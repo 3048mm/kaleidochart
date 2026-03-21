@@ -1,0 +1,51 @@
+import os
+from contextlib import contextmanager
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from db.models import Base
+
+# DB engine and session factory will be initialized after loading config
+engine = None
+SessionLocal = None
+
+def init_db(db_path: str):
+    """
+    Initializes the database engine and creates all tables if they don't exist.
+    """
+    global engine, SessionLocal
+    
+    # Ensure directory exists
+    db_dir = os.path.dirname(db_path)
+    if db_dir and not os.path.exists(db_dir):
+        os.makedirs(db_dir, exist_ok=True)
+        
+    # Example: sqlite:///data/stocktool.db
+    database_url = f"sqlite:///{db_path}"
+    
+    # Creates engine. connect_args check_same_thread is for SQLite
+    engine = create_engine(database_url, connect_args={"check_same_thread": False})
+    
+    # Create session factory
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    
+    # Create all tables according to the models
+    Base.metadata.create_all(bind=engine)
+
+@contextmanager
+def get_db():
+    """
+    Dependency generator for DB sessions, to be used with context managers wrapper.
+    Ensures safe commit/rollback and closing of sessions.
+    """
+    if SessionLocal is None:
+        raise RuntimeError("Database not initialized. Call init_db() first.")
+        
+    db = SessionLocal()
+    try:
+        yield db
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise e
+    finally:
+        db.close()

@@ -1,0 +1,269 @@
+import pandas as pd
+import numpy as np
+import ta
+
+def calculate_indicators(df_daily: pd.DataFrame, df_spy: pd.DataFrame = None) -> pd.DataFrame:
+    """
+    日足データ(T2)を受け取り、テクニカル指標とSPYとの相対評価を算出して返す純粋な関数。
+    
+    Args:
+        df_daily: 対象銘柄の日足DataFrame (date, open, high, low, close, volume)
+        df_spy:   SPYの日足DataFrame (date, close, volume) — RS系・Relative Volume計算に使用
+    Returns:
+        各種インジケーターカラムが追加されたDataFrame
+    """
+    df = df_daily.copy()
+    df = df.sort_values('date').reset_index(drop=True)
+    
+    if df.empty:
+        return df
+        
+    close  = df['close']
+    high   = df['high']
+    low    = df['low']
+    volume = df['volume'].astype(float)
+
+    # =========================================================
+    # 1. Simple Moving Averages (SMA) — 150 追加
+    # =========================================================
+    for period in [5, 21, 50, 63, 150, 200]:
+        df[f'sma_{period}'] = close.rolling(window=period, min_periods=1).mean()
+        
+    # =========================================================
+    # 2. Exponential Moving Averages (EMA)
+    # =========================================================
+    for period in [5, 21, 50, 63, 150, 200]:
+        df[f'ema_{period}'] = close.ewm(span=period, adjust=False, min_periods=1).mean()
+        
+    # =========================================================
+    # 3. ATR (14日) — raw & %
+    # =========================================================
+    try:
+        atr_indicator = ta.volatility.AverageTrueRange(
+            high=high, low=low, close=close, window=14, fillna=True
+        )
+        atr_values = atr_indicator.average_true_range()
+        df['atr_14'] = atr_values
+        df['atr_pct_14'] = np.where(close == 0, 0, (atr_values / close) * 100)
+    except Exception:
+        df['atr_14'] = np.nan
+        df['atr_pct_14'] = np.nan
+
+    # =========================================================
+    # 4. ADR% (21日) — Average Daily Range as % of Low
+    # =========================================================
+    daily_range_pct = np.where(low == 0, np.nan, (high - low) / low * 100)
+    df['adr_pct_21'] = pd.Series(daily_range_pct).rolling(window=21, min_periods=1).mean().values
+
+    # =========================================================
+    # 5. Distance from SMA50 in ATR multiples
+    # =========================================================
+    df['dist_sma50_atr'] = np.where(
+        df['atr_14'].isna() | (df['atr_14'] == 0),
+        np.nan,
+        (close - df['sma_50']) / df['atr_14']
+    )
+
+    # =========================================================
+    # 6. TD Sequential (TD9)
+    # =========================================================
+    td9_series = np.zeros(len(close))
+    for i in range(len(close)):
+        if i >= 4:
+            if close.iloc[i] > close.iloc[i-4]:
+                prev = td9_series[i-1]
+                # Reset after completing a 9-count, or start fresh if previous was bearish/zero
+                count = prev if (0 < prev < 9) else 0
+                td9_series[i] = count + 1
+            elif close.iloc[i] < close.iloc[i-4]:
+                prev = td9_series[i-1]
+                count = prev if (-9 < prev < 0) else 0
+                td9_series[i] = count - 1
+    df['td9'] = td9_series
+
+    # =========================================================
+    # 7. Relative Strength vs SPY  +  RS Momentum  +  RS Ratio(Z-score)
+    # =========================================================
+    if df_spy is not None and not df_spy.empty:
+        # --- SPY close / volume の準備 ---
+        spy_ref = df_spy[['date', 'close', 'volume']].rename(
+            columns={'close': 'spy_close', 'volume': 'spy_volume'}
+        )
+        df = pd.merge(df, spy_ref, on='date', how='left')
+        df['spy_close']  = df['spy_close'].ffill()
+        df['spy_volume'] = df['spy_volume'].ffill().astype(float)
+
+        # RS = Close / SPY_Close
+        df['relative_strength_spy'] = np.where(
+            df['spy_close'].isna() | (df['spy_close'] == 0),
+            np.nan,
+            df['close'] / df['spy_close']
+        )
+        rs = df['relative_strength_spy']
+
+        # RS Condition (n) = RS / SMA(RS, n)
+        for n in [14, 21, 63]:
+            rs_sma = rs.rolling(window=n, min_periods=max(1, n//2)).mean()
+            df[f'rs_condition_{n}'] = np.where(
+                rs_sma.isna() | (rs_sma == 0), np.nan, rs / rs_sma
+            )
+
+        # RS Ratio (Z-score of RS over n days)
+        for n in [14, 21, 63]:
+            rs_mean = rs.rolling(window=n, min_periods=max(1, n//2)).mean()
+            rs_std  = rs.rolling(window=n, min_periods=max(1, n//2)).std()
+            df[f'rs_ratio_{n}'] = np.where(
+                rs_std.isna() | (rs_std == 0), np.nan, (rs - rs_mean) / rs_std
+            )
+            
+        # RRG RS Momentum (Z-score of RS-Ratio over n days)
+        # In standard RRG, momentum is the rate of change of Ratio.
+        # Since our Ratio is essentially a normalized relative strength,
+        # we apply a rolling normalized difference (Z-score approximation) to the Ratio itself.
+        for n in [14, 21, 63]:
+            ratio_col = df[f'rs_ratio_{n}']
+            ratio_mean = ratio_col.rolling(window=n, min_periods=max(1, n//2)).mean()
+            ratio_std  = ratio_col.rolling(window=n, min_periods=max(1, n//2)).std()
+            df[f'rs_momentum_{n}'] = np.where(
+                ratio_std.isna() | (ratio_std == 0), np.nan, (ratio_col - ratio_mean) / ratio_std
+            )
+
+        # --- Relative Volume vs SPY ---
+        vol_sma_21     = volume.rolling(window=21, min_periods=1).mean()
+        spy_vol_sma_21 = df['spy_volume'].rolling(window=21, min_periods=1).mean()
+
+        df['vol_surge_21'] = np.where(
+            vol_sma_21 == 0, np.nan, volume / vol_sma_21
+        )
+        # Relative Vol vs SPY = vol_surge / SPY_vol_surge
+        spy_vol_surge = np.where(
+            spy_vol_sma_21 == 0, np.nan, df['spy_volume'] / spy_vol_sma_21
+        )
+        df['rel_vol_vs_spy_21'] = np.where(
+            (spy_vol_surge == 0) | (pd.isna(spy_vol_surge)), np.nan,
+            df['vol_surge_21'] / spy_vol_surge
+        )
+
+        df = df.drop(columns=['spy_close', 'spy_volume'])
+    else:
+        for col in ['relative_strength_spy', 'rs_condition_14', 'rs_condition_21', 'rs_condition_63', 
+                    'rs_ratio_14', 'rs_ratio_21', 'rs_ratio_63',
+                    'rs_momentum_14', 'rs_momentum_21', 'rs_momentum_63', 'rel_vol_vs_spy_21']:
+            df[col] = np.nan
+        # vol_surge can still be computed without SPY
+        vol_sma_21 = volume.rolling(window=21, min_periods=1).mean()
+        df['vol_surge_21'] = np.where(vol_sma_21 == 0, np.nan, volume / vol_sma_21)
+
+    # Volume surge without SPY (covers VIX/DXY for vol_surge_21 column)
+    if 'vol_surge_21' not in df.columns:
+        vol_sma_21 = volume.rolling(window=21, min_periods=1).mean()
+        df['vol_surge_21'] = np.where(vol_sma_21 == 0, np.nan, volume / vol_sma_21)
+
+    # =========================================================
+    # 8. % from N-day Highs
+    # =========================================================
+    max_63d  = high.rolling(window=63,  min_periods=1).max()
+    max_252d = high.rolling(window=252, min_periods=1).max()
+
+    df['pct_from_63d_high']  = np.where(max_63d  == 0, np.nan, (close - max_63d)  / max_63d  * 100)
+    df['pct_from_52w_high']  = np.where(max_252d == 0, np.nan, (close - max_252d) / max_252d * 100)
+
+    # =========================================================
+    # 9. Trend Template フラグ
+    # =========================================================
+    # Condition 4: SMA200 today >= SMA200 20 days ago (rolling check)
+    sma200_20d_ago = df['sma_200'].shift(20)
+
+    cond1 = close > df['sma_50']
+    cond2 = df['sma_50'] > df['sma_150']
+    cond3 = df['sma_150'] > df['sma_200']
+    cond4 = df['sma_200'] >= sma200_20d_ago
+    cond5 = close >= (max_252d * 0.70)  # within 30% of 52w high
+
+    df['trend_template_ok'] = np.where(
+        sma200_20d_ago.isna(),   # not enough data yet → NULL
+        None,
+        np.where(cond1 & cond2 & cond3 & cond4 & cond5, 1, 0)
+    )
+
+    # =========================================================
+    # 10. Sanitize: replace np.nan with None for SQLAlchemy
+    # =========================================================
+    df = df.replace({np.nan: None})
+    
+    return df
+
+
+def calculate_relative_ranks(df_all_indicators: pd.DataFrame, group_col: str, indicator_col: str) -> pd.DataFrame:
+    """
+    全銘柄の計算済みデータを受け取り、日付ごとのグループ内 Relative Rank (Percentile) を計算。
+    対象: rs_ratio_21, rs_ratio_63 など T4 に保存する指標
+    """
+    if df_all_indicators.empty or indicator_col not in df_all_indicators.columns:
+        return pd.DataFrame()
+        
+    df_result = df_all_indicators.copy()
+    df_result['percent_rank'] = df_result.groupby(['date', group_col])[indicator_col].rank(pct=True, ascending=True)
+    
+    res = df_result[['symbol_id', 'date', group_col, indicator_col, 'percent_rank']].copy()
+    res = res.rename(columns={group_col: 'group_name'})
+    res['indicator_name'] = indicator_col
+    res = res.drop(columns=[indicator_col])
+    return res
+
+
+def calculate_market_signals(df_spy: pd.DataFrame) -> pd.DataFrame:
+    """
+    SPYの日足データから市場フェーズシグナルを計算してDataFrameに返す。
+    各行が1取引日分のmarket_signalsレコードに対応する。
+    """
+    if df_spy is None or df_spy.empty:
+        return pd.DataFrame()
+
+    df = df_spy.copy().sort_values('date').reset_index(drop=True)
+    close  = df['close']
+    volume = df['volume'].astype(float)
+
+    # SMA200
+    df['sma_200'] = close.rolling(200, min_periods=1).mean()
+    sma200_20d_ago = df['sma_200'].shift(20)
+
+    df['spy_above_sma200']  = (close > df['sma_200']).astype(int)
+    df['spy_sma200_rising'] = np.where(
+        sma200_20d_ago.isna(), None,
+        (df['sma_200'] >= sma200_20d_ago).astype(int)
+    )
+
+    # Distribution Days: SPY下落 -0.2% 以上 かつ 出来高が前日比増
+    daily_ret    = close.pct_change()
+    vol_increase = volume > volume.shift(1)
+    is_dist_day  = (daily_ret <= -0.002) & vol_increase
+
+    # 直近25営業日のカウント（rolling sum）
+    df['distribution_days'] = is_dist_day.rolling(window=25, min_periods=1).sum().astype(int)
+
+    # Follow Through Day (FTD)
+    # 1. 直近安値から4日以上 2. 前日比 +1.7% 以上 3. 出来高が前日より多
+    is_ftd = (daily_ret >= 0.017) & vol_increase
+    # Simplification: mark FTD on the signal day itself (full valley detection is complex)
+    df['follow_through_day'] = is_ftd.astype(int)
+
+    # Market Phase 判定
+    def phase(row):
+        if row['spy_above_sma200'] == 1 and row['distribution_days'] <= 3:
+            return 'BULL'
+        elif row['spy_above_sma200'] == 1 and row['distribution_days'] >= 5:
+            return 'CORRECTION'
+        elif row['spy_above_sma200'] == 0 and row['follow_through_day'] == 1:
+            return 'RALLY_ATTEMPT'
+        elif row['spy_above_sma200'] == 0:
+            if row.get('spy_sma200_rising') == 0:
+                return 'BEAR'
+            return 'RALLY_ATTEMPT'
+        else:
+            return 'BULL'
+
+    df['market_phase'] = df.apply(phase, axis=1)
+
+    return df[['date', 'spy_above_sma200', 'spy_sma200_rising',
+                'distribution_days', 'follow_through_day', 'market_phase']]
