@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { createChart, IChartApi, ISeriesApi, CrosshairMode, SeriesMarker } from 'lightweight-charts';
-import { Symbol, ChartDataPoint } from '../types';
+import { Symbol, ChartDataPoint, EarningData } from '../types';
 import { appConfig } from '../config';
 import { RrgChart } from '../components/RrgChart';
 import { SymbolDataTable } from '../components/SymbolDataTable';
@@ -11,7 +11,6 @@ interface ChartPageProps {
     symbols: Symbol[];
 }
 
-// Helper: compute 1D % change for a data point
 const getChange = (data: ChartDataPoint[], point: ChartDataPoint): number | null => {
     const idx = data.findIndex(d => d.time === point.time);
     if (idx <= 0) return null;
@@ -19,6 +18,85 @@ const getChange = (data: ChartDataPoint[], point: ChartDataPoint): number | null
     return ((point.close - prev.close) / prev.close) * 100;
 };
 
+const formatMarketCap = (val: number): string => {
+    if (Math.abs(val) >= 1.0e12) return `$${(val / 1.0e12).toFixed(2)}T`;
+    if (Math.abs(val) >= 1.0e9) return `$${(val / 1.0e9).toFixed(2)}B`;
+    if (Math.abs(val) >= 1.0e6) return `$${(val / 1.0e6).toFixed(2)}M`;
+    return `$${val.toLocaleString()}`;
+};
+
+const EarningsChart: React.FC<{ earnings: EarningData[] }> = ({ earnings }) => {
+    if (!earnings || earnings.length === 0) return null;
+
+    const chartData = [...earnings].reverse();
+    
+    const maxVal = Math.max(
+        ...chartData.map(e => e.revenue || 0),
+        ...chartData.map(e => e.net_income || 0)
+    ) || 1;
+    const minVal = Math.min(
+        0, 
+        ...chartData.map(e => e.net_income || 0)
+    );
+    
+    const paddedMax = maxVal * 1.1; 
+    const range = paddedMax - minVal;
+    const zeroY = (Math.abs(minVal) / range) * 100;
+
+    return (
+        <div style={{ padding: '0 0 30px', borderBottom: '1px solid rgba(255,255,255,0.1)', marginBottom: '30px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                <h4 style={{ margin: 0, fontSize: '15px', color: '#ccc' }}>Quarterly Performance</h4>
+                <div style={{ display: 'flex', gap: '15px', fontSize: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                        <div style={{ width: '12px', height: '12px', background: '#2962FF', borderRadius: '2px' }} />
+                        <span style={{ color: '#888' }}>Revenue</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                        <div style={{ width: '12px', height: '12px', background: appConfig.colors.good, borderRadius: '2px' }} />
+                        <span style={{ color: '#888' }}>Net Income</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div style={{ position: 'relative', height: '160px', display: 'flex', gap: '4px', overflowX: 'auto', paddingBottom: '20px' }}>
+                {/* Zero Line */}
+                <div style={{ position: 'absolute', left: 0, right: 0, bottom: `${zeroY}%`, height: '1px', background: 'rgba(255,255,255,0.2)', zIndex: 0 }} />
+                
+                {chartData.map(e => {
+                    const rev = e.revenue || 0;
+                    const net = e.net_income || 0;
+                    
+                    const revH = (Math.abs(rev) / range) * 100;
+                    const netH = (Math.abs(net) / range) * 100;
+                    
+                    return (
+                        <div key={e.period_date} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: '0 0 60px', height: '100%', position: 'relative', zIndex: 1 }} title={`Period: ${e.period_date}\nRevenue: ${formatMarketCap(rev)}\nNet Income: ${formatMarketCap(net)}`}>
+                            
+                            {/* Revenue Bar */}
+                            {rev > 0 && (
+                                <div style={{ width: '16px', height: `${revH}%`, background: '#2962FF', opacity: 0.9, borderRadius: '2px 2px 0 0', position: 'absolute', bottom: `${zeroY}%`, left: '12px', transition: 'height 0.3s' }} />
+                            )}
+                            
+                            {/* Net Income Bar */}
+                            {net > 0 && (
+                                <div style={{ width: '16px', height: `${netH}%`, background: appConfig.colors.good, opacity: 0.9, borderRadius: '2px 2px 0 0', position: 'absolute', bottom: `${zeroY}%`, right: '12px', transition: 'height 0.3s' }} />
+                            )}
+                            {net < 0 && (
+                                <div style={{ width: '16px', height: `${netH}%`, background: appConfig.colors.bad, opacity: 0.9, borderRadius: '0 0 2px 2px', position: 'absolute', top: `${100 - zeroY}%`, right: '12px', transition: 'height 0.3s' }} />
+                            )}
+                            
+                            {/* X-axis Label */}
+                            <div style={{ position: 'absolute', bottom: '-22px', fontSize: '11px', color: '#888', whiteSpace: 'nowrap' }}>
+                                {e.period_date.substring(0, 7)}
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+};
 
 
 export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
@@ -28,7 +106,9 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
 
-    const [viewMode, setViewMode] = useState<'chart' | 'rs' | 'table'>('chart');
+    const [viewMode, setViewMode] = useState<'chart' | 'rs' | 'table' | 'fundamentals'>('chart');
+    const [earnings, setEarnings] = useState<EarningData[]>([]);
+    const [earningsLoading, setEarningsLoading] = useState(false);
 
     // State for hovering
     const [hoverData, setHoverData] = useState<ChartDataPoint | null>(null);
@@ -82,6 +162,13 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
                 setError(err.message);
             })
             .finally(() => setLoading(false));
+
+        setEarningsLoading(true);
+        fetch(`/api/earnings/${selected.id}`)
+            .then(res => res.ok ? res.json() : [])
+            .then(json => setEarnings(json))
+            .catch(err => console.error(err))
+            .finally(() => setEarningsLoading(false));
     }, [selected]);
 
     // Fetch comparison data when user requests
@@ -391,6 +478,11 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px' }}>
                     <span style={{ fontSize: '18px', fontWeight: 700 }}>{selected.ticker}</span>
                     <span style={{ fontSize: '12px', color: '#888' }}>{selected.name} ({selected.category})</span>
+                    {latest && latest.market_cap && (
+                        <span style={{ fontSize: '12px', color: '#aaa', marginLeft: '10px', padding: '2px 8px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px' }}>
+                            Market Cap: <strong style={{ color: '#fff' }}>{formatMarketCap(latest.market_cap)}</strong>
+                        </span>
+                    )}
                 </div>
                 <a href={tradingViewUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#2962FF', textDecoration: 'none', fontSize: '12px', marginLeft: 'auto' }}>
                     TradingView ↗
@@ -418,6 +510,13 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
                     style={{ padding: '6px 16px', fontSize: '14px', borderRadius: '4px' }}
                 >
                     Data View
+                </button>
+                <button
+                    className={`toggle-btn ${viewMode === 'fundamentals' ? 'active' : ''}`}
+                    onClick={() => setViewMode('fundamentals')}
+                    style={{ padding: '6px 16px', fontSize: '14px', borderRadius: '4px' }}
+                >
+                    Fundamentals
                 </button>
             </div>
 
@@ -518,6 +617,50 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
                         <div className="no-data">Select a symbol to view chart</div>
                     )}
                 </main>
+                {viewMode === 'fundamentals' && (
+                    <main className="chart-area glass-panel" style={{ flex: 1, display: 'flex', flexDirection: 'column', margin: '0 20px 20px 20px', padding: '20px', overflowY: 'auto' }}>
+                        <h3 style={{ margin: '0 0 20px 0', fontSize: '18px', fontWeight: 600 }}>Earnings & Fundamentals</h3>
+                        
+                        {earningsLoading ? (
+                            <div className="loading" style={{ padding: '40px', textAlign: 'center' }}>Loading earnings data...</div>
+                        ) : earnings.length === 0 ? (
+                            <div style={{ color: '#aaa', padding: '40px', textAlign: 'center' }}>No quarterly earnings data available for this symbol.</div>
+                        ) : (
+                            <div style={{ overflowX: 'auto', display: 'flex', flexDirection: 'column' }}>
+                                <EarningsChart earnings={earnings} />
+                                
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px', minWidth: '600px' }}>
+                                    <thead>
+                                        <tr style={{ color: '#888', borderBottom: '1px solid rgba(255,255,255,0.1)', fontSize: '12px', textTransform: 'uppercase' }}>
+                                            <th style={{ padding: '12px 10px', textAlign: 'left' }}>Period Date</th>
+                                            <th style={{ padding: '12px 10px', textAlign: 'right' }}>Revenue</th>
+                                            <th style={{ padding: '12px 10px', textAlign: 'right' }}>Net Income</th>
+                                            <th style={{ padding: '12px 10px', textAlign: 'right' }}>EPS (Basic)</th>
+                                            <th style={{ padding: '12px 10px', textAlign: 'right' }}>EPS (Diluted)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {earnings.map(e => (
+                                            <tr key={e.period_date} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                                                <td style={{ padding: '12px 10px', textAlign: 'left', fontWeight: 'bold' }}>{e.period_date}</td>
+                                                <td style={{ padding: '12px 10px', textAlign: 'right' }}>{e.revenue ? formatMarketCap(e.revenue) : '-'}</td>
+                                                <td style={{ padding: '12px 10px', textAlign: 'right', color: e.net_income && e.net_income > 0 ? appConfig.colors.good : e.net_income && e.net_income < 0 ? appConfig.colors.bad : 'inherit' }}>
+                                                    {e.net_income ? formatMarketCap(e.net_income) : '-'}
+                                                </td>
+                                                <td style={{ padding: '12px 10px', textAlign: 'right', color: e.eps_basic && e.eps_basic > 0 ? appConfig.colors.good : e.eps_basic && e.eps_basic < 0 ? appConfig.colors.bad : 'inherit' }}>
+                                                    {e.eps_basic != null ? e.eps_basic.toFixed(2) : '-'}
+                                                </td>
+                                                <td style={{ padding: '12px 10px', textAlign: 'right', color: e.eps_diluted && e.eps_diluted > 0 ? appConfig.colors.good : e.eps_diluted && e.eps_diluted < 0 ? appConfig.colors.bad : 'inherit' }}>
+                                                    {e.eps_diluted != null ? e.eps_diluted.toFixed(2) : '-'}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </main>
+                )}
             </div>
         </div>
     );

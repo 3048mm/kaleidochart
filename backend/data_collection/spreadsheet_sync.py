@@ -57,8 +57,12 @@ def fetch_symbols_from_sheet(credentials_path: str, spreadsheet_url: str) -> Lis
                 theme_type = None
                 if exchange.upper() == 'VIRTUAL':
                     theme_type = 'virtual'
+                elif base_category == 'セクタ':
+                    theme_type = 'sector'
                 elif base_category == 'テーマ':
-                    theme_type = 'etf'  # Real ETF covering a theme
+                    theme_type = 'theme'  # Categorize as theme for better identification
+                elif base_category == '指標' or base_category == '市場':
+                    theme_type = 'etf' if exchange.upper() != 'VIRTUAL' else 'virtual'
                 
                 all_symbols.append({
                     "ticker": ticker,

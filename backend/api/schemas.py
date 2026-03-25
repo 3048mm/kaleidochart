@@ -61,6 +61,7 @@ class ChartDataPoint(BaseModel):
     pct_from_63d_high: Optional[float] = None
     pct_from_52w_high: Optional[float] = None
     trend_template_ok: Optional[int] = None
+    market_cap: Optional[float] = None
     
     # Optional Relative Ranks
     rank_rs_ratio_14: Optional[float] = None
@@ -212,3 +213,13 @@ class ThemeDetailResponse(BaseModel):
     rs63_sparkline: List[float] = []
     chart_data: List[ChartDataPoint] = []  # 6-month OHLCV for MiniChart
     constituents: List[ThemeConstituentItem] = []
+
+class EarningResponse(BaseModel):
+    period_date: str
+    eps_basic: Optional[float] = None
+    eps_diluted: Optional[float] = None
+    revenue: Optional[float] = None
+    net_income: Optional[float] = None
+
+    class Config:
+        from_attributes = True

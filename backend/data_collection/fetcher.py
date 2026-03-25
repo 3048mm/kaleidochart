@@ -84,13 +84,26 @@ def fetch_daily_data(ticker: str, start_date: str, end_date: str = None) -> pd.D
         return pd.DataFrame()
 
 
-def fetch_multiple_daily_data(tickers: list[str], start_date: str, sleep_seconds: float = 1.0) -> dict[str, pd.DataFrame]:
+def fetch_multiple_daily_data(
+    tickers: list[str],
+    start_date: str,
+    sleep_seconds: float = 1.0,
+    start_date_overrides: dict[str, str] | None = None
+) -> dict[str, pd.DataFrame]:
     """
     複数銘柄のデータを順次取得します。APIレート制限回避のためSleepを挟みます。
+
+    Args:
+        tickers: 取得対象のティッカーリスト
+        start_date: デフォルトの取得開始日 (YYYY-MM-DD)
+        sleep_seconds: 銘柄間のスリープ秒数
+        start_date_overrides: {ticker: "YYYY-MM-DD"} の形式で銘柄ごとの開始日を上書きできる
     """
     results = {}
+    overrides = start_date_overrides or {}
     for i, ticker in enumerate(tickers):
-        df = fetch_daily_data(ticker, start_date)
+        ticker_start = overrides.get(ticker, start_date)
+        df = fetch_daily_data(ticker, ticker_start)
         if not df.empty:
             results[ticker] = df
             

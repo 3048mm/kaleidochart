@@ -48,6 +48,7 @@ export interface ChartDataPoint {
     pct_from_63d_high?: number | null
     pct_from_52w_high?: number | null
     trend_template_ok?: number | null
+    market_cap?: number | null
 
     // Relative Ranks
     rank_rs_ratio_14?: number | null
@@ -204,3 +205,12 @@ export interface ThemeDetailResponse {
     chart_data: ChartDataPoint[];
     constituents: ThemeConstituentItem[];
 }
+
+export interface EarningData {
+    period_date: string;
+    eps_basic: number | null;
+    eps_diluted: number | null;
+    revenue: number | null;
+    net_income: number | null;
+}
+

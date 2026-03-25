@@ -35,7 +35,6 @@ export const ScreenerPage: React.FC = () => {
             max_dist_sma50_atr: '6',
             min_adr_pct_21: '4',
             min_market_cap: '1000000000',
-            trend_template_ok: '1',
         },
         'check_volume_surge': {
             min_vol_surge_21: '1.5',
@@ -51,7 +50,6 @@ export const ScreenerPage: React.FC = () => {
             max_dist_sma50_atr: '6',
             min_adr_pct_21: '4',
             min_market_cap: '1000000000',
-            trend_template_ok: '1',
         },
         'check_momentum97': {
             min_rs_ratio_21_rank: '0.97',

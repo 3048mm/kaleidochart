@@ -97,7 +97,8 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db)):
                 "rel_vol_vs_spy_21": ind.rel_vol_vs_spy_21,
                 "pct_from_63d_high": ind.pct_from_63d_high,
                 "pct_from_52w_high": ind.pct_from_52w_high,
-                "trend_template_ok": ind.trend_template_ok
+                "trend_template_ok": ind.trend_template_ok,
+                "market_cap": ind.market_cap
             })
             
         # Merge relative ranks if present
@@ -118,6 +119,29 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db)):
         chart_data.append(schemas.ChartDataPoint(**point))
         
     return chart_data
+
+@router.get("/earnings/{symbol_id}", response_model=List[schemas.EarningResponse])
+def get_earnings_data(symbol_id: int, db: Session = Depends(get_api_db)):
+    """
+    T6: Get quarterly earnings fundamental data for a symbol.
+    """
+    symbol = db.query(Symbol).filter(Symbol.id == symbol_id).first()
+    if not symbol:
+        raise HTTPException(status_code=404, detail="Symbol not found")
+        
+    earnings = db.query(Earning).filter(Earning.symbol_id == symbol_id).order_by(Earning.period_date.desc()).all()
+    
+    resp = []
+    for e in earnings:
+        resp.append(schemas.EarningResponse(
+            period_date=str(e.period_date),
+            eps_basic=e.eps_basic,
+            eps_diluted=e.eps_diluted,
+            revenue=e.revenue,
+            net_income=e.net_income
+        ))
+    return resp
+
 
 @router.get("/ranking", response_model=List[schemas.RankingResponse])
 def get_rankings(db: Session = Depends(get_api_db), limit: int = 20, asc: bool = False):
@@ -685,8 +709,7 @@ def get_screener_dashboard(
         Indicator.rel_vol_vs_spy_21 >= 1.0,
         Indicator.dist_sma50_atr <= 6.0,
         Indicator.adr_pct_21 >= 4.0,
-        Indicator.market_cap >= _GAIN_1B,
-        Indicator.trend_template_ok == 1
+        Indicator.market_cap >= _GAIN_1B
     ).order_by(desc((DailyPrice.close - DailyPrice.open) / DailyPrice.open))
 
     _vol_surge = q_base().filter(
@@ -703,9 +726,8 @@ def get_screener_dashboard(
         ((DailyPrice.close - Indicator.ema_21) / Indicator.ema_21 * 100) <= 2.0,
         Indicator.dist_sma50_atr <= 6.0,
         Indicator.adr_pct_21 >= 4.0,
-        Indicator.market_cap >= _GAIN_1B,
-        Indicator.trend_template_ok == 1
-    ).order_by(desc(Indicator.rs_ratio_21))
+        Indicator.market_cap >= _GAIN_1B
+    ).order_by(desc((DailyPrice.close - DailyPrice.open) / DailyPrice.open))
 
     # Momentum 97 requires RelativeRank join
     _latest_rank_date = db.query(func.max(RelativeRank.date)).filter(RelativeRank.date <= latest_date_result).scalar()
@@ -733,16 +755,16 @@ def get_screener_dashboard(
         DailyPrice.close > Indicator.sma_50,
         Indicator.rs_condition_21 > 1.0,
         Indicator.market_cap >= _GAIN_1B
-    ).order_by(desc(Indicator.rs_ratio_21))
+    ).order_by(desc((DailyPrice.close - DailyPrice.open) / DailyPrice.open))
 
     # Rise - [Overhead sign]
-    climax = q_base().filter((Indicator.dist_sma50_atr > 3.0) | (Indicator.td9 == -9)).order_by(desc(Indicator.dist_sma50_atr))
+    climax = q_base().filter((Indicator.dist_sma50_atr > 3.0) | (Indicator.td9 == -9)).order_by(desc((DailyPrice.close - DailyPrice.open) / DailyPrice.open))
     dist8 = q_base().filter(Indicator.dist_sma50_atr > 8.0).order_by(desc(Indicator.dist_sma50_atr))
     td9_overhead = q_base().filter(Indicator.td9 >= 8).order_by(desc(Indicator.td9))
 
     # Fall - [Warning]
     tb = q_base().filter(Indicator.trend_template_ok == 0, Indicator.rs_ratio_63 < -1.0, Indicator.sma_50 < Indicator.sma_200).order_by(Indicator.rs_ratio_63)
-    hvd = q_base().filter(Indicator.vol_surge_21 > 1.5, ((DailyPrice.close - DailyPrice.open) / DailyPrice.open * 100) < -2.0).order_by(desc(Indicator.vol_surge_21))
+    hvd = q_base().filter(Indicator.vol_surge_21 > 1.5, ((DailyPrice.close - DailyPrice.open) / DailyPrice.open * 100) < -2.0).order_by((DailyPrice.close - DailyPrice.open) / DailyPrice.open)
 
     # Fall - [Rebound sign]
     osr = q_base().filter(Indicator.td9 == 9, Indicator.rs_ratio_14 < 0.2).order_by(Indicator.rs_ratio_14)
