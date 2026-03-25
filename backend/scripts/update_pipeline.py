@@ -475,6 +475,7 @@ def run_step3_pipeline(recalculate_all: bool = False, categories: Optional[List[
                         fund_res = fetch_fundamentals(ticker)
                     
                     shares_df = fund_res.get("shares")
+                    info = fund_res.get("info")
                     
                     df_ind['market_cap'] = None
                     if shares_df is not None and not shares_df.empty:
@@ -489,7 +490,17 @@ def run_step3_pipeline(recalculate_all: bool = False, categories: Optional[List[
                             merged_shares = pd.merge_asof(df_temp, shares_df_temp, on='date', direction='backward')
                             df_ind['market_cap'] = df['close'].values * merged_shares['shares'].values
                         except Exception as e:
-                            logger.error(f"[{ticker}] Error calculating market cap: {e}")
+                            logger.error(f"[{ticker}] Error calculating market cap from shares: {e}")
+                    
+                    # Fallback to info['marketCap'] for the most recent data if calculation failed or shares missing
+                    if info and 'marketCap' in info:
+                        latest_mcap = info['marketCap']
+                        # If market_cap column is still all None or has NaNs at the end, fill with static info
+                        if df_ind['market_cap'].isnull().all():
+                            df_ind['market_cap'] = latest_mcap
+                        else:
+                            # Fill only the last row or latest missing ones
+                            df_ind['market_cap'] = df_ind['market_cap'].fillna(latest_mcap)
                             
                     income_stmt = fund_res.get("income_stmt")
                     if income_stmt is not None and not income_stmt.empty:
