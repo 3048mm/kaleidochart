@@ -167,7 +167,7 @@ export const ScreenerPage: React.FC = () => {
                         style={{
                             padding: '6px 12px',
                             borderRadius: '4px',
-                            background: 'rgba(255,255,255,0.1)',
+                            background: '#1a1d26',
                             border: '1px solid rgba(255,255,255,0.2)',
                             color: '#fff',
                             colorScheme: 'dark'

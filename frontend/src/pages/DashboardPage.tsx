@@ -431,7 +431,7 @@ export const DashboardPage: React.FC = () => {
                                 <div style={{ flex: '1', minWidth: '300px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
                                     <div className="glass-panel" style={{ padding: '20px' }}>
                                         <h3 style={{ marginTop: 0, borderBottom: `1px solid ${appConfig.colors.glassBorder}`, paddingBottom: '10px' }}>🔥 Top Themes (1M RS Rank) <span style={{ fontSize: '12px', fontWeight: 'normal', color: '#aaa' }}>Top {Math.min(themesVisibleCount, data.themes_top.length)}</span></h3>
-                                        {renderPanelList(data.themes_top.slice(0, themesVisibleCount), appConfig.thresholds.sparkline_max_pct_theme, (item) => `/theme/${item.id}`)}
+                                        {renderPanelList(data.themes_top.slice(0, themesVisibleCount), appConfig.thresholds.sparkline_max_pct_theme, (item) => `/chart/${encodeURIComponent(item.ticker)}`)}
                                     </div>
 
                                     {/* Expand / Collapse button */}
@@ -480,7 +480,7 @@ export const DashboardPage: React.FC = () => {
 
                                     <div className="glass-panel" style={{ padding: '20px' }}>
                                         <h3 style={{ marginTop: 0, borderBottom: `1px solid ${appConfig.colors.glassBorder}`, paddingBottom: '10px' }}>❄️ Weak Themes (1M RS Rank) <span style={{ fontSize: '12px', fontWeight: 'normal', color: '#aaa' }}>Bottom {Math.min(themesVisibleCount, data.themes_bottom.length)}</span></h3>
-                                        {renderPanelList(data.themes_bottom.slice(0, themesVisibleCount), appConfig.thresholds.sparkline_max_pct_theme, (item) => `/theme/${item.id}`)}
+                                        {renderPanelList(data.themes_bottom.slice(0, themesVisibleCount), appConfig.thresholds.sparkline_max_pct_theme, (item) => `/chart/${encodeURIComponent(item.ticker)}`)}
                                     </div>
                                 </div>
                             </div>

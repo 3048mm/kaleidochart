@@ -22,7 +22,7 @@ def get_symbols(db: Session = Depends(get_api_db)):
     symbols = db.query(Symbol).filter(Symbol.active == 1).order_by(Symbol.category, Symbol.ticker).all()
     return symbols
 
-@router.get("/chart/{symbol_id}", response_model=List[schemas.ChartDataPoint])
+@router.get("/chart/{symbol_id}", response_model=schemas.ChartResponse)
 def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db)):
     """
     T2+T3: Get combined daily prices and indicators for rendering charts
@@ -41,18 +41,30 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db)):
     
     # Pre-fetch all RelativeRanks for this symbol to populate the minimaps
     ranks = db.query(RelativeRank).filter(RelativeRank.symbol_id == symbol_id).all()
-    # rank_map structure: { "YYYY-MM-DD": { "rs_ratio_21": 0.85, ... } }
     rank_map = {}
     for r in ranks:
         d_str = r.date.strftime('%Y-%m-%d')
         if d_str not in rank_map:
             rank_map[d_str] = {}
         rank_map[d_str][r.indicator_name] = r.percent_rank
+
+    # Pre-calculate Bollinger Bands (21, 2) efficiently using Pandas
+    bb_map = {}
+    if len(prices) >= 21:
+        import pandas as pd
+        df_bb = pd.DataFrame([{'d': p.date.strftime('%Y-%m-%d'), 'c': p.close} for p in prices])
+        df_bb['std'] = df_bb['c'].rolling(window=21).std()
+        df_bb['sma'] = df_bb['c'].rolling(window=21).mean()
+        df_bb['u'] = df_bb['sma'] + (2 * df_bb['std'])
+        df_bb['l'] = df_bb['sma'] - (2 * df_bb['std'])
+        # Convert to dict for fast lookup
+        bb_map = df_bb.set_index('d')[['u', 'l']].to_dict('index')
     
     chart_data = []
     for p in prices:
         date_str = p.date.strftime('%Y-%m-%d')
         ind = ind_map.get(date_str)
+        bb = bb_map.get(date_str, {})
         
         point = {
             "time": date_str,
@@ -61,6 +73,8 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db)):
             "low": p.low,
             "close": p.close,
             "volume": p.volume,
+            "bb_upper": bb.get('u'),
+            "bb_lower": bb.get('l'),
         }
         
         # Merge indicator data if present
@@ -98,27 +112,48 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db)):
                 "pct_from_63d_high": ind.pct_from_63d_high,
                 "pct_from_52w_high": ind.pct_from_52w_high,
                 "trend_template_ok": ind.trend_template_ok,
-                "market_cap": ind.market_cap
+                "market_cap": ind.market_cap,
             })
             
-        # Merge relative ranks if present
-        r_data = rank_map.get(date_str)
-        if r_data:
-            point.update({
-                "rank_rs_ratio_14": r_data.get("rs_ratio_14"),
-                "rank_rs_ratio_21": r_data.get("rs_ratio_21"),
-                "rank_rs_ratio_63": r_data.get("rs_ratio_63"),
-                "rank_rs_momentum_14": r_data.get("rs_momentum_14"),
-                "rank_rs_momentum_21": r_data.get("rs_momentum_21"),
-                "rank_rs_momentum_63": r_data.get("rs_momentum_63"),
-                "rank_rs_condition_14": r_data.get("rs_condition_14"),
-                "rank_rs_condition_21": r_data.get("rs_condition_21"),
-                "rank_rs_condition_63": r_data.get("rs_condition_63"),
-            })
-            
+            # Merge relative ranks if present
+            d_ranks = rank_map.get(date_str, {})
+            for k, v in d_ranks.items():
+                point[f"rank_{k}"] = v
+                
         chart_data.append(schemas.ChartDataPoint(**point))
-        
-    return chart_data
+
+    # Fetch associated themes (from tags column and theme_constituents)
+    theme_meta = []
+    
+    # 1. From tags
+    if symbol.tags:
+        tag_list = [t.strip() for t in symbol.tags.split(',') if t.strip()]
+        if tag_list:
+            tag_themes = db.query(Symbol).filter(Symbol.ticker.in_(tag_list)).all()
+            for t in tag_themes:
+                theme_meta.append(schemas.ChartSymbolMeta(id=t.id, ticker=t.ticker, name=t.name))
+                
+    # 2. From theme_constituents
+    tc_themes = db.query(Symbol).join(
+        ThemeConstituent, Symbol.id == ThemeConstituent.theme_id
+    ).filter(
+        ThemeConstituent.symbol_id == symbol_id
+    ).all()
+    
+    for t in tc_themes:
+        if not any(tm.ticker == t.ticker for tm in theme_meta):
+            theme_meta.append(schemas.ChartSymbolMeta(id=t.id, ticker=t.ticker, name=t.name))
+
+    return schemas.ChartResponse(
+        metadata=schemas.ChartSymbolMeta(
+            id=symbol.id, 
+            ticker=symbol.ticker, 
+            name=symbol.name,
+            category=symbol.category
+        ),
+        themes=theme_meta,
+        data=chart_data
+    )
 
 @router.get("/earnings/{symbol_id}", response_model=List[schemas.EarningResponse])
 def get_earnings_data(symbol_id: int, db: Session = Depends(get_api_db)):
@@ -691,7 +726,7 @@ def get_screener_dashboard(
             Indicator, Symbol.id == Indicator.symbol_id
         ).join(
             DailyPrice, (Symbol.id == DailyPrice.symbol_id) & (Indicator.date == DailyPrice.date)
-        ).filter(Symbol.active == True, Indicator.date == latest_date_result)
+        ).filter(Symbol.active == True, Symbol.category.in_(["テーマ", "個別"]), Indicator.date == latest_date_result)
 
     def fetch_top_8(query, order_col="Indicator.rs_ratio_21.desc()"):
         # For simple sorting we can order by close/open change or indicator fields
@@ -824,7 +859,8 @@ def get_screener(
     max_rs_condition_21: Optional[float] = Query(None, description="Max RS Condition 21"),
     min_td9: Optional[int] = Query(None, description="Min TDR9"),
     max_td9: Optional[int] = Query(None, description="Max TDR9"),
-    max_vol_surge_21: Optional[float] = Query(None, description="Max Volume Surge 21")
+    max_vol_surge_21: Optional[float] = Query(None, description="Max Volume Surge 21"),
+    theme_rs21_gt_63: Optional[bool] = Query(None, description="Theme RS21 > RS63")
 ):
     # Determine the date to use for indicators
     if target_date:
@@ -840,7 +876,7 @@ def get_screener(
         Indicator, Symbol.id == Indicator.symbol_id
     ).join(
         DailyPrice, (Symbol.id == DailyPrice.symbol_id) & (Indicator.date == DailyPrice.date)
-    ).filter(Symbol.active == 1)
+    ).filter(Symbol.active == 1, Symbol.category.in_(["テーマ", "個別"]))
 
     # Filter by the determined date
     query = query.filter(Indicator.date == latest_date_result)
@@ -995,6 +1031,15 @@ def get_screener(
         ).filter(Earning.eps_basic > 0).subquery()
         
         query = query.filter(Symbol.id.in_(eps_filter_subq))
+    if theme_rs21_gt_63:
+        # Filter stocks that belong to AT LEAST ONE theme where RS21 > RS63
+        theme_momentum_subq = db.query(ThemeConstituent.symbol_id).join(
+            Indicator, ThemeConstituent.theme_id == Indicator.symbol_id
+        ).filter(
+            Indicator.date == latest_date_result,
+            Indicator.rs_ratio_21 > Indicator.rs_ratio_63
+        ).subquery()
+        query = query.filter(Symbol.id.in_(theme_momentum_subq))
 
     results = query.all()
     

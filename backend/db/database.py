@@ -14,6 +14,11 @@ def init_db(db_path: str):
     """
     global engine, SessionLocal
     
+    # Allow override via environment variable
+    env_db_path = os.getenv("STOCKTOOL_DB_PATH")
+    if env_db_path:
+        db_path = env_db_path
+    
     # Ensure directory exists
     db_dir = os.path.dirname(db_path)
     if db_dir and not os.path.exists(db_dir):

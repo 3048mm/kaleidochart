@@ -2,7 +2,7 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { createChart, IChartApi, ISeriesApi, CrosshairMode, SeriesMarker } from 'lightweight-charts';
-import { Symbol, ChartDataPoint, EarningData } from '../types';
+import { Symbol, ChartDataPoint, EarningData, ChartResponse, ChartSymbolMeta } from '../types';
 import { appConfig } from '../config';
 import { RrgChart } from '../components/RrgChart';
 import { SymbolDataTable } from '../components/SymbolDataTable';
@@ -103,6 +103,7 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
     const { ticker } = useParams<{ ticker: string }>();
     const chartContainerRef = useRef<HTMLDivElement>(null);
     const [data, setData] = useState<ChartDataPoint[]>([]);
+    const [themes, setThemes] = useState<ChartSymbolMeta[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
 
@@ -131,11 +132,13 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
     const [showEma200, setShowEma200] = useState(false);
     const [showVolume, setShowVolume] = useState(true);
     const [showTd9, setShowTd9] = useState(true);
+    const [showBB, setShowBB] = useState(false);
 
     const chartRef = useRef<IChartApi | null>(null);
     const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
     const smaSeriesRefs = useRef<Record<string, ISeriesApi<"Line"> | null>>({});
     const emaSeriesRefs = useRef<Record<string, ISeriesApi<"Line"> | null>>({});
+    const bbSeriesRefs = useRef<{ upper: ISeriesApi<"Line"> | null, lower: ISeriesApi<"Line"> | null }>({ upper: null, lower: null });
 
     const selected = useMemo(() => {
         const parsedTicker = ticker?.includes(':') ? ticker.split(':')[1] : ticker;
@@ -155,7 +158,9 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
                 return res.json();
             })
             .then(json => {
-                setData(json);
+                const res = json as ChartResponse;
+                setData(res.data);
+                setThemes(res.themes || []);
             })
             .catch(err => {
                 console.error(err);
@@ -393,6 +398,35 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
         addMaSeries('ema63', 'ema_63', '#8bc34a', showEma63, emaSeriesRefs);
         addMaSeries('ema200', 'ema_200', '#795548', showEma200, emaSeriesRefs);
 
+        // --- Bollinger Bands (21, 2) ---
+        const bbUpperSeries = chart.addLineSeries({
+            color: 'rgba(255, 255, 255, 0.25)',
+            lineWidth: 1,
+            lineStyle: 2, // Dashed
+            title: 'BB UPPER',
+            visible: showBB,
+            crosshairMarkerVisible: false,
+        });
+        bbUpperSeries.setData(data.filter(d => d.bb_upper != null).map(d => ({
+            time: d.time as any,
+            value: d.bb_upper as number
+        })));
+        bbSeriesRefs.current.upper = bbUpperSeries;
+
+        const bbLowerSeries = chart.addLineSeries({
+            color: 'rgba(255, 255, 255, 0.25)',
+            lineWidth: 1,
+            lineStyle: 2, // Dashed
+            title: 'BB LOWER',
+            visible: showBB,
+            crosshairMarkerVisible: false,
+        });
+        bbLowerSeries.setData(data.filter(d => d.bb_lower != null).map(d => ({
+            time: d.time as any,
+            value: d.bb_lower as number
+        })));
+        bbSeriesRefs.current.lower = bbLowerSeries;
+
         chart.subscribeCrosshairMove((param) => {
             if (param.time && param.seriesData.size > 0) {
                 const point = data.find(d => d.time === param.time);
@@ -413,7 +447,8 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
     }, [
         data, compareData, showVolume, showTd9,
         showSma21, showSma50, showSma63, showSma150, showSma200,
-        showEma5, showEma21, showEma50, showEma63, showEma200
+        showEma5, showEma21, showEma50, showEma63, showEma200,
+        showBB
     ]);
 
     const latest = data.length > 0 ? data[data.length - 1] : null;
@@ -478,6 +513,37 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px' }}>
                     <span style={{ fontSize: '18px', fontWeight: 700 }}>{selected.ticker}</span>
                     <span style={{ fontSize: '12px', color: '#888' }}>{selected.name} ({selected.category})</span>
+                    {themes.length > 0 && (
+                        <div style={{ display: 'flex', gap: '8px', marginLeft: '10px', alignItems: 'center' }}>
+                            <span style={{ fontSize: '11px', color: '#666' }}>Themes:</span>
+                            {themes.map(t => (
+                                <Link 
+                                    key={t.id} 
+                                    to={`/chart/${t.ticker}`} 
+                                    style={{ 
+                                        fontSize: '11px', 
+                                        color: '#00ff88', 
+                                        background: 'rgba(0, 255, 136, 0.1)', 
+                                        padding: '2px 8px', 
+                                        borderRadius: '12px', 
+                                        textDecoration: 'none',
+                                        border: '1px solid rgba(0, 255, 136, 0.2)',
+                                        transition: 'all 0.2s'
+                                    }}
+                                    onMouseEnter={e => {
+                                        e.currentTarget.style.background = 'rgba(0, 255, 136, 0.2)';
+                                        e.currentTarget.style.borderColor = 'rgba(0, 255, 136, 0.4)';
+                                    }}
+                                    onMouseLeave={e => {
+                                        e.currentTarget.style.background = 'rgba(0, 255, 136, 0.1)';
+                                        e.currentTarget.style.borderColor = 'rgba(0, 255, 136, 0.2)';
+                                    }}
+                                >
+                                    {t.name}
+                                </Link>
+                            ))}
+                        </div>
+                    )}
                     {latest && latest.market_cap && (
                         <span style={{ fontSize: '12px', color: '#aaa', marginLeft: '10px', padding: '2px 8px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px' }}>
                             Market Cap: <strong style={{ color: '#fff' }}>{formatMarketCap(latest.market_cap)}</strong>
@@ -579,6 +645,7 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
 
                                 <button className={`toggle-btn ${showVolume ? 'active' : ''}`} onClick={() => setShowVolume(!showVolume)}>Vol</button>
                                 <button className={`toggle-btn ${showTd9 ? 'active' : ''}`} onClick={() => setShowTd9(!showTd9)}>TD9</button>
+                                <button className={`toggle-btn ${showBB ? 'active' : ''}`} onClick={() => setShowBB(!showBB)}>BB</button>
 
                                 <div style={{ borderLeft: '1px solid #333', margin: '0 10px', height: '24px', alignSelf: 'center' }}></div>
 

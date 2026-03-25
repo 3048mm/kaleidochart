@@ -62,6 +62,7 @@ const FILTER_CATEGORIES: { title: string, filters: FilterDef[] }[] = [
         filters: [
             { id: 'rs21_rank', label: 'RS21 Rank', type: 'range', paramMin: 'min_rs_ratio_21_rank', paramMax: 'max_rs_ratio_21_rank', step: 0.01 },
             { id: 'rs21_gt_63', label: 'RS21rank > RS63rank', type: 'boolean', paramBool: 'rs_rank_21_gt_63' },
+            { id: 'theme_rs21_gt_63', label: 'Theme RS21 > RS63', type: 'boolean', paramBool: 'theme_rs21_gt_63' },
             { id: 'rs_cond', label: 'RS Cond 21', type: 'range', paramMin: 'min_rs_condition_21', paramMax: 'max_rs_condition_21', step: 0.1 },
             { id: 'td9', label: 'TDR9 (Sequential)', type: 'range', paramMin: 'min_td9', paramMax: 'max_td9', step: 1 }
         ]
@@ -156,7 +157,17 @@ const FilterRow: React.FC<{
         else onChange({}, [def.paramSelect!]);
     };
 
-    const inputStyle = { width: '45px', padding: '2px 4px', fontSize: '11px', background: 'rgba(255,255,255,0.05)', border: '1px solid #444', color: '#fff', borderRadius: '3px', outline: 'none', colorScheme: 'dark' };
+    const inputStyle = { 
+        width: '45px', 
+        padding: '2px 4px', 
+        fontSize: '11px', 
+        background: '#1a1d26', 
+        border: '1px solid rgba(255,255,255,0.2)', 
+        color: '#fff', 
+        borderRadius: '3px', 
+        outline: 'none', 
+        colorScheme: 'dark' 
+    };
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', padding: '4px 0' }}>
@@ -174,7 +185,7 @@ const FilterRow: React.FC<{
             {checked && def.type === 'select' && def.options && (
                 <div style={{ paddingLeft: '22px' }}>
                     <select value={selVal} onChange={handleSelectChange} style={{ ...inputStyle, width: '90px' }}>
-                        {def.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                        {def.options.map(o => <option key={o.value} value={o.value} style={{ background: '#1a1d26' }}>{o.label}</option>)}
                     </select>
                 </div>
             )}

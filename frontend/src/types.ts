@@ -50,6 +50,10 @@ export interface ChartDataPoint {
     trend_template_ok?: number | null
     market_cap?: number | null
 
+    // Bollinger Bands (Calculated on the fly)
+    bb_upper?: number | null
+    bb_lower?: number | null
+
     // Relative Ranks
     rank_rs_ratio_14?: number | null
     rank_rs_ratio_21?: number | null
@@ -60,6 +64,18 @@ export interface ChartDataPoint {
     rank_rs_condition_14?: number | null
     rank_rs_condition_21?: number | null
     rank_rs_condition_63?: number | null
+}
+
+export interface ChartSymbolMeta {
+    id: number;
+    ticker: string;
+    name: string;
+}
+
+export interface ChartResponse {
+    metadata: ChartSymbolMeta;
+    themes: ChartSymbolMeta[];
+    data: ChartDataPoint[];
 }
 
 export interface RankingItem {

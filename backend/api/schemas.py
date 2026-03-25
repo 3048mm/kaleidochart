@@ -63,6 +63,10 @@ class ChartDataPoint(BaseModel):
     trend_template_ok: Optional[int] = None
     market_cap: Optional[float] = None
     
+    # Bollinger Bands (Calculated on the fly)
+    bb_upper: Optional[float] = None
+    bb_lower: Optional[float] = None
+    
     # Optional Relative Ranks
     rank_rs_ratio_14: Optional[float] = None
     rank_rs_ratio_21: Optional[float] = None
@@ -73,6 +77,16 @@ class ChartDataPoint(BaseModel):
     rank_rs_condition_14: Optional[float] = None
     rank_rs_condition_21: Optional[float] = None
     rank_rs_condition_63: Optional[float] = None
+
+class ChartSymbolMeta(BaseModel):
+    id: int
+    ticker: str
+    name: str
+
+class ChartResponse(BaseModel):
+    metadata: ChartSymbolMeta
+    themes: List[ChartSymbolMeta] = []
+    data: List[ChartDataPoint]
 
 class RankingItem(BaseModel):
     symbol_id: int
