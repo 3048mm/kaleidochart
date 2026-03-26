@@ -65,7 +65,7 @@
 
 ## 5. バックエンド API 仕様 (FastAPI)
 
-フロントエンドからのリクエストに応答するインターフェース群です。ポート `8001` で待機します。
+フロントエンドからのリクエストに応答するインターフェース群です。ポート `8000` で待機します。
 全てのエンドポイントは `/api/` プレフィックスを持ちます。
 
 *   **`GET /api/market_signal`**: 最新の T5 データ（市場フェーズや FTD）を取得。
@@ -74,3 +74,73 @@
     - **レスポンス構造**: `ChartResponse` 型。`data` (時系列配列) に加え、`metadata` (銘柄基本情報) および `themes` (関連テーマ情報の配列) を含みます。
     - **テーマ解決ロジック**: `theme_constituents` テーブルによる直接の紐付けに加え、`symbols` テーブルの `tags` カラムに含まれるカンマ区切りのタグもテーマとして解決し、リンク可能な情報を返却します。
 *   **`GET /api/screener_data`**: スクリーナー用のカスタムフィルタ（「SMA50より上」「時価総額 10M以上」等）に合致する銘柄群と各指標値を返却。
+
+## 6. バックテストエンジン
+
+### 6.1 目的
+スクリーナーの各種フィルタ条件セット（戦略）の有効性を、過去5年分のヒストリカルデータに対してシミュレーションし、**Expectancy**（期待値）と **Profit Factor**（総利益/総損失）を主軸に定量的に評価・比較する。パラメータの調整→再実行を繰り返す反復的なワークフローを前提とした設計。
+
+### 6.2 ディレクトリ構成
+```
+backend/backtest/
+├── backtest_config.toml   # 戦略パラメータセット定義
+├── backtest_runner.py     # CLI エントリーポイント
+├── backtest_screener.py   # 日付ごとのシグナルスキャナー
+├── backtest_simulator.py  # トレードシミュレーター（出口ルール適用）
+├── backtest_report.py     # 結果集計・比較テーブル出力
+└── results/               # 実行結果出力先
+```
+
+### 6.3 設定ファイル (`backtest_config.toml`)
+TOML形式でパラメータセットを定義。`[[strategy]]` 配列を追加するだけで新しい条件セットを試行可能。
+
+```toml
+[general]
+start_date = "2021-03-26"
+end_date   = "2026-03-25"
+failsafe_max_days = 120
+
+[[strategy]]
+name = "A_momentum_breakout"
+min_1d_gain_pct = 4.0
+min_vol_surge_21 = 1.5
+min_adr_pct_21 = 4.0
+max_dist_sma50_atr = 6.0
+min_market_cap = 1e9
+rs_rank_21_gt_63 = true
+```
+
+### 6.4 出口ルール（固定）
+
+| ルール | 条件 |
+|---|---|
+| **エントリー** | スクリーン該当日の終値で買い |
+| **損切り** | エントリー価格から -8% |
+| **1/3利確** | +20%超え or SMA50/ATR% >= 8 → 残りの損切りラインをエントリー価格に引き上げ |
+| **全利確** | EMA21を終値で2日連続下回る or SMA50/ATR% >= 11 |
+| **タイムストップ** | 7営業日の高値-安値 < 1ATR → 強制退出 |
+| **フェイルセーフ** | 120営業日で未決済 → 強制退出 |
+
+### 6.5 評価指標
+
+| 指標 | 説明 |
+|---|---|
+| **Expectancy** | 1トレードあたりの期待値 = (WR × AvgWin) - ((1-WR) × AvgLoss) |
+| **Profit Factor** | 総利益 / 総損失 |
+| **Win Rate** | 勝ちトレード数 / 全トレード数（補助指標） |
+| **Avg Holding Days** | 平均保有日数（補助指標） |
+
+### 6.6 パフォーマンス方針
+5年 × 約250営業日 × 複数戦略のスクリーン実行が必要となるため、全期間の Indicator + DailyPrice + RelativeRank データを**事前にメモリへ一括ロード**し、pandas 上でフィルタリング処理を行う。DB への都度クエリは行わない。
+
+### 6.7 実行方法
+```bash
+# 全戦略実行
+python backend/backtest/backtest_runner.py
+
+# 特定戦略のみ
+python backend/backtest/backtest_runner.py --strategy A_momentum_breakout
+
+# 設定ファイル指定
+python backend/backtest/backtest_runner.py --config path/to/custom_config.toml
+```

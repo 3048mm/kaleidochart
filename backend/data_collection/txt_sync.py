@@ -108,33 +108,36 @@ def sync_symbols_from_txt(db):
     db.commit()
     
     # Rebuild ThemeConstituents
-    logger.info("Rebuilding Theme Constituents mapping for VIRTUAL indices...")
+    logger.info("Rebuilding Theme Constituents mapping for all themes...")
     db.query(ThemeConstituent).delete()
     db.commit()
     
+    # Get all active theme symbols
+    themes = db.query(Symbol).filter(Symbol.category == 'テーマ', Symbol.active == 1).all()
+    
     constituents_to_add = []
-    for v_item in virtual_items:
-        v_id = symbol_ids.get((v_item['ticker'], v_item['exchange']))
-        if not v_id: continue
+    for theme in themes:
+        theme_id = theme.id
+        theme_ticker = theme.ticker.strip()
+        theme_name = theme.name.strip()
         
-        name_tag = v_item['name'].strip()
-        ticker_tag = v_item['ticker'].strip()
-            
+        # Match stocks that have this theme ticker or name in their tags
         matching_symbols = db.query(Symbol).filter(
             Symbol.active == 1,
-            (Symbol.tags.like(f"%{ticker_tag}%")) | (Symbol.tags.like(f"%{name_tag}%")),
-            (Symbol.theme_type != 'virtual') | (Symbol.theme_type.is_(None))
+            Symbol.category == '個別',
+            (Symbol.tags.like(f"%{theme_ticker}%")) | (Symbol.tags.like(f"%{theme_name}%"))
         ).all()
         
         if matching_symbols:
             weight = 1.0 / len(matching_symbols)
             for m_sym in matching_symbols:
                 constituents_to_add.append(
-                    ThemeConstituent(theme_id=v_id, symbol_id=m_sym.id, weight=weight)
+                    ThemeConstituent(theme_id=theme_id, symbol_id=m_sym.id, weight=weight)
                 )
 
     if constituents_to_add:
         db.bulk_save_objects(constituents_to_add)
         db.commit()
+        logger.info(f"Added {len(constituents_to_add)} theme constituents mapping.")
 
     return sheet_data, symbol_ids

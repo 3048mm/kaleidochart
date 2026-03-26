@@ -66,6 +66,18 @@ export const ScreenerPage: React.FC = () => {
         'td9_rebound': { max_td9: '-8' },
         'dist_sma50_atr_8': { min_dist_sma50_atr: '8' },
         'high_vol_dist': { min_vol_surge_21: '1.5', max_1d_gain_pct: '-2' },
+        'rrg_leading_in': {
+            rrg_leading_in: 'true',
+            min_vol_surge_21: '1.0',
+            min_adr_pct_21: '4',
+            max_dist_sma50_atr: '6',
+            min_market_cap: '1000000000',
+        },
+        'rrg_lagging_in': {
+            rrg_lagging_in: 'true',
+            max_1d_gain_pct: '-2.0',
+            min_vol_surge_21: '1.0',
+        },
     };
 
     const buildResultLink = (presetId: string) => {

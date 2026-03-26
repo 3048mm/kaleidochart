@@ -22,7 +22,9 @@ const PRESET_LABELS: Record<string, string> = {
     td9_overhead: 'TDR9 Overhead',
     td9_rebound: 'TDR9 Rebound',
     dist_sma50_atr_8: 'SMA50/ATR% > 8',
-    high_vol_dist: 'High Vol Distribution'
+    high_vol_dist: 'High Vol Distribution',
+    rrg_leading_in: 'RRG Leading In',
+    rrg_lagging_in: 'RRG Lagging In'
 };
 
 
@@ -63,6 +65,8 @@ const FILTER_CATEGORIES: { title: string, filters: FilterDef[] }[] = [
             { id: 'rs21_rank', label: 'RS21 Rank', type: 'range', paramMin: 'min_rs_ratio_21_rank', paramMax: 'max_rs_ratio_21_rank', step: 0.01 },
             { id: 'rs21_gt_63', label: 'RS21rank > RS63rank', type: 'boolean', paramBool: 'rs_rank_21_gt_63' },
             { id: 'theme_rs21_gt_63', label: 'Theme RS21 > RS63', type: 'boolean', paramBool: 'theme_rs21_gt_63' },
+            { id: 'rrg_leading_in', label: 'RRG Leading In', type: 'boolean', paramBool: 'rrg_leading_in' },
+            { id: 'rrg_lagging_in', label: 'RRG Lagging In', type: 'boolean', paramBool: 'rrg_lagging_in' },
             { id: 'rs_cond', label: 'RS Cond 21', type: 'range', paramMin: 'min_rs_condition_21', paramMax: 'max_rs_condition_21', step: 0.1 },
             { id: 'td9', label: 'TDR9 (Sequential)', type: 'range', paramMin: 'min_td9', paramMax: 'max_td9', step: 1 }
         ]

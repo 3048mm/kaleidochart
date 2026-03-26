@@ -1,0 +1,77 @@
+# Backtest Engine Configuration
+# パラメータセットは [[strategy]] を追加するだけで自由に拡張可能
+
+[general]
+start_date = "2021-03-26"
+end_date   = "2026-03-25"
+failsafe_max_days = 120
+
+# --- Exit Rules (固定) ---
+[exit_rules]
+stop_loss_pct = -8.0
+partial_take_profit_pct = 20.0
+partial_take_profit_sma50_atr = 8.0
+partial_ratio = 0.333
+full_exit_ema21_consecutive_days = 2
+full_exit_sma50_atr = 11.0
+time_stop_days = 7
+# time_stop_range < 1 ATR
+
+# =============================================================
+# Strategy Parameter Sets
+# =============================================================
+
+[[strategy]]
+name = "A_momentum_breakout"
+description = "出来高を伴った急騰銘柄 (攻撃的)"
+min_1d_gain_pct = 4.0
+min_vol_surge_21 = 1.5
+min_adr_pct_21 = 4.0
+max_dist_sma50_atr = 6.0
+min_market_cap = 1e9
+rs_rank_21_gt_63 = true
+
+[[strategy]]
+name = "B_theme_momentum"
+description = "強いテーマに属する銘柄のモメンタム"
+min_1d_gain_pct = 2.0
+min_vol_surge_21 = 1.0
+min_adr_pct_21 = 4.0
+max_dist_sma50_atr = 6.0
+min_market_cap = 1e9
+theme_rs21_gt_63 = true
+
+[[strategy]]
+name = "C_rrg_leading_in"
+description = "RRG Leading象限に転換した銘柄"
+rrg_leading_in = true
+min_vol_surge_21 = 1.0
+min_adr_pct_21 = 4.0
+max_dist_sma50_atr = 6.0
+min_market_cap = 1e9
+
+[[strategy]]
+name = "D_ema21_pullback"
+description = "上昇トレンド中のEMA21押し目買い"
+min_dist_21ema_pct = -2.0
+max_dist_21ema_pct = 2.0
+max_dist_sma50_atr = 4.0
+min_rs_ratio_21_rank = 0.7
+min_market_cap = 1e9
+trend_template_ok = 1
+
+[[strategy]]
+name = "E_vcp"
+description = "ボラティリティ収縮パターン"
+max_adr_pct_21 = 3.0
+close_gt_sma50 = true
+min_rs_condition_21 = 1.0
+rs_rank_21_gt_63 = true
+min_market_cap = 1e9
+
+[[strategy]]
+name = "F_elite_momentum97"
+description = "RS上位3%のエリート銘柄"
+min_rs_ratio_21_rank = 0.97
+trend_template_ok = 1
+min_market_cap = 3e8

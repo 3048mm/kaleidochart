@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
-from sqlalchemy import desc, func
+from sqlalchemy.orm import Session, aliased
+from sqlalchemy import desc, func, or_
 from typing import List, Optional
 from datetime import date as dt_date, timedelta
 from db.database import get_db
@@ -720,6 +720,9 @@ def get_screener_dashboard(
     if not latest_date_result:
         return schemas.ScreenerDashboardResponse(rise=[], fall=[])
 
+    # Get previous date for transition check
+    previous_date_result = db.query(func.max(Indicator.date)).filter(Indicator.date < latest_date_result).scalar()
+
     # Base query wrapper function
     def q_base():
         return db.query(Symbol.id, Symbol.ticker, Symbol.name, DailyPrice.open, DailyPrice.close).join(
@@ -805,8 +808,30 @@ def get_screener_dashboard(
     osr = q_base().filter(Indicator.td9 == 9, Indicator.rs_ratio_14 < 0.2).order_by(Indicator.rs_ratio_14)
     td9_rebound = q_base().filter(Indicator.td9 <= -8).order_by(Indicator.td9)
 
+    # RRG Transitions
+    IndPrev = aliased(Indicator)
+    
+    _rrg_leading_in = q_base().join(IndPrev, (Symbol.id == IndPrev.symbol_id) & (IndPrev.date == previous_date_result)).filter(
+        Indicator.rs_ratio_21 > 0,
+        Indicator.rs_momentum_21 > 0,
+        or_(IndPrev.rs_ratio_21 <= 0, IndPrev.rs_momentum_21 <= 0),
+        Indicator.vol_surge_21 >= 1.0,
+        Indicator.adr_pct_21 >= 4.0,
+        Indicator.dist_sma50_atr <= 6.0,
+        Indicator.market_cap >= _GAIN_1B
+    ).order_by(desc(Indicator.rs_ratio_21))
+
+    _rrg_lagging_in = q_base().join(IndPrev, (Symbol.id == IndPrev.symbol_id) & (IndPrev.date == previous_date_result)).filter(
+        Indicator.rs_ratio_21 < 0,
+        Indicator.rs_momentum_21 < 0,
+        or_(IndPrev.rs_ratio_21 >= 0, IndPrev.rs_momentum_21 >= 0),
+        ((DailyPrice.close - DailyPrice.open) / DailyPrice.open * 100) < -2.0,
+        Indicator.vol_surge_21 >= 1.0
+    ).order_by(Indicator.rs_ratio_21)
+
     return schemas.ScreenerDashboardResponse(
         rise=[
+            schemas.ScreenerDashboardCategory(id="rrg_leading_in", name="RRG Leading In", group="Check", items=fetch_top_8(_rrg_leading_in)),
             schemas.ScreenerDashboardCategory(id="check_1d_gain", name="1D% Gain", group="Check", items=fetch_top_8(_1d_gain)),
             schemas.ScreenerDashboardCategory(id="check_volume_surge", name="Volume Surge", group="Check", items=fetch_top_8(_vol_surge)),
             schemas.ScreenerDashboardCategory(id="check_21ema", name="21EMA Pullback", subtitle="(-2%~+2%)", group="Check", items=fetch_top_8(_21ema)),
@@ -817,6 +842,7 @@ def get_screener_dashboard(
             schemas.ScreenerDashboardCategory(id="td9_overhead", name="TDR9", subtitle=">= 8", group="Overhead sign", items=fetch_top_8(td9_overhead)),
         ],
         fall=[
+            schemas.ScreenerDashboardCategory(id="rrg_lagging_in", name="RRG Lagging In", group="Warning", items=fetch_top_8(_rrg_lagging_in)),
             schemas.ScreenerDashboardCategory(id="trend_breakdown", name="Trend Breakdown", group="Warning", items=fetch_top_8(tb)),
             schemas.ScreenerDashboardCategory(id="high_vol_dist", name="High Volume Distribution", group="Warning", items=fetch_top_8(hvd)),
             schemas.ScreenerDashboardCategory(id="oversold_rebound", name="Oversold Rebound", group="Rebound sign", items=fetch_top_8(osr)),
@@ -860,7 +886,9 @@ def get_screener(
     min_td9: Optional[int] = Query(None, description="Min TDR9"),
     max_td9: Optional[int] = Query(None, description="Max TDR9"),
     max_vol_surge_21: Optional[float] = Query(None, description="Max Volume Surge 21"),
-    theme_rs21_gt_63: Optional[bool] = Query(None, description="Theme RS21 > RS63")
+    theme_rs21_gt_63: Optional[bool] = Query(None, description="Theme RS21 > RS63"),
+    rrg_leading_in: bool = Query(False),
+    rrg_lagging_in: bool = Query(False)
 ):
     # Determine the date to use for indicators
     if target_date:
@@ -870,6 +898,9 @@ def get_screener(
         
     if not latest_date_result:
         return []
+
+    # Get previous date for transition check
+    previous_date_result = db.query(func.max(Indicator.date)).filter(Indicator.date < latest_date_result).scalar()
 
     # Base query for active symbols
     query = db.query(Symbol, Indicator, DailyPrice).join(
@@ -1031,15 +1062,52 @@ def get_screener(
         ).filter(Earning.eps_basic > 0).subquery()
         
         query = query.filter(Symbol.id.in_(eps_filter_subq))
+
     if theme_rs21_gt_63:
-        # Filter stocks that belong to AT LEAST ONE theme where RS21 > RS63
-        theme_momentum_subq = db.query(ThemeConstituent.symbol_id).join(
-            Indicator, ThemeConstituent.theme_id == Indicator.symbol_id
-        ).filter(
+        # 1. Themes that satisfy the condition (RS21 > RS63)
+        # 2. Stocks that belong to AT LEAST ONE theme where RS21 > RS63
+        theme_momentum_subq = db.query(Indicator.symbol_id).filter(
             Indicator.date == latest_date_result,
             Indicator.rs_ratio_21 > Indicator.rs_ratio_63
         ).subquery()
-        query = query.filter(Symbol.id.in_(theme_momentum_subq))
+        
+        # Stocks in those themes
+        stock_in_leading_themes_subq = db.query(ThemeConstituent.symbol_id).filter(
+            ThemeConstituent.theme_id.in_(theme_momentum_subq)
+        ).subquery()
+        
+        query = query.filter(
+            or_(
+                (Symbol.category == "テーマ") & (Symbol.id.in_(theme_momentum_subq)),
+                (Symbol.category == "個別") & (Symbol.id.in_(stock_in_leading_themes_subq))
+            )
+        )
+
+    # RRG Transitions (Leading/Lagging In)
+    if (rrg_leading_in or rrg_lagging_in) and previous_date_result:
+        IndPrev = aliased(Indicator)
+        query = query.join(IndPrev, (Symbol.id == IndPrev.symbol_id) & (IndPrev.date == previous_date_result))
+        
+        if rrg_leading_in and rrg_lagging_in:
+            # Union of both transitions
+            query = query.filter(
+                or_(
+                    (Indicator.rs_ratio_21 > 0) & (Indicator.rs_momentum_21 > 0) & or_(IndPrev.rs_ratio_21 <= 0, IndPrev.rs_momentum_21 <= 0),
+                    (Indicator.rs_ratio_21 < 0) & (Indicator.rs_momentum_21 < 0) & or_(IndPrev.rs_ratio_21 >= 0, IndPrev.rs_momentum_21 >= 0)
+                )
+            )
+        elif rrg_leading_in:
+            query = query.filter(
+                Indicator.rs_ratio_21 > 0,
+                Indicator.rs_momentum_21 > 0,
+                or_(IndPrev.rs_ratio_21 <= 0, IndPrev.rs_momentum_21 <= 0)
+            )
+        elif rrg_lagging_in:
+            query = query.filter(
+                Indicator.rs_ratio_21 < 0,
+                Indicator.rs_momentum_21 < 0,
+                or_(IndPrev.rs_ratio_21 >= 0, IndPrev.rs_momentum_21 >= 0)
+            )
 
     results = query.all()
     

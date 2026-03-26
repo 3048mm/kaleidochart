@@ -2,7 +2,7 @@ import requests
 import json
 
 try:
-    r = requests.get('http://localhost:8001/api/chart/377')
+    r = requests.get('http://localhost:8000/api/chart/377')
     if r.status_code == 200:
         data = r.json()
         print(f"Success. Returned {len(data)} rows.")

@@ -18,7 +18,7 @@ set PYTHONIOENCODING=utf-8
 set PYTHONUTF8=1
 set PYTHONPATH=backend
 
-uvicorn api.server:app --host 127.0.0.1 --port 8001 --reload
+uvicorn api.server:app --host 127.0.0.1 --port 8000 --reload
 if errorlevel 1 (
     echo.
     echo [ERROR] Failed to start API Server.
