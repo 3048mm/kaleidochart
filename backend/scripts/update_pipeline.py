@@ -143,9 +143,15 @@ def build_virtual_index_prices(db, virtual_id: int):
         
     c_ids = [m.symbol_id for m in mappings]
     
-    # Query all prices for these constituents
-    prices = db.query(DailyPrice).filter(DailyPrice.symbol_id.in_(c_ids)).all()
-    if not prices:
+    # Query all prices for these constituents - Chunked to avoid SQL variable limit (SQLite default 999)
+    all_prices = []
+    chunk_size = 900
+    for i in range(0, len(c_ids), chunk_size):
+        chunk = c_ids[i:i + chunk_size]
+        prices = db.query(DailyPrice).filter(DailyPrice.symbol_id.in_(chunk)).all()
+        all_prices.extend(prices)
+        
+    if not all_prices:
         return pd.DataFrame()
         
     # Build dataframe: date, symbol_id, close
@@ -153,7 +159,7 @@ def build_virtual_index_prices(db, virtual_id: int):
         'date': p.date,
         'symbol_id': p.symbol_id,
         'close': p.close
-    } for p in prices if p.close is not None and p.close > 0])
+    } for p in all_prices if p.close is not None and p.close > 0])
     
     if df.empty:
         return pd.DataFrame()
@@ -230,6 +236,9 @@ def run_step3_pipeline(recalculate_all: bool = False, categories: Optional[List[
         real_tickers = [d['ticker'] for d in sheet_data if d['theme_type'] != 'virtual']
         virtual_items = [d for d in sheet_data if d['theme_type'] == 'virtual']
         
+        # 2. Sync from Price Data
+        data_dict = {}
+        
         # 2. Fetch SPY first to determine the target (latest) date
         logger.info("Fetching SPY data first to determine target date...")
         spy_full_start = (datetime.now() - timedelta(days=initial_fetch_days)).strftime('%Y-%m-%d')
@@ -281,8 +290,10 @@ def run_step3_pipeline(recalculate_all: bool = False, categories: Optional[List[
                 db.bulk_save_objects(new_spy_records)
                 db.commit()
                 logger.info(f"SPY: inserted {len(new_spy_records)} new rows.")
+                data_dict["SPY"] = spy_new_df # Track so T3 calculation is triggered
             else:
                 logger.info("SPY: no new rows to insert.")
+                data_dict["SPY"] = None # Track so T3 calculation logic can still check it
         
         # Get SPY's latest date (now updated)
         spy_latest_date = db.query(func.max(DailyPrice.date)).filter(DailyPrice.symbol_id == spy_sym_id).scalar() if spy_sym_id else None
@@ -295,8 +306,6 @@ def run_step3_pipeline(recalculate_all: bool = False, categories: Optional[List[
         # 3. Get latest date in DB for each symbol (bulk query)
         latest_date_rows = db.query(DailyPrice.symbol_id, func.max(DailyPrice.date)).group_by(DailyPrice.symbol_id).all()
         sym_latest_date_map = {sym_id: latest for sym_id, latest in latest_date_rows}
-        
-        data_dict = {}  # ticker -> DataFrame of NEW rows fetched (for indicator recalc flag)
         
         logger.info("Fetching/updating price data for real symbols (incremental)...")
         for item in sheet_data:
@@ -429,12 +438,19 @@ def run_step3_pipeline(recalculate_all: bool = False, categories: Optional[List[
                 try:
                     has_new_data = ticker in data_dict and data_dict.get(ticker) is not None
 
-                    # recalculate_all が False かつ価格更新がない場合のみスキップ
-                    if not recalculate_all and not has_new_data and ticker in data_dict:
+                    # Check latest indicator date vs price date to ensure no gaps
+                    latest_ind_date = db.query(func.max(Indicator.date)).filter(Indicator.symbol_id == sym_id).scalar()
+                    latest_price_date = sym_latest_date_map.get(sym_id)
+                    
+                    is_up_to_date = (latest_ind_date and latest_price_date and latest_ind_date >= latest_price_date)
+
+                    # recalculate_all が False かつ価格更新がない場合、かつインジケーターが既に最新の場合のみスキップ
+                    if not recalculate_all and not has_new_data and ticker in data_dict and is_up_to_date:
                         # Symbol is up to date — load only the latest indicator row from DB for RS Rank
                         latest_ind = db.query(Indicator).filter(
-                            Indicator.symbol_id == sym_id
-                        ).order_by(Indicator.date.desc()).first()
+                            Indicator.symbol_id == sym_id,
+                            Indicator.date == latest_ind_date
+                        ).first()
                         if latest_ind:
                             rs21 = latest_ind.rs_ratio_21
                             rs63 = latest_ind.rs_ratio_63
@@ -610,6 +626,9 @@ def run_step3_pipeline(recalculate_all: bool = False, categories: Optional[List[
             logger.info("Calculating relative ranks (T4)...")
             if not skip_t3:
                 combined_df = pd.concat(all_indicators_dfs, ignore_index=True)
+                # Filter to only recent dates to avoid re-calculating/saving entire history
+                threshold_date = datetime.strptime("2026-03-24", "%Y-%m-%d").date()
+                combined_df = combined_df[combined_df['date'] >= threshold_date]
             
             # Clear existing ranks for full recalculation
             if recalculate_all:

@@ -56,12 +56,12 @@
 5.  **ファンダメンタルズ取得**: yfinance経由で発行済株式数を取得し、日ごとの `market_cap` を算出して保存。
 6.  **相対ランク・マーケットフェーズ計算 (T4/T5)**: グループごとのパーセンタイルランク(T4)や S&P500ベースの相場フェーズ(T5)を決定。
 
-### 4.1 管理用CLIオプション (`update_pipeline.py`)
+### 4.2 SQL クエリの最適化 (Chunking)
 
-データ破損時や特定の銘柄群のみを再計算したい場合、以下のオプションを指定して実行可能です。
+大量の銘柄（数千件）を扱う際、SQLite のホスト変数上限（通常 999個）を回避し、クエリパフォーマンスを維持するため以下の工夫を導入しています。
 
-- `--re-calculate`: 既存のインジケータ (T3) および Ranks (T4) の履歴を削除し、全期間のデータを最初から計算・再保存します。データの整合性が失われた際の復旧に使用します。
-- `--category "カテゴリ名"`: 指定したカテゴリ（例: "セクタ,テーマ"）に属する銘柄のみを対象に処理を実行します。全件実行（約4000件以上）を避け、特定のグループのみを高速に更新・復旧する際に有効です。
+- **`IN` 句のチャンク化**: 銘柄IDリストによるフィルタリングが必要な場合、一度に全てのIDを渡すのではなく、**900件ずつの小分け（Chunk）**にしてクエリを分割実行し、メモリ上で結合します。
+- **日付主導のロード**: バックテストなどの全件に近い検索では、銘柄IDによるフィルタを最小限にし、日付範囲で一括取得してから pandas 上でマッピングすることで DB 負荷を軽減します。
 
 ## 5. バックエンド API 仕様 (FastAPI)
 
@@ -88,6 +88,7 @@ backend/backtest/
 ├── backtest_screener.py   # 日付ごとのシグナルスキャナー
 ├── backtest_simulator.py  # トレードシミュレーター（出口ルール適用）
 ├── backtest_report.py     # 結果集計・比較テーブル出力
+├── cache/                 # 高速化用 Parquet キャッシュ (backtest専用)
 └── results/               # 実行結果出力先
 ```
 
@@ -101,13 +102,10 @@ end_date   = "2026-03-25"
 failsafe_max_days = 120
 
 [[strategy]]
-name = "A_momentum_breakout"
-min_1d_gain_pct = 4.0
-min_vol_surge_21 = 1.5
-min_adr_pct_21 = 4.0
-max_dist_sma50_atr = 6.0
-min_market_cap = 1e9
-rs_rank_21_gt_63 = true
+name = "F_elite_momentum97"
+min_rs_ratio_21_rank = 0.97
+trend_template_ok = 1
+min_market_cap = 3e8
 ```
 
 ### 6.4 出口ルール（固定）
@@ -117,8 +115,8 @@ rs_rank_21_gt_63 = true
 | **エントリー** | スクリーン該当日の終値で買い |
 | **損切り** | エントリー価格から -8% |
 | **1/3利確** | +20%超え or SMA50/ATR% >= 8 → 残りの損切りラインをエントリー価格に引き上げ |
-| **全利確** | EMA21を終値で2日連続下回る or SMA50/ATR% >= 11 |
-| **タイムストップ** | 7営業日の高値-安値 < 1ATR → 強制退出 |
+| **全利確** | EMA21を終値で2日連続下回る |
+| **タイムストップ** | 7営業日のレンジ（高値-安値） < 1ATR → 強制退出 |
 | **フェイルセーフ** | 120営業日で未決済 → 強制退出 |
 
 ### 6.5 評価指標
@@ -131,16 +129,23 @@ rs_rank_21_gt_63 = true
 | **Avg Holding Days** | 平均保有日数（補助指標） |
 
 ### 6.6 パフォーマンス方針
-5年 × 約250営業日 × 複数戦略のスクリーン実行が必要となるため、全期間の Indicator + DailyPrice + RelativeRank データを**事前にメモリへ一括ロード**し、pandas 上でフィルタリング処理を行う。DB への都度クエリは行わない。
+5年 × 約250営業日 × 複数戦略のスクリーン実行が必要となるため、**Parquet キャッシュ**を採用しています。
+
+- **メモリへの一括ロード**: 実行時に全期間のデータを pandas へロード。
+- **静的キャッシュ**: 初回アクセス時または明示的な更新時に DB から抽出したデータを `backend/backtest/cache/*.parquet` に保存。2回目以降は秒単位での読込を実現（5年分で約10〜15秒、3ヶ月分で0.4秒）。
+- **独立性**: キャッシュはバックテスト専用であり、稼働中の DB 更新（API/Pipeline）とは干渉しません。
 
 ### 6.7 実行方法
 ```bash
-# 全戦略実行
+# 全戦略実行（デフォルト期間・キャッシュ優先）
 python backend/backtest/backtest_runner.py
 
 # 特定戦略のみ
-python backend/backtest/backtest_runner.py --strategy A_momentum_breakout
+python backend/backtest/backtest_runner.py --strategy F_elite_momentum97
 
-# 設定ファイル指定
-python backend/backtest/backtest_runner.py --config path/to/custom_config.toml
+# 期間の上書き
+python backend/backtest/backtest_runner.py --start-date 2025-01-01 --end-date 2026-03-01
+
+# キャッシュをリフレッシュ（DBから最新を取得し直す）
+python backend/backtest/backtest_runner.py --refresh-cache
 ```

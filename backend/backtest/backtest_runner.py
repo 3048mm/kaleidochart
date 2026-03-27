@@ -194,7 +194,7 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
     return df_symbols, df_prices, df_indicators, df_ranks, df_theme_constituents, trading_dates
 
 
-def run_backtest(config: dict, strategy_filter: str = None, refresh_cache: bool = False):
+def run_backtest(config: dict, strategy_filter: str = None, refresh_cache: bool = False, db_path_override: str = None):
     """
     Main backtest execution loop.
 
@@ -202,6 +202,7 @@ def run_backtest(config: dict, strategy_filter: str = None, refresh_cache: bool 
         config: Parsed TOML config dict.
         strategy_filter: Optional strategy name to run only one strategy.
         refresh_cache: If True, force reload from DB and update cache.
+        db_path_override: Optional path to a specific SQLite database file.
     """
     general = config.get('general', {})
     start_date = general.get('start_date', '2021-03-26')
@@ -216,10 +217,17 @@ def run_backtest(config: dict, strategy_filter: str = None, refresh_cache: bool 
             return
 
     # Initialize DB
-    config_path = os.path.join(project_root, 'config.toml')
-    with open(config_path, 'rb') as f:
-        app_config = tomli.load(f)
-    db_path = os.path.join(project_root, app_config['system']['db_path'])
+    if db_path_override:
+        db_path = db_path_override
+        if not os.path.isabs(db_path):
+            db_path = os.path.abspath(db_path)
+    else:
+        config_path_app = os.path.join(project_root, 'config.toml')
+        with open(config_path_app, 'rb') as f:
+            app_config = tomli.load(f)
+        db_path = os.path.join(project_root, app_config['system']['db_path'])
+    
+    print(f"  Connecting to DB: {db_path}")
     init_db(db_path)
 
     # Preload all data using engine (pandas.read_sql or Parquet cache)
@@ -309,6 +317,10 @@ def main():
                         help='Override end date (YYYY-MM-DD)')
     parser.add_argument('--refresh-cache', action='store_true',
                         help='Force reload data from DB and refresh Parquet cache')
+    parser.add_argument('--db-path', type=str, default=None,
+                        help='Path to a specific SQLite DB file to use for this run')
+    parser.add_argument('--delete-db-after', action='store_true',
+                        help='Delete the database file specified in --db-path after completion')
     args = parser.parse_args()
 
     # Default config path
@@ -347,7 +359,23 @@ def main():
     print("=" * 60)
     print()
 
-    run_backtest(config, strategy_filter=args.strategy, refresh_cache=args.refresh_cache)
+    run_backtest(
+        config, 
+        strategy_filter=args.strategy, 
+        refresh_cache=args.refresh_cache,
+        db_path_override=args.db_path
+    )
+
+    # Optional cleanup
+    if args.delete_db_after and args.db_path:
+        if os.path.exists(args.db_path):
+            print(f"\nCleaning up temporary database: {args.db_path}")
+            # Close engine connection first to unlock the file
+            database.engine.dispose()
+            try:
+                os.remove(args.db_path)
+            except Exception as e:
+                print(f"Warning: Failed to delete DB file: {e}")
 
 
 if __name__ == '__main__':

@@ -28,7 +28,7 @@ def init_db(db_path: str):
     database_url = f"sqlite:///{db_path}"
     
     # Creates engine. connect_args check_same_thread is for SQLite
-    engine = create_engine(database_url, connect_args={"check_same_thread": False})
+    engine = create_engine(database_url, connect_args={"check_same_thread": False, "timeout": 3600})
     
     # Create session factory
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
