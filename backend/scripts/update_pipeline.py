@@ -229,8 +229,9 @@ def run_step3_pipeline(recalculate_all: bool = False, categories: Optional[List[
         # --- Category Filter ---
         if categories:
             original_count = len(sheet_data)
-            sheet_data = [s for s in sheet_data if s['category'] in categories]
-            logger.info(f"Filtered symbols by categories {categories}: {len(sheet_data)} / {original_count}")
+            # Ensure SPY is always included as it's the benchmark for RS
+            sheet_data = [s for s in sheet_data if s['category'] in categories or s['ticker'] == 'SPY']
+            logger.info(f"Filtered symbols by categories {categories} (benchmark 'SPY' always included): {len(sheet_data)} / {original_count}")
         
         # Split into real vs virtual
         real_tickers = [d['ticker'] for d in sheet_data if d['theme_type'] != 'virtual']
@@ -265,6 +266,9 @@ def run_step3_pipeline(recalculate_all: bool = False, categories: Optional[List[
             spy_new_df = fetch_daily_data("SPY", spy_fetch_start)
         else:
             logger.info("Skipping SPY fetch due to --skip-fetch.")
+        
+        # Ensure SPY is in data_dict to signal it should be processed for indicators
+        data_dict["SPY"] = spy_new_df if not spy_new_df.empty else None
         
         # Save new SPY rows (append only - do not delete)
         if not spy_new_df.empty:
@@ -311,8 +315,7 @@ def run_step3_pipeline(recalculate_all: bool = False, categories: Optional[List[
         for item in sheet_data:
             if item['theme_type'] == 'virtual':
                 continue
-            if item['ticker'] == 'SPY':
-                continue  # Already handled above
+            # SPY is already handled in data_dict above
                 
             ticker = item['ticker']
             sym_id = symbol_id_map[(ticker, item['exchange'])]
@@ -482,6 +485,13 @@ def run_step3_pipeline(recalculate_all: bool = False, categories: Optional[List[
                         'low': p.low, 'close': p.close, 'volume': p.volume
                     } for p in all_prices])
 
+                    # Fetch existing market_cap as fallback BEFORE any potential delete
+                    fallback_mcap = db.query(Indicator.market_cap).filter(
+                        Indicator.symbol_id == sym_id,
+                        Indicator.market_cap.is_not(None)
+                    ).order_by(Indicator.date.desc()).first()
+                    fallback_mcap = fallback_mcap[0] if fallback_mcap else None
+
                     df_ind = calculate_indicators(df, spy_df if ticker != "SPY" else None)
 
                     # Fetch fundamentals for market_cap calculation
@@ -517,6 +527,12 @@ def run_step3_pipeline(recalculate_all: bool = False, categories: Optional[List[
                         else:
                             # Fill only the last row or latest missing ones
                             df_ind['market_cap'] = df_ind['market_cap'].fillna(latest_mcap)
+                    elif fallback_mcap:
+                        # Final fallback to existing DB data if API fetch was skipped/failed
+                        if df_ind['market_cap'].isnull().all():
+                            df_ind['market_cap'] = fallback_mcap
+                        else:
+                            df_ind['market_cap'] = df_ind['market_cap'].fillna(fallback_mcap)
                             
                     income_stmt = fund_res.get("income_stmt")
                     if income_stmt is not None and not income_stmt.empty:

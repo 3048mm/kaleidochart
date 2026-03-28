@@ -3,6 +3,7 @@ import sys
 import logging
 import yfinance as yf
 from datetime import datetime
+import time
 
 # Add backend directory to sys.path
 backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -29,48 +30,57 @@ def backfill_market_cap():
         logger.info(f"Found {len(symbols)} active symbols to check.")
         
         count = 0
+        skipped = 0
+        updated = 0
+        failed = 0
+        
         for i, sym in enumerate(symbols):
-            # Check if latest indicator has market_cap
-            latest_ind = db.query(Indicator).filter(
-                Indicator.symbol_id == sym.id
-            ).order_by(Indicator.date.desc()).first()
+            # Check if this symbol needs update
+            # (If it has ANY row with NULL market_cap, we'll update it)
+            has_null = db.query(Indicator).filter(
+                Indicator.symbol_id == sym.id,
+                Indicator.market_cap.is_(None)
+            ).first()
             
-            if not latest_ind:
-                continue
-                
-            if latest_ind.market_cap is not None:
-                # Already populated
+            if not has_null:
+                skipped += 1
                 continue
                 
             # Fetch from yfinance
             try:
                 logger.info(f"[{i+1}/{len(symbols)}] Fetching marketCap for {sym.ticker}...")
                 t = yf.Ticker(sym.ticker)
+                # yfinance's info call is slow, use a reasonable timeout if possible 
+                # (Ticker doesn't have a direct timeout for info, but handled by requests inside)
                 mcap = t.info.get("marketCap")
                 
                 if mcap:
-                    # Update all indicators for this symbol that have NULL market_cap?
-                    # Or just the latest? Let's do all NULL ones with this static value for now 
-                    # as a "best effort" backfill.
+                    # Update all NULL rows for this symbol at once with the latest value
                     db.query(Indicator).filter(
                         Indicator.symbol_id == sym.id,
                         Indicator.market_cap.is_(None)
-                    ).update({"market_cap": mcap}, synchronize_session=False)
+                    ).update({"market_cap": float(mcap)}, synchronize_session=False)
                     
+                    updated += 1
                     count += 1
                     if count % 10 == 0:
                         db.commit()
-                        logger.info(f"Committed {count} updates.")
+                        logger.info(f"Committed {count} symbols (Total updated so far: {updated}).")
+                else:
+                    logger.warning(f"No marketCap found for {sym.ticker}")
+                    # Even if no mcap found, we don't want to retry every time if it's consistently missing?
+                    # For now, let's just let it stay NULL to retry next time if needed.
+                    failed += 1
                 
             except Exception as e:
                 logger.error(f"Failed to update {sym.ticker}: {e}")
+                failed += 1
             
-            # Rate limiting
-            import time
-            time.sleep(0.5)
+            # Rate limiting: 0.3s is generally fine for info calls
+            time.sleep(0.3)
             
         db.commit()
-        logger.info(f"Finished. Total symbols updated: {count}")
+        logger.info(f"Finished. Updated: {updated}, Skipped: {skipped}, Failed/Missing: {failed}, Total: {len(symbols)}")
 
 if __name__ == "__main__":
     backfill_market_cap()

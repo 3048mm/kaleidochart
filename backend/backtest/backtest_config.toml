@@ -3,7 +3,7 @@
 
 [general]
 start_date = "2021-03-26"
-end_date   = "2026-03-25"
+end_date   = "2026-03-26"
 failsafe_max_days = 120
 
 # --- Exit Rules (固定) ---

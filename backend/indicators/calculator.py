@@ -2,6 +2,29 @@ import pandas as pd
 import numpy as np
 import ta
 
+def calculate_ema_tv(series: pd.Series, period: int) -> pd.Series:
+    """
+    Exponential Moving Average matching TradingView (Pine Script 'ta.ema').
+    Starts with SMA(period) as the initial value at index period-1.
+    """
+    if len(series) < period:
+        return pd.Series([np.nan] * len(series), index=series.index)
+    
+    alpha = 2 / (period + 1)
+    ema_values = np.full(len(series), np.nan)
+    
+    # Simple Moving Average for the first 'period' entries
+    initial_sma = series.iloc[:period].mean()
+    ema_values[period-1] = initial_sma
+    
+    # Recursive calculation from index 'period' onwards
+    curr_ema = initial_sma
+    for i in range(period, len(series)):
+        curr_ema = series.iloc[i] * alpha + curr_ema * (1 - alpha)
+        ema_values[i] = curr_ema
+        
+    return pd.Series(ema_values, index=series.index)
+
 def calculate_indicators(df_daily: pd.DataFrame, df_spy: pd.DataFrame = None) -> pd.DataFrame:
     """
     日足データ(T2)を受け取り、テクニカル指標とSPYとの相対評価を算出して返す純粋な関数。
@@ -24,16 +47,16 @@ def calculate_indicators(df_daily: pd.DataFrame, df_spy: pd.DataFrame = None) ->
     volume = df['volume'].astype(float)
 
     # =========================================================
-    # 1. Simple Moving Averages (SMA) — 150 追加
+    # 1. Simple Moving Averages (SMA)
     # =========================================================
     for period in [5, 21, 50, 63, 150, 200]:
         df[f'sma_{period}'] = close.rolling(window=period, min_periods=1).mean()
         
     # =========================================================
-    # 2. Exponential Moving Averages (EMA)
+    # 2. Exponential Moving Averages (EMA) — Match TradingView (SMA Seeding)
     # =========================================================
     for period in [5, 21, 50, 63, 150, 200]:
-        df[f'ema_{period}'] = close.ewm(span=period, adjust=False, min_periods=1).mean()
+        df[f'ema_{period}'] = calculate_ema_tv(close, period)
         
     # =========================================================
     # 3. ATR (14日) — raw & %
@@ -56,12 +79,12 @@ def calculate_indicators(df_daily: pd.DataFrame, df_spy: pd.DataFrame = None) ->
     df['adr_pct_21'] = pd.Series(daily_range_pct).rolling(window=21, min_periods=1).mean().values
 
     # =========================================================
-    # 5. Distance from SMA50 in ATR multiples
+    # 5. Distance from SMA50 in ATR multiples (Formula updated per user request)
     # =========================================================
     df['dist_sma50_atr'] = np.where(
-        df['atr_14'].isna() | (df['atr_14'] == 0),
+        df['atr_pct_14'].isna() | (df['atr_pct_14'] == 0) | df['sma_50'].isna() | (df['sma_50'] == 0),
         np.nan,
-        (close - df['sma_50']) / df['atr_14']
+        ((close / df['sma_50'] * 100) - 100) / df['atr_pct_14']
     )
 
     # =========================================================
@@ -146,10 +169,14 @@ def calculate_indicators(df_daily: pd.DataFrame, df_spy: pd.DataFrame = None) ->
 
         df = df.drop(columns=['spy_close', 'spy_volume'])
     else:
-        for col in ['relative_strength_spy', 'rs_condition_14', 'rs_condition_21', 'rs_condition_63', 
-                    'rs_ratio_14', 'rs_ratio_21', 'rs_ratio_63',
-                    'rs_momentum_14', 'rs_momentum_21', 'rs_momentum_63', 'rel_vol_vs_spy_21']:
-            df[col] = np.nan
+        # If no SPY benchmark is provided (i.e. this IS SPY), 
+        # set relative strength to 1.0 and Z-scores (Ratio/Momentum) to 0.0 to avoid NULLs.
+        df['relative_strength_spy'] = 1.0
+        for n in [14, 21, 63]:
+            df[f'rs_condition_{n}'] = 1.0
+            df[f'rs_ratio_{n}']     = 0.0
+            df[f'rs_momentum_{n}']  = 0.0
+        df['rel_vol_vs_spy_21'] = 1.0
         # vol_surge can still be computed without SPY
         vol_sma_21 = volume.rolling(window=21, min_periods=1).mean()
         df['vol_surge_21'] = np.where(vol_sma_21 == 0, np.nan, volume / vol_sma_21)
