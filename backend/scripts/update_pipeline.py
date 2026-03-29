@@ -642,9 +642,11 @@ def run_step3_pipeline(recalculate_all: bool = False, categories: Optional[List[
             logger.info("Calculating relative ranks (T4)...")
             if not skip_t3:
                 combined_df = pd.concat(all_indicators_dfs, ignore_index=True)
-                # Filter to only recent dates to avoid re-calculating/saving entire history
-                threshold_date = datetime.strptime("2026-03-24", "%Y-%m-%d").date()
-                combined_df = combined_df[combined_df['date'] >= threshold_date]
+                # Remove hardcoded filter. Process all if recalculate_all, else only the latest update.
+                if not recalculate_all:
+                    # In normal incremental runs, we only need to rank the newly added indicators.
+                    # Typically this matches the dates in all_indicators_dfs.
+                    pass
             
             # Clear existing ranks for full recalculation
             if recalculate_all:

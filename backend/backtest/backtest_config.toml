@@ -38,7 +38,7 @@ min_1d_gain_pct = 2.0
 min_vol_surge_21 = 1.0
 min_adr_pct_21 = 4.0
 max_dist_sma50_atr = 6.0
-min_market_cap = 1e9
+min_market_cap = 1e8
 theme_rs21_gt_63 = true
 
 [[strategy]]
