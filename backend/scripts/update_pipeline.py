@@ -697,23 +697,27 @@ def run_step3_pipeline(recalculate_all: bool = False, categories: Optional[List[
         # 7. Market Signals (T5)
         if not spy_df.empty:
             logger.info("Calculating market signals (T5)...")
-            db.query(MarketSignal).delete()
-            db.commit()
-            
-            ms_df = calculate_market_signals(spy_df)
-            t5_records = [
-                MarketSignal(
-                    date=row['date'],
-                    spy_above_sma200=int(row['spy_above_sma200']),
-                    spy_sma200_rising=int(row['spy_sma200_rising']) if _to_val(row, 'spy_sma200_rising') is not None else None,
-                    distribution_days=int(row['distribution_days']),
-                    follow_through_day=int(row['follow_through_day']),
-                    market_phase=row['market_phase'],
-                )
-                for _, row in ms_df.iterrows()
-            ]
-            db.bulk_save_objects(t5_records)
-            db.commit()
+            try:
+                ms_df = calculate_market_signals(spy_df)
+                t5_records = [
+                    MarketSignal(
+                        date=row['date'],
+                        spy_above_sma200=int(row['spy_above_sma200']),
+                        spy_sma200_rising=int(row['spy_sma200_rising']) if _to_val(row, 'spy_sma200_rising') is not None else None,
+                        distribution_days=int(row['distribution_days']),
+                        follow_through_day=int(row['follow_through_day']),
+                        market_phase=row['market_phase'],
+                    )
+                    for _, row in ms_df.iterrows()
+                ]
+                # Atomic replace: Delete and Insert in a single transaction
+                db.query(MarketSignal).delete()
+                db.bulk_save_objects(t5_records)
+                db.commit()
+                logger.info(f"Successfully saved {len(t5_records)} market signal records.")
+            except Exception as e:
+                db.rollback()
+                logger.error(f"Critical error updating Market Signals (T5). Existing data preserved. Exception: {e}")
 
     logger.info("Step 3 Pipeline completed successfully.")
 

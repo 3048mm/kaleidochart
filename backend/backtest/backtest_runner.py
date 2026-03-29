@@ -194,16 +194,52 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
     return df_symbols, df_prices, df_indicators, df_ranks, df_theme_constituents, trading_dates
 
 
-def run_backtest(config: dict, strategy_filter: str = None, refresh_cache: bool = False, db_path_override: str = None):
-    """
-    Main backtest execution loop.
+def run_single_strategy(strat_dict: dict, df_indicators, df_prices, df_ranks, df_symbols, df_theme_constituents, trading_dates, exit_rules, show_progress=True):
+    strat_name = strat_dict.get('name', 'Optuna_Strategy')
+    strat_desc = strat_dict.get('description', '')
+    if show_progress:
+        print(f"Running strategy: {strat_name} ({strat_desc})")
+    
+    t0 = time.time()
+    trades = []
+    active_positions = set()
 
-    Args:
-        config: Parsed TOML config dict.
-        strategy_filter: Optional strategy name to run only one strategy.
-        refresh_cache: If True, force reload from DB and update cache.
-        db_path_override: Optional path to a specific SQLite database file.
-    """
+    for i, td in enumerate(trading_dates):
+        prev_date = trading_dates[i - 1] if i > 0 else None
+        signals = scan_signals_for_date(
+            target_date=td, df_ind=df_indicators, df_price=df_prices, df_ranks=df_ranks,
+            df_symbols=df_symbols, df_theme_constituents=df_theme_constituents,
+            strategy=strat_dict, prev_date=prev_date,
+        )
+
+        for signal in signals:
+            if signal.symbol_id in active_positions:
+                continue
+            df_price_sym = df_prices[df_prices['symbol_id'] == signal.symbol_id]
+            df_ind_sym = df_indicators[df_indicators['symbol_id'] == signal.symbol_id]
+            result = simulate_trade(signal, df_price_sym, df_ind_sym, exit_rules)
+            if result:
+                trades.append(result)
+                active_positions.add(signal.symbol_id)
+
+        exited_ids = set()
+        for t in trades:
+            if t.exit_date <= td and t.symbol_id in active_positions:
+                exited_ids.add(t.symbol_id)
+        active_positions -= exited_ids
+
+        if show_progress and (i + 1) % 100 == 0:
+            print(f"  Processed {i + 1}/{len(trading_dates)} days, {len(trades)} trades so far...")
+
+    elapsed = time.time() - t0
+    metrics = calculate_metrics(trades)
+    if show_progress:
+        print(f"  Completed: {len(trades)} trades in {elapsed:.1f}s")
+    
+    return metrics, trades
+
+def run_backtest(config: dict, strategy_filter: str = None, refresh_cache: bool = False, db_path_override: str = None):
+    # (Existing beginning part of run_backtest up to initialization)
     general = config.get('general', {})
     start_date = general.get('start_date', '2021-03-26')
     end_date = general.get('end_date', '2026-03-25')
@@ -216,7 +252,6 @@ def run_backtest(config: dict, strategy_filter: str = None, refresh_cache: bool 
             print(f"Strategy '{strategy_filter}' not found in config.")
             return
 
-    # Initialize DB
     if db_path_override:
         db_path = db_path_override
         if not os.path.isabs(db_path):
@@ -230,72 +265,20 @@ def run_backtest(config: dict, strategy_filter: str = None, refresh_cache: bool 
     print(f"  Connecting to DB: {db_path}")
     init_db(db_path)
 
-    # Preload all data using engine (pandas.read_sql or Parquet cache)
     df_symbols, df_prices, df_indicators, df_ranks, df_theme_constituents, trading_dates = \
         preload_data(database.engine, start_date, end_date, refresh_cache=refresh_cache)
 
-    # Run each strategy
     all_results = {}
     all_trades = {}
 
     for strat in strategies:
-        strat_name = strat['name']
-        strat_desc = strat.get('description', '')
-        print(f"Running strategy: {strat_name} ({strat_desc})")
-        t0 = time.time()
-
-        trades = []
-        # Track active positions to avoid duplicate entries
-        active_positions = set()  # set of symbol_ids currently in a trade
-
-        for i, td in enumerate(trading_dates):
-            # Get previous trading date
-            prev_date = trading_dates[i - 1] if i > 0 else None
-
-            # Scan for signals
-            signals = scan_signals_for_date(
-                target_date=td,
-                df_ind=df_indicators,
-                df_price=df_prices,
-                df_ranks=df_ranks,
-                df_symbols=df_symbols,
-                df_theme_constituents=df_theme_constituents,
-                strategy=strat,
-                prev_date=prev_date,
-            )
-
-            # Simulate trades for new signals (skip if already in active position)
-            for signal in signals:
-                if signal.symbol_id in active_positions:
-                    continue
-
-                # Get symbol-specific data for simulation
-                df_price_sym = df_prices[df_prices['symbol_id'] == signal.symbol_id]
-                df_ind_sym = df_indicators[df_indicators['symbol_id'] == signal.symbol_id]
-
-                result = simulate_trade(signal, df_price_sym, df_ind_sym, exit_rules)
-                if result:
-                    trades.append(result)
-                    # Mark as active until exit
-                    active_positions.add(signal.symbol_id)
-
-            # Clean up exited positions
-            exited_ids = set()
-            for t in trades:
-                if t.exit_date <= td and t.symbol_id in active_positions:
-                    exited_ids.add(t.symbol_id)
-            active_positions -= exited_ids
-
-            # Progress indicator
-            if (i + 1) % 100 == 0:
-                print(f"  Processed {i + 1}/{len(trading_dates)} days, {len(trades)} trades so far...")
-
-        elapsed = time.time() - t0
-        metrics = calculate_metrics(trades)
+        strat_name = strat.get('name', 'Strategy')
+        metrics, trades = run_single_strategy(
+            strat, df_indicators, df_prices, df_ranks, df_symbols, df_theme_constituents, 
+            trading_dates, exit_rules, show_progress=True
+        )
         all_results[strat_name] = metrics
         all_trades[strat_name] = trades
-
-        print(f"  Completed: {len(trades)} trades in {elapsed:.1f}s")
 
     # Print comparison table
     print_comparison_table(all_results, start_date, end_date)

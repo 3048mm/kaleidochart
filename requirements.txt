@@ -3,3 +3,5 @@ pandas==2.2.0
 SQLAlchemy==2.0.25
 tomli==2.0.1  # For parsing TOML in older python versions, or built-in tomllib for 3.11+
 ta==0.11.0    # Technical Analysis Library
+optuna==4.8.0
+optuna-dashboard==0.15.1
