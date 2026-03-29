@@ -149,14 +149,3 @@ python backend/backtest/backtest_runner.py --start-date 2025-01-01 --end-date 20
 # キャッシュをリフレッシュ（DBから最新を取得し直す）
 python backend/backtest/backtest_runner.py --refresh-cache
 ```
-
-### 6.8 自動パラメータ最適化 (Optuna)
-
-指定したペース戦略（例: `B_theme_momentum`）の各種パラメータの探索範囲を定義し、ベイズ最適化を用いて最も実運用に適した閾値を探索します。
-
-*   **実行スクリプト**: `backend/optimization_runner.py`
-*   **ストレージ**: `data/optimization_trials.db` (中断・再開に対応した SQLite ベースの Optuna DB)
-*   **最適化設計の特徴**:
-    *   **カスタムスコアとペナルティ**: 単純な総利益へのカーブフィッティングを防ぐため、「大きすぎるドローダウン」や「トレード頻度が多すぎる（1日平均25件以上など）」設定に対してスコア減点（罰則）を与えるように設計。
-    *   **マルチ期間学習**: 特定のトレンドに過学習しないよう、弱気（ベア）相場と強気（ブル）相場の複数期間で同じパラメータを並行評価し、その平均スコアを最大化する目的関数を採用。
-    *   **UIダッシュボード**: `optuna-dashboard` と連動し、Webブラウザ上で探索過程やパラメータごとの重要度（Hyperparameter Importance）をリアルタイム可視化。
