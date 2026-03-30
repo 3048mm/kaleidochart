@@ -1,0 +1,164 @@
+# ============================================================
+# スクリーナー プリセット定義
+# 
+# Optuna等で最適なパラメータが見つかった場合は、
+# このファイルの値を書き換えるだけでフロントエンドに即反映されます。
+#
+# 【フィルタキー命名規則】
+#   min_<column>       : Indicator.<column> >= value
+#   max_<column>       : Indicator.<column> <= value
+#   <column>           : Indicator.<column> == value (完全一致)
+#   min_<col>_rank     : T4 RelativeRank percent_rank >= value
+#   max_<col>_rank     : T4 RelativeRank percent_rank <= value
+#
+# 【計算列 (Virtual Columns)】
+#   1d_gain_pct        : (close - open) / open * 100
+#   dist_21ema_pct     : (close - ema_21) / ema_21 * 100
+#   dist_sma50_pct     : (close - sma_50) / sma_50 * 100
+#
+# 【式フィルタ (expression)】
+#   OR条件などの複合条件は expression = "..." で記述可能。
+#   例: expression = "dist_sma50_atr > 3 or td9 == -9"
+#   対応演算子: >, >=, <, <=, ==, !=, and, or
+#   不正な式はログに記録され、条件から除外されます。
+# ============================================================
+
+# ───────────────────────────────────────────────────
+# Rise (買い目線) - Check
+# ───────────────────────────────────────────────────
+
+[[rise]]
+id = "check_1d_gain"
+name = "1D% Gain"
+group = "Check"
+[rise.filters]
+min_1d_gain_pct = 4.0
+min_rel_vol_vs_spy_21 = 1.0
+max_dist_sma50_atr = 6.0
+min_adr_pct_21 = 4.0
+min_market_cap = 1e9
+
+[[rise]]
+id = "check_volume_surge"
+name = "Volume Surge"
+group = "Check"
+[rise.filters]
+min_vol_surge_21 = 1.5
+min_rel_vol_vs_spy_21 = 1.2
+min_1d_gain_pct = 0.0
+min_adr_pct_21 = 4.0
+min_market_cap = 1e9
+max_dist_sma50_atr = 6.0
+
+[[rise]]
+id = "check_21ema"
+name = "21EMA Pullback"
+subtitle = "(-2%~+2%)"
+group = "Check"
+[rise.filters]
+min_dist_21ema_pct = -2.0
+max_dist_21ema_pct = 2.0
+max_dist_sma50_atr = 6.0
+min_adr_pct_21 = 4.0
+min_market_cap = 1e9
+
+[[rise]]
+id = "check_momentum97"
+name = "Momentum 97"
+group = "Check"
+[rise.filters]
+min_rs_ratio_21_rank = 0.97
+trend_template_ok = 1
+
+[[rise]]
+id = "check_vcp"
+name = "VCP"
+group = "Check"
+[rise.filters]
+max_adr_pct_21 = 3.0
+min_dist_sma50_pct = 0.0
+min_rs_condition_21 = 1.0
+min_market_cap = 1e9
+
+[[rise]]
+id = "rrg_leading_in"
+name = "RRG Leading In"
+group = "Check"
+# RRGは前日比較ロジックが必要な特殊プリセット（バックエンド実装）
+special = "rrg_leading_in"
+[rise.filters]
+min_vol_surge_21 = 1.0
+min_adr_pct_21 = 4.0
+max_dist_sma50_atr = 6.0
+min_market_cap = 1e9
+
+# ───────────────────────────────────────────────────
+# Rise (買い目線) - Overhead sign
+# ───────────────────────────────────────────────────
+
+[[rise]]
+id = "climax_top"
+name = "Climax Top / Overextended"
+group = "Overhead sign"
+expression = "dist_sma50_atr > 3 or td9 == -9"
+
+[[rise]]
+id = "dist_sma50_atr_8"
+name = "SMA50/ATR%"
+subtitle = "> 8%"
+group = "Overhead sign"
+[rise.filters]
+min_dist_sma50_atr = 8.0
+
+[[rise]]
+id = "td9_overhead"
+name = "TDR9"
+subtitle = ">= 8"
+group = "Overhead sign"
+[rise.filters]
+min_td9 = 8
+
+# ───────────────────────────────────────────────────
+# Fall (警戒・売り目線) - Warning
+# ───────────────────────────────────────────────────
+
+[[fall]]
+id = "rrg_lagging_in"
+name = "RRG Lagging In"
+group = "Warning"
+special = "rrg_lagging_in"
+[fall.filters]
+max_1d_gain_pct = -2.0
+min_vol_surge_21 = 1.0
+
+[[fall]]
+id = "trend_breakdown"
+name = "Trend Breakdown"
+group = "Warning"
+expression = "trend_template_ok == 0 and rs_ratio_63 < -1.0 and sma_50 < sma_200"
+
+[[fall]]
+id = "high_vol_dist"
+name = "High Volume Distribution"
+group = "Warning"
+[fall.filters]
+min_vol_surge_21 = 1.5
+max_1d_gain_pct = -2.0
+
+# ───────────────────────────────────────────────────
+# Fall (警戒・売り目線) - Rebound sign
+# ───────────────────────────────────────────────────
+
+[[fall]]
+id = "oversold_rebound"
+name = "Oversold Rebound"
+group = "Rebound sign"
+expression = "td9 == 9 and rs_ratio_14 < 0.2"
+
+[[fall]]
+id = "td9_rebound"
+name = "TDR9"
+subtitle = "<= -8"
+group = "Rebound sign"
+[fall.filters]
+max_td9 = -8

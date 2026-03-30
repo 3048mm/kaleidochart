@@ -5,6 +5,8 @@ import logging
 import tomli
 import pandas as pd
 import argparse
+import traceback
+from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta, date
 from typing import List, Optional
 from sqlalchemy import func
@@ -25,8 +27,42 @@ from data_collection.fetcher import fetch_daily_data, fetch_multiple_daily_data,
 from data_collection.spreadsheet_sync import fetch_symbols_from_sheet
 from indicators.calculator import calculate_indicators, calculate_relative_ranks, calculate_market_signals
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
-logger = logging.getLogger(__name__)
+# Configure comprehensive logging
+def setup_pipeline_logging():
+    """
+    Setup logging to both console and a rotating file.
+    """
+    # Use logs directory at the project root
+    log_dir = os.path.join(project_root, "logs")
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir, exist_ok=True)
+        
+    log_file = os.path.join(log_dir, "pipeline.log")
+    
+    # Root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    
+    # Remove existing handlers
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+        
+    log_format = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+    
+    # Console Handler
+    console_h = logging.StreamHandler(sys.stdout)
+    console_h.setFormatter(log_format)
+    root_logger.addHandler(console_h)
+    
+    # File Handler (10MB per file, max 5 pieces)
+    file_h = RotatingFileHandler(log_file, maxBytes=10*1024*1024, backupCount=5, encoding='utf-8')
+    file_h.setFormatter(log_format)
+    root_logger.addHandler(file_h)
+    
+    return logging.getLogger(__name__)
+
+# Apply logging setup immediately
+logger = setup_pipeline_logging()
 
 def load_config():
     config_path = os.path.join(project_root, "config.toml")
@@ -206,46 +242,50 @@ def run_step3_pipeline(recalculate_all: bool = False, categories: Optional[List[
     
     init_db(db_path)
     
-    with get_db() as db:
-        # 1. Sync from Spreadsheets
-        if not skip_sync:
-            logger.info("Using Google Spreadsheet for symbol sync...")
-            sheet_data, symbol_id_map = sync_symbols_to_db(db, credentials_path, spreadsheet_url)
-        else:
-            logger.info("Skipping Google Spreadsheet sync. Using existing symbols in DB.")
-            symbols = db.query(Symbol).filter(Symbol.active == True).all()
-            sheet_data = []
-            symbol_id_map = {}
-            for s in symbols:
-                # Mock sheet_data format for downstream
-                sheet_data.append({
-                    'ticker': s.ticker,
-                    'exchange': s.exchange,
-                    'category': s.category,
-                    'theme_type': s.theme_type
-                })
-                symbol_id_map[(s.ticker, s.exchange)] = s.id
-        
-        # --- Category Filter ---
-        if categories:
-            original_count = len(sheet_data)
-            # Ensure SPY is always included as it's the benchmark for RS
-            sheet_data = [s for s in sheet_data if s['category'] in categories or s['ticker'] == 'SPY']
-            logger.info(f"Filtered symbols by categories {categories} (benchmark 'SPY' always included): {len(sheet_data)} / {original_count}")
-        
-        # Split into real vs virtual
-        real_tickers = [d['ticker'] for d in sheet_data if d['theme_type'] != 'virtual']
-        virtual_items = [d for d in sheet_data if d['theme_type'] == 'virtual']
-        
-        # 2. Sync from Price Data
-        data_dict = {}
-        
-        # 2. Fetch SPY first to determine the target (latest) date
-        logger.info("Fetching SPY data first to determine target date...")
-        spy_full_start = (datetime.now() - timedelta(days=initial_fetch_days)).strftime('%Y-%m-%d')
-        
-        spy_item = next((d for d in sheet_data if d['ticker'] == 'SPY'), None)
-        spy_sym_id = symbol_id_map.get(('SPY', spy_item['exchange'])) if spy_item else None
+    try:
+        with get_db() as db:
+            # 1. Sync from Spreadsheets
+            if not skip_sync:
+                logger.info("--- Phase 1: Symbol sync from Google Spreadsheet START ---")
+                sheet_data, symbol_id_map = sync_symbols_to_db(db, credentials_path, spreadsheet_url)
+                logger.info(f"--- Phase 1 COMPLETE: {len(sheet_data)} symbols synced ---")
+            else:
+                logger.info("Phase 1 skipped (skip_sync=True). Loading existing symbols from DB.")
+                symbols = db.query(Symbol).filter(Symbol.active == True).all()
+                sheet_data = []
+                symbol_id_map = {}
+                for s in symbols:
+                    # Mock sheet_data format for downstream
+                    sheet_data.append({
+                        'ticker': s.ticker,
+                        'exchange': s.exchange,
+                        'category': s.category,
+                        'theme_type': s.theme_type
+                    })
+                    symbol_id_map[(s.ticker, s.exchange)] = s.id
+                logger.info(f"Loaded {len(sheet_data)} symbols from DB.")
+            
+            # --- Category Filter ---
+            if categories:
+                original_count = len(sheet_data)
+                # Ensure SPY is always included as it's the benchmark for RS
+                sheet_data = [s for s in sheet_data if s['category'] in categories or s['ticker'] == 'SPY']
+                logger.info(f"Filtering symbols by categories {categories}. Filtered symbols: {len(sheet_data)} / {original_count}")
+            
+            # Split into real vs virtual
+            real_tickers = [d['ticker'] for d in sheet_data if d['theme_type'] != 'virtual']
+            virtual_items = [d for d in sheet_data if d['theme_type'] == 'virtual']
+            
+            # 2. Sync Price Data
+            logger.info(f"--- Phase 2: Price data sync START (Real: {len(real_tickers)}, Virtual: {len(virtual_items)}) ---")
+            data_dict = {}
+            
+            # 2. Fetch SPY first to determine the target (latest) date
+            logger.info("Fetching SPY data to determine target date...")
+            spy_full_start = (datetime.now() - timedelta(days=initial_fetch_days)).strftime('%Y-%m-%d')
+            
+            spy_item = next((d for d in sheet_data if d['ticker'] == 'SPY'), None)
+            spy_sym_id = symbol_id_map.get(('SPY', spy_item['exchange'])) if spy_item else None
         
         # Get SPY's current latest date in DB
         spy_latest_in_db = None
@@ -636,8 +676,10 @@ def run_step3_pipeline(recalculate_all: bool = False, categories: Optional[List[
                     logger.error(f"[{ticker}] Critical error in indicator calculation: {e}")
                     db.rollback()
                     continue
+            logger.info("--- Phase 3 COMPLETE: Indicator calculation (T3) ---")
             
         # 6. Relative Ranks (T4)
+        logger.info("--- Phase 4: Relative Rank calculation (T4) START ---")
         if skip_t3 or all_indicators_dfs:
             logger.info("Calculating relative ranks (T4)...")
             if not skip_t3:
@@ -694,6 +736,8 @@ def run_step3_pipeline(recalculate_all: bool = False, categories: Optional[List[
                 db.bulk_save_objects(t4_records)
                 db.commit()
             
+            logger.info("--- Phase 4 COMPLETE: Rankings calculated ---")
+            
         # 7. Market Signals (T5)
         if not spy_df.empty:
             logger.info("Calculating market signals (T5)...")
@@ -719,7 +763,16 @@ def run_step3_pipeline(recalculate_all: bool = False, categories: Optional[List[
                 db.rollback()
                 logger.error(f"Critical error updating Market Signals (T5). Existing data preserved. Exception: {e}")
 
-    logger.info("Step 3 Pipeline completed successfully.")
+        logger.info("--- Step 3 Pipeline COMPLETED SUCCESSFULLY ---")
+
+    except Exception as e:
+        logger.error("--- Step 3 Pipeline CRITICAL FAILURE ---")
+        logger.error(f"Error Type: {type(e).__name__}")
+        logger.error(f"Error Message: {str(e)}")
+        logger.error("Stack Trace:")
+        logger.error(traceback.format_exc())
+        # Re-raise to alert caller if necessary
+        raise e
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the Step 3 Data Pipeline.")

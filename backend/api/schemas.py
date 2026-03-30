@@ -237,3 +237,30 @@ class EarningResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+# --- Screener Presets / Meta ---
+
+class ScreenerPresetItem(BaseModel):
+    id: str
+    name: str
+    subtitle: Optional[str] = None
+    group: str
+    filters: dict = {}
+    expression: Optional[str] = None
+    special: Optional[str] = None
+
+class ScreenerPresetsResponse(BaseModel):
+    rise: List[ScreenerPresetItem]
+    fall: List[ScreenerPresetItem]
+
+class ScreenerColumnMeta(BaseModel):
+    name: str
+    label: str
+    category: str
+    type: str  # 'float', 'int'
+    step: Optional[float] = None
+
+class ScreenerMetaResponse(BaseModel):
+    columns: List[ScreenerColumnMeta]
+    rank_indicators: List[str]
+    virtual_columns: List[ScreenerColumnMeta]

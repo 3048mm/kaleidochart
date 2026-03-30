@@ -6,193 +6,141 @@ import { appConfig, getIntensityColor } from '../config';
 
 type SortKey = 'change_pct' | 'rs_ratio_21_rank' | 'vol_surge_21';
 
-// Base Presets definition (Only for presets utilizing OR conditions or unsupported params)
-const BASE_PRESETS = [
-    { id: 'climax_top', label: 'Climax Top / Overextended', sub: 'dist_sma50_atr > 3 or TD9 = -9' },
-    { id: 'trend_breakdown', label: 'Trend Breakdown', sub: 'RS63 < -1.0, 50SMA < 200SMA' },
-    { id: 'oversold_rebound', label: 'Oversold Rebound', sub: 'TD9 = 9, RS14 < 0.2' },
-];
-
-const PRESET_LABELS: Record<string, string> = {
-    check_1d_gain: '1D% Gain',
-    check_volume_surge: 'Volume Surge',
-    check_21ema: '21EMA Pullback',
-    check_momentum97: 'Momentum 97',
-    check_vcp: 'VCP',
-    td9_overhead: 'TDR9 Overhead',
-    td9_rebound: 'TDR9 Rebound',
-    dist_sma50_atr_8: 'SMA50/ATR% > 8',
-    high_vol_dist: 'High Vol Distribution',
-    rrg_leading_in: 'RRG Leading In',
-    rrg_lagging_in: 'RRG Lagging In'
-};
-
-
-interface FilterDef {
-    id: string;
+// --- Types for Meta API ---
+interface ColumnMeta {
+    name: string;
     label: string;
-    type: 'range' | 'boolean' | 'select';
-    paramMin?: string;
-    paramMax?: string;
-    paramBool?: string;
-    paramSelect?: string;
-    options?: { label: string; value: string }[];
+    category: string;
+    type: string; // 'float' | 'int'
     step?: number;
 }
 
-const FILTER_CATEGORIES: { title: string, filters: FilterDef[] }[] = [
-    {
-        title: "Price & Trend",
-        filters: [
-            { id: '1d_gain', label: '1D% Gain', type: 'range', paramMin: 'min_1d_gain_pct', paramMax: 'max_1d_gain_pct', step: 0.1 },
-            { id: '21ema_dist', label: '21EMA Pullback %', type: 'range', paramMin: 'min_dist_21ema_pct', paramMax: 'max_dist_21ema_pct', step: 0.1 },
-            { id: 'sma50_dist', label: 'SMA50乖離率 %', type: 'range', paramMin: 'min_dist_sma50_pct', paramMax: 'max_dist_sma50_pct', step: 0.1 },
-            { id: 'trend_template', label: 'Trend Template', type: 'boolean', paramBool: 'trend_template_ok' }
-        ]
-    },
-    {
-        title: "Volume & Volatility",
-        filters: [
-            { id: 'vol_surge', label: 'Vol Surge x', type: 'range', paramMin: 'min_vol_surge_21', paramMax: 'max_vol_surge_21', step: 0.1 },
-            { id: 'rel_vol', label: 'Relative Vol x', type: 'range', paramMin: 'min_rel_vol', paramMax: 'max_rel_vol', step: 0.1 },
-            { id: 'adr', label: 'ADR %', type: 'range', paramMin: 'min_adr_pct_21', paramMax: 'max_adr_pct_21', step: 0.1 },
-            { id: 'sma50_atr', label: '50SMA/ATR %', type: 'range', paramMin: 'min_dist_sma50_atr', paramMax: 'max_dist_sma50_atr', step: 1 }
-        ]
-    },
-    {
-        title: "Momentum & Indicators",
-        filters: [
-            { id: 'rs21_rank', label: 'RS21 Rank', type: 'range', paramMin: 'min_rs_ratio_21_rank', paramMax: 'max_rs_ratio_21_rank', step: 0.01 },
-            { id: 'rs21_gt_63', label: 'RS21rank > RS63rank', type: 'boolean', paramBool: 'rs_rank_21_gt_63' },
-            { id: 'theme_rs21_gt_63', label: 'Theme RS21 > RS63', type: 'boolean', paramBool: 'theme_rs21_gt_63' },
-            { id: 'rrg_leading_in', label: 'RRG Leading In', type: 'boolean', paramBool: 'rrg_leading_in' },
-            { id: 'rrg_lagging_in', label: 'RRG Lagging In', type: 'boolean', paramBool: 'rrg_lagging_in' },
-            { id: 'rs_cond', label: 'RS Cond 21', type: 'range', paramMin: 'min_rs_condition_21', paramMax: 'max_rs_condition_21', step: 0.1 },
-            { id: 'td9', label: 'TDR9 (Sequential)', type: 'range', paramMin: 'min_td9', paramMax: 'max_td9', step: 1 }
-        ]
-    },
-    {
-        title: "Fundamentals",
-        filters: [
-            { id: 'market_cap', label: 'Market Cap', type: 'select', paramSelect: 'min_market_cap', options: [
-                { label: 'Any', value: '' },
-                { label: '>= 10M', value: '10000000' },
-                { label: '>= 100M', value: '100000000' },
-                { label: '>= 300M', value: '300000000' },
-                { label: '>= 1B', value: '1000000000' },
-                { label: '>= 10B', value: '10000000000' },
-            ]}
-        ]
-    }
+interface MetaResponse {
+    columns: ColumnMeta[];
+    rank_indicators: string[];
+    virtual_columns: ColumnMeta[];
+}
+
+// --- Types for Presets API ---
+interface PresetItem {
+    id: string;
+    name: string;
+    subtitle?: string;
+    group: string;
+    filters: Record<string, number | string>;
+    expression?: string;
+    special?: string;
+}
+
+// Hard-wired boolean filters that cannot be expressed as simple min/max
+const BOOLEAN_FILTERS = [
+    { id: 'rs_rank_21_gt_63', label: 'RS21rank > RS63rank', param: 'rs_rank_21_gt_63' },
+    { id: 'theme_rs21_gt_63', label: 'Theme RS21 > RS63', param: 'theme_rs21_gt_63' },
+    { id: 'rrg_leading_in', label: 'RRG Leading In', param: 'rrg_leading_in' },
+    { id: 'rrg_lagging_in', label: 'RRG Lagging In', param: 'rrg_lagging_in' },
 ];
 
-const FilterRow: React.FC<{
-    def: FilterDef;
+// --- Dynamic Filter Row ---
+const DynFilterRow: React.FC<{
+    col: ColumnMeta;
     searchParams: URLSearchParams;
     onChange: (keysToSet: Record<string, string>, keysToRemove: string[]) => void;
-}> = ({ def, searchParams, onChange }) => {
-    
-    // Determine if active from URL
-    const isActive = def.type === 'range' ? 
-        (searchParams.has(def.paramMin!) || searchParams.has(def.paramMax!)) :
-        def.type === 'boolean' ? searchParams.has(def.paramBool!) :
-        searchParams.has(def.paramSelect!);
+}> = ({ col, searchParams, onChange }) => {
+    const minKey = `min_${col.name}`;
+    const maxKey = `max_${col.name}`;
+    // Check for rank variant
+    const isRankable = col.name.startsWith('rs_') || col.name === 'relative_strength_spy';
+    const minRankKey = `min_${col.name}_rank`;
+    const maxRankKey = `max_${col.name}_rank`;
 
+    const isActive = searchParams.has(minKey) || searchParams.has(maxKey) ||
+                     searchParams.has(minRankKey) || searchParams.has(maxRankKey) ||
+                     searchParams.has(col.name);
     const [checked, setChecked] = useState(isActive);
-    const [minVal, setMinVal] = useState(def.paramMin ? searchParams.get(def.paramMin) || '' : '');
-    const [maxVal, setMaxVal] = useState(def.paramMax ? searchParams.get(def.paramMax) || '' : '');
-    const [selVal, setSelVal] = useState(def.paramSelect ? searchParams.get(def.paramSelect) || '' : '');
+    const [minVal, setMinVal] = useState(searchParams.get(minKey) || '');
+    const [maxVal, setMaxVal] = useState(searchParams.get(maxKey) || '');
 
-    // Sync state if URL changes externally (e.g. browser back/forward)
     useEffect(() => {
         setChecked(isActive);
-        if (def.paramMin) setMinVal(searchParams.get(def.paramMin) || '');
-        if (def.paramMax) setMaxVal(searchParams.get(def.paramMax) || '');
-        if (def.paramSelect) setSelVal(searchParams.get(def.paramSelect) || '');
+        setMinVal(searchParams.get(minKey) || '');
+        setMaxVal(searchParams.get(maxKey) || '');
     }, [searchParams.toString()]);
 
-    // Debounce effect for Range Inputs
     useEffect(() => {
-        if (checked && def.type === 'range') {
+        if (checked) {
             const timer = setTimeout(() => {
                 const toSet: Record<string, string> = {};
                 const toRemove: string[] = [];
-                if (minVal) toSet[def.paramMin!] = minVal; else toRemove.push(def.paramMin!);
-                if (maxVal) toSet[def.paramMax!] = maxVal; else toRemove.push(def.paramMax!);
-                
-                // Only trigger if changes exist against URL
-                const currentMin = searchParams.get(def.paramMin!) || '';
-                const currentMax = searchParams.get(def.paramMax!) || '';
+                if (minVal) toSet[minKey] = minVal; else toRemove.push(minKey);
+                if (maxVal) toSet[maxKey] = maxVal; else toRemove.push(maxKey);
+                const currentMin = searchParams.get(minKey) || '';
+                const currentMax = searchParams.get(maxKey) || '';
                 if (currentMin !== minVal || currentMax !== maxVal) {
                     onChange(toSet, toRemove);
                 }
             }, 500);
             return () => clearTimeout(timer);
         }
-    }, [minVal, maxVal]); // only run when typing
+    }, [minVal, maxVal]);
 
     const handleCheck = (c: boolean) => {
         setChecked(c);
-        if (c) {
-            if (def.type === 'boolean') {
-                onChange({ [def.paramBool!]: '1' }, []);
-            } else if (def.type === 'select' && selVal) {
-                onChange({ [def.paramSelect!]: selVal }, []);
-            }
-        } else {
-            // Uncheck action -> Remove all relevant keys
-            const toRemove = [];
-            if (def.paramMin) toRemove.push(def.paramMin);
-            if (def.paramMax) toRemove.push(def.paramMax);
-            if (def.paramBool) toRemove.push(def.paramBool);
-            if (def.paramSelect) toRemove.push(def.paramSelect);
-            onChange({}, toRemove);
-            
-            // Optionally clear local state
+        if (!c) {
+            onChange({}, [minKey, maxKey, col.name, minRankKey, maxRankKey]);
             setMinVal('');
             setMaxVal('');
         }
     };
 
-    const handleSelectChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-        const val = e.target.value;
-        setSelVal(val);
-        if (val) onChange({ [def.paramSelect!]: val }, []);
-        else onChange({}, [def.paramSelect!]);
-    };
-
-    const inputStyle = { 
-        width: '45px', 
-        padding: '2px 4px', 
-        fontSize: '11px', 
-        background: '#1a1d26', 
-        border: '1px solid rgba(255,255,255,0.2)', 
-        color: '#fff', 
-        borderRadius: '3px', 
-        outline: 'none', 
-        colorScheme: 'dark' 
+    const inputStyle = {
+        width: '55px', padding: '2px 4px', fontSize: '11px',
+        background: '#1a1d26', border: '1px solid rgba(255,255,255,0.2)',
+        color: '#fff', borderRadius: '3px', outline: 'none', colorScheme: 'dark' as const
     };
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', padding: '4px 0' }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', cursor: 'pointer', color: checked ? '#fff' : '#aaa' }}>
                 <input type="checkbox" checked={checked} onChange={e => handleCheck(e.target.checked)} style={{ accentColor: appConfig.colors.accent, outline: 'none' }} />
-                {def.label}
+                {col.label}
             </label>
-            {checked && def.type === 'range' && (
+            {checked && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '5px', paddingLeft: '22px' }}>
-                    <input type="number" step={def.step || 1} value={minVal} onChange={e => setMinVal(e.target.value)} placeholder="Min" style={inputStyle} />
+                    <input type="number" step={col.step || 0.1} value={minVal} onChange={e => setMinVal(e.target.value)} placeholder="Min" style={inputStyle} />
                     <span style={{ fontSize: '11px', color: '#666' }}>〜</span>
-                    <input type="number" step={def.step || 1} value={maxVal} onChange={e => setMaxVal(e.target.value)} placeholder="Max" style={inputStyle} />
+                    <input type="number" step={col.step || 0.1} value={maxVal} onChange={e => setMaxVal(e.target.value)} placeholder="Max" style={inputStyle} />
                 </div>
             )}
-            {checked && def.type === 'select' && def.options && (
-                <div style={{ paddingLeft: '22px' }}>
-                    <select value={selVal} onChange={handleSelectChange} style={{ ...inputStyle, width: '90px' }}>
-                        {def.options.map(o => <option key={o.value} value={o.value} style={{ background: '#1a1d26' }}>{o.label}</option>)}
-                    </select>
-                </div>
-            )}
+        </div>
+    );
+};
+
+// --- Boolean Filter Row ---
+const BoolFilterRow: React.FC<{
+    label: string;
+    param: string;
+    searchParams: URLSearchParams;
+    onChange: (keysToSet: Record<string, string>, keysToRemove: string[]) => void;
+}> = ({ label, param, searchParams, onChange }) => {
+    const isActive = searchParams.has(param) && searchParams.get(param) !== 'false';
+    const [checked, setChecked] = useState(isActive);
+
+    useEffect(() => {
+        setChecked(isActive);
+    }, [searchParams.toString()]);
+
+    const handleCheck = (c: boolean) => {
+        setChecked(c);
+        if (c) onChange({ [param]: 'true' }, []);
+        else onChange({}, [param]);
+    };
+
+    return (
+        <div style={{ padding: '4px 0' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', cursor: 'pointer', color: checked ? '#fff' : '#aaa' }}>
+                <input type="checkbox" checked={checked} onChange={e => handleCheck(e.target.checked)} style={{ accentColor: appConfig.colors.accent, outline: 'none' }} />
+                {label}
+            </label>
         </div>
     );
 };
@@ -209,15 +157,18 @@ export const ScreenerResultPage: React.FC = () => {
     const [results, setResults] = useState<ScreenerResultItem[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
+    const [meta, setMeta] = useState<MetaResponse | null>(null);
 
     const [sortKey, setSortKey] = useState<SortKey>('change_pct');
     const [sortDesc, setSortDesc] = useState(true);
 
-    const basePresetDef = BASE_PRESETS.find(p => p.id === presetId);
-    
-    const DisplayTitle = basePresetDef ? `Base Filter: ${basePresetDef.label}` : 
-                         presetId ? `Custom Screener (${PRESET_LABELS[presetId] || presetId})` : 
-                         'Custom Screener';
+    // Load column meta from API (once)
+    useEffect(() => {
+        fetch('/api/screener/meta')
+            .then(res => res.json())
+            .then((json: MetaResponse) => setMeta(json))
+            .catch(err => console.error('Failed to load screener meta:', err));
+    }, []);
 
     const handleFilterChange = (keysToSet: Record<string, string>, keysToRemove: string[]) => {
         const nextParams = new URLSearchParams(location.search);
@@ -240,16 +191,9 @@ export const ScreenerResultPage: React.FC = () => {
     };
 
     useEffect(() => {
-        // If it's just the root /screener/result without a preset ID, that's fine too.
         setLoading(true);
         setError('');
-
         const params = new URLSearchParams(location.search);
-        // Apply Base Filter preset param if it matches a predefined OR filter
-        if (basePresetDef && !params.has('preset')) {
-            params.set('preset', basePresetDef.id);
-        }
-
         fetch(`/api/screener?${params.toString()}`)
             .then(res => {
                 if (!res.ok) throw new Error('API fetch error');
@@ -267,6 +211,18 @@ export const ScreenerResultPage: React.FC = () => {
             setSortKey(key);
             setSortDesc(true);
         }
+    };
+
+    // Group columns by category for left panel
+    const groupedColumns = (): Record<string, ColumnMeta[]> => {
+        if (!meta) return {};
+        const all = [...meta.virtual_columns, ...meta.columns];
+        const groups: Record<string, ColumnMeta[]> = {};
+        for (const col of all) {
+            if (!groups[col.category]) groups[col.category] = [];
+            groups[col.category].push(col);
+        }
+        return groups;
     };
 
     const renderResults = () => {
@@ -291,7 +247,7 @@ export const ScreenerResultPage: React.FC = () => {
                 }}>
                     <div style={{ flex: '1', minWidth: '80px' }}>Name</div>
                     <div style={{ width: '52px', textAlign: 'right', paddingRight: '5px' }}>Close</div>
-                    <div 
+                    <div
                         style={{ width: '50px', textAlign: 'center', cursor: 'pointer', color: sortKey === 'change_pct' ? '#fff' : '#aaa' }}
                         onClick={() => handleSort('change_pct')}
                         title="Sort by %1D"
@@ -299,20 +255,17 @@ export const ScreenerResultPage: React.FC = () => {
                         %1D {sortKey === 'change_pct' ? (sortDesc ? '▼' : '▲') : ''}
                     </div>
                     <div style={{ width: '50px', textAlign: 'right', paddingRight: '5px' }}>21E%</div>
-                    
-                    <div 
+                    <div
                         style={{ width: '50px', textAlign: 'right', cursor: 'pointer', color: sortKey === 'vol_surge_21' ? '#fff' : '#aaa' }}
                         onClick={() => handleSort('vol_surge_21')}
                         title="Sort by Volume Surge"
                     >
                         Vol SG {sortKey === 'vol_surge_21' ? (sortDesc ? '▼' : '▲') : ''}
                     </div>
-
                     <div style={{ width: '36px', textAlign: 'right' }}>ADR%</div>
                     <div style={{ width: '40px', textAlign: 'right' }}>50dATR</div>
                     <div style={{ width: '60px', textAlign: 'center' }}>Trend</div>
-                    
-                    <div 
+                    <div
                         style={{ width: '32px', textAlign: 'right', cursor: 'pointer', color: sortKey === 'rs_ratio_21_rank' ? '#fff' : '#aaa' }}
                         onClick={() => handleSort('rs_ratio_21_rank')}
                         title="Sort by RS21 Rank"
@@ -335,102 +288,34 @@ export const ScreenerResultPage: React.FC = () => {
 
                     return (
                         <div key={item.id} className="dashboard-item" style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            padding: '6px 0',
-                            borderBottom: `1px solid ${appConfig.colors.glassBorder}`,
-                            gap: '8px',
+                            display: 'flex', alignItems: 'center', padding: '6px 0',
+                            borderBottom: `1px solid ${appConfig.colors.glassBorder}`, gap: '8px',
                         }}>
-                            {/* 1. Name */}
                             <div style={{ flex: '1', minWidth: '80px', display: 'flex', flexDirection: 'column' }}>
                                 <Link to={`/chart/${encodeURIComponent(item.ticker)}`} target="_blank" style={{ color: appConfig.colors.chartText, textDecoration: 'none', fontWeight: 'bold', fontSize: '13px' }}>
                                     {item.ticker}
                                 </Link>
                                 <span style={{ fontSize: '10px', color: '#666', lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '120px' }}>{item.category ? `[${item.category}] ` : ''}{item.name}</span>
                             </div>
-
-                            {/* 2. Close */}
-                            <div style={{ width: '52px', textAlign: 'right', paddingRight: '5px', fontSize: '12px', fontVariantNumeric: 'tabular-nums' }}>
-                                {item.close.toFixed(2)}
-                            </div>
-
-                            {/* 3. %1D */}
-                            <div style={{
-                                width: '50px',
-                                textAlign: 'center',
-                                padding: '3px',
-                                borderRadius: '4px',
-                                backgroundColor: bgColor,
-                                color: textColor,
-                                fontWeight: '600',
-                                fontSize: '11px',
-                                flexShrink: 0,
-                            }}>
-                                {formatPct(item.change_pct)}
-                            </div>
-
-                            {/* 6. Dist 21EMA */}
-                            <div style={{ width: '50px', textAlign: 'right', paddingRight: '5px', color: colorNeutral(item.dist_21ema_pct), fontSize: '11px', fontWeight: '600', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
-                                {formatPct(item.dist_21ema_pct)}
-                            </div>
-
-                            {/* Vol Surge */}
-                            <div style={{ width: '50px', textAlign: 'right', fontSize: '11px', fontVariantNumeric: 'tabular-nums', fontWeight: item.vol_surge_21 && item.vol_surge_21 > 1.5 ? 'bold' : 'normal', color: item.vol_surge_21 && item.vol_surge_21 > 2.0 ? appConfig.colors.accent : '#fff', flexShrink: 0 }}>
-                                {formatNum(item.vol_surge_21, 1)}x
-                            </div>
-                            
-                            {/* ADR% */}
-                            <div style={{ width: '36px', textAlign: 'right', fontSize: '11px', fontVariantNumeric: 'tabular-nums', color: '#ccc', flexShrink: 0 }}>
-                                {formatNum(item.adr_pct_21, 1)}
-                            </div>
-
-                            {/* Dist 50SMA ATR */}
-                            <div style={{ width: '40px', textAlign: 'right', fontSize: '11px', fontVariantNumeric: 'tabular-nums', fontWeight: item.dist_sma50_atr && Math.abs(item.dist_sma50_atr) > 2.0 ? 'bold' : 'normal', color: item.dist_sma50_atr && item.dist_sma50_atr > 2.0 ? appConfig.colors.good : item.dist_sma50_atr && item.dist_sma50_atr < -2.0 ? appConfig.colors.bad : '#ccc', flexShrink: 0 }}>
-                                {formatNum(item.dist_sma50_atr, 1)}
-                            </div>
-
-                            {/* 7. Sparkline */}
+                            <div style={{ width: '52px', textAlign: 'right', paddingRight: '5px', fontSize: '12px', fontVariantNumeric: 'tabular-nums' }}>{item.close.toFixed(2)}</div>
+                            <div style={{ width: '50px', textAlign: 'center', padding: '3px', borderRadius: '4px', backgroundColor: bgColor, color: textColor, fontWeight: '600', fontSize: '11px', flexShrink: 0 }}>{formatPct(item.change_pct)}</div>
+                            <div style={{ width: '50px', textAlign: 'right', paddingRight: '5px', color: colorNeutral(item.dist_21ema_pct), fontSize: '11px', fontWeight: '600', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{formatPct(item.dist_21ema_pct)}</div>
+                            <div style={{ width: '50px', textAlign: 'right', fontSize: '11px', fontVariantNumeric: 'tabular-nums', fontWeight: item.vol_surge_21 && item.vol_surge_21 > 1.5 ? 'bold' : 'normal', color: item.vol_surge_21 && item.vol_surge_21 > 2.0 ? appConfig.colors.accent : '#fff', flexShrink: 0 }}>{formatNum(item.vol_surge_21, 1)}x</div>
+                            <div style={{ width: '36px', textAlign: 'right', fontSize: '11px', fontVariantNumeric: 'tabular-nums', color: '#ccc', flexShrink: 0 }}>{formatNum(item.adr_pct_21, 1)}</div>
+                            <div style={{ width: '40px', textAlign: 'right', fontSize: '11px', fontVariantNumeric: 'tabular-nums', fontWeight: item.dist_sma50_atr && Math.abs(item.dist_sma50_atr) > 2.0 ? 'bold' : 'normal', color: item.dist_sma50_atr && item.dist_sma50_atr > 2.0 ? appConfig.colors.good : item.dist_sma50_atr && item.dist_sma50_atr < -2.0 ? appConfig.colors.bad : '#ccc', flexShrink: 0 }}>{formatNum(item.dist_sma50_atr, 1)}</div>
                             <div style={{ width: '60px', flexShrink: 0 }}>
-                                <Sparkline
-                                    data={item.sparkline}
-                                    width={60}
-                                    height={22}
-                                    color={item.change_1m_pct >= 0 ? appConfig.colors.good : appConfig.colors.bad}
-                                    fixedRange={true}
-                                />
+                                <Sparkline data={item.sparkline} width={60} height={22} color={item.change_1m_pct >= 0 ? appConfig.colors.good : appConfig.colors.bad} fixedRange={true} />
                             </div>
-
-                            {/* 8. RS Score (21, 63) */}
-                            <div style={{
-                                width: '32px',
-                                textAlign: 'right',
-                                fontSize: '11px',
-                                fontVariantNumeric: 'tabular-nums',
-                                color: item.rs_ratio_21_rank >= 0.7 ? appConfig.colors.good :
-                                    item.rs_ratio_21_rank <= 0.3 ? appConfig.colors.bad : '#aaa',
-                                fontWeight: '600',
-                                flexShrink: 0,
-                            }}>
-                                {(item.rs_ratio_21_rank * 100).toFixed(0)}
-                            </div>
-                            <div style={{
-                                width: '32px',
-                                textAlign: 'right',
-                                fontSize: '11px',
-                                fontVariantNumeric: 'tabular-nums',
-                                color: item.rs_ratio_63_rank >= 0.7 ? appConfig.colors.good :
-                                    item.rs_ratio_63_rank <= 0.3 ? appConfig.colors.bad : '#aaa',
-                                fontWeight: '600',
-                                flexShrink: 0,
-                            }}>
-                                {(item.rs_ratio_63_rank * 100).toFixed(0)}
-                            </div>
+                            <div style={{ width: '32px', textAlign: 'right', fontSize: '11px', fontVariantNumeric: 'tabular-nums', color: item.rs_ratio_21_rank >= 0.7 ? appConfig.colors.good : item.rs_ratio_21_rank <= 0.3 ? appConfig.colors.bad : '#aaa', fontWeight: '600', flexShrink: 0 }}>{(item.rs_ratio_21_rank * 100).toFixed(0)}</div>
+                            <div style={{ width: '32px', textAlign: 'right', fontSize: '11px', fontVariantNumeric: 'tabular-nums', color: item.rs_ratio_63_rank >= 0.7 ? appConfig.colors.good : item.rs_ratio_63_rank <= 0.3 ? appConfig.colors.bad : '#aaa', fontWeight: '600', flexShrink: 0 }}>{(item.rs_ratio_63_rank * 100).toFixed(0)}</div>
                         </div>
                     );
                 })}
             </div>
         );
     };
+
+    const grouped = groupedColumns();
 
     return (
         <div style={{ padding: '20px', maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '20px', height: 'calc(100vh - 40px)' }}>
@@ -446,43 +331,43 @@ export const ScreenerResultPage: React.FC = () => {
                     <label style={{ fontSize: '13px', color: '#888' }}>Base Date:</label>
                     <button onClick={() => shiftDate(-1)} style={{ background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: '16px', padding: '0 5px' }}>◀</button>
                     <input
-                        type="date"
-                        value={targetDate}
-                        onChange={e => updateDateURL(e.target.value)}
-                        style={{
-                            padding: '4px 8px',
-                            borderRadius: '4px',
-                            background: 'rgba(255,255,255,0.05)',
-                            border: '1px solid rgba(255,255,255,0.1)',
-                            color: '#fff',
-                            colorScheme: 'dark',
-                            fontSize: '12px'
-                        }}
+                        type="date" value={targetDate} onChange={e => updateDateURL(e.target.value)}
+                        style={{ padding: '4px 8px', borderRadius: '4px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', colorScheme: 'dark', fontSize: '12px' }}
                     />
                     <button onClick={() => shiftDate(1)} style={{ background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: '16px', padding: '0 5px' }}>▶</button>
                 </div>
             </div>
 
             <div style={{ display: 'flex', gap: '20px', flex: 1, minHeight: 0 }}>
-                {/* Left Panel: Checkboxes & Ranges */}
+                {/* Left Panel: Dynamic Filters */}
                 <div className="glass-panel" style={{ width: '270px', padding: '15px', display: 'flex', flexDirection: 'column', flexShrink: 0, overflowY: 'auto' }}>
                     <h3 style={{ fontSize: '14px', margin: '0 0 15px 0', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '10px' }}>
                         Custom Filters
                     </h3>
                     
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                        {FILTER_CATEGORIES.map((category, idx) => (
-                            <div key={idx}>
+                        {Object.entries(grouped).map(([categoryName, cols]) => (
+                            <div key={categoryName}>
                                 <div style={{ fontSize: '11px', color: appConfig.colors.accent, textTransform: 'uppercase', marginBottom: '8px', letterSpacing: '0.5px' }}>
-                                    {category.title}
+                                    {categoryName}
                                 </div>
                                 <div>
-                                    {category.filters.map(f => (
-                                        <FilterRow key={f.id} def={f} searchParams={queryParams} onChange={handleFilterChange} />
+                                    {cols.map(col => (
+                                        <DynFilterRow key={col.name} col={col} searchParams={queryParams} onChange={handleFilterChange} />
                                     ))}
                                 </div>
                             </div>
                         ))}
+
+                        {/* Boolean Filters */}
+                        <div>
+                            <div style={{ fontSize: '11px', color: appConfig.colors.accent, textTransform: 'uppercase', marginBottom: '8px', letterSpacing: '0.5px' }}>
+                                Special Conditions
+                            </div>
+                            {BOOLEAN_FILTERS.map(bf => (
+                                <BoolFilterRow key={bf.id} label={bf.label} param={bf.param} searchParams={queryParams} onChange={handleFilterChange} />
+                            ))}
+                        </div>
                     </div>
                 </div>
 
@@ -490,12 +375,10 @@ export const ScreenerResultPage: React.FC = () => {
                 <div className="glass-panel" style={{ flex: 1, padding: '20px', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                         <div>
-                            <h2 style={{ margin: 0, fontSize: '20px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                {DisplayTitle}
-                                {basePresetDef && <span style={{ fontSize: '11px', padding: '2px 6px', background: 'rgba(255,100,100,0.2)', color: '#ff8888', borderRadius: '4px', fontWeight: 'bold' }}>BASE FILTER ACTIVE</span>}
+                            <h2 style={{ margin: 0, fontSize: '20px' }}>
+                                {presetId ? `Screener: ${presetId}` : 'Custom Screener'}
                             </h2>
-                            {basePresetDef && <p style={{ margin: '5px 0 0 0', color: '#aaa', fontSize: '12px' }}>{basePresetDef.sub}</p>}
-                            {!basePresetDef && presetId && <p style={{ margin: '5px 0 0 0', color: '#888', fontSize: '12px' }}>Additional criteria can be added from the left panel.</p>}
+                            <p style={{ margin: '5px 0 0 0', color: '#888', fontSize: '12px' }}>Additional criteria can be added from the left panel.</p>
                         </div>
                         <div style={{ fontSize: '14px', color: '#888', background: 'rgba(255,255,255,0.05)', padding: '4px 10px', borderRadius: '4px' }}>
                             {results.length} results

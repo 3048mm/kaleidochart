@@ -1,7 +1,42 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { ScreenerDashboardResponse, ScreenerDashboardCategory } from '../types';
 import { appConfig, getIntensityColor } from '../config';
+
+// Types for preset API response
+interface PresetItem {
+    id: string;
+    name: string;
+    subtitle?: string;
+    group: string;
+    filters: Record<string, number | string>;
+    expression?: string;
+    special?: string;
+}
+
+interface PresetsResponse {
+    rise: PresetItem[];
+    fall: PresetItem[];
+}
+
+interface ScreenerDashboardItem {
+    id: number;
+    ticker: string;
+    name: string;
+    change_pct: number;
+}
+
+interface ScreenerDashboardCategory {
+    id: string;
+    name: string;
+    subtitle?: string;
+    group: string;
+    items: ScreenerDashboardItem[];
+}
+
+interface ScreenerDashboardResponse {
+    rise: ScreenerDashboardCategory[];
+    fall: ScreenerDashboardCategory[];
+}
 
 export const ScreenerPage: React.FC = () => {
     const location = useLocation();
@@ -15,6 +50,7 @@ export const ScreenerPage: React.FC = () => {
         return today.toISOString().split('T')[0];
     });
     const [data, setData] = useState<ScreenerDashboardResponse | null>(null);
+    const [presets, setPresets] = useState<PresetsResponse | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [activeTab, setActiveTab] = useState<'Rise' | 'Fall'>('Rise');
@@ -26,73 +62,37 @@ export const ScreenerPage: React.FC = () => {
         setSelectedDate(d.toISOString().split('T')[0]);
     };
 
-    // Preset -> initial URL params for the result page
-    const PRESET_PARAMS: Record<string, Record<string, string>> = {
-        'check_1d_gain': {
-            min_1d_gain_pct: '4',
-            min_rel_vol: '1',
-            rs_rank_21_gt_63: 'true',
-            max_dist_sma50_atr: '6',
-            min_adr_pct_21: '4',
-            min_market_cap: '1000000000',
-        },
-        'check_volume_surge': {
-            min_vol_surge_21: '1.5',
-            min_rel_vol: '1.2',
-            min_1d_gain_pct: '0',
-            min_adr_pct_21: '4',
-            min_market_cap: '1000000000',
-            max_dist_sma50_atr: '6',
-        },
-        'check_21ema': {
-            min_dist_21ema_pct: '-2',
-            max_dist_21ema_pct: '2',
-            max_dist_sma50_atr: '6',
-            min_adr_pct_21: '4',
-            min_market_cap: '1000000000',
-        },
-        'check_momentum97': {
-            min_rs_ratio_21_rank: '0.97',
-            trend_template_ok: '1',
-        },
-        'check_vcp': {
-            max_adr_pct_21: '3',
-            min_dist_sma50_pct: '0',
-            min_rs_condition_21: '1',
-            rs_rank_21_gt_63: 'true',
-            min_market_cap: '1000000000',
-        },
-        'td9_overhead': { min_td9: '8' },
-        'td9_rebound': { max_td9: '-8' },
-        'dist_sma50_atr_8': { min_dist_sma50_atr: '8' },
-        'high_vol_dist': { min_vol_surge_21: '1.5', max_1d_gain_pct: '-2' },
-        'rrg_leading_in': {
-            rrg_leading_in: 'true',
-            min_vol_surge_21: '1.0',
-            min_adr_pct_21: '4',
-            max_dist_sma50_atr: '6',
-            min_market_cap: '1000000000',
-        },
-        'rrg_lagging_in': {
-            rrg_lagging_in: 'true',
-            max_1d_gain_pct: '-2.0',
-            min_vol_surge_21: '1.0',
-        },
+    // Load presets from API (once)
+    useEffect(() => {
+        fetch('/api/screener/presets')
+            .then(res => res.json())
+            .then((json: PresetsResponse) => setPresets(json))
+            .catch(err => console.error('Failed to load presets:', err));
+    }, []);
+
+    // Build result link from preset filters
+    const buildResultLink = (preset: PresetItem) => {
+        const params = new URLSearchParams({ target_date: selectedDate });
+        for (const [key, value] of Object.entries(preset.filters)) {
+            params.set(key, String(value));
+        }
+        if (preset.expression) {
+            params.set('expression', preset.expression);
+        }
+        if (preset.special) {
+            // Map special flags to boolean params
+            if (preset.special === 'rrg_leading_in') params.set('rrg_leading_in', 'true');
+            if (preset.special === 'rrg_lagging_in') params.set('rrg_lagging_in', 'true');
+        }
+        return `/screener/result/${preset.id}?${params.toString()}`;
     };
 
-    const buildResultLink = (presetId: string) => {
-        const pp = PRESET_PARAMS[presetId] || {};
-        const params = new URLSearchParams({ target_date: selectedDate, ...pp });
-        return `/screener/result/${presetId}?${params.toString()}`;
-    };
-
+    // Fetch dashboard summary data
     useEffect(() => {
         setLoading(true);
         const params = new URLSearchParams();
         if (selectedDate) {
             params.append('target_date', selectedDate);
-            // Sync URL without triggering a full scroll/reload if possible, 
-            // but navigate(..., { replace: true }) is standard.
             navigate(`/screener?${params.toString()}`, { replace: true });
         }
 
@@ -112,10 +112,18 @@ export const ScreenerPage: React.FC = () => {
     }, [selectedDate, navigate]);
 
     const renderPanel = (category: ScreenerDashboardCategory) => {
+        // Find matching preset for link building
+        const allPresets = presets ? [...(presets.rise || []), ...(presets.fall || [])] : [];
+        const matchingPreset = allPresets.find(p => p.id === category.id);
+
+        const linkTarget = matchingPreset
+            ? buildResultLink(matchingPreset)
+            : `/screener/result/${category.id}?target_date=${selectedDate}`;
+
         return (
             <div key={category.id} className="glass-panel" style={{ padding: '15px', display: 'flex', flexDirection: 'column', minWidth: '300px', flex: '1 1 300px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', borderBottom: `1px solid ${appConfig.colors.glassBorder}`, paddingBottom: '10px' }}>
-                    <Link to={buildResultLink(category.id)} style={{ textDecoration: 'none', color: '#fff', fontSize: '16px', fontWeight: 'bold' }}>
+                    <Link to={linkTarget} style={{ textDecoration: 'none', color: '#fff', fontSize: '16px', fontWeight: 'bold' }}>
                         {category.name}
                         {category.subtitle && <span style={{ fontSize: '11px', color: '#aaa', marginLeft: '6px', fontWeight: 'normal' }}>{category.subtitle}</span>}
                         <span style={{ fontSize: '12px', color: '#aaa', marginLeft: '4px', fontWeight: 'normal' }}>›</span>
