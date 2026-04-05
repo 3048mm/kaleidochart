@@ -66,18 +66,28 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
         log("Loading data from Parquet cache...")
         t0 = time.time()
         try:
+            log("  -> Reading symbols...")
             df_symbols = pd.read_parquet(paths['symbols'])
+            log("  -> Reading prices...")
             df_prices = pd.read_parquet(paths['prices'])
+            log("  -> Reading indicators...")
             df_indicators = pd.read_parquet(paths['indicators'])
+            log("  -> Reading ranks...")
             df_ranks = pd.read_parquet(paths['ranks'])
+            log("  -> Reading theme constituents...")
             df_theme_constituents = pd.read_parquet(paths['tc'])
 
-            # Convert dates back to datetime.date (Parquet stores as Timestamp)
-            df_prices['date'] = df_prices['date'].dt.date
-            df_indicators['date'] = df_indicators['date'].dt.date
-            df_ranks['date'] = df_ranks['date'].dt.date
+            log("  -> Parsing dates into canonical format...")
+            # Convert dates safely
+            df_prices['date'] = pd.to_datetime(df_prices['date']).dt.date
+            df_indicators['date'] = pd.to_datetime(df_indicators['date']).dt.date
+            df_ranks['date'] = pd.to_datetime(df_ranks['date']).dt.date
+            
+            log(f"  -> Date types after parse: prices={df_prices['date'].dtype}, ind={df_indicators['date'].dtype}, ranks={df_ranks['date'].dtype}")
+            if not df_ranks.empty:
+                log(f"  -> Sample rank date: {df_ranks['date'].iloc[0]} (Type: {type(df_ranks['date'].iloc[0])})")
 
-            log(f"  Cache loaded in {time.time()-t0:.1f}s")
+            log(f"  Cache loaded successfully in {time.time()-t0:.1f}s")
 
             # Get unique sorted trading dates
             sd = dt_date.fromisoformat(start_date)
@@ -108,44 +118,63 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
     )
     log(f"  Symbols: {len(df_symbols)} loaded ({time.time()-t0:.1f}s)")
 
-    # Daily Prices (date range only — no IN filter for speed)
+    # Daily Prices (chunked to avoid segfaults/OOM)
     log("  Loading daily prices...")
     t1 = time.time()
-    df_prices = pd.read_sql(
+    query_prices = (
         f"SELECT symbol_id, date, open, high, low, close, volume "
-        f"FROM daily_prices WHERE date >= '{buf_start}' AND date <= '{buf_end}'",
-        engine, parse_dates=['date']
+        f"FROM daily_prices WHERE date >= '{buf_start}' AND date <= '{buf_end}'"
     )
-    df_prices['date'] = df_prices['date'].dt.date
+    chunks_prices = []
+    for chunk in pd.read_sql(query_prices, engine, parse_dates=['date'], chunksize=100000):
+        chunk['date'] = pd.to_datetime(chunk['date']).dt.date
+        chunks_prices.append(chunk)
+    df_prices = pd.concat(chunks_prices, ignore_index=True) if chunks_prices else pd.DataFrame()
     log(f"  Daily Prices: {len(df_prices)} rows loaded ({time.time()-t1:.1f}s)")
 
-    # Indicators (date range only)
+    # Indicators (chunked)
     log("  Loading indicators...")
     t1 = time.time()
-    df_indicators = pd.read_sql(
+    query_ind = (
         f"SELECT symbol_id, date, sma_50, ema_21, atr_14, "
         f"adr_pct_21, dist_sma50_atr, vol_surge_21, rel_vol_vs_spy_21, "
         f"rs_ratio_21, rs_ratio_63, rs_momentum_21, "
         f"rs_condition_21, trend_template_ok, market_cap, td9 "
-        f"FROM indicators WHERE date >= '{buf_start}' AND date <= '{buf_end}'",
-        engine, parse_dates=['date']
+        f"FROM indicators WHERE date >= '{buf_start}' AND date <= '{buf_end}'"
     )
-    df_indicators['date'] = df_indicators['date'].dt.date
+    chunks_ind = []
+    for chunk in pd.read_sql(query_ind, engine, parse_dates=['date'], chunksize=50000):
+        chunk['date'] = pd.to_datetime(chunk['date']).dt.date
+        chunks_ind.append(chunk)
+    df_indicators = pd.concat(chunks_ind, ignore_index=True) if chunks_ind else pd.DataFrame()
     log(f"  Indicators: {len(df_indicators)} rows loaded ({time.time()-t1:.1f}s)")
 
-    # Relative Ranks (only rs_ratio_21, rs_ratio_63)
+    # Backfill market_cap from latest non-null values if missing historically
+    if not df_indicators.empty and 'market_cap' in df_indicators.columns:
+        log("  Backfilling market_cap for historical data...")
+        # Get latest known market_cap per symbol across the whole loaded range
+        # Note: df_indicators is sorted by date internally usually, but we use groupby
+        latest_mc = df_indicators.dropna(subset=['market_cap']).sort_values('date').groupby('symbol_id')['market_cap'].last()
+        if not latest_mc.empty:
+            # Map latest_mc to original dataframe where it's NaN
+            df_indicators['market_cap'] = df_indicators['market_cap'].fillna(df_indicators['symbol_id'].map(latest_mc))
+            log(f"  Backfilled market_cap for {len(latest_mc)} symbols.")
+
+    # Relative Ranks
     log("  Loading relative ranks...")
     t1 = time.time()
     rank_start = (sd - timedelta(days=10)).isoformat()
-    df_ranks = pd.read_sql(
-        f"SELECT symbol_id, date, indicator_name, percent_rank "
+    query_ranks = (
+        f"SELECT symbol_id, indicator_name, date, percent_rank "
         f"FROM relative_ranks "
-        f"WHERE date >= '{rank_start}' AND date <= '{end_date}' "
-        f"AND indicator_name IN ('rs_ratio_21', 'rs_ratio_63')",
-        engine, parse_dates=['date']
+        f"WHERE date >= '{rank_start}' AND date <= '{buf_end}' "
+        f"AND indicator_name IN ('rs_ratio_21', 'rs_ratio_63')"
     )
-
-    df_ranks['date'] = df_ranks['date'].dt.date
+    chunks_ranks = []
+    for chunk in pd.read_sql(query_ranks, engine, parse_dates=['date'], chunksize=100000):
+        chunk['date'] = pd.to_datetime(chunk['date']).dt.date
+        chunks_ranks.append(chunk)
+    df_ranks = pd.concat(chunks_ranks, ignore_index=True) if chunks_ranks else pd.DataFrame()
     log(f"  Relative Ranks: {len(df_ranks)} rows loaded ({time.time()-t1:.1f}s)")
 
     # Theme Constituents

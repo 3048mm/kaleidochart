@@ -90,9 +90,9 @@ def scan_signals_for_date(
 
     # --- RS Rank merge (do all merges first, then filter) ---
     if 'min_rs_ratio_21_rank' in strategy or strategy.get('rs_rank_21_gt_63'):
-        rank_dates = df_ranks[df_ranks['date'] <= target_date]['date'].unique()
-        if len(rank_dates) > 0:
-            rank_date = max(rank_dates)
+        past_ranks = df_ranks[df_ranks['date'] <= target_date]
+        if not past_ranks.empty:
+            rank_date = past_ranks['date'].max()
             ranks_day = df_ranks[df_ranks['date'] == rank_date]
 
             r21 = ranks_day[ranks_day['indicator_name'] == 'rs_ratio_21'][['symbol_id', 'percent_rank']].rename(
@@ -122,6 +122,13 @@ def scan_signals_for_date(
                 columns={'rs_ratio_21': 'prev_rs_ratio_21', 'rs_momentum_21': 'prev_rs_momentum_21'}
             )
             merged = merged.merge(ind_prev, on='symbol_id', how='left').reset_index(drop=True)
+
+    # --- Derived columns for filtering ---
+    if 'gain_1d_pct' not in merged.columns and 'close' in merged.columns and 'open' in merged.columns:
+        merged['gain_1d_pct'] = (merged['close'] - merged['open']) / merged['open'] * 100.0
+    
+    if 'dist_21ema_pct' not in merged.columns and 'close' in merged.columns and 'ema_21' in merged.columns:
+        merged['dist_21ema_pct'] = (merged['close'] - merged['ema_21']) / merged['ema_21'] * 100.0
 
     # --- Now build the mask after all merges are done ---
     mask = pd.Series(True, index=merged.index)
@@ -154,7 +161,10 @@ def scan_signals_for_date(
 
     # Fundamentals
     if 'min_market_cap' in strategy:
-        mask &= merged['market_cap'] >= strategy['min_market_cap']
+        # Exempt 'テーマ' category from min_market_cap to allow theme RS to be evaluated
+        # Individual stocks still must meet the requirement if they are to be traded
+        mc_mask = (merged['market_cap'] >= strategy['min_market_cap']) | (merged['category'] == 'テーマ')
+        mask &= mc_mask
 
     # RS Condition
     if 'min_rs_condition_21' in strategy:

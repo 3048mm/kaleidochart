@@ -4,6 +4,7 @@ import logging
 import yfinance as yf
 import subprocess
 import msvcrt
+import tomllib
 from datetime import datetime
 
 # Windows encoding safety
@@ -49,55 +50,6 @@ def release_lock():
         except Exception as e:
             logger.error(f"Error releasing lock: {e}")
 
-def check_if_needs_update():
-    from db.database import get_db, init_db
-    from db.models import Symbol, DailyPrice
-    import tomli
-    
-    config_path = os.path.join(project_root, "config.toml")
-    with open(config_path, "rb") as f:
-        config = tomli.load(f)
-    db_path = config["system"]["db_path"]
-    init_db(db_path)
-    
-    # Get latest date from DB for SPY
-    db_latest_date = None
-    with get_db() as db:
-        spy = db.query(Symbol).filter(Symbol.ticker == "SPY").first()
-        if spy:
-            latest_db_price = db.query(DailyPrice).filter(DailyPrice.symbol_id == spy.id).order_by(DailyPrice.date.desc()).first()
-            if latest_db_price:
-                db_latest_date = latest_db_price.date
-                
-    if not db_latest_date:
-        logger.info("SPY or DailyPrices not found in DB. Full update needed.")
-        return True
-        
-    # Get latest date from yfinance for SPY
-    logger.info("Fetching latest market date from yfinance (SPY)...")
-    try:
-        df = yf.download("SPY", period="5d", progress=False)
-        if df.empty:
-            logger.error("Could not fetch data from yfinance. Assuming no update needed to prevent blank DB.")
-            return False
-            
-        # df.index contains timestamps, get the date of the last row
-        yf_latest_date = df.index[-1].date()
-        
-        logger.info(f"DB latest date: {db_latest_date}, Market latest date: {yf_latest_date}")
-        
-        # Compare dates (convert to string for clean comparison)
-        if str(db_latest_date) == str(yf_latest_date):
-            logger.info("DB is already up to date with the market. Exiting.")
-            return False
-            
-    except Exception as e:
-        logger.error(f"Error fetching validation data from yfinance: {e}")
-        return False
-        
-    logger.info("New market data available. Proceeding with update.")
-    return True
-
 def run_update():
     logger.info("Starting update_pipeline.py calculation...")
     env = os.environ.copy()
@@ -122,11 +74,8 @@ if __name__ == "__main__":
         sys.exit(0)
         
     try:
-        # Check if we actually have new data to download
-        if not check_if_needs_update():
-            sys.exit(0)
-            
-        # Block and run the update
+        # We now rely on update_pipeline.py's own autonomous catch-up logic
+        # which is more robust than a target-less date comparison on SPY only.
         run_update()
     finally:
         # Guarantee lock release even if crashes

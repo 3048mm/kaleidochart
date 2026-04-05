@@ -114,27 +114,31 @@ def sync_symbols_from_txt(db):
     
     # Get all active theme symbols
     themes = db.query(Symbol).filter(Symbol.category == 'テーマ', Symbol.active == 1).all()
+    # Get all active individual symbols
+    all_stocks = db.query(Symbol).filter(Symbol.category == '個別', Symbol.active == 1).all()
     
     constituents_to_add = []
     for theme in themes:
         theme_id = theme.id
-        theme_ticker = theme.ticker.strip()
-        theme_name = theme.name.strip()
+        theme_ticker = theme.ticker.strip().upper()
+        theme_name = theme.name.strip().upper()
         
-        # Match stocks that have this theme ticker or name in their tags
-        matching_symbols = db.query(Symbol).filter(
-            Symbol.active == 1,
-            Symbol.category == '個別',
-            (Symbol.tags.like(f"%{theme_ticker}%")) | (Symbol.tags.like(f"%{theme_name}%"))
-        ).all()
-        
-        if matching_symbols:
-            weight = 1.0 / len(matching_symbols)
-            for m_sym in matching_symbols:
+        # Match stocks that have this theme ticker or name in their tags (split by comma)
+        for stock in all_stocks:
+            if not stock.tags: continue
+            
+            # Split tags and clean them
+            stock_tags = [t.strip().upper() for t in stock.tags.split(',') if t.strip()]
+            
+            # Match if ticker or name is in tags
+            if theme_ticker in stock_tags or theme_name in stock_tags:
                 constituents_to_add.append(
-                    ThemeConstituent(theme_id=theme_id, symbol_id=m_sym.id, weight=weight)
+                    ThemeConstituent(theme_id=theme_id, symbol_id=stock.id, weight=1.0)
                 )
-
+    
+    # Recalculate weights if needed (optional: current is 1.0 per relation)
+    # But Strategy B backtest_screener calculates its own count for weights if needed
+    
     if constituents_to_add:
         db.bulk_save_objects(constituents_to_add)
         db.commit()

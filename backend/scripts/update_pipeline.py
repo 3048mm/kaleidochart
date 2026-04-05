@@ -2,7 +2,7 @@ import os
 import sys
 import time
 import logging
-import tomli
+import tomllib
 import pandas as pd
 import argparse
 import traceback
@@ -29,45 +29,29 @@ from indicators.calculator import calculate_indicators, calculate_relative_ranks
 
 # Configure comprehensive logging
 def setup_pipeline_logging():
-    """
-    Setup logging to both console and a rotating file.
-    """
-    # Use logs directory at the project root
     log_dir = os.path.join(project_root, "logs")
     if not os.path.exists(log_dir):
         os.makedirs(log_dir, exist_ok=True)
-        
     log_file = os.path.join(log_dir, "pipeline.log")
-    
-    # Root logger
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.INFO)
-    
-    # Remove existing handlers
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
-        
     log_format = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
-    
-    # Console Handler
     console_h = logging.StreamHandler(sys.stdout)
     console_h.setFormatter(log_format)
     root_logger.addHandler(console_h)
-    
-    # File Handler (10MB per file, max 5 pieces)
     file_h = RotatingFileHandler(log_file, maxBytes=10*1024*1024, backupCount=5, encoding='utf-8')
     file_h.setFormatter(log_format)
     root_logger.addHandler(file_h)
-    
     return logging.getLogger(__name__)
 
-# Apply logging setup immediately
 logger = setup_pipeline_logging()
 
 def load_config():
     config_path = os.path.join(project_root, "config.toml")
     with open(config_path, "rb") as f:
-        return tomli.load(f)
+        return tomllib.load(f)
 
 def _to_val(row, key):
     v = row.get(key)
@@ -78,719 +62,272 @@ def _to_val(row, key):
         pass
     return v
 
+# --- Phase Functions (Modular) ---
+
+def sync_phase_t2_prices(db, sheet_data, symbol_id_map, initial_fetch_days, skip_fetch=False):
+    """Phase 2: Prices (T2) - Sync prices from yfinance led by SPY."""
+    logger.info("--- Phase 2: Price data sync START ---")
+    spy_item = next((d for d in sheet_data if d['ticker'] == 'SPY'), None)
+    if not spy_item:
+        logger.error("SPY not found in sheet_data.")
+        return None
+    spy_sym_id = symbol_id_map.get(("SPY", spy_item['exchange']))
+    spy_max_date = db.query(func.max(DailyPrice.date)).filter(DailyPrice.symbol_id == spy_sym_id).scalar()
+    default_start = (datetime.now() - timedelta(days=initial_fetch_days)).strftime('%Y-%m-%d')
+    spy_fetch_start = default_start
+    if spy_max_date:
+        spy_fetch_start = (datetime.combine(spy_max_date, datetime.min.time()) + timedelta(days=1)).strftime('%Y-%m-%d')
+    if not skip_fetch:
+        logger.info(f"Updating SPY from {spy_fetch_start}...")
+        spy_df = fetch_daily_data("SPY", spy_fetch_start)
+        if spy_df is not None and not spy_df.empty:
+            existing_dates = {r[0] for r in db.query(DailyPrice.date).filter(DailyPrice.symbol_id == spy_sym_id).all()}
+            new_recs = [DailyPrice(symbol_id=spy_sym_id, date=row['date'], open=_to_val(row, 'open'), high=_to_val(row, 'high'), low=_to_val(row, 'low'), close=_to_val(row, 'close'), volume=int(row['volume']) if _to_val(row, 'volume') is not None else 0) for _, row in spy_df.iterrows() if row['date'] not in existing_dates]
+            if new_recs:
+                db.bulk_save_objects(new_recs)
+                db.commit()
+                logger.info(f"SPY updated: +{len(new_recs)} rows.")
+            else:
+                logger.info("SPY: No new rows to add.")
+    spy_latest_date = db.query(func.max(DailyPrice.date)).filter(DailyPrice.symbol_id == spy_sym_id).scalar()
+    logger.info(f"Target Reference Date (SPY): {spy_latest_date}")
+    if not spy_latest_date: return None
+    real_items = [d for d in sheet_data if d['theme_type'] != 'virtual' and d['ticker'] != 'SPY']
+    latest_rows = db.query(DailyPrice.symbol_id, func.max(DailyPrice.date)).group_by(DailyPrice.symbol_id).all()
+    sym_latest_map = {sid: ldt for sid, ldt in latest_rows}
+    update_needed = [(it['ticker'], symbol_id_map.get((it['ticker'], it['exchange'])), sym_latest_map.get(symbol_id_map.get((it['ticker'], it['exchange'])))) for it in real_items if not sym_latest_map.get(symbol_id_map.get((it['ticker'], it['exchange']))) or sym_latest_map.get(symbol_id_map.get((it['ticker'], it['exchange']))) < spy_latest_date]
+    logger.info(f"Found {len(update_needed)} tickers needing price update.")
+    if not skip_fetch and update_needed:
+        for ticker, sid, current_max in update_needed:
+            f_start = default_start
+            if current_max: f_start = (datetime.combine(current_max, datetime.min.time()) + timedelta(days=1)).strftime('%Y-%m-%d')
+            df = fetch_daily_data(ticker, f_start)
+            if df is not None and not df.empty:
+                existing_dates = {r[0] for r in db.query(DailyPrice.date).filter(DailyPrice.symbol_id == sid).all()}
+                new_recs = [DailyPrice(symbol_id=sid, date=row['date'], open=_to_val(row, 'open'), high=_to_val(row, 'high'), low=_to_val(row, 'low'), close=_to_val(row, 'close'), volume=int(row['volume']) if _to_val(row, 'volume') is not None else 0) for _, row in df.iterrows() if row['date'] not in existing_dates]
+                if new_recs:
+                    db.bulk_save_objects(new_recs)
+                    db.commit()
+                    logger.debug(f"[{ticker}] Updated +{len(new_recs)} rows.")
+    return spy_latest_date
+
+def sync_phase_t3_indicators(db, sheet_data, symbol_id_map, spy_latest_date, skip_fetch=False):
+    """Phase 3: Indicators (T3) - Per-ticker catch-up using T2 price data."""
+    logger.info("--- Phase 3: Indicator calculation START ---")
+    if not spy_latest_date: return
+    spy_sym_id = symbol_id_map.get(("SPY", "NYSE" if ("SPY", "NYSE") in symbol_id_map else "AMEX")) or db.query(Symbol.id).filter(Symbol.ticker == "SPY").scalar()
+    spy_all = db.query(DailyPrice).filter(DailyPrice.symbol_id == spy_sym_id).order_by(DailyPrice.date).all()
+    spy_df = pd.DataFrame([{"date": r.date, "close": r.close, "volume": r.volume} for r in spy_all])
+    p_max_map = {sid: mdt for sid, mdt in db.query(DailyPrice.symbol_id, func.max(DailyPrice.date)).group_by(DailyPrice.symbol_id).all()}
+    i_max_map = {sid: mdt for sid, mdt in db.query(Indicator.symbol_id, func.max(Indicator.date)).group_by(Indicator.symbol_id).all()}
+    update_count = 0
+    for item in sheet_data:
+        ticker, sid = item['ticker'], symbol_id_map.get((item['ticker'], item['exchange']))
+        if not sid: continue
+        t2_max, t3_max = p_max_map.get(sid), i_max_map.get(sid)
+        if t2_max and (not t3_max or t3_max < t2_max):
+            logger.info(f"[{ticker}] Calculating T3 indicators (Gap: {t3_max} -> {t2_max}).")
+            df_price = pd.DataFrame([{'date': p.date, 'open': p.open, 'high': p.high, 'low': p.low, 'close': p.close, 'volume': p.volume} for p in db.query(DailyPrice).filter(DailyPrice.symbol_id == sid).order_by(DailyPrice.date).all()])
+            df_ind = calculate_indicators(df_price, spy_df if ticker != "SPY" else None)
+            fund_res = {} if skip_fetch else fetch_fundamentals(ticker)
+            shares_df, info = fund_res.get("shares"), fund_res.get("info")
+            df_ind['market_cap'] = None
+            if shares_df is not None and not shares_df.empty:
+                try:
+                    s_series = shares_df.iloc[:, 0]
+                    s_series.index = pd.to_datetime(s_series.index).tz_localize(None).normalize()
+                    s_df = s_series.reset_index(); s_df.columns = ['date', 'shares']
+                    merged = pd.merge_asof(pd.DataFrame({'date': pd.to_datetime(df_price['date'])}), s_df.sort_values('date'), on='date', direction='backward')
+                    df_ind['market_cap'] = df_price['close'].values * merged['shares'].values
+                except Exception as e: logger.error(f"[{ticker}] Market cap calc error: {e}")
+            if info and 'marketCap' in info: df_ind['market_cap'] = df_ind['market_cap'].fillna(info['marketCap'])
+            existing_i_dates = {r[0] for r in db.query(Indicator.date).filter(Indicator.symbol_id == sid).all()}
+            delta_df = df_ind[(df_ind['date'] > (t3_max if t3_max else date(2000, 1, 1))) & (~df_ind['date'].isin(existing_i_dates))]
+            
+            if not delta_df.empty:
+                t3_recs = [Indicator(symbol_id=sid, date=row['date'], sma_5=_to_val(row, 'sma_5'), sma_21=_to_val(row, 'sma_21'), sma_50=_to_val(row, 'sma_50'), sma_63=_to_val(row, 'sma_63'), sma_150=_to_val(row, 'sma_150'), sma_200=_to_val(row, 'sma_200'), ema_5=_to_val(row, 'ema_5'), ema_21=_to_val(row, 'ema_21'), ema_50=_to_val(row, 'ema_50'), ema_63=_to_val(row, 'ema_63'), ema_150=_to_val(row, 'ema_150'), ema_200=_to_val(row, 'ema_200'), td9=int(row['td9']) if _to_val(row, 'td9') is not None else 0, atr_14=_to_val(row, 'atr_14'), atr_pct_14=_to_val(row, 'atr_pct_14'), adr_pct_21=_to_val(row, 'adr_pct_21'), dist_sma50_atr=_to_val(row, 'dist_sma50_atr'), market_cap=_to_val(row, 'market_cap'), relative_strength_spy=_to_val(row, 'relative_strength_spy'), rs_condition_14=_to_val(row, 'rs_condition_14'), rs_condition_21=_to_val(row, 'rs_condition_21'), rs_condition_63=_to_val(row, 'rs_condition_63'), rs_momentum_14=_to_val(row, 'rs_momentum_14'), rs_momentum_21=_to_val(row, 'rs_momentum_21'), rs_momentum_63=_to_val(row, 'rs_momentum_63'), rs_ratio_14=_to_val(row, 'rs_ratio_14'), rs_ratio_21=_to_val(row, 'rs_ratio_21'), rs_ratio_63=_to_val(row, 'rs_ratio_63'), vol_surge_21=_to_val(row, 'vol_surge_21'), rel_vol_vs_spy_21=_to_val(row, 'rel_vol_vs_spy_21'), pct_from_63d_high=_to_val(row, 'pct_from_63d_high'), pct_from_52w_high=_to_val(row, 'pct_from_52w_high'), trend_template_ok=int(row['trend_template_ok']) if _to_val(row, 'trend_template_ok') is not None else None) for _, row in delta_df.iterrows()]
+                db.bulk_save_objects(t3_recs)
+                db.commit()
+                update_count += 1
+    logger.info(f"Phase 3 COMPLETE: Updated {update_count} tickers.")
+
+def sync_phase_t4_ranks(db, spy_latest_date):
+    """Phase 4: Relative Ranks (T4) - Idempotent catch-up."""
+    logger.info("--- Phase 4: Relative Rank calculation START ---")
+    t3_max, t4_max = db.query(func.max(Indicator.date)).scalar(), db.query(func.max(RelativeRank.date)).scalar()
+    if not t3_max or (t4_max and t4_max >= t3_max): return
+    gap_dates = [r[0] for r in db.query(Indicator.date).distinct().filter(Indicator.date > (t4_max if t4_max else date(2000,1,1))).order_by(Indicator.date).all()]
+    if not gap_dates: return
+    indicators_to_rank = ['relative_strength_spy', 'rs_ratio_14', 'rs_ratio_21', 'rs_ratio_63', 'rs_momentum_14', 'rs_momentum_21', 'rs_momentum_63', 'rs_condition_14', 'rs_condition_21', 'rs_condition_63']
+    for d in gap_dates:
+        df_date = pd.read_sql(db.query(Indicator.symbol_id, Indicator.date, Symbol.category, *[getattr(Indicator, col) for col in indicators_to_rank]).join(Symbol, Symbol.id == Indicator.symbol_id).filter(Indicator.date == d).statement, db.bind)
+        if df_date.empty: continue
+        t4_recs = []
+        for ind_col in indicators_to_rank:
+            if ind_col not in df_date.columns: continue
+            df_ranked = calculate_relative_ranks(df_date, group_col='category', indicator_col=ind_col)
+            t4_recs.extend([RelativeRank(symbol_id=int(r['symbol_id']), date=r['date'], group_name=r['group_name'], indicator_name=r['indicator_name'], percent_rank=float(r['percent_rank'])) for r in df_ranked[df_ranked['percent_rank'].notna()].to_dict('records')])
+        db.query(RelativeRank).filter(RelativeRank.date == d).delete()
+        db.bulk_save_objects(t4_recs)
+        db.commit()
+    logger.info("Phase 4 COMPLETE.")
+
+def sync_phase_t5_signals(db):
+    """Phase 5: Market Signals (T5) - Idempotent catch-up."""
+    logger.info("--- Phase 5: Market Signal calculation START ---")
+    spy_sym_id = db.query(Symbol.id).filter(Symbol.ticker == "SPY").scalar()
+    t3_max, t5_max = db.query(func.max(Indicator.date)).filter(Indicator.symbol_id == spy_sym_id).scalar(), db.query(func.max(MarketSignal.date)).scalar()
+    if not t3_max or (t5_max and t5_max >= t3_max): return
+    spy_df = pd.DataFrame([{"date": r.date, "close": r.close, "volume": r.volume} for r in db.query(DailyPrice).filter(DailyPrice.symbol_id == spy_sym_id).order_by(DailyPrice.date).all()])
+    if spy_df.empty: return
+    ms_df = calculate_market_signals(spy_df)
+    if t5_max: ms_df = ms_df[ms_df['date'] > t5_max]
+    if ms_df.empty: return
+    t5_recs = [MarketSignal(date=row['date'], spy_above_sma200=int(row['spy_above_sma200']), spy_sma200_rising=int(row['spy_sma200_rising']) if _to_val(row, 'spy_sma200_rising') is not None else None, distribution_days=int(row['distribution_days']), follow_through_day=int(row['follow_through_day']), market_phase=row['market_phase']) for _, row in ms_df.iterrows()]
+    db.query(MarketSignal).filter(MarketSignal.date.in_(ms_df['date'].tolist())).delete()
+    db.bulk_save_objects(t5_recs)
+    db.commit()
+    logger.info("Phase 5 COMPLETE.")
+
+# --- Utility Functions ---
+
 def sync_symbols_to_db(db, credentials_path, spreadsheet_url):
-    """
-    Fetch from spreadsheet and upsert T1 symbols and ThemeConstituents mapping.
-    """
     sheet_data = fetch_symbols_from_sheet(credentials_path, spreadsheet_url)
-    
-    # 1. Upsert Symbols
-    logger.info("Upserting symbols to database...")
-    
-    # Mark all existing as inactive first (soft delete)
     db.query(Symbol).update({"active": 0})
-    
-    symbol_ids = {} # (ticker, exchange) -> id
-    
+    symbol_ids = {}
     for item in sheet_data:
         sym = db.query(Symbol).filter(Symbol.ticker == item['ticker'], Symbol.exchange == item['exchange']).first()
         if sym:
-            sym.name = item['name']
-            sym.category = item['category']
-            sym.asset_class = item['asset_class']
-            sym.theme_type = item['theme_type']
-            sym.tags = item['tags']
-            sym.active = 1
+            sym.name, sym.category, sym.asset_class, sym.theme_type, sym.tags, sym.active = item['name'], item['category'], item['asset_class'], item['theme_type'], item['tags'], 1
         else:
-            sym = Symbol(
-                ticker=item['ticker'],
-                exchange=item['exchange'],
-                name=item['name'],
-                category=item['category'],
-                asset_class=item['asset_class'],
-                theme_type=item['theme_type'],
-                tags=item['tags'],
-                active=1
-            )
+            sym = Symbol(ticker=item['ticker'], exchange=item['exchange'], name=item['name'], category=item['category'], asset_class=item['asset_class'], theme_type=item['theme_type'], tags=item['tags'], active=1)
             db.add(sym)
-        
         db.flush()
         symbol_ids[(sym.ticker, sym.exchange)] = sym.id
-    
     db.commit()
-    logger.info(f"Updated {len(sheet_data)} active symbols.")
-    
-    # 2. Rebuild ThemeConstituents (VIRTUAL mappings)
-    logger.info("Rebuilding Theme Constituents mapping...")
     db.query(ThemeConstituent).delete()
     db.commit()
-    
-    virtuals = [s for s in sheet_data if s['theme_type'] == 'virtual']
-    constituents_to_add = []
-    
+    virtuals, constituents_to_add = [s for s in sheet_data if s['theme_type'] == 'virtual'], []
     for v_item in virtuals:
         v_id = symbol_ids[(v_item['ticker'], v_item['exchange'])]
-        
-        # We need to find stocks that have tags loosely matching the virtual name
-        # Ex: if virtual name is "フォトニクス", find stocks with "フォトニクス" in tags
-        # In a real scenario, you can define a more rigorous mapping rule (e.g. tag == v_item.ticker)
-        # For now, we will map by checking if the VIRTUAL ticker name (striped of __) or Name is in tags
-        target_tag = v_item['name'].strip()
-        if not target_tag:
-            # Fallback to Ticker if Name is empty
-            target_tag = v_item['ticker'].strip('_')
-            
-        # Find active symbols containing this tag
-        matching_symbols = db.query(Symbol).filter(
-            Symbol.active == 1,
-            Symbol.tags.like(f"%{target_tag}%"),
-            (Symbol.theme_type != 'virtual') | (Symbol.theme_type.is_(None))
-        ).all()
-        
+        target_tag = v_item['name'].strip() or v_item['ticker'].strip('_')
+        matching_symbols = db.query(Symbol).filter(Symbol.active == 1, Symbol.tags.like(f"%{target_tag}%"), (Symbol.theme_type != 'virtual') | (Symbol.theme_type.is_(None))).all()
         if matching_symbols:
-            logger.info(f"Virtual theme '{v_item['ticker']}' ({target_tag}) matched {len(matching_symbols)} constituents.")
-            weight = 1.0 / len(matching_symbols) # Equal weighting
+            weight = 1.0 / len(matching_symbols)
             for m_sym in matching_symbols:
-                constituents_to_add.append(
-                    ThemeConstituent(
-                        theme_id=v_id,
-                        symbol_id=m_sym.id,
-                        weight=weight
-                    )
-                )
-        else:
-            logger.warning(f"Virtual theme '{v_item['ticker']}' ({target_tag}) has no matching constituent symbols.")
-            
+                constituents_to_add.append(ThemeConstituent(theme_id=v_id, symbol_id=m_sym.id, weight=weight))
     if constituents_to_add:
         db.bulk_save_objects(constituents_to_add)
         db.commit()
-        
     return sheet_data, symbol_ids
 
 def build_virtual_index_prices(db, virtual_id: int):
-    """
-    Idea C: Synthesize DailyPrice for a virtual index based on equally weighted returns of constituents.
-    Base value is 1000.
-    """
-    # Get constituents
     mappings = db.query(ThemeConstituent).filter(ThemeConstituent.theme_id == virtual_id).all()
-    if not mappings:
-        return pd.DataFrame()
-        
+    if not mappings: return pd.DataFrame()
     c_ids = [m.symbol_id for m in mappings]
-    
-    # Query all prices for these constituents - Chunked to avoid SQL variable limit (SQLite default 999)
     all_prices = []
-    chunk_size = 900
-    for i in range(0, len(c_ids), chunk_size):
-        chunk = c_ids[i:i + chunk_size]
-        prices = db.query(DailyPrice).filter(DailyPrice.symbol_id.in_(chunk)).all()
-        all_prices.extend(prices)
-        
-    if not all_prices:
-        return pd.DataFrame()
-        
-    # Build dataframe: date, symbol_id, close
-    df = pd.DataFrame([{
-        'date': p.date,
-        'symbol_id': p.symbol_id,
-        'close': p.close
-    } for p in all_prices if p.close is not None and p.close > 0])
-    
-    if df.empty:
-        return pd.DataFrame()
-        
-    # Calculate daily returns for each symbol
+    for i in range(0, len(c_ids), 900):
+        all_prices.extend(db.query(DailyPrice).filter(DailyPrice.symbol_id.in_(c_ids[i:i + 900])).all())
+    if not all_prices: return pd.DataFrame()
+    df = pd.DataFrame([{'date': p.date, 'symbol_id': p.symbol_id, 'close': p.close} for p in all_prices if p.close is not None and p.close > 0])
+    if df.empty: return pd.DataFrame()
     df = df.sort_values('date')
     df['ret'] = df.groupby('symbol_id')['close'].pct_change()
-    
-    # Average the returns cross-sectionally per day
-    daily_avg_ret = df.dropna(subset=['ret']).groupby('date')['ret'].mean().reset_index()
-    daily_avg_ret = daily_avg_ret.sort_values('date')
-    
-    if daily_avg_ret.empty:
-        return pd.DataFrame()
-        
-    # Compound returns starting from 1000
-    base_value = 1000.0
-    synth_closes = []
-    
-    current_val = base_value
+    daily_avg_ret = df.dropna(subset=['ret']).groupby('date')['ret'].mean().reset_index().sort_values('date')
+    if daily_avg_ret.empty: return pd.DataFrame()
+    current_val, synth_closes = 1000.0, []
     for _, row in daily_avg_ret.iterrows():
         current_val *= (1 + row['ret'])
         synth_closes.append(current_val)
-        
     daily_avg_ret['close'] = synth_closes
-    daily_avg_ret['open'] = daily_avg_ret['close']
-    daily_avg_ret['high'] = daily_avg_ret['close']
-    daily_avg_ret['low'] = daily_avg_ret['close']
-    daily_avg_ret['volume'] = 0
-    daily_avg_ret['symbol_id'] = virtual_id
-    
+    daily_avg_ret['open'] = daily_avg_ret['high'] = daily_avg_ret['low'] = daily_avg_ret['close']
+    daily_avg_ret['volume'], daily_avg_ret['symbol_id'] = 0, virtual_id
     return daily_avg_ret
 
+# --- Main Pipeline ---
 
-def run_step3_pipeline(recalculate_all: bool = False, categories: Optional[List[str]] = None, skip_fetch: bool = False, skip_sync: bool = False, skip_t3: bool = False):
-    logger.info(f"Starting Step 3 Data Pipeline (Sheet Sync + Virtual Index) - recalculate_all={recalculate_all}, categories={categories}")
-    
+def run_step3_pipeline(rebuild_from: Optional[str] = None, categories: Optional[List[str]] = None, skip_fetch: bool = False, skip_sync: bool = False, skip_t3: bool = False, recalculate_all: bool = False):
+    """
+    Main Data Pipeline (Step 3) - Modular and Robust.
+    Supports cascaded rebuild via 'rebuild_from' or 'recalculate_all'.
+    """
+    logger.info(f"Starting Step 3 Pipeline - rebuild_from={rebuild_from}, categories={categories}, re-calculate={recalculate_all}")
     config = load_config()
-    db_path = config["system"]["db_path"]
-    spreadsheet_url = config["system"].get("spreadsheet_url", "https://docs.google.com/spreadsheets/d/1pkwMVl6FaurinU2Z1Mm_fW_zepMe6YLXE0e-v-vcp1k/edit#gid=0")
-    credentials_path = config["system"].get("credentials_path", "credentials.json")
-    initial_fetch_days = config["data_collection"]["initial_fetch_days"]
-    sleep_seconds = config["data_collection"]["sleep_seconds"]
+    init_db(config["system"]["db_path"])
     
-    init_db(db_path)
-    
+    # Map rebuild levels
+    lvl_map = {'T2': 2, 'T3': 3, 'T4': 4, 'T5': 5}
+    active_lvl = lvl_map.get(str(rebuild_from).upper(), 0)
+    if recalculate_all: active_lvl = 2
+
     try:
         with get_db() as db:
-            # 1. Sync from Spreadsheets
+            # 1. Phase 1: Symbol Sync (T1)
             if not skip_sync:
-                logger.info("--- Phase 1: Symbol sync from Google Spreadsheet START ---")
-                sheet_data, symbol_id_map = sync_symbols_to_db(db, credentials_path, spreadsheet_url)
-                logger.info(f"--- Phase 1 COMPLETE: {len(sheet_data)} symbols synced ---")
+                sheet_data, symbol_id_map = sync_symbols_to_db(db, config["system"].get("credentials_path", "credentials.json"), config["system"].get("spreadsheet_url", "https://docs.google.com/spreadsheets/d/1pkwMVl6FaurinU2Z1Mm_fW_zepMe6YLXE0e-v-vcp1k/edit#gid=0"))
             else:
-                logger.info("Phase 1 skipped (skip_sync=True). Loading existing symbols from DB.")
                 symbols = db.query(Symbol).filter(Symbol.active == True).all()
-                sheet_data = []
-                symbol_id_map = {}
-                for s in symbols:
-                    # Mock sheet_data format for downstream
-                    sheet_data.append({
-                        'ticker': s.ticker,
-                        'exchange': s.exchange,
-                        'category': s.category,
-                        'theme_type': s.theme_type
-                    })
-                    symbol_id_map[(s.ticker, s.exchange)] = s.id
-                logger.info(f"Loaded {len(sheet_data)} symbols from DB.")
+                sheet_data = [{'ticker': s.ticker, 'exchange': s.exchange, 'category': s.category, 'theme_type': s.theme_type} for s in symbols]
+                symbol_id_map = {(s.ticker, s.exchange): s.id for s in symbols}
             
-            # --- Category Filter ---
             if categories:
-                original_count = len(sheet_data)
-                # Ensure SPY is always included as it's the benchmark for RS
                 sheet_data = [s for s in sheet_data if s['category'] in categories or s['ticker'] == 'SPY']
-                logger.info(f"Filtering symbols by categories {categories}. Filtered symbols: {len(sheet_data)} / {original_count}")
             
-            # Split into real vs virtual
-            real_tickers = [d['ticker'] for d in sheet_data if d['theme_type'] != 'virtual']
+            target_ids = [symbol_id_map.get((s['ticker'], s['exchange'])) for s in sheet_data]
+
+            # 2. Cascade Deletion for Rebuild
+            if active_lvl > 0:
+                logger.info(f"Cascaded Rebuild Triggered: Clearing downstream from level {active_lvl}")
+                if active_lvl <= 5: # Signals
+                    db.query(MarketSignal).delete()
+                if active_lvl <= 4: # Ranks
+                    if categories: db.query(RelativeRank).filter(RelativeRank.symbol_id.in_(target_ids)).delete()
+                    else: db.query(RelativeRank).delete()
+                if active_lvl <= 3: # Indicators
+                    if categories: db.query(Indicator).filter(Indicator.symbol_id.in_(target_ids)).delete()
+                    else: db.query(Indicator).delete()
+                if active_lvl <= 2: # Prices (Real tickers only, SPY is preserved unless explicit)
+                    if categories: db.query(DailyPrice).filter(DailyPrice.symbol_id.in_(target_ids), Symbol.ticker != 'SPY').delete()
+                    # We move on, Phase 2 will fill the gaps
+                db.commit()
+
+            # 3. Phase 2: Price Sync (T2)
+            spy_latest_date = sync_phase_t2_prices(db, sheet_data, symbol_id_map, config["data_collection"]["initial_fetch_days"], skip_fetch=skip_fetch)
+            
+            # 4. Phase 2+: Virtual Themes
             virtual_items = [d for d in sheet_data if d['theme_type'] == 'virtual']
-            
-            # 2. Sync Price Data
-            logger.info(f"--- Phase 2: Price data sync START (Real: {len(real_tickers)}, Virtual: {len(virtual_items)}) ---")
-            data_dict = {}
-            
-            # 2. Fetch SPY first to determine the target (latest) date
-            logger.info("Fetching SPY data to determine target date...")
-            spy_full_start = (datetime.now() - timedelta(days=initial_fetch_days)).strftime('%Y-%m-%d')
-            
-            spy_item = next((d for d in sheet_data if d['ticker'] == 'SPY'), None)
-            spy_sym_id = symbol_id_map.get(('SPY', spy_item['exchange'])) if spy_item else None
-        
-        # Get SPY's current latest date in DB
-        spy_latest_in_db = None
-        if spy_sym_id:
-            row = db.query(func.max(DailyPrice.date)).filter(DailyPrice.symbol_id == spy_sym_id).scalar()
-            spy_latest_in_db = row
-        
-        # Determine SPY fetch start (incremental if exists, full otherwise)
-        if spy_latest_in_db:
-            spy_fetch_start = (datetime.combine(spy_latest_in_db, datetime.min.time()) + timedelta(days=1)).strftime('%Y-%m-%d')
-            logger.info(f"SPY exists in DB up to {spy_latest_in_db}. Fetching incremental from {spy_fetch_start}...")
-        else:
-            spy_fetch_start = spy_full_start
-            logger.info(f"SPY not in DB. Fetching full history from {spy_fetch_start}...")
-        
-        spy_new_df = pd.DataFrame()
-        if not skip_fetch:
-            spy_new_df = fetch_daily_data("SPY", spy_fetch_start)
-        else:
-            logger.info("Skipping SPY fetch due to --skip-fetch.")
-        
-        # Ensure SPY is in data_dict to signal it should be processed for indicators
-        data_dict["SPY"] = spy_new_df if not spy_new_df.empty else None
-        
-        # Save new SPY rows (append only - do not delete)
-        if not spy_new_df.empty:
-            existing_spy_dates = set(
-                str(r[0]) for r in db.query(DailyPrice.date)
-                .filter(DailyPrice.symbol_id == spy_sym_id).all()
-            ) if spy_sym_id and spy_latest_in_db else set()
-            
-            new_spy_records = [
-                DailyPrice(
-                    symbol_id=spy_sym_id,
-                    date=row['date'],
-                    open=_to_val(row, 'open'),
-                    high=_to_val(row, 'high'),
-                    low=_to_val(row, 'low'),
-                    close=_to_val(row, 'close'),
-                    volume=int(row['volume']) if _to_val(row, 'volume') is not None else 0,
-                )
-                for _, row in spy_new_df.iterrows()
-                if str(row['date']) not in existing_spy_dates
-            ]
-            if new_spy_records:
-                db.bulk_save_objects(new_spy_records)
-                db.commit()
-                logger.info(f"SPY: inserted {len(new_spy_records)} new rows.")
-                data_dict["SPY"] = spy_new_df # Track so T3 calculation is triggered
-            else:
-                logger.info("SPY: no new rows to insert.")
-                data_dict["SPY"] = None # Track so T3 calculation logic can still check it
-        
-        # Get SPY's latest date (now updated)
-        spy_latest_date = db.query(func.max(DailyPrice.date)).filter(DailyPrice.symbol_id == spy_sym_id).scalar() if spy_sym_id else None
-        logger.info(f"SPY target date (latest): {spy_latest_date}")
-        
-        # Load full SPY for indicator calculations
-        spy_all = db.query(DailyPrice).filter(DailyPrice.symbol_id == spy_sym_id).order_by(DailyPrice.date).all()
-        spy_df = pd.DataFrame([{"date": r.date, "close": r.close, "volume": r.volume} for r in spy_all])
-        
-        # 3. Get latest date in DB for each symbol (bulk query)
-        latest_date_rows = db.query(DailyPrice.symbol_id, func.max(DailyPrice.date)).group_by(DailyPrice.symbol_id).all()
-        sym_latest_date_map = {sym_id: latest for sym_id, latest in latest_date_rows}
-        
-        logger.info("Fetching/updating price data for real symbols (incremental)...")
-        for item in sheet_data:
-            if item['theme_type'] == 'virtual':
-                continue
-            # SPY is already handled in data_dict above
-                
-            ticker = item['ticker']
-            sym_id = symbol_id_map[(ticker, item['exchange'])]
-            sym_latest = sym_latest_date_map.get(sym_id)
-            
-            # Skip fetch logic
-            if skip_fetch:
-                logger.debug(f"[{ticker}] --skip-fetch is set. Using existing DB data.")
-                data_dict[ticker] = None # Signal to Use existing T2
-                continue
-
-            # Skip if already up to date
-            if sym_latest and spy_latest_date and str(sym_latest) >= str(spy_latest_date):
-                logger.debug(f"[{ticker}] Already up to date ({sym_latest}). Skipping.")
-                data_dict[ticker] = None  # Signal: skip indicator recalc
-                continue
-            
-            # Determine fetch start date
-            if isinstance(sym_latest, date):
-                fetch_start = (datetime.combine(sym_latest, datetime.min.time()) + timedelta(days=1)).strftime('%Y-%m-%d')
-                logger.info(f"[{ticker}] Incremental fetch from {fetch_start} (latest in DB: {sym_latest}).")
-            else:
-                fetch_start = spy_full_start
-                logger.info(f"[{ticker}] Full fetch from {fetch_start} (new symbol).")
-            
-            df_new = fetch_daily_data(ticker, fetch_start)
-            time.sleep(sleep_seconds)
-            
-            if df_new is None or df_new.empty:
-                data_dict[ticker] = None
-                continue
-            
-            # Append only new rows (avoid duplicates)
-            existing_dates = set(
-                str(r[0]) for r in db.query(DailyPrice.date)
-                .filter(DailyPrice.symbol_id == sym_id).all()
-            ) if sym_latest else set()
-            
-            new_rows = [
-                DailyPrice(
-                    symbol_id=sym_id,
-                    date=row['date'],
-                    open=_to_val(row, 'open'),
-                    high=_to_val(row, 'high'),
-                    low=_to_val(row, 'low'),
-                    close=_to_val(row, 'close'),
-                    volume=int(row['volume']) if _to_val(row, 'volume') is not None else 0,
-                )
-                for _, row in df_new.iterrows()
-                if str(row['date']) not in existing_dates
-            ]
-            if new_rows:
-                db.bulk_save_objects(new_rows)
-                db.commit()
-                data_dict[ticker] = df_new  # Has new data → needs indicator recalc
-            else:
-                data_dict[ticker] = None
-        
-        db.commit()
-        
-        # 4. Synthesize T2 for Virtual Themes (always recalculate since constituents may have changed)
-        logger.info("Synthesizing T2 DailyPrice records for virtual themes...")
-        for v_item in virtual_items:
-            v_ticker = v_item['ticker']
-            v_id = symbol_id_map[(v_ticker, v_item['exchange'])]
-            
-            synth_df = build_virtual_index_prices(db, v_id)
-            if not synth_df.empty:
-                db.query(DailyPrice).filter(DailyPrice.symbol_id == v_id).delete()
-                db.query(Indicator).filter(Indicator.symbol_id == v_id).delete()
-                db.commit()
-                
-                t2_records = [
-                    DailyPrice(
-                        symbol_id=v_id,
-                        date=row['date'],
-                        open=row['open'],
-                        high=row['high'],
-                        low=row['low'],
-                        close=row['close'],
-                        volume=0
-                    )
-                    for _, row in synth_df.iterrows()
-                ]
-                db.bulk_save_objects(t2_records)
-                data_dict[v_ticker] = synth_df  # Always recalc virtual
-        db.commit()
-
-        
-        # --- Step 5: Calculate T3 Indicators for ALL symbols ---
-        all_indicators_dfs = []
-        if skip_t3:
-            logger.info("Skipping T3 Indicator calculation (--skip-t3). Loading existing indicators from DB for T4 ranking...")
-            indicators_to_rank = [
-                'relative_strength_spy', 
-                'rs_ratio_14', 'rs_ratio_21', 'rs_ratio_63',
-                'rs_momentum_14', 'rs_momentum_21', 'rs_momentum_63',
-                'rs_condition_14', 'rs_condition_21', 'rs_condition_63'
-            ]
-            # Join with Symbol to get 'category' group and only select required columns to save RAM
-            query = db.query(
-                Indicator.symbol_id,
-                Indicator.date,
-                Symbol.category,
-                *[getattr(Indicator, col) for col in indicators_to_rank if hasattr(Indicator, col)]
-            ).join(Symbol, Symbol.id == Indicator.symbol_id).filter(Symbol.active == 1)
-            
-            # Load into a single DataFrame for T4
-            combined_df = pd.read_sql(query.statement, db.bind)
-            logger.info(f"Loaded {len(combined_df)} indicators for ranking.")
-        else:
-            logger.info("Calculating T3 Indicators for all symbols...")
-            processed_t3_sym_ids = set()
-            for item in sheet_data:
-                ticker = item['ticker']
-                sym_id = symbol_id_map[(ticker, item['exchange'])]
-                
-                # Prevent duplicate processing if a ticker is in multiple sheets
-                if sym_id in processed_t3_sym_ids:
-                    continue
-                processed_t3_sym_ids.add(sym_id)
-                
-                try:
-                    has_new_data = ticker in data_dict and data_dict.get(ticker) is not None
-
-                    # Check latest indicator date vs price date to ensure no gaps
-                    latest_ind_date = db.query(func.max(Indicator.date)).filter(Indicator.symbol_id == sym_id).scalar()
-                    latest_price_date = sym_latest_date_map.get(sym_id)
-                    
-                    is_up_to_date = (latest_ind_date and latest_price_date and latest_ind_date >= latest_price_date)
-
-                    # recalculate_all が False かつ価格更新がない場合、かつインジケーターが既に最新の場合のみスキップ
-                    if not recalculate_all and not has_new_data and ticker in data_dict and is_up_to_date:
-                        # Symbol is up to date — load only the latest indicator row from DB for RS Rank
-                        latest_ind = db.query(Indicator).filter(
-                            Indicator.symbol_id == sym_id,
-                            Indicator.date == latest_ind_date
-                        ).first()
-                        if latest_ind:
-                            rs21 = latest_ind.rs_ratio_21
-                            rs63 = latest_ind.rs_ratio_63
-                            rs_mom21 = latest_ind.rs_momentum_21
-                            if rs21 is not None or rs63 is not None:
-                                mini = pd.DataFrame([{
-                                    'symbol_id': sym_id,
-                                    'category': item['category'],
-                                    'date': latest_ind.date,
-                                    'rs_ratio_21': rs21,
-                                    'rs_ratio_63': rs63,
-                                    'rs_momentum_21': rs_mom21,
-                                }])
-                                all_indicators_dfs.append(mini)
-                        continue  # Skip full recalculation
-
-                    if not has_new_data and ticker not in data_dict:
-                        # Brand new ticker with no price data fetched, skip entirely
-                        continue
-
-                    # Has new data — load full history from DB and recalculate all indicators
-                    all_prices = db.query(DailyPrice).filter(
-                        DailyPrice.symbol_id == sym_id
-                    ).order_by(DailyPrice.date).all()
-                    if not all_prices:
-                        continue
-                    df = pd.DataFrame([{
-                        'date': p.date, 'open': p.open, 'high': p.high,
-                        'low': p.low, 'close': p.close, 'volume': p.volume
-                    } for p in all_prices])
-
-                    # Fetch existing market_cap as fallback BEFORE any potential delete
-                    fallback_mcap = db.query(Indicator.market_cap).filter(
-                        Indicator.symbol_id == sym_id,
-                        Indicator.market_cap.is_not(None)
-                    ).order_by(Indicator.date.desc()).first()
-                    fallback_mcap = fallback_mcap[0] if fallback_mcap else None
-
-                    df_ind = calculate_indicators(df, spy_df if ticker != "SPY" else None)
-
-                    # Fetch fundamentals for market_cap calculation
-                    fund_res = {}
-                    if not skip_fetch:
-                        logger.debug(f"[{ticker}] Fetching fundamentals for market cap...")
-                        fund_res = fetch_fundamentals(ticker)
-                    
-                    shares_df = fund_res.get("shares")
-                    info = fund_res.get("info")
-                    
-                    df_ind['market_cap'] = None
-                    if shares_df is not None and not shares_df.empty:
-                        try:
-                            shares_series = shares_df.iloc[:, 0]
-                            shares_series.index = pd.to_datetime(shares_series.index).tz_localize(None).normalize()
-                            shares_df_temp = shares_series.reset_index()
-                            shares_df_temp.columns = ['date', 'shares']
-                            shares_df_temp = shares_df_temp.sort_values('date')
-                            
-                            df_temp = pd.DataFrame({'date': pd.to_datetime(df['date'])})
-                            merged_shares = pd.merge_asof(df_temp, shares_df_temp, on='date', direction='backward')
-                            df_ind['market_cap'] = df['close'].values * merged_shares['shares'].values
-                        except Exception as e:
-                            logger.error(f"[{ticker}] Error calculating market cap from shares: {e}")
-                    
-                    # Fallback to info['marketCap'] for the most recent data if calculation failed or shares missing
-                    if info and 'marketCap' in info:
-                        latest_mcap = info['marketCap']
-                        # If market_cap column is still all None or has NaNs at the end, fill with static info
-                        if df_ind['market_cap'].isnull().all():
-                            df_ind['market_cap'] = latest_mcap
-                        else:
-                            # Fill only the last row or latest missing ones
-                            df_ind['market_cap'] = df_ind['market_cap'].fillna(latest_mcap)
-                    elif fallback_mcap:
-                        # Final fallback to existing DB data if API fetch was skipped/failed
-                        if df_ind['market_cap'].isnull().all():
-                            df_ind['market_cap'] = fallback_mcap
-                        else:
-                            df_ind['market_cap'] = df_ind['market_cap'].fillna(fallback_mcap)
-                            
-                    income_stmt = fund_res.get("income_stmt")
-                    if income_stmt is not None and not income_stmt.empty:
-                        try:
-                            db.query(Earning).filter(Earning.symbol_id == sym_id).delete()
-                            earning_records = []
-                            for period_dt in income_stmt.columns:
-                                if pd.isna(period_dt): continue
-                                col_data = income_stmt[period_dt]
-                                
-                                def get_val(key):
-                                    if key in col_data.index and pd.notna(col_data[key]):
-                                        return float(col_data[key])
-                                    return None
-                                    
-                                earning_records.append(Earning(
-                                    symbol_id=sym_id,
-                                    period_date=period_dt.date() if isinstance(period_dt, datetime) else period_dt,
-                                    eps_basic=get_val('Basic EPS'),
-                                    eps_diluted=get_val('Diluted EPS'),
-                                    revenue=get_val('Total Revenue') or get_val('Operating Revenue'),
-                                    net_income=get_val('Net Income')
-                                ))
-                            
-                            if earning_records:
-                                db.bulk_save_objects(earning_records)
-                                # Commit happens below with T3 records
-                        except Exception as e:
-                            logger.error(f"[{ticker}] Error saving earnings: {e}")
-
-                    # Save indicators (T3)
-                    if recalculate_all:
-                        # Clear existing history if requested
-                        db.query(Indicator).filter(Indicator.symbol_id == sym_id).delete()
-                        db.commit()
-                        dates_to_save = df_ind['date'].tolist()
-                    else:
-                        # Only save rows that don't exist in DB (Incremental Save)
-                        existing_ind_dates = set(
-                            str(r[0]) for r in db.query(Indicator.date)
-                            .filter(Indicator.symbol_id == sym_id).all()
-                        )
-                        dates_to_save = [
-                            d for d in df_ind['date'].tolist()
-                            if str(d) not in existing_ind_dates
-                        ]
-
-                    if dates_to_save:
-                        # Filter df_ind to only new dates
-                        df_to_save = df_ind[df_ind['date'].isin(dates_to_save)]
-                        
-                        t3_records = [
-                            Indicator(
-                                symbol_id=sym_id,
-                                date=row['date'],
-                                sma_5=_to_val(row, 'sma_5'),
-                                sma_21=_to_val(row, 'sma_21'),
-                                sma_50=_to_val(row, 'sma_50'),
-                                sma_63=_to_val(row, 'sma_63'),
-                                sma_150=_to_val(row, 'sma_150'),
-                                sma_200=_to_val(row, 'sma_200'),
-                                ema_5=_to_val(row, 'ema_5'),
-                                ema_21=_to_val(row, 'ema_21'),
-                                ema_50=_to_val(row, 'ema_50'),
-                                ema_63=_to_val(row, 'ema_63'),
-                                ema_150=_to_val(row, 'ema_150'), # Match calculator.py
-                                ema_200=_to_val(row, 'ema_200'),
-                                td9=int(row['td9']) if _to_val(row, 'td9') is not None else 0,
-                                atr_14=_to_val(row, 'atr_14'),
-                                atr_pct_14=_to_val(row, 'atr_pct_14'),
-                                adr_pct_21=_to_val(row, 'adr_pct_21'),
-                                dist_sma50_atr=_to_val(row, 'dist_sma50_atr'),
-                                market_cap=_to_val(row, 'market_cap'),
-                                relative_strength_spy=_to_val(row, 'relative_strength_spy'),
-                                rs_condition_14=_to_val(row, 'rs_condition_14'),
-                                rs_condition_21=_to_val(row, 'rs_condition_21'),
-                                rs_condition_63=_to_val(row, 'rs_condition_63'),
-                                rs_momentum_14=_to_val(row, 'rs_momentum_14'),
-                                rs_momentum_21=_to_val(row, 'rs_momentum_21'),
-                                rs_momentum_63=_to_val(row, 'rs_momentum_63'),
-                                rs_ratio_14=_to_val(row, 'rs_ratio_14'),
-                                rs_ratio_21=_to_val(row, 'rs_ratio_21'),
-                                rs_ratio_63=_to_val(row, 'rs_ratio_63'),
-                                vol_surge_21=_to_val(row, 'vol_surge_21'),
-                                rel_vol_vs_spy_21=_to_val(row, 'rel_vol_vs_spy_21'),
-                                pct_from_63d_high=_to_val(row, 'pct_from_63d_high'),
-                                pct_from_52w_high=_to_val(row, 'pct_from_52w_high'),
-                                trend_template_ok=int(row['trend_template_ok']) if _to_val(row, 'trend_template_ok') is not None else None,
-                            )
-                            for _, row in df_to_save.iterrows()
-                        ]
-                        db.bulk_save_objects(t3_records)
-                        db.commit()
-                        logger.debug(f"[{ticker}] Saved {len(t3_records)} indicator rows.")
-
-                    df_ind['symbol_id'] = sym_id
-                    df_ind['category'] = item['category']
-                    all_indicators_dfs.append(df_ind)
-
-                except Exception as e:
-                    logger.error(f"[{ticker}] Critical error in indicator calculation: {e}")
-                    db.rollback()
-                    continue
-            logger.info("--- Phase 3 COMPLETE: Indicator calculation (T3) ---")
-            
-        # 6. Relative Ranks (T4)
-        logger.info("--- Phase 4: Relative Rank calculation (T4) START ---")
-        if skip_t3 or all_indicators_dfs:
-            logger.info("Calculating relative ranks (T4)...")
-            if not skip_t3:
-                combined_df = pd.concat(all_indicators_dfs, ignore_index=True)
-                # Remove hardcoded filter. Process all if recalculate_all, else only the latest update.
-                if not recalculate_all:
-                    # In normal incremental runs, we only need to rank the newly added indicators.
-                    # Typically this matches the dates in all_indicators_dfs.
-                    pass
-            
-            # Clear existing ranks for full recalculation
-            if recalculate_all:
-                logger.info("Clearing ALL T4 RelativeRank records for full recalculation.")
-                db.query(RelativeRank).delete()
-                db.commit()
-            
-            t4_records = []
-            indicators_to_rank = [
-                'relative_strength_spy', 
-                'rs_ratio_14', 'rs_ratio_21', 'rs_ratio_63',
-                'rs_momentum_14', 'rs_momentum_21', 'rs_momentum_63',
-                'rs_condition_14', 'rs_condition_21', 'rs_condition_63'
-            ]
-            for ind_col in indicators_to_rank:
-                if ind_col not in combined_df.columns:
-                    continue
-                ranked_df = calculate_relative_ranks(combined_df, group_col='category', indicator_col=ind_col)
-                
-                # Optimized: avoid iterrows() and create a list of dicts for bulk insert
-                # Filtering out NaNs first to reduce data volume
-                valid_ranks = ranked_df[ranked_df['percent_rank'].notna()]
-                
-                new_records = [
-                    RelativeRank(
-                        symbol_id=int(row['symbol_id']),
-                        date=row['date'],
-                        group_name=row['group_name'],
-                        indicator_name=row['indicator_name'],
-                        percent_rank=float(row['percent_rank'])
-                    )
-                    for row in valid_ranks.to_dict('records')
-                ]
-                t4_records.extend(new_records)
-                
-                # Commit in chunks if very large
-                if len(t4_records) > 100000:
-                    logger.info(f"Saving chunk of {len(t4_records)} T4 records...")
-                    db.bulk_save_objects(t4_records)
+            for v_item in virtual_items:
+                v_id = symbol_id_map.get((v_item['ticker'], v_item['exchange']))
+                synth_df = build_virtual_index_prices(db, v_id)
+                if not synth_df.empty:
+                    db.query(DailyPrice).filter(DailyPrice.symbol_id == v_id).delete()
+                    db.query(Indicator).filter(Indicator.symbol_id == v_id).delete()
+                    db.bulk_save_objects([DailyPrice(symbol_id=v_id, date=row['date'], open=row['open'], high=row['high'], low=row['low'], close=row['close'], volume=0) for _, row in synth_df.iterrows()])
                     db.commit()
-                    t4_records = []
 
-            if t4_records:
-                logger.info(f"Saving final chunk of {len(t4_records)} T4 records...")
-                db.bulk_save_objects(t4_records)
-                db.commit()
+            # 5. Phase 3: Indicators (T3)
+            if not skip_t3:
+                sync_phase_t3_indicators(db, sheet_data, symbol_id_map, spy_latest_date, skip_fetch=skip_fetch)
             
-            logger.info("--- Phase 4 COMPLETE: Rankings calculated ---")
+            # 6. Phase 4: Ranks (T4)
+            sync_phase_t4_ranks(db, spy_latest_date)
             
-        # 7. Market Signals (T5)
-        if not spy_df.empty:
-            logger.info("Calculating market signals (T5)...")
-            try:
-                ms_df = calculate_market_signals(spy_df)
-                t5_records = [
-                    MarketSignal(
-                        date=row['date'],
-                        spy_above_sma200=int(row['spy_above_sma200']),
-                        spy_sma200_rising=int(row['spy_sma200_rising']) if _to_val(row, 'spy_sma200_rising') is not None else None,
-                        distribution_days=int(row['distribution_days']),
-                        follow_through_day=int(row['follow_through_day']),
-                        market_phase=row['market_phase'],
-                    )
-                    for _, row in ms_df.iterrows()
-                ]
-                # Atomic replace: Delete and Insert in a single transaction
-                db.query(MarketSignal).delete()
-                db.bulk_save_objects(t5_records)
-                db.commit()
-                logger.info(f"Successfully saved {len(t5_records)} market signal records.")
-            except Exception as e:
-                db.rollback()
-                logger.error(f"Critical error updating Market Signals (T5). Existing data preserved. Exception: {e}")
+            # 7. Phase 5: Signals (T5)
+            sync_phase_t5_signals(db)
 
-        logger.info("--- Step 3 Pipeline COMPLETED SUCCESSFULLY ---")
-
+            logger.info("--- Step 3 Pipeline COMPLETED SUCCESSFULLY ---")
     except Exception as e:
-        logger.error("--- Step 3 Pipeline CRITICAL FAILURE ---")
-        logger.error(f"Error Type: {type(e).__name__}")
-        logger.error(f"Error Message: {str(e)}")
-        logger.error("Stack Trace:")
-        logger.error(traceback.format_exc())
-        # Re-raise to alert caller if necessary
-        raise e
+        logger.error(f"--- Step 3 Pipeline FAILURE --- Type: {type(e).__name__}, Message: {str(e)}")
+        logger.error(traceback.format_exc()); raise e
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the Step 3 Data Pipeline.")
-    parser.add_argument("--re-calculate", action="store_true", help="Redownload all data and recalculate all indicators (clean start for T3/T4).")
-    parser.add_argument("--category", type=str, help="Comma-separated categories to process (e.g. '市場,指標,セクタ,テーマ').")
-    parser.add_argument("--skip-fetch", action="store_true", help="Skip yfinance price fetching, use existing DB data")
-    parser.add_argument("--skip-sync", action="store_true", help="Skip Google Spreadsheet sync, use existing symbols in DB")
-    parser.add_argument("--skip-t3", action="store_true", help="Skip T3 indicator calculation, jump to T4 ranking")
+    parser.add_argument("--rebuild-from", type=str, help="Rebuild from a specific table (T2, T3, T4, T5).")
+    parser.add_argument("--re-calculate", action="store_true", help="Redownload all data and recalculate all indicators.")
+    parser.add_argument("--category", type=str, help="Comma-separated categories to process.")
+    parser.add_argument("--skip-fetch", action="store_true", help="Skip yfinance price fetching.")
+    parser.add_argument("--skip-sync", action="store_true", help="Skip Google Spreadsheet sync.")
+    parser.add_argument("--skip-t3", action="store_true", help="Skip T3 indicator calculation.")
     args = parser.parse_args()
-    
-    selected_categories = None
-    if args.category:
-        selected_categories = [c.strip() for c in args.category.split(",")]
-    
-    run_step3_pipeline(
-        recalculate_all=args.re_calculate, 
-        categories=selected_categories,
-        skip_fetch=args.skip_fetch,
-        skip_sync=args.skip_sync,
-        skip_t3=args.skip_t3
-    )
+    selected_categories = [c.strip() for c in args.category.split(",")] if args.category else None
+    run_step3_pipeline(rebuild_from=args.rebuild_from, categories=selected_categories, skip_fetch=args.skip_fetch, skip_sync=args.skip_sync, skip_t3=args.skip_t3, recalculate_all=args.re_calculate)

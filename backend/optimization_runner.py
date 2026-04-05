@@ -56,8 +56,9 @@ def calculate_custom_score(metrics, total_trading_days):
 
     trades_count = metrics.get('total_trades', 0)
     if trades_count < 5:
-        return -100.0  # Must trade at least a bit
-        
+        # Give a gradient so Optuna knows if it's getting closer
+        # e.g., 0 trades = -100.0, 1 trade = -80.0, ..., 4 trades = -20.0
+        return -100.0 + (trades_count * 20.0)
     avg_trades_per_day = trades_count / total_trading_days
     
     # Penalty for too many trades (e.g. user requested < 50 cases/day, 
@@ -88,11 +89,25 @@ def calculate_custom_score(metrics, total_trading_days):
 
     return score
 
-def objective(trial: optuna.Trial, strategy_type: str, config_app, exit_rules: ExitRules, periods: list):
-    # Setup search space
-    strat = {"name": f"{strategy_type}_Trial_{trial.number}"}
+def objective(trial: optuna.Trial, strategy_type: str, config, config_app, exit_rules: ExitRules, periods: list):
+    # Mapping for short codes used by Optuna study names
+    full_names = {
+        'B': 'B_theme_momentum',
+        'D': 'D_ema21_pullback',
+        'F': 'F_elite_momentum97'
+    }
+    actual_name = full_names.get(strategy_type, strategy_type)
+    
+    # Extract the base strategy configuration from the list in config['strategy']
+    strat_base = next((s for s in config.get('strategy', []) if s.get('name') == actual_name), None)
+    if not strat_base:
+        raise ValueError(f"Strategy '{actual_name}' not found in backtest config.")
+        
+    # Copy strategy config to preserve baseline settings (like market_cap etc)
+    strat = strat_base.copy()
+    strat['name'] = f"{actual_name}_Trial_{trial.number}"
+
     if strategy_type == "B":
-        strat['description'] = "Optuna B: Theme Momentum"
         strat['min_1d_gain_pct'] = trial.suggest_float("min_1d_gain_pct", 1.0, 5.0, step=0.5)
         strat['min_vol_surge_21'] = trial.suggest_float("min_vol_surge_21", 0.5, 2.0, step=0.1)
         strat['min_adr_pct_21'] = trial.suggest_float("min_adr_pct_21", 2.0, 6.0, step=0.5)
@@ -195,9 +210,8 @@ def main():
     )
     
     study.optimize(
-        lambda t: objective(t, args.strategy, config_app, exit_rules, periods),
-        n_trials=args.trials,
-        catch=(Exception,)
+        lambda t: objective(t, args.strategy, config, config_app, exit_rules, periods),
+        n_trials=args.trials
     )
     
     print("-" * 60)
