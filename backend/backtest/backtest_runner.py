@@ -149,16 +149,19 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
     df_indicators = pd.concat(chunks_ind, ignore_index=True) if chunks_ind else pd.DataFrame()
     log(f"  Indicators: {len(df_indicators)} rows loaded ({time.time()-t1:.1f}s)")
 
-    # Backfill market_cap from latest non-null values if missing historically
+    # Backfill market_cap from latest known values in the entire DB if missing historically
     if not df_indicators.empty and 'market_cap' in df_indicators.columns:
-        log("  Backfilling market_cap for historical data...")
-        # Get latest known market_cap per symbol across the whole loaded range
-        # Note: df_indicators is sorted by date internally usually, but we use groupby
-        latest_mc = df_indicators.dropna(subset=['market_cap']).sort_values('date').groupby('symbol_id')['market_cap'].last()
-        if not latest_mc.empty:
-            # Map latest_mc to original dataframe where it's NaN
-            df_indicators['market_cap'] = df_indicators['market_cap'].fillna(df_indicators['symbol_id'].map(latest_mc))
-            log(f"  Backfilled market_cap for {len(latest_mc)} symbols.")
+        log("  Backfilling market_cap robustly from global latest values...")
+        try:
+            # Fetch the absolute latest market_cap for each symbol directly from the DB
+            mc_query = "SELECT symbol_id, market_cap FROM indicators WHERE market_cap IS NOT NULL AND date = (SELECT MAX(date) FROM indicators i2 WHERE i2.symbol_id = indicators.symbol_id AND i2.market_cap IS NOT NULL)"
+            global_mc_df = pd.read_sql(mc_query, engine).drop_duplicates(subset=['symbol_id'], keep='last')
+            if not global_mc_df.empty:
+                global_mc_map = global_mc_df.set_index('symbol_id')['market_cap']
+                df_indicators['market_cap'] = df_indicators['market_cap'].fillna(df_indicators['symbol_id'].map(global_mc_map))
+                log(f"  Backfilled market_cap using global DB values for {len(global_mc_map)} symbols.")
+        except Exception as e:
+            log(f"  Warning: failed to globally backfill market_cap: {e}")
 
     # Relative Ranks
     log("  Loading relative ranks...")
