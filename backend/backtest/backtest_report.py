@@ -50,6 +50,23 @@ def calculate_metrics(trades: List[TradeResult]) -> Dict[str, Any]:
     for t in trades:
         exit_reasons[t.exit_reason] = exit_reasons.get(t.exit_reason, 0) + 1
 
+    # Calculate equity curve for Max Drawdown
+    # We sort trades by exit_date to build a rough equity curve
+    sorted_trades = sorted(trades, key=lambda t: t.exit_date)
+    equity = 100.0
+    peak_equity = 100.0
+    max_dd = 0.0
+    
+    for t in sorted_trades:
+        equity *= (1 + t.pnl_pct / 100.0)
+        if equity > peak_equity:
+            peak_equity = equity
+        dd = (peak_equity - equity) / peak_equity * 100.0
+        if dd > max_dd:
+            max_dd = dd
+
+    total_return_pct = (equity - 100.0)
+
     return {
         'trades': total,
         'wins': win_count,
@@ -60,6 +77,12 @@ def calculate_metrics(trades: List[TradeResult]) -> Dict[str, Any]:
         'expectancy': expectancy,
         'avg_holding_days': avg_holding,
         'exit_reasons': exit_reasons,
+        
+        # Keys expected by optimization_runner.py
+        'total_trades': total,
+        'win_trades': win_count,
+        'total_return_pct': total_return_pct,
+        'max_drawdown_pct': -max_dd
     }
 
 

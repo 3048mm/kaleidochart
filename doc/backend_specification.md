@@ -146,7 +146,24 @@ min_market_cap = 3e8
 - **静的キャッシュ**: 初回アクセス時または明示的な更新時に DB から抽出したデータを `backend/backtest/cache/*.parquet` に保存。2回目以降は秒単位での読込を実現（5年分で約10〜15秒、3ヶ月分で0.4秒）。
 - **独立性**: キャッシュはバックテスト専用であり、稼働中の DB 更新（API/Pipeline）とは干渉しません。
 
-### 6.7 実行方法
+### 6.7 キャッシュ対象カラム (Cached Keys)
+バックテスト時のメモリ（RAM）消費を最小限に抑え、最適化時のOOM（Out of Memory）を防ぐため、DB内の全カラムではなく**戦略評価に必須なカラムのみ**を選択的に抽出・キャッシュしています。
+
+**1. `indicators` テーブル**
+*   **抽出対象**: `symbol_id`, `date`, `sma_50`, `ema_21`, `atr_14`, `adr_pct_21`, `dist_sma50_atr`, `vol_surge_21`, `rel_vol_vs_spy_21`, `rs_ratio_21`, `rs_ratio_63`, `rs_momentum_21`, `rs_condition_21`, `trend_template_ok`, `market_cap`, `td9`
+*   **除外対象**: `sma_5/21/63/150/200` 等の別期間MA群、14日/63日の RS momentum/condition、`atr_pct_14`, `pct_from_52w_high` 等（現状の戦略で直接使用しないもの）。※除外されているものは必要になったタイミングで `backtest_runner.py` に追記します。
+*   **特記事項 (`market_cap`)**: 時価総額は過去の履歴が存在しないケースが多いため、切り取った期間内での穴埋めではなく「DB全期間の中から最新の `market_cap` を取得し、過去の日付にグローバル・バックフィル（適用）」する特殊処理を施しています。
+
+**2. `symbols` テーブル**
+*   **抽出対象**: `id`, `ticker`, `name`, `category`, `active`
+*   **除外対象**: `exchange`, `asset_class`, `theme_type`, `tags` など
+
+**3. その他テーブル**
+*   **`daily_prices`**: PK (`id`) 以外を全て抽出。
+*   **`relative_ranks`**: 対象指標名が `rs_ratio_21` および `rs_ratio_63` のレコードのみに絞り、`symbol_id`, `indicator_name`, `date`, `percent_rank` のみを抽出（`group_name`, `id` を除外）。
+*   **`market_signals`, `fundamental_data`**: 現状のバックテストエンジンでは利用していないため、完全に除外。
+
+### 6.8 実行方法
 ```bash
 # 全戦略実行（デフォルト期間・キャッシュ優先）
 python backend/backtest/backtest_runner.py
@@ -161,7 +178,7 @@ python backend/backtest/backtest_runner.py --start-date 2025-01-01 --end-date 20
 python backend/backtest/backtest_runner.py --refresh-cache
 ```
 
-### 6.8 自動パラメータ最適化 (Optuna)
+### 6.9 自動パラメータ最適化 (Optuna)
 
 指定したペース戦略（例: `B_theme_momentum`）の各種パラメータの探索範囲を定義し、ベイズ最適化を用いて最も実運用に適した閾値を探索します。
 
@@ -173,7 +190,7 @@ python backend/backtest/backtest_runner.py --refresh-cache
     *   **マルチ期間学習**: 特定のトレンドに過学習しないよう、弱気（ベア）相場と強気（ブル）相場の複数期間で同じパラメータを並行評価し、その平均スコアを最大化する目的関数を採用。
     *   **UIダッシュボード**: `optuna-dashboard` と連動し、Webブラウザ上で探索過程やパラメータごとの重要度（Hyperparameter Importance）をリアルタイム可視化。
 
-### 6.9 大規模データのメモリ安全設計 (OOM回避)
+### 6.10 大規模データのメモリ安全設計 (OOM回避)
 
 バックテストおよびキャッシュの生成時には、数百万件規模の価格データ・指標データを扱うため、システムレベルでのメモリ不足（OOM）を防ぐ設計を適用しています。
 

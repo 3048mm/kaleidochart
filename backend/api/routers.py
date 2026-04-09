@@ -243,7 +243,11 @@ def get_screener_meta(db: Session = Depends(get_api_db)):
         virtual.append(schemas.ScreenerColumnMeta(name=vc_name, label=label, category=cat, type="float", step=0.1))
 
     # T4 rank indicator names
-    rank_names = [r[0] for r in db.query(RelativeRank.indicator_name).distinct().all()]
+    latest_rk_date = db.query(func.max(RelativeRank.date)).scalar()
+    if latest_rk_date:
+        rank_names = [r[0] for r in db.query(RelativeRank.indicator_name).filter(RelativeRank.date == latest_rk_date).distinct().all()]
+    else:
+        rank_names = []
 
     return schemas.ScreenerMetaResponse(columns=columns, rank_indicators=rank_names, virtual_columns=virtual)
 
@@ -978,20 +982,35 @@ def get_screener_dashboard(
         """Build a query from a single preset definition (TOML dict)."""
         q = q_base()
 
-        # Apply special logic (RRG transitions)
+        # Apply special logic
         special = preset_def.get("special")
-        if special and previous_date_result:
-            IndPrev = aliased(Indicator)
-            q = q.join(IndPrev, (Symbol.id == IndPrev.symbol_id) & (IndPrev.date == previous_date_result))
-            if special == "rrg_leading_in":
+        if special:
+            if special in ("rrg_leading_in", "rrg_lagging_in") and previous_date_result:
+                IndPrev = aliased(Indicator)
+                q = q.join(IndPrev, (Symbol.id == IndPrev.symbol_id) & (IndPrev.date == previous_date_result))
+                if special == "rrg_leading_in":
+                    q = q.filter(
+                        Indicator.rs_ratio_21 > 0, Indicator.rs_momentum_21 > 0,
+                        or_(IndPrev.rs_ratio_21 <= 0, IndPrev.rs_momentum_21 <= 0)
+                    )
+                elif special == "rrg_lagging_in":
+                    q = q.filter(
+                        Indicator.rs_ratio_21 < 0, Indicator.rs_momentum_21 < 0,
+                        or_(IndPrev.rs_ratio_21 >= 0, IndPrev.rs_momentum_21 >= 0)
+                    )
+            elif special == "theme_rs21_gt_63":
+                theme_momentum_subq = db.query(Indicator.symbol_id).filter(
+                    Indicator.date == latest_date_result,
+                    Indicator.rs_ratio_21 > Indicator.rs_ratio_63
+                ).subquery()
+                stock_in_leading_themes_subq = db.query(ThemeConstituent.symbol_id).filter(
+                    ThemeConstituent.theme_id.in_(theme_momentum_subq)
+                ).subquery()
                 q = q.filter(
-                    Indicator.rs_ratio_21 > 0, Indicator.rs_momentum_21 > 0,
-                    or_(IndPrev.rs_ratio_21 <= 0, IndPrev.rs_momentum_21 <= 0)
-                )
-            elif special == "rrg_lagging_in":
-                q = q.filter(
-                    Indicator.rs_ratio_21 < 0, Indicator.rs_momentum_21 < 0,
-                    or_(IndPrev.rs_ratio_21 >= 0, IndPrev.rs_momentum_21 >= 0)
+                    or_(
+                        (Symbol.category == "テーマ") & (Symbol.id.in_(theme_momentum_subq)),
+                        (Symbol.category == "個別") & (Symbol.id.in_(stock_in_leading_themes_subq))
+                    )
                 )
 
         # Apply expression-based filters (OR conditions etc.)
@@ -1134,12 +1153,12 @@ def get_screener(
             Indicator.rs_ratio_21 > Indicator.rs_ratio_63
         ).subquery()
         stock_in_leading_themes_subq = db.query(ThemeConstituent.symbol_id).filter(
-            ThemeConstituent.theme_id.in_(theme_momentum_subq)
+            ThemeConstituent.theme_id.in_(theme_momentum_subq.select())
         ).subquery()
         query = query.filter(
             or_(
-                (Symbol.category == "テーマ") & (Symbol.id.in_(theme_momentum_subq)),
-                (Symbol.category == "個別") & (Symbol.id.in_(stock_in_leading_themes_subq))
+                (Symbol.category == "テーマ") & (Symbol.id.in_(theme_momentum_subq.select())),
+                (Symbol.category == "個別") & (Symbol.id.in_(stock_in_leading_themes_subq.select()))
             )
         )
 
