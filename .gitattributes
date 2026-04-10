@@ -1,0 +1,20 @@
+* text=auto
+
+*.py text
+*.js text
+*.ts text
+*.tsx text
+*.toml text
+*.md text
+*.txt text
+*.json text
+*.csv text
+
+*.bat text eol=crlf
+*.sh text eol=lf
+
+*.db binary
+*.png binary
+*.webp binary
+*.parquet binary
+*.ico binary
