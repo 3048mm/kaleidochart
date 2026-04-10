@@ -59,3 +59,13 @@ tmp/
 update_pipeline.lock
 !package-lock.json
 !frontend/package-lock.json
+
+# Results & Logs
+backend/backtest/results/
+logs/
+
+# Temporary & Backups
+tmp_*.json
+doc/*.bak
+*.bak
+data/*.csv
