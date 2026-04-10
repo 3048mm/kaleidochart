@@ -134,7 +134,11 @@ min_market_cap = 3e8
 
 | 指標 | 説明 |
 |---|---|
-| **Expectancy** | 1トレードあたりの期待値 = (WR × AvgWin) - ((1-WR) × AvgLoss) |
+| **Expectancy** | 1トレードあたりの期待値 = (WR × AvgWin) + ((1-WR) × AvgLoss)。**最適化スコアの主軸**。 |
+| **Avg Gain** | 全トレードの PnL% の単純平均。トレード回数に依存しない「1件あたりの平均品質」。 |
+| **Avg SPY Gain** | 各トレードと**同一の保有期間**で SPY を購入した場合の平均リターン%。ベンチマーク。 |
+| **Alpha** | Avg Gain - Avg SPY Gain。正の値 = 戦略が市場平均を上回っている（超過リターン）。 |
+| **Max Drawdown** | 累積 PnL の最高到達点からの最大下落幅（加算ベース、ポイント単位）。 |
 | **Profit Factor** | 総利益 / 総損失 |
 | **Win Rate** | 勝ちトレード数 / 全トレード数（補助指標） |
 | **Avg Holding Days** | 平均保有日数（補助指標） |
@@ -180,7 +184,7 @@ python backend/backtest/backtest_runner.py --refresh-cache
 
 ### 6.9 自動パラメータ最適化 (Optuna)
 
-指定したペース戦略（例: `B_theme_momentum`）の各種パラメータの探索範囲を定義し、ベイズ最適化を用いて最も実運用に適した閾値を探索します。
+指定したベース戦略（例: `B_theme_momentum`）の各種パラメータの探索範囲を定義し、ベイズ最適化を用いて最も実運用に適した閾値を探索します。
 
 *   **実行スクリプト**: `backend/optimization_runner.py`
 *   **ストレージ**: `data/optimization_trials.db` (中断・再開に対応した SQLite ベースの Optuna DB)
@@ -189,6 +193,59 @@ python backend/backtest/backtest_runner.py --refresh-cache
         *   **勾配を持たせたペナルティ**: トレードが極端に少ない（5件未満）場合、単純な足切り（一律マイナス）ではなく、トレード回数に応じたスコアの「勾配」を設けることで、AIが正解のパラメータ方向を探れるよう誘導。
     *   **マルチ期間学習**: 特定のトレンドに過学習しないよう、弱気（ベア）相場と強気（ブル）相場の複数期間で同じパラメータを並行評価し、その平均スコアを最大化する目的関数を採用。
     *   **UIダッシュボード**: `optuna-dashboard` と連動し、Webブラウザ上で探索過程やパラメータごとの重要度（Hyperparameter Importance）をリアルタイム可視化。
+
+#### 6.9.1 探索空間の宣言的定義 (TOML ベース)
+
+探索パラメータのレンジ（範囲・刻み幅）は、Pythonコードにハードコーディングせず、**`backtest_config.toml` の `[optimization.<戦略短縮名>]` セクションで宣言的に定義**する。`optimization_runner.py` はこのTOML定義を動的にパースし、Optuna の `trial.suggest_*` APIに変換して探索を実行する。
+
+**サポートするパラメータ型:**
+
+| `type` | Optuna API | TOML 必須キー | 説明 |
+| :--- | :--- | :--- | :--- |
+| `"float"` | `trial.suggest_float()` | `min`, `max`, `step` | 連続値の範囲探索（ステップ刻み） |
+| `"int"` | `trial.suggest_int()` | `min`, `max`, `step` | 整数値の範囲探索（ステップ刻み） |
+| `"categorical"` | `trial.suggest_categorical()` | `choices` | 離散値リストからの選択 |
+
+**TOML 記法例:**
+
+```toml
+# backtest_config.toml 内に追加
+
+[optimization.D]
+min_dist_21ema_pct   = { type = "float", min = -4.0, max = -1.0, step = 0.5 }
+max_dist_21ema_pct   = { type = "float", min = 0.5,  max = 4.0,  step = 0.5 }
+max_dist_sma50_atr   = { type = "float", min = 2.0,  max = 6.0,  step = 0.5 }
+min_rs_ratio_21_rank = { type = "float", min = 0.70, max = 0.95, step = 0.05 }
+min_market_cap       = { type = "categorical", choices = [1e8, 3e8, 5e8, 1e9] }
+trend_template_ok    = { type = "categorical", choices = [1] }
+
+[optimization.B]
+min_1d_gain_pct      = { type = "float", min = 1.0, max = 5.0, step = 0.5 }
+min_vol_surge_21     = { type = "float", min = 0.5, max = 2.0, step = 0.1 }
+min_adr_pct_21       = { type = "float", min = 2.0, max = 6.0, step = 0.5 }
+max_dist_sma50_atr   = { type = "float", min = 3.0, max = 8.0, step = 0.5 }
+min_market_cap       = { type = "categorical", choices = [1e7, 5e7, 1e8, 3e8, 5e8, 1e9] }
+theme_rs21_gt_63     = { type = "categorical", choices = [true, false] }
+```
+
+**パース仕様:**
+- `optimization_runner.py` は `config["optimization"][strategy_short_name]` を読み込み、各キーの `type` フィールドに応じて対応する `trial.suggest_*` を呼び出す。
+- TOML に `[optimization.X]` が未定義の戦略で `--strategy X` を実行した場合は、明確なエラーメッセージとともに即座に終了する。
+- TOML で定義されていないパラメータ（`[[strategy]]` セクション内のベース値）は変更されず、そのまま継承される。
+
+#### 6.9.2 マルチ期間設定の外部化
+
+最適化時の評価対象期間も `backtest_config.toml` で宣言的に定義する。
+
+```toml
+[optimization_periods]
+periods = [
+    { start = "2022-01-01", end = "2022-12-31", label = "Bear 2022" },
+    { start = "2024-06-01", end = "2025-12-31", label = "Bull 2024-25" },
+]
+```
+
+これにより、評価期間の追加・変更時にPythonコードの修正が不要になる。
 
 ### 6.10 大規模データのメモリ安全設計 (OOM回避)
 

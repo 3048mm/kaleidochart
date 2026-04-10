@@ -16,8 +16,14 @@ def calculate_metrics(trades: List[TradeResult]) -> Dict[str, Any]:
     Calculate performance metrics from a list of trade results.
 
     Returns:
-        Dict with metrics: trades, wins, win_rate, avg_win, avg_loss,
-        profit_factor, expectancy, avg_holding_days, exit_reasons.
+        Dict with metrics including:
+        - trades, wins, win_rate, avg_win, avg_loss
+        - profit_factor, expectancy, avg_holding_days
+        - avg_gain: average PnL% per trade (key metric for optimization)
+        - avg_spy_gain: average SPY return% over the same holding periods (benchmark)
+        - alpha: avg_gain - avg_spy_gain (excess return over market)
+        - total_return_pct, max_drawdown_pct (additive cumulative PnL)
+        - exit_reasons breakdown
     """
     if not trades:
         return {
@@ -25,6 +31,9 @@ def calculate_metrics(trades: List[TradeResult]) -> Dict[str, Any]:
             'avg_win': 0.0, 'avg_loss': 0.0,
             'profit_factor': 0.0, 'expectancy': 0.0,
             'avg_holding_days': 0.0, 'exit_reasons': {},
+            'avg_gain': 0.0, 'avg_spy_gain': 0.0, 'alpha': 0.0,
+            'total_trades': 0, 'win_trades': 0,
+            'total_return_pct': 0.0, 'max_drawdown_pct': 0.0,
         }
 
     wins = [t for t in trades if t.pnl_pct > 0]
@@ -45,27 +54,39 @@ def calculate_metrics(trades: List[TradeResult]) -> Dict[str, Any]:
 
     avg_holding = sum(t.holding_days for t in trades) / total
 
+    # Average gain per trade (key metric for optimization)
+    avg_gain = sum(t.pnl_pct for t in trades) / total
+
+    # SPY benchmark: average SPY return over the same holding periods
+    spy_gains = [t.spy_pnl_pct for t in trades if t.spy_pnl_pct is not None]
+    avg_spy_gain = sum(spy_gains) / len(spy_gains) if spy_gains else 0.0
+
+    # Alpha: excess return over market (positive = outperforming SPY)
+    alpha = avg_gain - avg_spy_gain
+
     # Exit reason breakdown
     exit_reasons = {}
     for t in trades:
         exit_reasons[t.exit_reason] = exit_reasons.get(t.exit_reason, 0) + 1
 
-    # Calculate equity curve for Max Drawdown
-    # We sort trades by exit_date to build a rough equity curve
+    # Calculate Max Drawdown using additive cumulative PnL
+    # (not multiplicative compounding, since we evaluate raw signals without portfolio sizing)
     sorted_trades = sorted(trades, key=lambda t: t.exit_date)
-    equity = 100.0
-    peak_equity = 100.0
+    cumulative_pnl = 0.0
+    peak_cumulative = 0.0
     max_dd = 0.0
     
     for t in sorted_trades:
-        equity *= (1 + t.pnl_pct / 100.0)
-        if equity > peak_equity:
-            peak_equity = equity
-        dd = (peak_equity - equity) / peak_equity * 100.0
+        cumulative_pnl += t.pnl_pct
+        if cumulative_pnl > peak_cumulative:
+            peak_cumulative = cumulative_pnl
+        
+        # Drawdown is the distance from the peak cumulative PnL
+        dd = peak_cumulative - cumulative_pnl
         if dd > max_dd:
             max_dd = dd
 
-    total_return_pct = (equity - 100.0)
+    total_return_pct = cumulative_pnl
 
     return {
         'trades': total,
@@ -77,6 +98,9 @@ def calculate_metrics(trades: List[TradeResult]) -> Dict[str, Any]:
         'expectancy': expectancy,
         'avg_holding_days': avg_holding,
         'exit_reasons': exit_reasons,
+        'avg_gain': avg_gain,
+        'avg_spy_gain': avg_spy_gain,
+        'alpha': alpha,
         
         # Keys expected by optimization_runner.py
         'total_trades': total,
@@ -100,27 +124,33 @@ def print_comparison_table(results: Dict[str, Dict[str, Any]], start_date: str, 
     print(f"{'='*100}")
 
     # Header
-    header = f"{'Strategy':<30} {'Trades':>7} {'WinRate':>8} {'AvgWin':>8} {'AvgLoss':>8} {'PF':>6} {'Expect':>8} {'AvgDays':>8}"
+    header = (
+        f"{'Strategy':<25} {'Trades':>7} {'WinRate':>8} {'AvgWin':>8} {'AvgLoss':>8} "
+        f"{'PF':>6} {'Expect':>8} {'AvgGain':>8} {'SPY':>8} {'Alpha':>8} {'AvgDays':>8}"
+    )
     print(header)
-    print('-' * 100)
+    print('-' * 120)
 
     # Sort by expectancy descending
     sorted_strategies = sorted(results.items(), key=lambda x: x[1].get('expectancy', 0), reverse=True)
 
     for name, metrics in sorted_strategies:
         row = (
-            f"{name:<30} "
+            f"{name:<25} "
             f"{metrics['trades']:>7} "
             f"{metrics['win_rate']*100:>7.1f}% "
             f"{metrics['avg_win']:>+7.1f}% "
             f"{metrics['avg_loss']:>+7.1f}% "
             f"{metrics['profit_factor']:>6.2f} "
             f"{metrics['expectancy']:>+7.2f}% "
+            f"{metrics.get('avg_gain', 0):>+7.2f}% "
+            f"{metrics.get('avg_spy_gain', 0):>+7.2f}% "
+            f"{metrics.get('alpha', 0):>+7.2f}% "
             f"{metrics['avg_holding_days']:>7.1f}"
         )
         print(row)
 
-    print(f"{'='*100}")
+    print(f"{'='*120}")
 
     # Exit reason breakdown
     print(f"\n  Exit Reason Breakdown")

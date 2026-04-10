@@ -33,6 +33,11 @@
 - [ ] **戦略名マッピング**: `B` -> `B_theme_momentum` のような短縮名がバックテスト設定と正しく紐付いているか。
 - [ ] **パラメータ継承**: TOML で定義された基本設定（market_cap 閾値など）が、Optuna の試行中に失われず維持されているか。
 - [ ] **ペナルティ勾配**: トレード 0 件時に、パラメータ探索を継続させるための適切なスコア勾配が付与されているか。
+- [ ] **TOML 探索空間パース (float)**: `{ type = "float", min = ..., max = ..., step = ... }` 形式の定義が `trial.suggest_float()` に正しく変換されるか。
+- [ ] **TOML 探索空間パース (categorical)**: `{ type = "categorical", choices = [...] }` 形式の定義が `trial.suggest_categorical()` に正しく変換されるか。
+- [ ] **TOML 探索空間パース (int)**: `{ type = "int", min = ..., max = ..., step = ... }` 形式の定義が `trial.suggest_int()` に正しく変換されるか。
+- [ ] **未定義戦略のエラー**: TOML に `[optimization.X]` が存在しない戦略を `--strategy X` で実行した場合、明確なエラーメッセージとともに終了するか。
+- [ ] **マルチ期間設定の読み込み**: `[optimization_periods]` セクションの `periods` 配列が正しくパースされ、各期間のバックテストが実行されるか。
 
 ---
 
@@ -50,5 +55,39 @@ $env:PYTHONPATH="backend"; python backend/backtest/verify_db_vs_cache.py
 
 ---
 
+## 5. テスト駆動開発 (TDD) ガイドライン
+
+### 5.1 基本方針
+- **新規機能の追加・既存機能の改修**時には、まずテストコードを作成し、テストが失敗（Red）することを確認してから実装に着手する。
+- テストは `backend/tests/` に一元集約し、`pytest` で実行する。
+
+### 5.2 テスト配置規約
+
+| テスト対象 | テストファイル |
+| :--- | :--- |
+| `backtest_screener.py` | `backend/tests/test_backtest_screener.py` |
+| `backtest_simulator.py` | `backend/tests/test_backtest_simulator.py` |
+| `optimization_runner.py` | `backend/tests/test_optimization_runner.py` |
+| `backtest_runner.py` | `backend/tests/test_backtest_runner.py` |
+
+### 5.3 テスト実行コマンド
+```powershell
+$env:PYTHONPATH="backend"; python -m pytest backend/tests/ -v
+```
+
+### 5.4 最適化ランナーのテスト項目例
+以下のユニットテストを `test_optimization_runner.py` に実装する（TDD の Red フェーズで先行作成）。
+
+- [ ] **`test_parse_float_param`**: float 型のTOML定義が正しく `suggest_float` 引数に変換されること。
+- [ ] **`test_parse_categorical_param`**: categorical 型のTOML定義が正しく `suggest_categorical` 引数に変換されること。
+- [ ] **`test_parse_int_param`**: int 型のTOML定義が正しく `suggest_int` 引数に変換されること。
+- [ ] **`test_undefined_strategy_raises_error`**: 未定義の戦略指定時に `ValueError` が発生すること。
+- [ ] **`test_base_params_inherited`**: TOML で定義されていないパラメータが `[[strategy]]` のベース値から継承されること。
+- [ ] **`test_periods_parsed_from_toml`**: `[optimization_periods]` が正しくパースされること。
+
+---
+
 ## 6. 更新履歴
+- 2026-04-09: TOML外部化に伴う検証項目の拡充、TDDガイドライン追加
 - 2026-04-05: 初版作成（バックエンド検証仕様書より分離独立）
+

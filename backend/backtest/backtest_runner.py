@@ -263,6 +263,19 @@ def run_single_strategy(strat_dict: dict, df_indicators, df_prices, df_ranks, df
         if show_progress and (i + 1) % 100 == 0:
             print(f"  Processed {i + 1}/{len(trading_dates)} days, {len(trades)} trades so far...")
 
+    # --- Inject SPY benchmark returns into each trade ---
+    spy_row = df_symbols[df_symbols['ticker'] == 'SPY']
+    if not spy_row.empty and trades:
+        spy_id = spy_row.iloc[0]['id']
+        df_spy = df_prices[df_prices['symbol_id'] == spy_id].set_index('date')['close']
+        for t in trades:
+            spy_entry = df_spy.get(t.entry_date)
+            spy_exit = df_spy.get(t.exit_date)
+            if spy_entry is not None and spy_exit is not None and spy_entry > 0:
+                t.spy_pnl_pct = (spy_exit - spy_entry) / spy_entry * 100.0
+            else:
+                t.spy_pnl_pct = None
+
     elapsed = time.time() - t0
     metrics = calculate_metrics(trades)
     if show_progress:

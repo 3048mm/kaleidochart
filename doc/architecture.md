@@ -75,3 +75,33 @@
 
 ※ デフォルトの状態で起動した場合、上記のように各サービスでポートが綺麗に分かれているため**ポート衝突は発生しません**（3つすべて同時に立ち上げておくことが可能です）。
 今後、新たなツール（DB可視化ツールや、Celery等のワーカー管理画面など）を導入する場合は、上記のポート番号と競合しない値を明示的に割り当ててください。
+
+## 7. 開発方針
+
+### 7.1 テスト駆動開発 (TDD: Test-Driven Development)
+
+本プロジェクトでは、**今後の新規機能の追加・既存機能の改修**において、テスト駆動開発（TDD）を採用します。
+
+#### TDDサイクル
+1. **Red**: まず、実装予定の機能に対する**テストコードを先に書き**、テストが失敗する（Red）ことを確認する。
+2. **Green**: テストを通すために必要な**最小限のコード**を実装する。
+3. **Refactor**: テストが通った状態を維持しながら、コードの品質（可読性・保守性）を改善する。
+
+#### テストコードの配置規約
+テストコードは **`backend/tests/`** ディレクトリに一元集約し、以下の命名規約に従います。
+
+| テスト対象モジュール | テストファイル名 | 例 |
+| :--- | :--- | :--- |
+| `backend/api/routers.py` | `backend/tests/test_api.py` | API エンドポイントのテスト |
+| `backend/backtest/backtest_screener.py` | `backend/tests/test_backtest_screener.py` | スクリーナーロジックのテスト |
+| `backend/optimization_runner.py` | `backend/tests/test_optimization_runner.py` | 最適化パラメータ読み込みのテスト |
+| `backend/indicators/calculate.py` | `backend/tests/test_indicators.py` | インジケータ計算のテスト |
+
+#### テスト実行ルール
+- **フレームワーク**: `pytest` を使用する。
+- **実行コマンド**:
+  ```powershell
+  $env:PYTHONPATH="backend"; python -m pytest backend/tests/ -v
+  ```
+- **コミット前の義務**: コードの変更をコミットする前に、ローカルで `pytest` を実行し、**全件パス（All Green）** を確認すること。
+- **適用範囲**: TDDルールは**新規機能から適用**する。既存コードに対するテスト追加は、改修のタイミングで段階的に行う。

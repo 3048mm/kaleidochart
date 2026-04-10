@@ -23,6 +23,7 @@ class TradeResult:
     holding_days: int
     exit_reason: str         # 'stop_loss', 'partial_then_stop', 'ema21_exit', 'sma50_atr_exit', 'time_stop', 'failsafe'
     partial_exit_pnl_pct: Optional[float] = None  # PnL % on the 1/3 partial exit
+    spy_pnl_pct: Optional[float] = None           # SPY return % over the same holding period (benchmark)
 
 
 @dataclass

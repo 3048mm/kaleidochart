@@ -56,28 +56,65 @@ python backend/optimization_runner.py --strategy F_elite_momentum97 --trials 500
 
 ## 3. 動作パラメーターのカスタマイズ (開発者向け)
 
-今後、新しいスクリーナー条件が追加されたり、探索範囲を広げたい場合は、`backend/optimization_runner.py` の**目的関数 (`objective` 関数)** 内を直接編集します。
+探索パラメータのレンジ（範囲・刻み幅）やマルチ期間設定は、**`backtest_config.toml`** に一元定義されており、Pythonコードの変更は不要です。
 
 ### 3.1 探索パラメータの追加・変更について
-`optimization_runner.py` の 81 行目付近に、探索するパラメータの「範囲指定」が記載されています。
-例えば「時価総額（Market Cap）」を探索対象から外して固定したい場合や、追加したい場合は以下のように変更します。
+`backtest_config.toml` の `[optimization.<戦略短縮名>]` セクションで、探索するパラメータの「型」「範囲」「刻み幅」を定義します。
 
-```python
-# float(小数)で探索させたい場合 (最小値, 最大値)
-params['min_market_cap'] = trial.suggest_float("min_market_cap", 50e6, 500e6)
+#### 記法一覧
 
-# int(整数)で特定のステップごとに探索させたい場合 (1～150の範囲をステップ5刻みで)
-# params['trend_template_ok'] = trial.suggest_int("trend_template_ok", 0, 1)
+| 型 | TOML記法 | 用途 |
+| :--- | :--- | :--- |
+| 連続値 (float) | `{ type = "float", min = 1.0, max = 5.0, step = 0.5 }` | RSランク閾値、乖離%、ADR% 等 |
+| 整数 (int) | `{ type = "int", min = 0, max = 1, step = 1 }` | トレンドテンプレートON/OFF 等 |
+| 選択肢 (categorical) | `{ type = "categorical", choices = [1e8, 5e8, 1e9] }` | 時価総額フィルタ、True/False 等 |
 
-# Categorical (特定の選択肢の中から選ばせたい場合)
-# params['target_sector'] = trial.suggest_categorical("target_sector", ["Technology", "Healthcare", "Finance"])
+#### 変更例
+
+例えば、戦略 D（EMA21 Pullback）で RSランクの下限を `0.50〜0.90` から `0.70〜0.95` に絞り込むには：
+
+```toml
+# backtest_config.toml
+
+[optimization.D]
+# 変更前: min = 0.50, max = 0.90
+# 変更後: より厳しい範囲に絞り込み
+min_rs_ratio_21_rank = { type = "float", min = 0.70, max = 0.95, step = 0.05 }
 ```
 
-### 3.2 ペナルティなどの調整について
-「実運用ではやはり1日20件以上ヒットすると手動で買えないので除外したい」「ドローダウンは絶対-15%未満に抑えたい」といった運用ポリシーによる制約は、同じく `optimization_runner.py` の `calculate_custom_score` 関数内（60行目付近）を調整します。
+新しいフィルタ条件（例: 出来高急増 `min_vol_surge_21`）を最適化対象に追加する場合：
+
+```toml
+[optimization.D]
+# 既存のパラメータ...
+min_dist_21ema_pct   = { type = "float", min = -4.0, max = -1.0, step = 0.5 }
+# (省略)
+
+# 新規追加: 出来高急増も探索対象にする
+min_vol_surge_21     = { type = "float", min = 0.5, max = 3.0, step = 0.5 }
+```
+
+`[optimization.D]` に書かれていないパラメータ（例: `description` 等）は、`[[strategy]]` セクションのベース値がそのまま継承されるため、変更せずとも動作します。
+
+### 3.2 マルチ期間設定の変更
+最適化時のバックテスト対象期間（ベア／ブル相場）も `backtest_config.toml` で管理しています。
+
+```toml
+[optimization_periods]
+periods = [
+    { start = "2022-01-01", end = "2022-12-31", label = "Bear 2022" },
+    { start = "2024-06-01", end = "2025-12-31", label = "Bull 2024-25" },
+]
+```
+
+新しい期間を追加したい場合（例: 2020年のコロナショック期間）は、`periods` 配列に要素を追記するだけです。
+
+### 3.3 ペナルティなどの調整について
+「実運用ではやはり1日20件以上ヒットすると手動で買えないので除外したい」「ドローダウンは絶対-15%未満に抑えたい」といった運用ポリシーによる制約は、`optimization_runner.py` の `calculate_custom_score` 関数内を調整します。
 
 **現在のペナルティの例:**
 * 1日平均 `25件` を超えると、超過分に応じて指数関数的にマイナスのスコアを与え、AIに「これは悪い結果だ」と教え込みます。最大 50件で完全にスコアが 0 以下になります。
 * 最大ドローダウン（資産の目減り）をスコアに掛け合わせ、利益が高くてもマイナス幅が大きいじゃじゃ馬なパラメータの評価を落としています。
 
 この基準を厳しくすることで、より「堅実で実運用に適した究極のパラメータ」をAIに探させることが可能になります。
+

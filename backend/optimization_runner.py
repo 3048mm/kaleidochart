@@ -47,47 +47,140 @@ def calculate_custom_score(metrics, total_trading_days):
 
     """
     Calculate optimization score. Higher = Better.
-    Provides heavy penalties for:
-    - Less than 5 trades (too rare)
-    - More than 25 trades per day on average
+    
+    Primary metric: expectancy (avg gain per trade).
+    This avoids favoring strategies that simply generate more trades,
+    and instead finds parameters where each individual trade is most profitable.
+    
+    Penalties:
+    - Less than 5 trades (too rare to be statistically meaningful)
+    - More than 25 trades per day on average (too noisy / over-fitted)
     """
     if not metrics:
         return -1000.0
 
     trades_count = metrics.get('total_trades', 0)
     if trades_count < 5:
-        # Give a gradient so Optuna knows if it's getting closer
-        # e.g., 0 trades = -100.0, 1 trade = -80.0, ..., 4 trades = -20.0
+        # Gradient so Optuna knows if it's getting closer
         return -100.0 + (trades_count * 20.0)
     avg_trades_per_day = trades_count / total_trading_days
     
-    # Penalty for too many trades (e.g. user requested < 50 cases/day, 
-    # we use average of > 25/day as a severe penalty threshold as 50 is extremely high)
+    # Penalty for too many trades
     if avg_trades_per_day >= 50:
         return -500.0 - (avg_trades_per_day * 10)
     elif avg_trades_per_day >= 25:
-        # Penalize moderately if between 25 and 50
         return -100.0 - (avg_trades_per_day * 2)
         
-    profit_pct = metrics.get('total_return_pct', 0.0)
+    # --- Primary scoring: expectancy (average %Gain per trade) ---
+    expectancy = metrics.get('expectancy', 0.0)
     max_dd = abs(metrics.get('max_drawdown_pct', 0.0))
     
-    # Hard penalty for severe drawdown
+    # Hard penalty for severe drawdown (> 35 percentage points cumulative)
     if max_dd > 35.0:  
         return -max_dd * 10
 
-    if profit_pct <= 0:
-        return profit_pct
+    if expectancy <= 0:
+        # Still return the expectancy so Optuna can see direction
+        return expectancy * 10  # Amplify to distinguish bad from very bad
         
-    # Custom Score: Profit / (Drawdown + 1)
-    score = (profit_pct * 100) / (max_dd + 1.0)
+    # Score = Expectancy, with mild drawdown adjustment
+    # Drawdown guard: discount score proportionally to drawdown severity
+    score = expectancy * 100.0 / (1.0 + max_dd * 0.1)
     
-    # Minor penalization for volume of trades to prefer efficiency (higher win rate, fewer trades)
-    # If trades are > 1 per day, softly reduce the score
+    # Soft penalty if generating an unreasonable volume of trades per day
     if avg_trades_per_day > 1.0:
-        score = score / (avg_trades_per_day ** 0.5)
+        score = score / (avg_trades_per_day ** 0.3)
 
     return score
+
+# =============================================================
+# TOML-driven parameter parsing functions (testable, pure)
+# =============================================================
+
+def parse_optimization_params(config, strategy_short):
+    """Parse optimization parameter definitions from TOML config.
+    
+    Args:
+        config: Parsed TOML config dict (must contain 'optimization' section).
+        strategy_short: Short strategy name (e.g. 'B', 'D', 'F').
+    
+    Returns:
+        List of parameter definition dicts, each containing:
+        - name: parameter name
+        - type: 'float', 'int', or 'categorical'
+        - For float/int: min, max, step
+        - For categorical: choices (with 'none' strings converted to Python None)
+    
+    Raises:
+        ValueError: If strategy_short is not defined in [optimization.*] section.
+    """
+    opt_section = config.get('optimization', {})
+    if strategy_short not in opt_section:
+        raise ValueError(
+            f"No [optimization.{strategy_short}] section found in config. "
+            f"Available: {list(opt_section.keys())}"
+        )
+    
+    raw_params = opt_section[strategy_short]
+    result = []
+    for param_name, param_def in raw_params.items():
+        entry = {'name': param_name, 'type': param_def['type']}
+        if param_def['type'] in ('float', 'int'):
+            entry['min'] = param_def['min']
+            entry['max'] = param_def['max']
+            entry['step'] = param_def['step']
+        elif param_def['type'] == 'categorical':
+            # Convert string 'none' to Python None
+            entry['choices'] = [
+                None if (isinstance(v, str) and v.lower() == 'none') else v
+                for v in param_def['choices']
+            ]
+        result.append(entry)
+    return result
+
+
+def apply_trial_params(trial, param_defs, strat):
+    """Apply Optuna trial suggestions to strategy dict based on param definitions.
+    
+    Args:
+        trial: Optuna Trial object.
+        param_defs: List of parameter definitions from parse_optimization_params().
+        strat: Strategy dict to update in-place.
+    """
+    for p in param_defs:
+        name = p['name']
+        if p['type'] == 'float':
+            strat[name] = trial.suggest_float(name, p['min'], p['max'], step=p['step'])
+        elif p['type'] == 'int':
+            strat[name] = trial.suggest_int(name, p['min'], p['max'], step=p['step'])
+        elif p['type'] == 'categorical':
+            strat[name] = trial.suggest_categorical(name, p['choices'])
+
+
+def parse_optimization_periods(config):
+    """Parse optimization evaluation periods from TOML config.
+    
+    Args:
+        config: Parsed TOML config dict.
+    
+    Returns:
+        List of (start_date, end_date) tuples.
+    
+    Raises:
+        ValueError: If optimization_periods section is missing.
+    """
+    if 'optimization_periods' not in config:
+        raise ValueError(
+            "No [optimization_periods] section found in config. "
+            "Please define evaluation periods in backtest_config.toml."
+        )
+    raw_periods = config['optimization_periods']['periods']
+    return [(p['start'], p['end']) for p in raw_periods]
+
+
+# =============================================================
+# Optuna objective function (TOML-driven)
+# =============================================================
 
 def objective(trial: optuna.Trial, strategy_type: str, config, config_app, exit_rules: ExitRules, periods: list):
     # Mapping for short codes used by Optuna study names
@@ -107,35 +200,18 @@ def objective(trial: optuna.Trial, strategy_type: str, config, config_app, exit_
     strat = strat_base.copy()
     strat['name'] = f"{actual_name}_Trial_{trial.number}"
 
-    if strategy_type == "B":
-        strat['min_1d_gain_pct'] = trial.suggest_float("min_1d_gain_pct", 1.0, 5.0, step=0.5)
-        strat['min_vol_surge_21'] = trial.suggest_float("min_vol_surge_21", 0.5, 2.0, step=0.1)
-        strat['min_adr_pct_21'] = trial.suggest_float("min_adr_pct_21", 2.0, 6.0, step=0.5)
-        strat['max_dist_sma50_atr'] = trial.suggest_float("max_dist_sma50_atr", 3.0, 8.0, step=0.5)
-        strat['min_market_cap'] = trial.suggest_categorical("min_market_cap", [1e7, 5e7, 1e8, 3e8, 5e8, 1e9])
-        strat['theme_rs21_gt_63'] = trial.suggest_categorical("theme_rs21_gt_63", [True, False])
-    elif strategy_type == "D":
-        strat['description'] = "Optuna D: EMA21 Pullback"
-        strat['min_dist_21ema_pct'] = trial.suggest_float("min_dist_21ema_pct", -4.0, -1.0, step=0.5)
-        strat['max_dist_21ema_pct'] = trial.suggest_float("max_dist_21ema_pct", 0.5, 4.0, step=0.5)
-        strat['max_dist_sma50_atr'] = trial.suggest_float("max_dist_sma50_atr", 2.0, 6.0, step=0.5)
-        strat['min_rs_ratio_21_rank'] = trial.suggest_float("min_rs_ratio_21_rank", 0.50, 0.90, step=0.05)
-        strat['min_market_cap'] = trial.suggest_categorical("min_market_cap", [1e8, 3e8, 5e8, 1e9])
-        strat['trend_template_ok'] = trial.suggest_categorical("trend_template_ok", [1])
-    elif strategy_type == "F":
-        strat['description'] = "Optuna F: Elite Momentum"
-        strat['min_rs_ratio_21_rank'] = trial.suggest_float("min_rs_ratio_21_rank", 0.85, 0.99, step=0.01)
-        strat['min_market_cap'] = trial.suggest_categorical("min_market_cap", [1e7, 1e8, 3e8, 5e8, 1e9])
-        strat['min_adr_pct_21'] = trial.suggest_float("min_adr_pct_21", 1.0, 4.0, step=0.5)
-        strat['trend_template_ok'] = trial.suggest_categorical("trend_template_ok", [1, None])
-    else:
-        raise ValueError(f"Unknown strategy_type: {strategy_type}")
+    # Parse optimization params from TOML and apply via Optuna trial
+    param_defs = parse_optimization_params(config, strategy_type)
+    apply_trial_params(trial, param_defs, strat)
         
     total_score = 0.0
     total_trades = 0
     total_wins = 0
-    total_return_pct_sum = 0.0
+    expectancy_sum = 0.0
+    avg_gain_sum = 0.0
+    avg_spy_gain_sum = 0.0
     max_dd_overall = 0.0
+    periods_with_trades = 0
     
     for start_date, end_date in periods:
         df_symbols, df_prices, df_indicators, df_ranks, df_theme_constituents, trading_dates = get_cached_data(config_app, start_date, end_date)
@@ -149,8 +225,12 @@ def objective(trial: optuna.Trial, strategy_type: str, config, config_app, exit_
         if metrics:
             total_trades += metrics.get('total_trades', 0)
             total_wins += metrics.get('win_trades', 0)
-            total_return_pct_sum += metrics.get('total_return_pct', 0.0)
             max_dd_overall = min(max_dd_overall, metrics.get('max_drawdown_pct', 0.0))
+            if metrics.get('total_trades', 0) > 0:
+                expectancy_sum += metrics.get('expectancy', 0.0)
+                avg_gain_sum += metrics.get('avg_gain', 0.0)
+                avg_spy_gain_sum += metrics.get('avg_spy_gain', 0.0)
+                periods_with_trades += 1
             
     # Average score across periods
     avg_score = total_score / len(periods)
@@ -161,7 +241,20 @@ def objective(trial: optuna.Trial, strategy_type: str, config, config_app, exit_
         trial.set_user_attr("win_rate", (total_wins / total_trades) * 100)
     else:
         trial.set_user_attr("win_rate", 0.0)
-    trial.set_user_attr("total_return", total_return_pct_sum)
+    
+    if periods_with_trades > 0:
+        avg_expectancy = expectancy_sum / periods_with_trades
+        avg_gain = avg_gain_sum / periods_with_trades
+        avg_spy = avg_spy_gain_sum / periods_with_trades
+        trial.set_user_attr("expectancy", round(avg_expectancy, 3))
+        trial.set_user_attr("avg_gain", round(avg_gain, 3))
+        trial.set_user_attr("avg_spy_gain", round(avg_spy, 3))
+        trial.set_user_attr("alpha", round(avg_gain - avg_spy, 3))
+    else:
+        trial.set_user_attr("expectancy", 0.0)
+        trial.set_user_attr("avg_gain", 0.0)
+        trial.set_user_attr("avg_spy_gain", 0.0)
+        trial.set_user_attr("alpha", 0.0)
     trial.set_user_attr("max_drawdown", max_dd_overall)
 
     return avg_score
@@ -186,11 +279,8 @@ def main():
     db_path_main = os.path.join(project_root, config_app['system']['db_path'])
     init_db(db_path_main)
     
-    # Defined periods: 2022 (Bear), 2025 (Bull)
-    periods = [
-        ("2022-01-01", "2022-12-31"),
-        ("2024-06-01", "2025-12-31")  # Added some 2024 to catch 2025 nicely
-    ]
+    # Load periods from TOML config
+    periods = parse_optimization_periods(config)
     
     # Setup storage
     db_path = os.path.join(project_root, 'data', 'optimization_trials.db')
@@ -223,11 +313,14 @@ def main():
     for key, value in trial.params.items():
         print(f"    {key}: {value}")
         
-    if "total_return" in trial.user_attrs:
-        print(f"  Total Return: {trial.user_attrs['total_return']:.1f}%")
-        print(f"  Max Drawdown: {trial.user_attrs['max_drawdown']:.1f}%")
-        print(f"  Win Rate:     {trial.user_attrs['win_rate']:.1f}%")
-        print(f"  Total Trades: {trial.user_attrs['total_trades']}")
+    if "expectancy" in trial.user_attrs:
+        print(f"  Expectancy:     {trial.user_attrs['expectancy']:.3f}%")
+        print(f"  Avg Gain/Trade: {trial.user_attrs['avg_gain']:.3f}%")
+        print(f"  Avg SPY Gain:   {trial.user_attrs['avg_spy_gain']:.3f}%")
+        print(f"  Alpha:          {trial.user_attrs['alpha']:.3f}%")
+        print(f"  Max Drawdown:   {trial.user_attrs['max_drawdown']:.1f}%")
+        print(f"  Win Rate:       {trial.user_attrs['win_rate']:.1f}%")
+        print(f"  Total Trades:   {trial.user_attrs['total_trades']}")
 
 if __name__ == "__main__":
     main()
