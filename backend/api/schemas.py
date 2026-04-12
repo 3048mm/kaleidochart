@@ -173,10 +173,16 @@ class RankingResponse(BaseModel):
     indicator_name: str
     items: List[RankingItem]
 
+class MarketTrendScoreHistoryItem(BaseModel):
+    date: str
+    score: float
+
 class DashboardResponse(BaseModel):
     date: str
     market_phase: str
     distribution_days: int
+    market_trend_score: float = 0.0
+    trend_score_history: List[MarketTrendScoreHistoryItem] = []
     spy_feature: Optional[SpyFeatureItem] = None
     leading: List[LeadingIndicatorItem] = []
     indices: List[DashboardPanelItem] = []
@@ -264,3 +270,6 @@ class ScreenerMetaResponse(BaseModel):
     columns: List[ScreenerColumnMeta]
     rank_indicators: List[str]
     virtual_columns: List[ScreenerColumnMeta]
+
+class AvailableDatesResponse(BaseModel):
+    dates: List[str]

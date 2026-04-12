@@ -4,25 +4,54 @@ import { DashboardResponse, DashboardPanelItem, LeadingIndicatorItem } from '../
 import { Sparkline } from '../components/Sparkline';
 import { MarketPhaseMeter } from '../components/MarketPhaseMeter';
 import { MiniChart } from '../components/MiniChart';
+import { TrendScoreChart } from '../components/TrendScoreChart';
 import { RrgChart, RrgSeries } from '../components/RrgChart';
 import { appConfig, getIntensityColor } from '../config';
 
 export const DashboardPage: React.FC = () => {
-    const [selectedDate, setSelectedDate] = useState<string>(() => {
-        const today = new Date();
-        return today.toISOString().split('T')[0];
-    });
+    const [availableDates, setAvailableDates] = useState<string[]>([]);
+    const [selectedDate, setSelectedDate] = useState<string>('');
     const [data, setData] = useState<DashboardResponse | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [activeTab, setActiveTab] = useState<'indicator' | 'market' | 'sector-theme'>('indicator');
     const [themesVisibleCount, setThemesVisibleCount] = useState(10);
 
-    const shiftDate = (days: number) => {
-        if (!selectedDate) return;
-        const d = new Date(selectedDate);
-        d.setDate(d.getDate() + days);
-        setSelectedDate(d.toISOString().split('T')[0]);
+    // Initial load: Fetch available dates
+    useEffect(() => {
+        fetch('/api/available_dates')
+            .then(res => res.json())
+            .then(json => {
+                if (json.dates && json.dates.length > 0) {
+                    setAvailableDates(json.dates);
+                    setSelectedDate(json.dates[0]); // Set to latest
+                }
+            })
+            .catch(err => console.error('Failed to fetch available dates:', err));
+    }, []);
+
+    const shiftDate = (direction: number) => {
+        if (!selectedDate || availableDates.length === 0) return;
+        const currentIndex = availableDates.indexOf(selectedDate);
+
+        if (currentIndex !== -1) {
+            // Standard case: date is a business day
+            const newIndex = currentIndex - direction;
+            if (newIndex >= 0 && newIndex < availableDates.length) {
+                setSelectedDate(availableDates[newIndex]);
+            }
+        } else {
+            // Edge case: date is NOT in the list (e.g., manually selected Weekend)
+            // direction -1 (Backwards) -> find first date < selectedDate
+            // direction +1 (Forwards) -> find first date > selectedDate
+            if (direction === -1) {
+                const target = availableDates.find(d => d < selectedDate);
+                if (target) setSelectedDate(target);
+            } else {
+                const target = [...availableDates].reverse().find(d => d > selectedDate);
+                if (target) setSelectedDate(target);
+            }
+        }
     };
 
     useEffect(() => {
@@ -260,21 +289,39 @@ export const DashboardPage: React.FC = () => {
                 <h1 style={{ margin: 0 }}>Market Dashboard</h1>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                     <label style={{ fontSize: '14px', color: '#aaa' }}>Base Date:</label>
-                    <button onClick={() => shiftDate(-1)} style={{ background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: '18px', padding: '0 5px' }}>◀</button>
-                    <input
-                        type="date"
-                        value={selectedDate}
-                        onChange={e => setSelectedDate(e.target.value)}
-                        style={{
-                            padding: '6px 12px',
-                            borderRadius: '4px',
-                            background: 'rgba(255,255,255,0.1)',
-                            border: '1px solid rgba(255,255,255,0.2)',
-                            color: '#fff',
-                            colorScheme: 'dark'
-                        }}
-                    />
-                    <button onClick={() => shiftDate(1)} style={{ background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: '18px', padding: '0 5px' }}>▶</button>
+                    <button 
+                        onClick={() => shiftDate(-1)} 
+                        style={{ background: 'transparent', border: 'none', color: !availableDates.some(d => d < selectedDate) ? '#444' : '#aaa', cursor: 'pointer', fontSize: '18px', padding: '0 5px' }}
+                        disabled={!availableDates.some(d => d < selectedDate)}
+                    >
+                        ◀
+                    </button>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(255,255,255,0.05)', padding: '4px 10px', borderRadius: '6px', border: `1px solid ${appConfig.colors.glassBorder}` }}>
+                        <input
+                            type="date"
+                            value={selectedDate}
+                            onChange={e => setSelectedDate(e.target.value)}
+                            style={{
+                                background: 'transparent',
+                                border: 'none',
+                                color: '#fff',
+                                fontSize: '14px',
+                                outline: 'none',
+                                colorScheme: 'dark',
+                                cursor: 'pointer'
+                            }}
+                        />
+                        <span style={{ fontSize: '13px', color: appConfig.colors.accent, fontWeight: 'bold', minWidth: '35px' }}>
+                            ({selectedDate ? new Date(selectedDate).toLocaleDateString('en-US', { weekday: 'short' }) : '---'})
+                        </span>
+                    </div>
+                    <button 
+                        onClick={() => shiftDate(1)} 
+                        style={{ background: 'transparent', border: 'none', color: !availableDates.some(d => d > selectedDate) ? '#444' : '#aaa', cursor: 'pointer', fontSize: '18px', padding: '0 5px' }}
+                        disabled={!availableDates.some(d => d > selectedDate)}
+                    >
+                        ▶
+                    </button>
                 </div>
             </div>
 
@@ -329,17 +376,50 @@ export const DashboardPage: React.FC = () => {
                     {activeTab === 'indicator' && (
                         <>
                             {/* Top Row: Trend */}
-                            <div style={{ marginBottom: '20px', display: 'flex', gap: '20px' }}>
-                                <div style={{ flex: 1 }}>
+                            <div style={{ marginBottom: '20px', display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+                                {/* 1. Market Phase Meter */}
+                                <div style={{ flex: '2', minWidth: '400px' }}>
                                     <MarketPhaseMeter phase={data.market_phase} />
                                 </div>
-                                <div className="glass-panel" style={{ padding: '20px', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', minWidth: '150px' }}>
+                                
+                                {/* 2. Market Trend Score Card */}
+                                <div className="glass-panel" style={{ flex: '1', padding: '20px', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', minWidth: '150px' }}>
+                                    <div style={{ fontSize: '11px', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Trend Score</div>
+                                    <div style={{ 
+                                        fontSize: '42px', 
+                                        fontWeight: 'bold', 
+                                        color: data.market_trend_score >= 50 ? appConfig.colors.good : appConfig.colors.bad,
+                                        lineHeight: 1
+                                    }}>
+                                        {Math.round(data.market_trend_score)}
+                                    </div>
+                                    <div style={{ fontSize: '12px', marginTop: '5px', color: '#888' }}>
+                                        {data.market_trend_score >= 80 ? 'EXTREME BULL' : data.market_trend_score >= 50 ? 'BULL' : data.market_trend_score >= 20 ? 'BEAR' : 'EXTREME BEAR'}
+                                    </div>
+                                </div>
+
+                                {/* 3. Distribution Days Card */}
+                                <div className="glass-panel" style={{ flex: '1', padding: '20px', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', minWidth: '150px' }}>
                                     <div style={{ fontSize: '11px', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Distribution Days</div>
-                                    <div style={{ fontSize: '32px', fontWeight: 'bold', color: data.distribution_days >= 4 ? appConfig.colors.bad : '#fff' }}>
+                                    <div style={{ fontSize: '42px', fontWeight: 'bold', color: data.distribution_days >= 4 ? appConfig.colors.bad : '#fff', lineHeight: 1 }}>
                                         {data.distribution_days}
+                                    </div>
+                                    <div style={{ fontSize: '12px', marginTop: '5px', color: '#888' }}>
+                                        {data.distribution_days >= 5 ? 'DISTRIBUTION' : 'CALM'}
                                     </div>
                                 </div>
                             </div>
+
+                            {/* Market Trend Score History Graph */}
+                            {data.trend_score_history && data.trend_score_history.length > 0 && (
+                                <div className="glass-panel" style={{ padding: '20px', marginBottom: '20px' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', borderBottom: `1px solid ${appConfig.colors.glassBorder}`, paddingBottom: '10px' }}>
+                                        <h3 style={{ margin: 0 }}>📈 Market Trend Score History (0-100)</h3>
+                                        <div style={{ fontSize: '12px', color: '#aaa' }}>Last 100 Trading Days</div>
+                                    </div>
+                                    <TrendScoreChart data={data.trend_score_history} height={180} />
+                                </div>
+                            )}
 
                             {/* SPY Feature Panel */}
                             {data.spy_feature && (

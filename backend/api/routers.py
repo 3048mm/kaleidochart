@@ -452,6 +452,17 @@ def get_rankings(db: Session = Depends(get_api_db), limit: int = 20, asc: bool =
         
     return rankings
 
+@router.get("/available_dates", response_model=schemas.AvailableDatesResponse)
+def get_available_dates(db: Session = Depends(get_api_db)):
+    """
+    Get all unique dates available for the dashboard from MarketSignal table.
+    Sorted descending (latest first).
+    """
+    rows = db.query(MarketSignal.date).order_by(desc(MarketSignal.date)).distinct().all()
+    # MarketSignal.date is a date object, convert to string
+    date_strings = [str(r[0]) for r in rows]
+    return schemas.AvailableDatesResponse(dates=date_strings)
+
 @router.get("/dashboard", response_model=schemas.DashboardResponse)
 def get_dashboard(
     date: Optional[str] = Query(None, description="ISO Format Date YYYY-MM-DD"),
@@ -478,10 +489,22 @@ def get_dashboard(
             raise HTTPException(status_code=404, detail="No Market Signal found")
         target_date = str(signal.date)
 
+    # 2.1 Get Trend Score History
+    history_signals = db.query(MarketSignal).filter(
+        MarketSignal.date <= target_date
+    ).order_by(desc(MarketSignal.date)).limit(100).all()
+    
+    trend_history = [
+        schemas.MarketTrendScoreHistoryItem(date=str(s.date), score=s.market_trend_score or 0.0)
+        for s in reversed(history_signals)
+    ]
+
     resp = schemas.DashboardResponse(
         date=target_date,
         market_phase=signal.market_phase,
         distribution_days=signal.distribution_days or 0,
+        market_trend_score=signal.market_trend_score or 0.0,
+        trend_score_history=trend_history,
         leading=[],
         indices=[],
         sectors=[],

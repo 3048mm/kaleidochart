@@ -44,22 +44,51 @@ export const ScreenerPage: React.FC = () => {
     const queryParams = new URLSearchParams(location.search);
     const urlDate = queryParams.get('target_date');
 
-    const [selectedDate, setSelectedDate] = useState<string>(() => {
-        if (urlDate) return urlDate;
-        const today = new Date();
-        return today.toISOString().split('T')[0];
-    });
+    const [availableDates, setAvailableDates] = useState<string[]>([]);
+    const [selectedDate, setSelectedDate] = useState<string>('');
     const [data, setData] = useState<ScreenerDashboardResponse | null>(null);
     const [presets, setPresets] = useState<PresetsResponse | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [activeTab, setActiveTab] = useState<'Rise' | 'Fall'>('Rise');
 
-    const shiftDate = (days: number) => {
-        if (!selectedDate) return;
-        const d = new Date(selectedDate);
-        d.setDate(d.getDate() + days);
-        setSelectedDate(d.toISOString().split('T')[0]);
+    // Load available dates
+    useEffect(() => {
+        fetch('/api/available_dates')
+            .then(res => res.json())
+            .then(json => {
+                if (json.dates && json.dates.length > 0) {
+                    setAvailableDates(json.dates);
+                    // Initialize if not in URL
+                    if (!urlDate) {
+                        setSelectedDate(json.dates[0]);
+                    } else {
+                        setSelectedDate(urlDate);
+                    }
+                }
+            })
+            .catch(err => console.error('Failed to fetch available dates:', err));
+    }, [urlDate]);
+
+    const shiftDate = (direction: number) => {
+        if (!selectedDate || availableDates.length === 0) return;
+        const currentIndex = availableDates.indexOf(selectedDate);
+        
+        if (currentIndex !== -1) {
+            const newIndex = currentIndex - direction;
+            if (newIndex >= 0 && newIndex < availableDates.length) {
+                setSelectedDate(availableDates[newIndex]);
+            }
+        } else {
+            // Weekend/Holidays logic
+            if (direction === -1) {
+                const target = availableDates.find(d => d < selectedDate);
+                if (target) setSelectedDate(target);
+            } else {
+                const target = [...availableDates].reverse().find(d => d > selectedDate);
+                if (target) setSelectedDate(target);
+            }
+        }
     };
 
     // Load presets from API (once)
@@ -180,21 +209,39 @@ export const ScreenerPage: React.FC = () => {
                 <h1 style={{ margin: 0, fontSize: '24px' }}>Market Screener</h1>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                     <label style={{ fontSize: '14px', color: '#aaa' }}>Base Date:</label>
-                    <button onClick={() => shiftDate(-1)} style={{ background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: '18px', padding: '0 5px' }}>◀</button>
-                    <input
-                        type="date"
-                        value={selectedDate}
-                        onChange={e => setSelectedDate(e.target.value)}
-                        style={{
-                            padding: '6px 12px',
-                            borderRadius: '4px',
-                            background: '#1a1d26',
-                            border: '1px solid rgba(255,255,255,0.2)',
-                            color: '#fff',
-                            colorScheme: 'dark'
-                        }}
-                    />
-                    <button onClick={() => shiftDate(1)} style={{ background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: '18px', padding: '0 5px' }}>▶</button>
+                    <button 
+                        onClick={() => shiftDate(-1)} 
+                        style={{ background: 'transparent', border: 'none', color: !availableDates.some(d => d < selectedDate) ? '#444' : '#aaa', cursor: 'pointer', fontSize: '18px', padding: '0 5px' }}
+                        disabled={!availableDates.some(d => d < selectedDate)}
+                    >
+                        ◀
+                    </button>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(255,255,255,0.05)', padding: '4px 10px', borderRadius: '6px', border: `1px solid ${appConfig.colors.glassBorder}` }}>
+                        <input
+                            type="date"
+                            value={selectedDate}
+                            onChange={e => setSelectedDate(e.target.value)}
+                            style={{
+                                background: 'transparent',
+                                border: 'none',
+                                color: '#fff',
+                                fontSize: '14px',
+                                outline: 'none',
+                                colorScheme: 'dark',
+                                cursor: 'pointer'
+                            }}
+                        />
+                        <span style={{ fontSize: '13px', color: appConfig.colors.accent, fontWeight: 'bold', minWidth: '35px' }}>
+                            ({selectedDate ? new Date(selectedDate).toLocaleDateString('en-US', { weekday: 'short' }) : '---'})
+                        </span>
+                    </div>
+                    <button 
+                        onClick={() => shiftDate(1)} 
+                        style={{ background: 'transparent', border: 'none', color: !availableDates.some(d => d > selectedDate) ? '#444' : '#aaa', cursor: 'pointer', fontSize: '18px', padding: '0 5px' }}
+                        disabled={!availableDates.some(d => d > selectedDate)}
+                    >
+                        ▶
+                    </button>
                 </div>
             </div>
 

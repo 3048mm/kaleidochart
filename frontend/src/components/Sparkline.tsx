@@ -39,6 +39,16 @@ export const Sparkline: React.FC<SparklineProps> = ({
 
     return (
         <svg width={width} height={height} style={{ overflow: 'visible' }}>
+            {/* Center reference line */}
+            <line 
+                x1={0} 
+                y1={height / 2} 
+                x2={width} 
+                y2={height / 2} 
+                stroke="rgba(255, 255, 255, 0.6)" 
+                strokeWidth={1} 
+                strokeDasharray="3,3"
+            />
             <path
                 d={pathData}
                 fill="none"

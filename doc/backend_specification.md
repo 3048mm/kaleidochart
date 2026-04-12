@@ -43,9 +43,23 @@
 *   **特徴**: 同一カテゴリ内で特定指標（RSスコア等）を横並び比較し、パーセンタイル(0〜1)で順位付けしたデータ。
 *   **カラム**: `symbol_id`, `date`, `group_name`, `indicator_name`, `percent_rank`
 
-### 3.6 T5/T6: マーケットシグナル (`market_signals`, `fundamental_data`)
-*   **T5**: S&P500の動向から算出される市場全体の方向性（`market_phase`）や「Follow Through Day（FTD）」などのシグナル。
-*   **T6**: 銘柄に紐づく株数（shares）やEPS等の基礎データ。
+### 3.6 T5: マーケットシグナル (`market_signals`)
+*   **特徴**: S&P500の動向から算出される市場全体の方向性（`market_phase`）や「Follow Through Day（FTD）」などの定性的シグナルに加え、0〜100 の定量的な「Market Trend Score」を保存。
+*   **カラム**: `date`, `spy_above_sma200`, `distribution_days`, `follow_through_day`, `market_phase`, `market_trend_score`
+
+### 3.7 Market Trend Score (0-100) 算出ロジック
+市場の過熱感や健全性を定量化するため、以下の4つの独立した構成要素に基づき、各要素最大25点、合計100点満点で算出します：
+1.  **SPY Trend (25pts)**: 以下の4項目（各6.25点）が真であれば加算。
+    - Price > EMA21
+    - Price > SMA50
+    - Price > SMA200
+    - SMA200 is rising (過去5日間平均の比較)
+2.  **Market Breadth (25pts)**: 個別銘柄（category='個別' 且つ active=1）のうち、終値が 50日移動平均線（SMA50）を上回っている銘柄の比率を 0〜25 点にスケーリング。
+3.  **Momentum Ratio (25pts)**: 全体銘柄のうち、前日比でプラスとなった銘柄の比率を 0〜25 点にスケーリング（短期的な買いの勢いを測定）。
+4.  **Volatility (25pts)**: VIX 指数の絶対値による評価。
+    - 12.0以下であれば 25点満点。
+    - 35.0以上であれば 0点。
+    - その間は線形補間（Greedで満点、Fearで減点）。
 
 ## 4. バッチ処理フロー (Pipeline Logic)
 日々のデータ更新は `update_pipeline.py` によって管理され、各階層 (T1〜T6) は「ソース」と「ターゲット」の最大日付を比較して不足分を補完する **独立したキャッチアップ・ロジック** を持ちます。
@@ -59,11 +73,11 @@
 | **Phase 2+** | `prices` (Virtual) | 構成銘柄の T2 | 構成銘柄の最新 | **内部合成**: 構成銘柄の T2 が揃った最新日までテーマ指数の価格を再合成。 |
 | **Phase 3** | `indicators` | `daily_prices` | T2 最新日 | **銘柄別計算**: `T2.MAX(date) > T3.MAX(date)` 的差分を算出。RS計算のため SPY の T3 を最優先。 |
 | **Phase 4** | `relative_ranks` | `indicators` | T3 最新日 | **日付別計算**: `T3.MAX(date) > T4.MAX(date)` 的不足日を **Delete-Insert** で一括生成。 |
-| **Phase 5** | `market_signals` | T3/T4 | T4 最新日 | **日付別概況**: 市場フェーズ・FTD等を算出。Dashboard の表示基準日となる。 |
+| **Phase 5** | `market_signals` | T3/T4 | T4 最新日 | **日付別概況**: 市場フェーズ・スコア等を算出。NULL欠損時は過去に遡りバックフィルを実施。 |
 | **Phase 6** | `fundamental_data` | yfinance API | - | **定期リフレッシュ**: 前回の取得から 24時間以上経過した銘柄の `market_cap` 等を取得。 |
 
 ### 4.2 堅牢性とパフォーマンスの設計 (Key Design Principles)
-- **べき等性 (Idempotency)**: T4/T5 等の集計テーブルは、不整合回避のために対象日を一度物理削除してから挿入することで、重複エラー (`IntegrityError`) を防止し、ジョブの再試行を常に安全にします。
+- **べき等性 (Idempotency)**: T4/T5 等の集計テーブルは、不整合回避のために対象日を一度物理削除してから挿入することで、重複エラー (`IntegrityError`) を防止し、ジョブの再試行を常に安全にします。また、新規指標（カラム）の追加時には NULL レコードを自動検知して補完するロジックを備えています。
 - **バッチ取得による負荷軽減**: yfinance へのリクエストは 50〜100件ずつのマルチ・ティッカー・バッチで一括実行し、API 制限の回避とパフォーマンス向上を両立します。
 - **SPY 主導の同期**: SPY カレンダーを全銘柄の共通の到達点 (Target) とし、既存データの無駄な再スキャンを最小限に抑えます。
 

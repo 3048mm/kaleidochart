@@ -164,10 +164,17 @@ export interface SpyFeatureItem {
     chart_data: ChartDataPoint[];
 }
 
+export interface MarketTrendScoreHistoryItem {
+    date: string;
+    score: number;
+}
+
 export interface DashboardResponse {
     date: string
     market_phase: string
     distribution_days: number
+    market_trend_score: number
+    trend_score_history: MarketTrendScoreHistoryItem[]
     spy_feature?: SpyFeatureItem
     leading: LeadingIndicatorItem[]
     indices: DashboardPanelItem[]

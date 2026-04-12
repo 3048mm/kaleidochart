@@ -80,6 +80,24 @@ export const MiniChart: React.FC<MiniChartProps> = ({ data, height = 200 }) => {
             low: d.low,
             close: d.close,
         }));
+
+        // Add horizontal center line if data exists
+        if (data.length > 0) {
+            const highs = data.map(d => d.high);
+            const lows = data.map(d => d.low);
+            const max = Math.max(...highs);
+            const min = Math.min(...lows);
+            const mid = (max + min) / 2;
+
+            candleSeriesRef.current.createPriceLine({
+                price: mid,
+                color: 'rgba(255, 255, 255, 0.4)',
+                lineWidth: 1,
+                lineStyle: 1, // Dotted
+                axisLabelVisible: false,
+                title: '',
+            });
+        }
         
         candleSeriesRef.current.setData(chartData as any);
         chartRef.current?.timeScale().fitContent();

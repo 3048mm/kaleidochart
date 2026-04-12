@@ -93,6 +93,26 @@ CLI スクリプトや検証コードで直接 `from db.database import SessionL
 
 ---
 
+## 7. 大規模ファイルに対する `grep_search` のタイムアウト
+
+### 問題
+`routers.py` や `DashboardPage.tsx` のような大規模なソースファイル（1000行超）に対し、`grep_search` を実行するとタイムアウトが発生し、エージェントが固まる（または応答が極端に遅くなる）ことがある。
+
+### 原因
+ブラウザツールやエージェントのバックエンド側での検索処理、またはファイル読み込みのオーバーヘッドが大きいため。
+
+### 対策ルール
+- **チャンク読込の活用**: 検索が失敗する場合は `grep` を諦め、`view_file` で 500〜800 行ずつチャンクとして読み進める。
+- **PowerShell の利用**: `run_command` を使い、OS レベルの `Select-String` (grep 相当) を実行して行番号を特定する。
+  ```powershell
+  $OutputEncoding = [System.Console]::OutputEncoding = [System.Text.Encoding]::UTF8;
+  Select-String -Path "backend/api/routers.py" -Pattern "@router.get\(\"/dashboard\""
+  ```
+- **ノウハウの蓄積**: 一度特定した重要パスや行番号はメモし、再検索の手間を省く。
+
+---
+
 ## 更新履歴
 - 2026-04-10: 初版作成（DB未初期化、APIタイムアウト、TOMLパーサー注意点、キャッシュ整合性の4項目）
 - 2026-04-11: 課題リストの方針 (doc/issue_list.md) を追記
+- 2026-04-12: 大規模ファイルに対する `grep_search` のタイムアウト対策を追記

@@ -9,7 +9,7 @@ import traceback
 from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta, date
 from typing import List, Optional
-from sqlalchemy import func
+from sqlalchemy import func, text
 
 # Add backend directory to sys.path
 backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -176,18 +176,117 @@ def sync_phase_t5_signals(db):
     """Phase 5: Market Signals (T5) - Idempotent catch-up."""
     logger.info("--- Phase 5: Market Signal calculation START ---")
     spy_sym_id = db.query(Symbol.id).filter(Symbol.ticker == "SPY").scalar()
-    t3_max, t5_max = db.query(func.max(Indicator.date)).filter(Indicator.symbol_id == spy_sym_id).scalar(), db.query(func.max(MarketSignal.date)).scalar()
-    if not t3_max or (t5_max and t5_max >= t3_max): return
+    vix_sym_id = db.query(Symbol.id).filter(Symbol.ticker == "^VIX").scalar()
+    
+    # 1. Determine Gap Dates to process (New dates OR dates with missing score)
+    # Strategy: Find all dates where we have SPY metrics, but MarketSignal is either missing or has NULL score
+    spy_sym_id = db.query(Symbol.id).filter(Symbol.ticker == "SPY").scalar()
+    
+    # Dates having SPY indicators (potential signal days)
+    t3_dates = {r[0] for r in db.query(Indicator.date).distinct().filter(Indicator.symbol_id == spy_sym_id).all()}
+    
+    # Dates already having a non-null score
+    t5_completed_dates = {r[0] for r in db.query(MarketSignal.date).filter(MarketSignal.market_trend_score.is_not(None)).all()}
+    
+    # Gap is the set difference
+    gap_dates = sorted(list(t3_dates - t5_completed_dates))
+    
+    if not gap_dates:
+        logger.info("No gaps or missing scores detected in Phase 5.")
+        return
+
+    # 2. Fetch SPY full history (needed for Distribution Days etc.)
     spy_df = pd.DataFrame([{"date": r.date, "close": r.close, "volume": r.volume} for r in db.query(DailyPrice).filter(DailyPrice.symbol_id == spy_sym_id).order_by(DailyPrice.date).all()])
-    if spy_df.empty: return
-    ms_df = calculate_market_signals(spy_df)
-    if t5_max: ms_df = ms_df[ms_df['date'] > t5_max]
-    if ms_df.empty: return
-    t5_recs = [MarketSignal(date=row['date'], spy_above_sma200=int(row['spy_above_sma200']), spy_sma200_rising=int(row['spy_sma200_rising']) if _to_val(row, 'spy_sma200_rising') is not None else None, distribution_days=int(row['distribution_days']), follow_through_day=int(row['follow_through_day']), market_phase=row['market_phase']) for _, row in ms_df.iterrows()]
-    db.query(MarketSignal).filter(MarketSignal.date.in_(ms_df['date'].tolist())).delete()
+    if spy_df.empty:
+        logger.error("SPY price data missing.")
+        return
+    spy_df['date'] = pd.to_datetime(spy_df['date'])
+
+    # 3. Fetch VIX history
+    vix_df = pd.DataFrame()
+    if vix_sym_id:
+        vix_df = pd.DataFrame([{"date": r.date, "close": r.close} for r in db.query(DailyPrice).filter(DailyPrice.symbol_id == vix_sym_id).order_by(DailyPrice.date).all()])
+        if not vix_df.empty:
+            vix_df['date'] = pd.to_datetime(vix_df['date'])
+    
+    # 4. Calculate Breadth & Momentum for each gap date
+    metrics_list = []
+    active_stock_ids = [r[0] for r in db.query(Symbol.id).filter(Symbol.active == 1, Symbol.category == '個別').all()]
+    
+    if not active_stock_ids:
+        logger.warning("No active '個別' stocks found for metrics calculation.")
+    else:
+        for d in gap_dates:
+            # Breadth (% above SMA50)
+            # We want: (Count of stocks where close > sma_50) / (Count of stocks)
+            # Joining indicators and daily_prices for the same day
+            # Revised approach: Use a join on active symbols
+            # Breadth
+            breadth_val = db.execute(text(f"""
+                SELECT CAST(SUM(CASE WHEN dp.close > i.sma_50 THEN 1 ELSE 0 END) AS FLOAT) / COUNT(*)
+                FROM indicators i
+                JOIN daily_prices dp ON i.symbol_id = dp.symbol_id AND i.date = dp.date
+                JOIN symbols s ON i.symbol_id = s.id
+                WHERE i.date = '{d}' AND s.active = 1 AND s.category = '個別'
+            """)).scalar() or 0.5
+            
+            # Momentum (% daily change > 0)
+            # We need daily_prices for today (dp) and previous trading day (dp_prev)
+            momentum_val = db.execute(text(f"""
+                WITH current_prices AS (
+                    SELECT symbol_id, close FROM daily_prices WHERE date = '{d}'
+                ),
+                prev_prices AS (
+                    SELECT dp.symbol_id, dp.close
+                    FROM daily_prices dp
+                    JOIN (
+                        SELECT symbol_id, MAX(date) as max_date FROM daily_prices WHERE date < '{d}' GROUP BY symbol_id
+                    ) dp_last ON dp.symbol_id = dp_last.symbol_id AND dp.date = dp_last.max_date
+                )
+                SELECT CAST(SUM(CASE WHEN cp.close > pp.close THEN 1 ELSE 0 END) AS FLOAT) / COUNT(*)
+                FROM current_prices cp
+                JOIN prev_prices pp ON cp.symbol_id = pp.symbol_id
+                JOIN symbols s ON cp.symbol_id = s.id
+                WHERE s.active = 1 AND s.category = '個別'
+            """)).scalar() or 0.5
+            
+            metrics_list.append({
+                'date': pd.to_datetime(d),
+                'breadth_sma50': breadth_val,
+                'momentum_ratio': momentum_val
+            })
+            
+    metrics_df = pd.DataFrame(metrics_list) if metrics_list else pd.DataFrame(columns=['date', 'breadth_sma50', 'momentum_ratio'])
+
+    # 5. Execute core calculator
+    ms_df = calculate_market_signals(spy_df, vix_df, metrics_df)
+    
+    # Filter only the gap dates we intended to process
+    gap_dt = [pd.to_datetime(d) for d in gap_dates]
+    ms_df = ms_df[ms_df['date'].isin(gap_dt)]
+    
+    if ms_df.empty:
+        logger.info("No signals found for the target gap dates.")
+        return
+
+    # 6. Upsert records
+    t5_recs = []
+    for _, row in ms_df.iterrows():
+        t5_recs.append(MarketSignal(
+            date=row['date'].date(),
+            spy_above_sma200=int(row['spy_above_sma200']),
+            spy_sma200_rising=int(row['spy_sma200_rising']) if _to_val(row, 'spy_sma200_rising') is not None else None,
+            distribution_days=int(row['distribution_days']),
+            follow_through_day=int(row['follow_through_day']),
+            market_phase=row['market_phase'],
+            market_trend_score=float(row['market_trend_score']) if _to_val(row, 'market_trend_score') is not None else None
+        ))
+    
+    # Delete potentially partial entries for the dates we are saving
+    db.query(MarketSignal).filter(MarketSignal.date.in_([r.date for r in t5_recs])).delete(synchronize_session=False)
     db.bulk_save_objects(t5_recs)
     db.commit()
-    logger.info("Phase 5 COMPLETE.")
+    logger.info(f"Phase 5 COMPLETE: Saved {len(t5_recs)} signal records.")
 
 # --- Utility Functions ---
 

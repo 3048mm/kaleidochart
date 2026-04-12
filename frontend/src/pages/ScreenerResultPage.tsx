@@ -158,9 +158,28 @@ export const ScreenerResultPage: React.FC = () => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [meta, setMeta] = useState<MetaResponse | null>(null);
+    const [availableDates, setAvailableDates] = useState<string[]>([]);
 
     const [sortKey, setSortKey] = useState<SortKey>('change_pct');
     const [sortDesc, setSortDesc] = useState(true);
+
+    // Load available dates
+    useEffect(() => {
+        fetch('/api/available_dates')
+            .then(res => res.json())
+            .then(json => {
+                if (json.dates && json.dates.length > 0) {
+                    setAvailableDates(json.dates);
+                    // If no targetDate in URL, initialize with latest?
+                    // Usually we come here with a date from the dashboard/screener, 
+                    // but let's handle the direct navigation case.
+                    if (!targetDate) {
+                        updateDateURL(json.dates[0]);
+                    }
+                }
+            })
+            .catch(err => console.error('Failed to fetch available dates:', err));
+    }, []);
 
     // Load column meta from API (once)
     useEffect(() => {
@@ -183,11 +202,25 @@ export const ScreenerResultPage: React.FC = () => {
         navigate(`${location.pathname}?${nextParams.toString()}`, { replace: true });
     };
 
-    const shiftDate = (days: number) => {
-        if (!targetDate) return;
-        const d = new Date(targetDate);
-        d.setDate(d.getDate() + days);
-        updateDateURL(d.toISOString().split('T')[0]);
+    const shiftDate = (direction: number) => {
+        if (!targetDate || availableDates.length === 0) return;
+        const currentIndex = availableDates.indexOf(targetDate);
+        
+        if (currentIndex !== -1) {
+            const newIndex = currentIndex - direction;
+            if (newIndex >= 0 && newIndex < availableDates.length) {
+                updateDateURL(availableDates[newIndex]);
+            }
+        } else {
+            // Weekend logic
+            if (direction === -1) {
+                const target = availableDates.find(d => d < targetDate);
+                if (target) updateDateURL(target);
+            } else {
+                const target = [...availableDates].reverse().find(d => d > targetDate);
+                if (target) updateDateURL(target);
+            }
+        }
     };
 
     useEffect(() => {
@@ -329,12 +362,39 @@ export const ScreenerResultPage: React.FC = () => {
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                     <label style={{ fontSize: '13px', color: '#888' }}>Base Date:</label>
-                    <button onClick={() => shiftDate(-1)} style={{ background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: '16px', padding: '0 5px' }}>◀</button>
-                    <input
-                        type="date" value={targetDate} onChange={e => updateDateURL(e.target.value)}
-                        style={{ padding: '4px 8px', borderRadius: '4px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', colorScheme: 'dark', fontSize: '12px' }}
-                    />
-                    <button onClick={() => shiftDate(1)} style={{ background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: '16px', padding: '0 5px' }}>▶</button>
+                    <button 
+                        onClick={() => shiftDate(-1)} 
+                        style={{ background: 'transparent', border: 'none', color: !availableDates.some(d => d < targetDate) ? '#444' : '#aaa', cursor: 'pointer', fontSize: '16px', padding: '0 5px' }}
+                        disabled={!availableDates.some(d => d < targetDate)}
+                    >
+                        ◀
+                    </button>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(255,255,255,0.05)', padding: '4px 8px', borderRadius: '4px', border: `1px solid rgba(255,255,255,0.1)` }}>
+                        <input
+                            type="date"
+                            value={targetDate}
+                            onChange={e => updateDateURL(e.target.value)}
+                            style={{
+                                background: 'transparent',
+                                border: 'none',
+                                color: '#fff',
+                                fontSize: '12px',
+                                outline: 'none',
+                                colorScheme: 'dark',
+                                cursor: 'pointer'
+                            }}
+                        />
+                        <span style={{ fontSize: '12px', color: appConfig.colors.accent, fontWeight: 'bold', minWidth: '32px' }}>
+                            ({targetDate ? new Date(targetDate).toLocaleDateString('en-US', { weekday: 'short' }) : '---'})
+                        </span>
+                    </div>
+                    <button 
+                        onClick={() => shiftDate(1)} 
+                        style={{ background: 'transparent', border: 'none', color: !availableDates.some(d => d > targetDate) ? '#444' : '#aaa', cursor: 'pointer', fontSize: '16px', padding: '0 5px' }}
+                        disabled={!availableDates.some(d => d > targetDate)}
+                    >
+                        ▶
+                    </button>
                 </div>
             </div>
 

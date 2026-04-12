@@ -176,4 +176,7 @@ class MarketSignal(Base):
     # BULL | CORRECTION | RALLY_ATTEMPT | BEAR
     market_phase       = Column(String)
     
+    # 0-100 market trend score
+    market_trend_score  = Column(Float)
+    
     created_at = Column(DateTime, default=datetime.utcnow)
