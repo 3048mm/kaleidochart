@@ -40,7 +40,7 @@ def get_cached_data(config_app, start_date, end_date):
     print(f"Preloading data from {start_date} to {end_date} for optimization...")
     res = preload_data(database.engine, start_date, end_date, refresh_cache=False)
     _cached_data_dict[period_key] = res
-    print("Data preload complete.")
+    print("Data preload complete.", flush=True)
     return res
 
 def calculate_custom_score(metrics, total_trading_days):
@@ -65,7 +65,7 @@ def calculate_custom_score(metrics, total_trading_days):
         return -100.0 + (trades_count * 20.0)
     avg_trades_per_day = trades_count / total_trading_days
     
-    # Penalty for too many trades
+    # Penalty for too many trades (noise / over-fitting)
     if avg_trades_per_day >= 50:
         return -500.0 - (avg_trades_per_day * 10)
     elif avg_trades_per_day >= 25:
@@ -75,23 +75,49 @@ def calculate_custom_score(metrics, total_trading_days):
     expectancy = metrics.get('expectancy', 0.0)
     max_dd = abs(metrics.get('max_drawdown_pct', 0.0))
     
-    # Hard penalty for severe drawdown (> 35 percentage points cumulative)
-    if max_dd > 35.0:  
-        return -max_dd * 10
+    # 累積ドローダウン(加算ベース)はトレード回数が多いほど自然と膨らむため、
+    # ペナルティではなく Expectancy の「割引係数」としてスムーズに適用する。
+    # 例: 1日平均10銘柄保有する戦略なら max_dd を 10 で割って「1枠あたりの最大DD」を推定
+    normalized_dd = max_dd / max(1.0, avg_trades_per_day)
 
     if expectancy <= 0:
-        # Still return the expectancy so Optuna can see direction
-        return expectancy * 10  # Amplify to distinguish bad from very bad
-        
-    # Score = Expectancy, with mild drawdown adjustment
-    # Drawdown guard: discount score proportionally to drawdown severity
-    score = expectancy * 100.0 / (1.0 + max_dd * 0.1)
+        # マイナス期待値ならドローダウンが深いほどさらにマイナス
+        return (expectancy * 10) - normalized_dd
+
+    # スコア計算: 基本は Expectancy × 100。
+    # Normalizeされたドローダウン規模に応じてスコアをマイルドに割り引く（1 + DDの平方根で割るなど）
+    score = (expectancy * 100.0) / (1.0 + (normalized_dd ** 0.5) * 0.5)
     
-    # Soft penalty if generating an unreasonable volume of trades per day
-    if avg_trades_per_day > 1.0:
-        score = score / (avg_trades_per_day ** 0.3)
+    # 1日あたりの取引回数が多すぎる場合は期待値をさらに割り引く(10件まではノーペナルティ)
+    if avg_trades_per_day > 10.0:
+        score = score / ((avg_trades_per_day / 10.0) ** 0.5)
 
     return score
+
+def calculate_prune_penalty(avg_hits: float, hit_rate_pct: float, bounds: tuple):
+    """
+    Calculate directional penalty when a trial fails pruning condition.
+    bounds = (min_avg, max_avg, min_hit_rate_pct)
+    Allows Optuna's TPE to infer whether to tighten or relax conditions.
+    """
+    min_avg, max_avg, min_hit_rate = bounds
+    
+    # Base penalty offset inside the forbidden zone
+    base_penalty = -100.0
+    
+    if avg_hits < min_avg:
+        # Too few hits. Penalty gets much worse as it reaches 0.
+        return base_penalty - ((min_avg - avg_hits) * 2000.0)
+        
+    if avg_hits > max_avg:
+        # Too many hits. Penalty gets linearly worse.
+        return base_penalty - ((avg_hits - max_avg) * 50.0)
+        
+    if hit_rate_pct < min_hit_rate:
+        # Hit rate ratio too low.
+        return base_penalty - ((min_hit_rate - hit_rate_pct) * 100.0)
+        
+    return None
 
 # =============================================================
 # TOML-driven parameter parsing functions (testable, pure)
@@ -203,7 +229,13 @@ def objective(trial: optuna.Trial, strategy_type: str, config, config_app, exit_
     # Parse optimization params from TOML and apply via Optuna trial
     param_defs = parse_optimization_params(config, strategy_type)
     apply_trial_params(trial, param_defs, strat)
-        
+    # Extract prune bounds from config if available
+    prune_conf = config.get('optimization_pruning', {})
+    min_avg = prune_conf.get('min_avg_hits_per_day', 1.0)
+    max_avg = prune_conf.get('max_avg_hits_per_day', 15.0)
+    min_hit_rate = prune_conf.get('min_hit_rate_pct', 5.0)
+    prune_bounds = (min_avg, max_avg, min_hit_rate)
+    
     total_score = 0.0
     total_trades = 0
     total_wins = 0
@@ -217,8 +249,25 @@ def objective(trial: optuna.Trial, strategy_type: str, config, config_app, exit_
         df_symbols, df_prices, df_indicators, df_ranks, df_theme_constituents, trading_dates = get_cached_data(config_app, start_date, end_date)
         metrics, _ = run_single_strategy(
             strat, df_indicators, df_prices, df_ranks, df_symbols, df_theme_constituents, 
-            trading_dates, exit_rules, show_progress=False
+            trading_dates, exit_rules, show_progress=True, 
+            fast_prune=True, prune_bounds=prune_bounds
         )
+        
+        # --- Handle directional penalty branching ---
+        if isinstance(metrics, dict) and metrics.get('fast_pruned'):
+            penalty = calculate_prune_penalty(
+                metrics['avg_per_day'], 
+                metrics['hit_rate_pct'], 
+                prune_bounds
+            )
+            if penalty is not None:
+                # We return the heavy penalty immediately (skip remaining periods)
+                # so Optuna TPE learns the gradient.
+                return penalty
+            else:
+                # Fallback, theoretically shouldn't reach if bounds logic matched
+                raise optuna.TrialPruned()
+            
         period_score = calculate_custom_score(metrics, len(trading_dates))
         total_score += period_score
         

@@ -18,34 +18,53 @@
 
 ### 3.1 T1: 銘柄メタデータ (`symbols`)
 *   **特徴**: 株価データの主体となる銘柄そのものの定義。
-*   **カラム**: `symbol_id` (PK), `ticker`, `exchange`, `name`, `category` (市場, セクタ, テーマ, 個別等), `asset_class`, `tags`, `active`
+*   **カラム**: 
+    *   `id` (PK, INTEGER): 主キー
+    *   `ticker`, `exchange`, `name`, `category` (市場, セクタ, テーマ, 個別等), `asset_class`, `tags`, `active`
 
 ### 3.2 構成銘柄連携 (`theme_constituents`)
-*   **特徴**: テーマや「仮想指数（Virtual Index）」を構成する銘柄の連携テーブル。
+*   **特徴**: テーマETFや「仮想指数（Virtual Index）」を構成する個別銘柄群を管理する連携テーブル。スクリーナーの「テーマモメンタム」条件などで利用される。
 *   **同期ロジック**: 
-    - 以前の SQL `LIKE` による曖昧検索を廃止し、 `txt_sync.py` において **Python の集合演算 (Set-based matching)** を採用。
-    - 各銘柄の `tags` カラム（カンマ区切り文字列）を集合として扱い、テーマ名との完全一致を判定することで、数千件規模の銘柄を誤検知なく正確に紐付けています。
-*   **カラム**: `theme_id` (FK), `symbol_id` (FK), `weight` (ウェイト)
+    - 仮想テーマだけでなく、実在テーマ（例: GDX, WCLD）についても、`symbols` テーブルの `tags` カラムに含まれるタグ文字列を用いて個別銘柄と動的に紐付ける設計。
+*   **カラム**: 
+    *   `id` (PK, INTEGER): 主キー
+    *   `theme_id` (FK, INTEGER): `symbols.id` への外部キー (category='テーマ')
+    *   `symbol_id` (FK, INTEGER): `symbols.id` への外部キー (category='個別'等)
+    *   `weight` (FLOAT): 構成ウェイト
 
 ### 3.3 T2: 日足データ (`daily_prices`)
 *   **特徴**: yfinance等から取得した生の日足データ。仮想指数の場合は構成銘柄の平均騰落率から合成されます。
-*   **カラム**: `symbol_id`, `date`, `open`, `high`, `low`, `close`, `volume`
+*   **カラム**: 
+    *   `id` (PK, INTEGER)
+    *   `symbol_id` (FK, INTEGER): `symbols.id` への外部キー
+    *   `date`, `open`, `high`, `low`, `close`, `volume`
 
 ### 3.4 T3: インジケータデータ (`indicators`)
 *   **特徴**: T2の価格データを元に算出される各種テクニカル・モメンタム指標。
-*   **主な指標**:
-    *   **移動平均線**: `sma_5`, `sma_21`, `sma_50`, `sma_200`, `ema_21` など
-    *   **特殊指標**: `td9` (TD Sequential), `atr_14`, `dist_sma50_atr` (ATR単位でのSMA50からの乖離度)
-    *   **相対的強さ (RS)**: 対 SPY レラティブ・ストレングス、モメンタム、条件スコアなど
-    *   **ファンダメンタルズ**: `market_cap`（時価総額：終値 × 発行済株式数）
+*   **カラム**: `id` (PK), `symbol_id` (FK), `date`, `sma_5`, `sma_21`, `sma_50`, `sma_200`, `ema_21`, `td9`, `atr_14`, `dist_sma50_atr`, `market_cap` など。
 
 ### 3.5 T4: 相対評価データ (`relative_ranks`)
 *   **特徴**: 同一カテゴリ内で特定指標（RSスコア等）を横並び比較し、パーセンタイル(0〜1)で順位付けしたデータ。
-*   **カラム**: `symbol_id`, `date`, `group_name`, `indicator_name`, `percent_rank`
+*   **カラム**: `id` (PK), `symbol_id` (FK), `date`, `group_name`, `indicator_name`, `percent_rank`
 
 ### 3.6 T5: マーケットシグナル (`market_signals`)
 *   **特徴**: S&P500の動向から算出される市場全体の方向性（`market_phase`）や「Follow Through Day（FTD）」などの定性的シグナルに加え、0〜100 の定量的な「Market Trend Score」を保存。
-*   **カラム**: `date`, `spy_above_sma200`, `distribution_days`, `follow_through_day`, `market_phase`, `market_trend_score`
+*   **カラム**: `id` (PK), `date`, `spy_above_sma200`, `distribution_days`, `follow_through_day`, `market_phase`, `market_trend_score`
+
+#### 3.6.1 各定性的シグナルの定義
+ダッシュボードに表示される市場の健康状態は、S&P500 (SPY) の日足データから以下のロジックで判定されます。
+
+*   **Distribution Day (売り抜け日)**: 機関投資家の資金流出を示唆する警戒シグナル。
+    *   **判定条件**: `SPYの終値が前日比で -0.2% 以下（下落）` かつ `出来高が前日より増加` した場合。
+    *   **カウント**: `distribution_days` カラムは、直近25営業日中に発生した上記シグナルの**合計日数**を記録します。
+*   **Follow Through Day (FTD; フォロースルー日)**: 下落トレンドからの反転を示唆する買いシグナル。
+    *   **判定条件**: `SPYの終値が前日比で +1.7% 以上（上昇）` かつ `出来高が前日より増加` した場合。（※バックエンドコード上は、市場の底打ち確認日として記録されます）
+*   **Market Phase (市場局面)**: 以下の優先順位に従って判定されます。
+    1.  **BULL (強気相場)**: `SPY > SMA200` かつ `Distribution Days <= 3`（健全な上昇トレンド）
+    2.  **CORRECTION (調整局面)**: `SPY > SMA200` かつ `Distribution Days >= 5`（上昇トレンドだが売り圧力が強まっている）
+    3.  **RALLY_ATTEMPT (反発の試み)**: `SPY < SMA200` だが当日にFTDが発生した、あるいは `SMA200` 自体はまだ上向きを維持している。
+    4.  **BEAR (弱気相場)**: `SPY < SMA200` かつ `SMA200` も下落傾向にある。
+    *   *(上記以外の曖昧な状態(例: SPY>SMA200 だが Dist Daysが4) については一時的なバッファとして BULL が維持されます)*
 
 ### 3.7 Market Trend Score (0-100) 算出ロジック
 市場の過熱感や健全性を定量化するため、以下の4つの独立した構成要素に基づき、各要素最大25点、合計100点満点で算出します：

@@ -306,15 +306,22 @@ def sync_symbols_to_db(db, credentials_path, spreadsheet_url):
     db.commit()
     db.query(ThemeConstituent).delete()
     db.commit()
-    virtuals, constituents_to_add = [s for s in sheet_data if s['theme_type'] == 'virtual'], []
-    for v_item in virtuals:
-        v_id = symbol_ids[(v_item['ticker'], v_item['exchange'])]
-        target_tag = v_item['name'].strip() or v_item['ticker'].strip('_')
+    themes_and_virtuals, constituents_to_add = [s for s in sheet_data if s['category'] == 'テーマ'], []
+    for t_item in themes_and_virtuals:
+        t_id = symbol_ids[(t_item['ticker'], t_item['exchange'])]
+        if t_item.get('theme_type') == 'virtual':
+            target_tag = t_item['name'].strip() or t_item['ticker'].strip('_')
+        else:
+            target_tag = t_item['ticker'].strip()
+            
+        if not target_tag:
+            continue
+            
         matching_symbols = db.query(Symbol).filter(Symbol.active == 1, Symbol.tags.like(f"%{target_tag}%"), (Symbol.theme_type != 'virtual') | (Symbol.theme_type.is_(None))).all()
         if matching_symbols:
             weight = 1.0 / len(matching_symbols)
             for m_sym in matching_symbols:
-                constituents_to_add.append(ThemeConstituent(theme_id=v_id, symbol_id=m_sym.id, weight=weight))
+                constituents_to_add.append(ThemeConstituent(theme_id=t_id, symbol_id=m_sym.id, weight=weight))
     if constituents_to_add:
         db.bulk_save_objects(constituents_to_add)
         db.commit()

@@ -226,15 +226,23 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
     return df_symbols, df_prices, df_indicators, df_ranks, df_theme_constituents, trading_dates
 
 
-def run_single_strategy(strat_dict: dict, df_indicators, df_prices, df_ranks, df_symbols, df_theme_constituents, trading_dates, exit_rules, show_progress=True):
+def run_single_strategy(strat_dict: dict, df_indicators, df_prices, df_ranks, df_symbols, df_theme_constituents, trading_dates, exit_rules, show_progress=True, fast_prune=False, prune_bounds=(1.0, 15.0, 5.0)):
+    """
+    Run backtest for a single strategy.
+    If fast_prune=True, it will pre-scan all signals and immediately return ("PRUNED", None) 
+    if the signal counts exceed the prune_bounds (min_avg, max_avg, min_hit_rate_pct).
+    """
     strat_name = strat_dict.get('name', 'Optuna_Strategy')
     strat_desc = strat_dict.get('description', '')
     if show_progress:
-        print(f"Running strategy: {strat_name} ({strat_desc})")
+        print(f"Running strategy: {strat_name} ({strat_desc})", flush=True)
     
     t0 = time.time()
-    trades = []
-    active_positions = set()
+    
+    # --- PHASE 1: Fast Pre-Scan ---
+    signals_by_date = {}
+    total_signals = 0
+    days_with_signals = 0
 
     for i, td in enumerate(trading_dates):
         prev_date = trading_dates[i - 1] if i > 0 else None
@@ -243,6 +251,36 @@ def run_single_strategy(strat_dict: dict, df_indicators, df_prices, df_ranks, df
             df_symbols=df_symbols, df_theme_constituents=df_theme_constituents,
             strategy=strat_dict, prev_date=prev_date,
         )
+        if signals:
+            signals_by_date[td] = signals
+            total_signals += len(signals)
+            days_with_signals += 1
+
+        if show_progress and (i + 1) % 100 == 0:
+            print(f"  [Scan] Processed {i + 1}/{len(trading_dates)} days...", flush=True)
+
+    total_days = len(trading_dates)
+    if total_days > 0:
+        avg_per_day = total_signals / total_days
+        hit_rate_pct = (days_with_signals / total_days) * 100.0
+    else:
+        avg_per_day = 0
+        hit_rate_pct = 0
+        
+    # --- PRUNING GATE ---
+    if fast_prune:
+        min_avg, max_avg, min_hit_rate = prune_bounds
+        if avg_per_day < min_avg or avg_per_day > max_avg or hit_rate_pct < min_hit_rate:
+            if show_progress:
+                print(f"  [Pruned] avg={avg_per_day:.2f}, hit_days={hit_rate_pct:.1f}%", flush=True)
+            return {"fast_pruned": True, "avg_per_day": avg_per_day, "hit_rate_pct": hit_rate_pct}, None
+
+    # --- PHASE 2: Trade Simulation ---
+    trades = []
+    active_positions = set()
+
+    for i, td in enumerate(trading_dates):
+        signals = signals_by_date.get(td, [])
 
         for signal in signals:
             if signal.symbol_id in active_positions:
@@ -261,7 +299,7 @@ def run_single_strategy(strat_dict: dict, df_indicators, df_prices, df_ranks, df
         active_positions -= exited_ids
 
         if show_progress and (i + 1) % 100 == 0:
-            print(f"  Processed {i + 1}/{len(trading_dates)} days, {len(trades)} trades so far...")
+            print(f"  Processed {i + 1}/{total_days} days, {len(trades)} trades so far...", flush=True)
 
     # --- Inject SPY benchmark returns into each trade ---
     spy_row = df_symbols[df_symbols['ticker'] == 'SPY']
@@ -279,7 +317,7 @@ def run_single_strategy(strat_dict: dict, df_indicators, df_prices, df_ranks, df
     elapsed = time.time() - t0
     metrics = calculate_metrics(trades)
     if show_progress:
-        print(f"  Completed: {len(trades)} trades in {elapsed:.1f}s")
+        print(f"  Completed: {len(trades)} trades in {elapsed:.1f}s", flush=True)
     
     return metrics, trades
 

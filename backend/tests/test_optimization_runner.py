@@ -13,6 +13,7 @@ from optimization_runner import (
     parse_optimization_params,
     apply_trial_params,
     parse_optimization_periods,
+    calculate_prune_penalty,
 )
 
 
@@ -244,3 +245,53 @@ class TestParseOptimizationPeriods:
         config = {"strategy": []}
         with pytest.raises(ValueError, match="optimization_periods"):
             parse_optimization_periods(config)
+
+
+# ============================================================
+# Tests for calculate_prune_penalty()
+# ============================================================
+
+class TestCalculatePrunePenalty:
+    """TDD tests for penalty score generated when hit counts are out of bounds."""
+
+    def test_penalty_too_few_hits(self):
+        """Penalty increases sharply as hits drop towards 0."""
+        bounds = (1.0, 15.0, 5.0)
+        
+        # Severe fail: 0 hits (-100 - (1.0 - 0.0) * 2000 = -2100)
+        p_worst = calculate_prune_penalty(0.0, 0.0, bounds)
+        assert p_worst == -2100.0
+        
+        # Mild fail: 0.8 hits. Score should be better than 0 hits, giving a gradient!
+        # -100 - (1.0 - 0.8) * 2000 = -500
+        p_better = calculate_prune_penalty(0.8, 10.0, bounds)
+        assert p_better > p_worst
+        assert p_better == pytest.approx(-500.0)
+
+    def test_penalty_too_many_hits(self):
+        """Penalty increases smoothly as hits rise above maximum."""
+        bounds = (1.0, 15.0, 5.0)
+        
+        # Mild fail: 16 hits (-100 - (16-15)*50 = -150)
+        p_mild = calculate_prune_penalty(16.0, 10.0, bounds)
+        assert p_mild == -150.0
+        
+        # Severe fail: 35 hits (-100 - (35-15)*50 = -1100)
+        p_worst = calculate_prune_penalty(35.0, 10.0, bounds)
+        assert p_worst < p_mild
+        assert p_worst == -1100.0
+        
+        # Ensure being slightly over (16 hits) is BETTER than being completely dead (0 hits)
+        assert p_mild > calculate_prune_penalty(0.0, 0.0, bounds)
+
+    def test_penalty_low_hit_rate(self):
+        """Penalty increases as hit rate drops below minimum."""
+        bounds = (1.0, 15.0, 5.0)
+        
+        # Average is fine (e.g. 5.0), but they all happened on a single day (e.g. hit_rate = 1.0)
+        p_mild = calculate_prune_penalty(5.0, 4.0, bounds)
+        assert p_mild == -100.0 - ((5.0 - 4.0) * 100) # -200.0
+
+        p_worst = calculate_prune_penalty(5.0, 0.0, bounds)
+        assert p_worst == -100.0 - (5.0 * 100) # -600.0
+        assert p_worst < p_mild
