@@ -73,12 +73,8 @@ def calculate_custom_score(metrics, total_trading_days):
         
     # --- Primary scoring: expectancy (average %Gain per trade) ---
     expectancy = metrics.get('expectancy', 0.0)
-    max_dd = abs(metrics.get('max_drawdown_pct', 0.0))
-    
-    # 累積ドローダウン(加算ベース)はトレード回数が多いほど自然と膨らむため、
-    # ペナルティではなく Expectancy の「割引係数」としてスムーズに適用する。
-    # 例: 1日平均10銘柄保有する戦略なら max_dd を 10 で割って「1枠あたりの最大DD」を推定
-    normalized_dd = max_dd / max(1.0, avg_trades_per_day)
+    # The max_drawdown_pct received here is now already Portfolio-Equivalent (Normalized via Little's Law)
+    normalized_dd = abs(metrics.get('max_drawdown_pct', 0.0))
 
     if expectancy <= 0:
         # マイナス期待値ならドローダウンが深いほどさらにマイナス

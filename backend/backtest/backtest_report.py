@@ -86,7 +86,20 @@ def calculate_metrics(trades: List[TradeResult]) -> Dict[str, Any]:
         if dd > max_dd:
             max_dd = dd
 
-    total_return_pct = cumulative_pnl
+    # Normalize additive return and drawdown to Portfolio-Equivalent scale using Little's Law
+    # L (Average Concurrent Positions) = Arrival Rate (Trades / Day) * Average Holding Days
+    if len(trades) > 1:
+        start_dt = min(t.entry_date for t in trades)
+        end_dt = max(t.exit_date for t in trades)
+        calendar_days = (end_dt - start_dt).days
+        trading_days = max(1.0, calendar_days * 252.0 / 365.0)
+        arrival_rate = len(trades) / trading_days
+        avg_slots = max(1.0, arrival_rate * avg_holding)
+    else:
+        avg_slots = 1.0
+
+    total_return_pct = cumulative_pnl / avg_slots
+    max_dd_norm = max_dd / avg_slots
 
     return {
         'trades': total,
@@ -106,7 +119,7 @@ def calculate_metrics(trades: List[TradeResult]) -> Dict[str, Any]:
         'total_trades': total,
         'win_trades': win_count,
         'total_return_pct': total_return_pct,
-        'max_drawdown_pct': -max_dd
+        'max_drawdown_pct': -max_dd_norm
     }
 
 

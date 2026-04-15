@@ -8,8 +8,6 @@ logger = logging.getLogger(__name__)
 # Config map for what each sheet represents
 # Key: Sheet title, Value: Target base Category
 SHEET_CONFIG = {
-    "IndexList": "市場",
-    "Market": "市場",
     "MarketList": "市場",
     "LeadingList": "指標",
     "SectorList": "セクタ",
