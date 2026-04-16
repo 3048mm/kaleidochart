@@ -158,8 +158,12 @@ def sync_phase_t4_ranks(db, spy_latest_date):
     if not t3_max or (t4_max and t4_max >= t3_max): return
     gap_dates = [r[0] for r in db.query(Indicator.date).distinct().filter(Indicator.date > (t4_max if t4_max else date(2000,1,1))).order_by(Indicator.date).all()]
     if not gap_dates: return
+    total_dates = len(gap_dates)
+    logger.info(f"Phase 4: Processing relative ranks for {total_dates} dates.")
     indicators_to_rank = ['relative_strength_spy', 'rs_ratio_14', 'rs_ratio_21', 'rs_ratio_63', 'rs_momentum_14', 'rs_momentum_21', 'rs_momentum_63', 'rs_condition_14', 'rs_condition_21', 'rs_condition_63']
-    for d in gap_dates:
+    for i, d in enumerate(gap_dates):
+        if i % 10 == 0 or i == total_dates - 1:
+            logger.info(f"Phase 4 Progress: {i+1}/{total_dates} (Date: {d})")
         df_date = pd.read_sql(db.query(Indicator.symbol_id, Indicator.date, Symbol.category, *[getattr(Indicator, col) for col in indicators_to_rank]).join(Symbol, Symbol.id == Indicator.symbol_id).filter(Indicator.date == d).statement, db.bind)
         if df_date.empty: continue
         t4_recs = []
@@ -216,7 +220,11 @@ def sync_phase_t5_signals(db):
     if not active_stock_ids:
         logger.warning("No active '個別' stocks found for metrics calculation.")
     else:
-        for d in gap_dates:
+        total_dates = len(gap_dates)
+        logger.info(f"Phase 5: Calculating breadth and momentum for {total_dates} dates.")
+        for i, d in enumerate(gap_dates):
+            if i % 10 == 0 or i == total_dates - 1:
+                logger.info(f"Phase 5 Progress: {i+1}/{total_dates} (Date: {d})")
             # Breadth (% above SMA50)
             # We want: (Count of stocks where close > sma_50) / (Count of stocks)
             # Joining indicators and daily_prices for the same day
