@@ -73,13 +73,38 @@
 
 ---
 
-## 5. 定期検証ツール
+## 5. ウォッチリスト API 検証項目
+
+### 5.1 登録/解除ロジック
+- [ ] **新規登録**: POST /api/watchlist で active レコードが作成され、entry_price に指定日の終値が保存されるか。
+- [ ] **解除（翌日以降）**: DELETE /api/watchlist/{ticker} で status が 'removed' に変わり、removed_at と removed_price が記録されるか。
+- [ ] **1時間以内解除**: 登録から1時間以内に解除した場合、レコードが物理削除されるか。
+- [ ] **1時間以内の再登録**: 解除から1時間以内に再登録した場合、元の entry_date/entry_price が維持され、added_at が更新されていないか。
+- [ ] **1時間超過の再登録**: 解除から1時間超過で再登録した場合、新しい entry_date/entry_price で上書きされ、added_at が更新されていないか。
+
+### 5.2 指定日変更
+- [ ] **PUT /api/watchlist/{ticker}**: entry_date と entry_price が正しく更新されるか。
+
+### 5.3 一括削除
+- [ ] **DELETE /api/watchlist/removed/clear**: status='removed' のレコードのみが物理削除され、active レコードは影響を受けないか。
+
+### 5.4 メトリクス算出
+- [ ] **%Gain**: `(latest_close - entry_price) / entry_price * 100` が正しく算出されるか。
+- [ ] **Max/Min Gain**: entry_date～最新日の close から算出した値が正確か。
+- [ ] **rs_sparkline**: T4 の rs_ratio_21 ランク直近30日分が正しく返却されるか。
+
+### 5.5 べき等性
+- [ ] 同一銘柄に対する重複 POST で IntegrityError が発生しないか（既存ロジックで吸収されるか）。
+
+---
+
+## 6. 定期検証ツール
 - [ ] `tools/db_health_check.py`: DB の全体健全性をチェック。
 
 ---
 
+- 2026-04-16: ウォッチリスト API 検証項目を追加
 - 2026-04-05: バックテスト検証仕様を別ドキュメント (backtest_verification_spec.md) へ分離独立
 
 ---
-
 

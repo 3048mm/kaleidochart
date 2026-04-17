@@ -80,6 +80,25 @@
     - 35.0以上であれば 0点。
     - その間は線形補間（Greedで満点、Fearで減点）。
 
+### 3.8 ウォッチリスト (`watchlist`)
+*   **特徴**: ユーザーが注目する銘柄とその登録基準日を管理するテーブル。T1～T6 のパイプラインとは独立した「ユーザー操作データ」。
+*   **カラム**:
+    *   `id` (PK, INTEGER): 主キー
+    *   `symbol_id` (FK, INTEGER): `symbols.id` への外部キー。UNIQUE 制約（1銘柄1レコード）
+    *   `entry_date` (DATE): 指定日（パフォーマンス基準日）
+    *   `entry_price` (FLOAT): 指定日の終値スナップショット
+    *   `status` (STRING): `'active'` | `'removed'`
+    *   `added_at` (DATETIME): 登録操作日時
+    *   `removed_at` (DATETIME, NULL): 解除操作日時
+    *   `removed_price` (FLOAT, NULL): 解除時の最新終値スナップショット
+*   **登録/解除ロジック**（時刻基準: UTC）:
+    *   *解除時*: `utcnow() - added_at < 1時間` → 物理 DELETE（誤登録の即時取消）。それ以外 → 論理削除（`status='removed'`, `removed_price` スナップショット）。
+    *   *登録時*:
+        *   既存 `removed` レコードが `utcnow() - removed_at < 1時間` → `entry_date`/`entry_price` を維持して復活（`added_at` は更新しない）。
+        *   1時間超過 → 新しい `entry_date`/`entry_price` で上書き（`added_at` は更新しない）。
+        *   レコードなし → 新規 INSERT（`added_at = utcnow()`）。
+    *   **`added_at` 不変ルール**: `added_at` を更新するのは新規INSERT時のみ。再登録（removed → active）時は元の値を維持する。これにより「再登録→即解除→物理DELETE」のループを防止する。
+
 ## 4. バッチ処理フロー (Pipeline Logic)
 日々のデータ更新は `update_pipeline.py` によって管理され、各階層 (T1〜T6) は「ソース」と「ターゲット」の最大日付を比較して不足分を補完する **独立したキャッチアップ・ロジック** を持ちます。
 
@@ -118,6 +137,27 @@
     - **レスポンス構造**: `ChartResponse` 型。`data` (時系列配列) に加え、`metadata` (銘柄基本情報) および `themes` (関連テーマ情報の配列) を含みます。
     - **テーマ解決ロジック**: `theme_constituents` テーブルによる直接の紐付けに加え、`symbols` テーブルの `tags` カラムに含まれるカンマ区切りのタグもテーマとして解決し、リンク可能な情報を返却します。
 *   **`GET /api/screener_data`**: スクリーナー用のカスタムフィルタ（「SMA50より上」「時価総額 10M以上」等）に合致する銘柄群と各指標値を返却。
+
+### 5.1 ウォッチリスト API
+
+| Method | Path | 説明 |
+| :--- | :--- | :--- |
+| `GET` | `/api/watchlist` | 全ウォッチリスト取得（active/removed 両方 + メトリクス算出） |
+| `POST` | `/api/watchlist` | 登録（3日ルール付き） |
+| `DELETE` | `/api/watchlist/{ticker}` | 解除（当日登録分は物理削除、それ以外は論理削除） |
+| `PUT` | `/api/watchlist/{ticker}` | 指定日変更（entry_date と entry_price を更新） |
+| `DELETE` | `/api/watchlist/removed/clear` | 解除済みの一括物理削除 |
+| `GET` | `/api/watchlist/tickers` | active な ticker リストのみ返却（★ボタン状態判定用、軽量） |
+
+**`GET /api/watchlist` のレスポンスに含まれる算出項目:**
+*   `latest_close`: T2 最新日の close
+*   `latest_ema_21`: T3 最新日の ema_21
+*   `gain_pct`: `(latest_close - entry_price) / entry_price * 100`
+*   `max_gain_pct`: entry_date～最新日の `daily_prices.close` の最大値から算出
+*   `min_gain_pct`: entry_date～最新日の `daily_prices.close` の最小値から算出
+*   `latest_adr_pct`: T3 最新日の adr_pct_21
+*   `latest_dist_sma50_atr`: T3 最新日の dist_sma50_atr
+*   `rs_sparkline`: T4 の rs_ratio_21 ランク直近30日分
 
 ## 6. バックテストエンジン
 

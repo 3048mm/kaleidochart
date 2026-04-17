@@ -180,3 +180,21 @@ class MarketSignal(Base):
     market_trend_score  = Column(Float)
     
     created_at = Column(DateTime, default=datetime.utcnow)
+
+class Watchlist(Base):
+    """User watchlist: tracks watched symbols with entry date and performance baseline."""
+    __tablename__ = 'watchlist'
+
+    id = Column(Integer, primary_key=True)
+    symbol_id = Column(Integer, ForeignKey('symbols.id'), nullable=False)
+    entry_date = Column(Date, nullable=False)          # 指定日（パフォーマンス基準日）
+    entry_price = Column(Float, nullable=False)        # 指定日の終値スナップショット
+    status = Column(String, nullable=False, default='active')  # 'active' | 'removed'
+    added_at = Column(DateTime, nullable=False, default=datetime.utcnow)  # 登録操作日時
+    removed_at = Column(DateTime, nullable=True)       # 解除操作日時
+    removed_price = Column(Float, nullable=True)       # 解除時の最新終値スナップショット
+
+    __table_args__ = (
+        UniqueConstraint('symbol_id', name='uq_watchlist_symbol'),
+    )
+

@@ -273,3 +273,40 @@ class ScreenerMetaResponse(BaseModel):
 
 class AvailableDatesResponse(BaseModel):
     dates: List[str]
+
+
+# --- Watchlist ---
+
+class WatchlistAddRequest(BaseModel):
+    ticker: str
+    entry_date: date
+
+class WatchlistUpdateRequest(BaseModel):
+    entry_date: date
+
+class WatchlistBulkDeleteRequest(BaseModel):
+    tickers: List[str]
+
+class WatchlistItem(BaseModel):
+    id: int
+    symbol_id: int
+    ticker: str
+    name: str
+    entry_date: str           # YYYY-MM-DD
+    entry_price: float
+    latest_close: float
+    latest_ema_21: float
+    gain_pct: float
+    max_gain_pct: float
+    min_gain_pct: float
+    latest_adr_pct: float
+    latest_dist_sma50_atr: float
+    rs_sparkline: List[float]
+    status: str               # 'active' | 'removed'
+    added_at: str
+    removed_at: Optional[str] = None
+    removed_price: Optional[float] = None
+
+class WatchlistResponse(BaseModel):
+    active: List[WatchlistItem]
+    removed: List[WatchlistItem]

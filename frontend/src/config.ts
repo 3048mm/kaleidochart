@@ -10,7 +10,8 @@ export const appConfig = {
         chartLine: '#2962FF',  // Base line color
         glassBorder: 'rgba(255, 255, 255, 0.1)',
         glassBg: 'rgba(25, 25, 30, 0.65)',
-        accent: '#2962FF'
+        accent: '#2962FF',
+        star: '#FFC107'
     },
 
     // Thresholds for alerts and rendering

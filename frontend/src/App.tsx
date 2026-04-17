@@ -6,6 +6,8 @@ import { ChartPage } from './pages/ChartPage'
 import { ScreenerPage } from './pages/ScreenerPage'
 import { ScreenerResultPage } from './pages/ScreenerResultPage'
 import { ThemePage } from './pages/ThemePage'
+import { WatchlistPage } from './pages/WatchlistPage'
+
 
 const API = '/api'
 
@@ -78,6 +80,8 @@ export default function App() {
                 <nav style={{ display: 'flex', gap: '20px', marginRight: '20px' }}>
                     <Link to="/" style={{ color: location.pathname === '/' ? '#00ff88' : '#d1d4dc', textDecoration: 'none' }}>Dashboard</Link>
                     <Link to="/screener" style={{ color: location.pathname === '/screener' ? '#00ff88' : '#d1d4dc', textDecoration: 'none' }}>Screener</Link>
+                    <Link to="/watchlist" style={{ color: location.pathname === '/watchlist' ? '#00ff88' : '#d1d4dc', textDecoration: 'none' }}>Watchlist</Link>
+
                 </nav>
                 <div className="header-status">
                     <div className="status-dot" />
@@ -127,6 +131,8 @@ export default function App() {
                     <Route path="/theme/:symbolId" element={<ThemePage />} />
                     <Route path="/screener" element={<ScreenerPage />} />
                     <Route path="/screener/result/:presetId" element={<ScreenerResultPage />} />
+                    <Route path="/watchlist" element={<WatchlistPage />} />
+
                 </Routes>
             </main>
         </div>

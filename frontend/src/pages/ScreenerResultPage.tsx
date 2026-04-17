@@ -3,6 +3,9 @@ import { Link, useParams, useLocation, useNavigate } from 'react-router-dom';
 import { ScreenerResultItem } from '../types';
 import { Sparkline } from '../components/Sparkline';
 import { appConfig, getIntensityColor } from '../config';
+import { useWatchlist } from '../hooks/useWatchlist';
+import { WatchlistButton } from '../components/WatchlistButton';
+
 
 type SortKey = 'change_pct' | 'rs_ratio_21_rank' | 'vol_surge_21';
 
@@ -162,6 +165,8 @@ export const ScreenerResultPage: React.FC = () => {
 
     const [sortKey, setSortKey] = useState<SortKey>('change_pct');
     const [sortDesc, setSortDesc] = useState(true);
+    const { isTickerActive, toggleWatchlist } = useWatchlist();
+
 
     // Load available dates
     useEffect(() => {
@@ -278,7 +283,9 @@ export const ScreenerResultPage: React.FC = () => {
                     display: 'flex', fontSize: '11px', color: '#aaa', paddingBottom: '8px', borderBottom: `1px solid ${appConfig.colors.glassBorder}`, marginBottom: '8px',
                     gap: '8px', userSelect: 'none'
                 }}>
+                    <div style={{ width: '24px' }}></div>
                     <div style={{ flex: '1', minWidth: '80px' }}>Name</div>
+
                     <div style={{ width: '52px', textAlign: 'right', paddingRight: '5px' }}>Close</div>
                     <div
                         style={{ width: '50px', textAlign: 'center', cursor: 'pointer', color: sortKey === 'change_pct' ? '#fff' : '#aaa' }}
@@ -324,7 +331,18 @@ export const ScreenerResultPage: React.FC = () => {
                             display: 'flex', alignItems: 'center', padding: '6px 0',
                             borderBottom: `1px solid ${appConfig.colors.glassBorder}`, gap: '8px',
                         }}>
+                            <div style={{ width: '24px', display: 'flex', alignItems: 'center' }}>
+                                <WatchlistButton 
+                                    isActive={isTickerActive(item.ticker)} 
+                                    onClick={(e) => {
+                                        e.preventDefault();
+                                        toggleWatchlist(item.ticker, targetDate);
+                                    }}
+                                    size={18}
+                                />
+                            </div>
                             <div style={{ flex: '1', minWidth: '80px', display: 'flex', flexDirection: 'column' }}>
+
                                 <Link to={`/chart/${encodeURIComponent(item.ticker)}`} target="_blank" style={{ color: appConfig.colors.chartText, textDecoration: 'none', fontWeight: 'bold', fontSize: '13px' }}>
                                     {item.ticker}
                                 </Link>

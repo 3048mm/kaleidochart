@@ -237,3 +237,29 @@ export interface EarningData {
     net_income: number | null;
 }
 
+
+export interface WatchlistItem {
+    id: number;
+    symbol_id: number;
+    ticker: string;
+    name: string;
+    entry_date: string;
+    entry_price: number;
+    latest_close: number;
+    latest_ema_21: number;
+    gain_pct: number;
+    max_gain_pct: number;
+    min_gain_pct: number;
+    latest_adr_pct: number;
+    latest_dist_sma50_atr: number;
+    rs_sparkline: number[];
+    status: 'active' | 'removed';
+    added_at: string;
+    removed_at: string | null;
+    removed_price: number | null;
+}
+
+export interface WatchlistResponse {
+    active: WatchlistItem[];
+    removed: WatchlistItem[];
+}

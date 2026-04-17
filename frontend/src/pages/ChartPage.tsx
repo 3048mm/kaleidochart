@@ -6,6 +6,9 @@ import { Symbol, ChartDataPoint, EarningData, ChartResponse, ChartSymbolMeta } f
 import { appConfig } from '../config';
 import { RrgChart } from '../components/RrgChart';
 import { SymbolDataTable } from '../components/SymbolDataTable';
+import { useWatchlist } from '../hooks/useWatchlist';
+import { WatchlistButton } from '../components/WatchlistButton';
+
 
 interface ChartPageProps {
     symbols: Symbol[];
@@ -110,6 +113,8 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
     const [viewMode, setViewMode] = useState<'chart' | 'rs' | 'table' | 'fundamentals'>('chart');
     const [earnings, setEarnings] = useState<EarningData[]>([]);
     const [earningsLoading, setEarningsLoading] = useState(false);
+    const { isTickerActive, toggleWatchlist } = useWatchlist();
+
 
     // State for hovering
     const [hoverData, setHoverData] = useState<ChartDataPoint | null>(null);
@@ -510,8 +515,14 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
         <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
             <div style={{ padding: '10px 20px', display: 'flex', alignItems: 'center', gap: '20px' }}>
                 <Link to="/" style={{ color: '#00ff88', textDecoration: 'none' }}>&larr; Dashboard</Link>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <WatchlistButton 
+                        isActive={isTickerActive(selected.ticker)} 
+                        onClick={() => toggleWatchlist(selected.ticker, latest?.time)}
+                        size={24}
+                    />
                     <span style={{ fontSize: '18px', fontWeight: 700 }}>{selected.ticker}</span>
+
                     <span style={{ fontSize: '12px', color: '#888' }}>{selected.name} ({selected.category})</span>
                     {themes.length > 0 && (
                         <div style={{ display: 'flex', gap: '8px', marginLeft: '10px', alignItems: 'center' }}>
