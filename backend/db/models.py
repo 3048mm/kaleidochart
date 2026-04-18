@@ -115,12 +115,15 @@ class Indicator(Base):
     rs_condition_14   = Column(Float)     # NEW: RS-Condition (RS / SMA14(RS))
     rs_condition_21   = Column(Float)     # NEW: RS-Condition (RS / SMA21(RS))
     rs_condition_63   = Column(Float)     # NEW: RS-Condition (RS / SMA63(RS))
-    rs_momentum_14   = Column(Float)     # NEW: RRG RS-Momentum (Z-score of RS-Ratio)
-    rs_momentum_21   = Column(Float)     # NEW: RRG RS-Momentum (Z-score of RS-Ratio)
-    rs_momentum_63   = Column(Float)     # NEW: RRG RS-Momentum (Z-score of RS-Ratio)
-    rs_ratio_14      = Column(Float)     # NEW: Z-score of RS over 14 days
-    rs_ratio_21      = Column(Float)     # NEW: Z-score of RS over 21 days
-    rs_ratio_63      = Column(Float)     # NEW: Z-score of RS over 63 days
+    rs_ema_14         = Column(Float)     # NEW: EMA of Relative Strength (Smoothing for RRG)
+    rs_ema_21         = Column(Float)     # NEW: EMA of Relative Strength (Smoothing for RRG)
+    rs_ema_63         = Column(Float)     # NEW: EMA of Relative Strength (Smoothing for RRG)
+    rs_momentum_14   = Column(Float)     # NEW: RRG RS-Momentum (Z-score of smoothed RS-Ratio)
+    rs_momentum_21   = Column(Float)     # NEW: RRG RS-Momentum (Z-score of smoothed RS-Ratio)
+    rs_momentum_63   = Column(Float)     # NEW: RRG RS-Momentum (Z-score of smoothed RS-Ratio)
+    rs_ratio_14      = Column(Float)     # NEW: RS-Ratio (Z-score of smoothed RS over 14 days)
+    rs_ratio_21      = Column(Float)     # NEW: RS-Ratio (Z-score of smoothed RS over 21 days)
+    rs_ratio_63      = Column(Float)     # NEW: RS-Ratio (Z-score of smoothed RS over 63 days)
     
     # --- Volume ---
     vol_surge_21     = Column(Float)     # NEW: Volume / SMA(Volume,21)

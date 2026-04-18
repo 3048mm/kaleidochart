@@ -6,17 +6,33 @@ from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
+def _normalize_ticker(ticker: str) -> str:
+    """
+    yfinanceでエラーになりやすい記号を正規化します。
+    例: BRK/B -> BRK-B, BF.B -> BF-B
+    """
+    if not ticker:
+        return ticker
+    # スラッシュやドットをハイフンに変換
+    normalized = ticker.replace('/', '-').replace('.', '-')
+    if normalized != ticker:
+        logger.debug(f"Ticker normalized: {ticker} -> {normalized}")
+    return normalized
+
 def fetch_daily_data(ticker: str, start_date: str, end_date: str = None) -> pd.DataFrame:
     """
-    yfinanceを用いて指定銘柄の株価データを取得します。
+    yfinanceを用いて指定銘銘柄の株価データを取得します。
     例外ハンドリング(Volume欠損値)やffillによる欠損日補完を行います。
     """
-    logger.info(f"[{ticker}] Fetching data from {start_date} to {end_date or 'today'}...")
+    # Normalize ticker symbol for yfinance (e.g., BRK/B -> BRK-B)
+    yf_ticker = _normalize_ticker(ticker)
+    
+    logger.info(f"[{ticker}] Fetching data (as {yf_ticker}) from {start_date} to {end_date or 'today'}...")
     try:
         if end_date:
-            df = yf.download(ticker, start=start_date, end=end_date, progress=False)
+            df = yf.download(yf_ticker, start=start_date, end=end_date, progress=False)
         else:
-            df = yf.download(ticker, start=start_date, progress=False)
+            df = yf.download(yf_ticker, start=start_date, progress=False)
             
         if df.empty:
             logger.warning(f"[{ticker}] No data returned from yfinance.")
@@ -25,7 +41,7 @@ def fetch_daily_data(ticker: str, start_date: str, end_date: str = None) -> pd.D
         # If it returns multi-index columns, sometimes happens with yf.download(ticker list length=1)
         if isinstance(df.columns, pd.MultiIndex):
             # df.columns = df.columns.droplevel(1) # drops ticker name
-            df = df.xs(ticker, axis=1, level=1, drop_level=True) if len(df.columns.levels[1]) > 0 and ticker in df.columns.levels[1] else df
+            df = df.xs(yf_ticker, axis=1, level=1, drop_level=True) if len(df.columns.levels[1]) > 0 and yf_ticker in df.columns.levels[1] else df
             
             # Additional cleanup in case it's still weird
             if isinstance(df.columns, pd.MultiIndex):
@@ -116,10 +132,11 @@ def fetch_fundamentals(ticker: str) -> dict:
     """
     yfinanceから最新のinfo, 発行済株式数履歴(shares), 四半期損益計算書(income_stmt)を取得します。
     """
-    logger.info(f"[{ticker}] Fetching fundamentals (shares, income_stmt)...")
+    yf_ticker = _normalize_ticker(ticker)
+    logger.info(f"[{ticker}] Fetching fundamentals (as {yf_ticker}) (shares, income_stmt)...")
     res = {"shares": None, "income_stmt": None, "info": None}
     try:
-        t = yf.Ticker(ticker)
+        t = yf.Ticker(yf_ticker)
         
         try:
             res["info"] = dict(t.info) if t.info else {}

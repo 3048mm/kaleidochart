@@ -52,6 +52,9 @@ class ChartDataPoint(BaseModel):
     rs_momentum_14: Optional[float] = None
     rs_momentum_21: Optional[float] = None
     rs_momentum_63: Optional[float] = None
+    rs_ema_14: Optional[float] = None
+    rs_ema_21: Optional[float] = None
+    rs_ema_63: Optional[float] = None
     rs_ratio_14: Optional[float] = None
     rs_ratio_21: Optional[float] = None
     rs_ratio_63: Optional[float] = None
@@ -226,6 +229,9 @@ class ThemeDetailResponse(BaseModel):
     rs_condition_14: Optional[float] = None
     rs_condition_21: Optional[float] = None
     rs_condition_63: Optional[float] = None
+    rs_ema_14: Optional[float] = None
+    rs_ema_21: Optional[float] = None
+    rs_ema_63: Optional[float] = None
     adr_pct_21: Optional[float] = None
     dist_sma50_atr: Optional[float] = None
     rs14_sparkline: List[float] = []
@@ -280,6 +286,11 @@ class ScreenerMetaResponse(BaseModel):
 
 class AvailableDatesResponse(BaseModel):
     dates: List[str]
+
+class SystemInfoResponse(BaseModel):
+    db_path: str
+    db_name: str
+    is_production: bool
 
 
 # --- Watchlist ---

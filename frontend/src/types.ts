@@ -37,6 +37,9 @@ export interface ChartDataPoint {
     rs_condition_14?: number | null
     rs_condition_21?: number | null
     rs_condition_63?: number | null
+    rs_ema_14?: number | null
+    rs_ema_21?: number | null
+    rs_ema_63?: number | null
     rs_momentum_14?: number | null
     rs_momentum_21?: number | null
     rs_momentum_63?: number | null
@@ -184,6 +187,12 @@ export interface DashboardResponse {
     themes_bottom: DashboardPanelItem[]
 }
 
+export interface SystemInfo {
+    db_path: string;
+    db_name: string;
+    is_production: boolean;
+}
+
 export interface ThemeConstituentItem {
     id: number;
     ticker: string;
@@ -221,6 +230,9 @@ export interface ThemeDetailResponse {
     rs_condition_14?: number | null;
     rs_condition_21?: number | null;
     rs_condition_63?: number | null;
+    rs_ema_14?: number | null;
+    rs_ema_21?: number | null;
+    rs_ema_63?: number | null;
     adr_pct_21?: number | null;
     dist_sma50_atr?: number | null;
     rs14_sparkline: number[];

@@ -131,18 +131,22 @@ def calculate_indicators(df_daily: pd.DataFrame, df_spy: pd.DataFrame = None) ->
                 rs_sma.isna() | (rs_sma == 0), np.nan, rs / rs_sma
             )
 
-        # RS Ratio (Z-score of RS over n days)
+        # RS-EMA, RS-Ratio and RS-Momentum
+        # We smooth RS first to get a cleaner rotation in RRG graphs.
         for n in [14, 21, 63]:
-            rs_mean = rs.rolling(window=n, min_periods=max(1, n//2)).mean()
-            rs_std  = rs.rolling(window=n, min_periods=max(1, n//2)).std()
+            # 1. Smoothing
+            rs_ema = calculate_ema_tv(rs, n)
+            df[f'rs_ema_{n}'] = rs_ema
+            
+            # 2. RS-Ratio (Z-score of smoothed RS)
+            rs_mean = rs_ema.rolling(window=n, min_periods=max(1, n//2)).mean()
+            rs_std  = rs_ema.rolling(window=n, min_periods=max(1, n//2)).std()
             df[f'rs_ratio_{n}'] = np.where(
-                rs_std.isna() | (rs_std == 0), np.nan, (rs - rs_mean) / rs_std
+                rs_std.isna() | (rs_std == 0), np.nan, (rs_ema - rs_mean) / rs_std
             )
             
-        # RRG RS Momentum (Z-score of RS-Ratio over n days)
-        # In standard RRG, momentum is the rate of change of Ratio.
-        # Since our Ratio is essentially a normalized relative strength,
-        # we apply a rolling normalized difference (Z-score approximation) to the Ratio itself.
+        # RS-Momentum (Z-score of RS-Ratio)
+        # Ratio is already smoothed, so Z-score of Ratio yields a leading, stable momentum signal.
         for n in [14, 21, 63]:
             ratio_col = df[f'rs_ratio_{n}']
             ratio_mean = ratio_col.rolling(window=n, min_periods=max(1, n//2)).mean()

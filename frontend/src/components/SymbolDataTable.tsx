@@ -81,6 +81,11 @@ export const SymbolDataTable: React.FC<SymbolDataTableProps> = ({ data }) => {
                         <th style={{ width: '60px', padding: '8px', textAlign: 'right' }}>EMA150</th>
                         <th style={{ width: '60px', padding: '8px', textAlign: 'right' }}>EMA200</th>
 
+                        {/* RS EMA (Smoothed) */}
+                        <th style={{ width: '60px', padding: '8px', textAlign: 'right', borderLeft: '1px solid #333' }}>EMA RS14</th>
+                        <th style={{ width: '60px', padding: '8px', textAlign: 'right' }}>EMA RS21</th>
+                        <th style={{ width: '60px', padding: '8px', textAlign: 'right' }}>EMA RS63</th>
+
                         {/* RS Ratio */}
                         <th style={{ width: '60px', padding: '8px', textAlign: 'right', borderLeft: '1px solid #333' }}>Rat 14</th>
                         <th style={{ width: '60px', padding: '8px', textAlign: 'right' }}>Rat 21</th>
@@ -147,6 +152,11 @@ export const SymbolDataTable: React.FC<SymbolDataTableProps> = ({ data }) => {
                                 <td style={{ padding: '6px 8px', textAlign: 'right' }}>{formatN(d.ema_63)}</td>
                                 <td style={{ padding: '6px 8px', textAlign: 'right' }}>{formatN(d.ema_150)}</td>
                                 <td style={{ padding: '6px 8px', textAlign: 'right' }}>{formatN(d.ema_200)}</td>
+
+                                {/* RS EMA (Smoothed) */}
+                                <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: '#888' }}>{formatN(d.rs_ema_14, 4)}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', color: '#888' }}>{formatN(d.rs_ema_21, 4)}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', color: '#888' }}>{formatN(d.rs_ema_63, 4)}</td>
 
                                 {/* RS Ratio */}
                                 <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: getChgColor((d.rs_ratio_14 || 0) - 100) }}>{formatN(d.rs_ratio_14)}</td>

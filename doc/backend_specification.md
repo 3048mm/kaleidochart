@@ -17,39 +17,107 @@
 構成データは、段階的（T1〜T6）に計算・生成されるテーブル群に保存されます。
 
 ### 3.1 T1: 銘柄メタデータ (`symbols`)
-*   **特徴**: 株価データの主体となる銘柄そのものの定義。
-*   **カラム**: 
-    *   `id` (PK, INTEGER): 主キー
-    *   `ticker`, `exchange`, `name`, `category` (市場, セクタ, テーマ, 個別等), `asset_class`, `tags`, `active`
+
+株価データの主体となる銘柄そのものの定義です。Googleスプレッドシートから同期されます。
+
+| カラム名 | 型 | 説明・用途 |
+| :--- | :--- | :--- |
+| `id` | INTEGER | 主キー。内部的なID管理に使用。 |
+| `ticker` | STRING | 銘柄のティッカーシンボル（例: AAPL, SPY, _PHNC_）。 |
+| `exchange` | STRING | 取引所コード（NYSE, NASDAQ 等）。仮想インデックスは `VIRTUAL`。 |
+| `name` | STRING | 銘柄名称。 |
+| `category` | STRING | 銘柄の分類（市場, 指標, セクタ, テーマ, 個別）。 |
+| `asset_class` | STRING | 資産クラス・属性（Industryなど）。 |
+| `theme_type` | STRING | 詳細タイプ（`etf`: 実在ETF, `virtual`: 仮想指数, `sector`: セクタ指標）。 |
+| `tags` | STRING | カンマ区切りの属性タグ。仮想テーマの構成銘柄紐付けに利用。 |
+| `active` | SMALLINT| ソフトデリートフラグ（1:有効, 0:無効）。 |
 
 ### 3.2 構成銘柄連携 (`theme_constituents`)
-*   **特徴**: テーマETFや「仮想指数（Virtual Index）」を構成する個別銘柄群を管理する連携テーブル。スクリーナーの「テーマモメンタム」条件などで利用される。
-*   **同期ロジック**: 
-    - 仮想テーマだけでなく、実在テーマ（例: GDX, WCLD）についても、`symbols` テーブルの `tags` カラムに含まれるタグ文字列を用いて個別銘柄と動的に紐付ける設計。
-*   **カラム**: 
-    *   `id` (PK, INTEGER): 主キー
-    *   `theme_id` (FK, INTEGER): `symbols.id` への外部キー (category='テーマ')
-    *   `symbol_id` (FK, INTEGER): `symbols.id` への外部キー (category='個別'等)
-    *   `weight` (FLOAT): 構成ウェイト
+
+テーマETFや「仮想指数（Virtual Index）」を構成する個別銘柄群を管理する連携テーブルです。バックテストの「テーマモメンタム」条件などで利用されます。
+
+| カラム名 | 型 | 説明・用途 |
+| :--- | :--- | :--- |
+| `id` | INTEGER | 主キー。 |
+| `theme_id` | INTEGER | `symbols.id` への外部キー。親となるテーマ/指数のID。 |
+| `symbol_id` | INTEGER | `symbols.id` への外部キー。構成銘柄（個別銘柄等）のID。 |
+| `weight` | FLOAT | 構成比率（現在は主に 1.0 = 均等ウェイト）。 |
+
+**紐付けロジック:**
+- 仮想テーマ（tickerが `_` で囲まれている等）の場合、`symbols.tags` にテーマ名（PHNC等）を含む銘柄を自動的に抽出して紐付けます。
+- 実在するETF（GDX, WCLD等）についても、同様にタグベースで構成銘柄を特定し、テーマ全体の強さを個別銘柄に波及させるために利用されます。
 
 ### 3.3 T2: 日足データ (`daily_prices`)
-*   **特徴**: yfinance等から取得した生の日足データ。仮想指数の場合は構成銘柄の平均騰落率から合成されます。
-*   **カラム**: 
-    *   `id` (PK, INTEGER)
-    *   `symbol_id` (FK, INTEGER): `symbols.id` への外部キー
-    *   `date`, `open`, `high`, `low`, `close`, `volume`
+
+yfinance等から取得した生の日足データ、または合成された仮想指数の価格データです。
+
+| カラム名 | 型 | 説明・用途 |
+| :--- | :--- | :--- |
+| `id` | INTEGER | 主キー。 |
+| `symbol_id` | INTEGER | `symbols.id` への外部キー。 |
+| `date` | DATE | 取引日。 |
+| `open` | FLOAT | 始値。当日騰落率（`gain_1d_pct`）の計算に使用。 |
+| `high` | FLOAT | 高値。タイムストップやチャネルブレイク、ATRの計算に使用。 |
+| `low` | FLOAT | 安値。損切り判定やATRの計算に使用。 |
+| `close` | FLOAT | 終値。すべてのテクニカル指標計算のベース。 |
+| `volume` | BIGINT | 出来高。出来高急増（`vol_surge`）の計算に使用。 |
 
 ### 3.4 T3: インジケータデータ (`indicators`)
-*   **特徴**: T2の価格データを元に算出される各種テクニカル・モメンタム指標。
-*   **カラム**: `id` (PK), `symbol_id` (FK), `date`, `sma_5`, `sma_21`, `sma_50`, `sma_200`, `ema_21`, `td9`, `atr_14`, `dist_sma50_atr`, `market_cap` など。
+
+T2の価格データを元に算出される各種テクニカル・モメンタム指標です。
+
+| カラム名 | 型 | 説明・用途 | 計算式 / 論理 |
+| :--- | :--- | :--- | :--- |
+| `sma_n` | FLOAT | 5, 21, 50, 63, 150, 200日単純移動平均。トレンド判定に使用。 | `close.rolling(n).mean()` |
+| `ema_n` | FLOAT | 5, 21, 50, 63, 150, 200日指数平滑移動平均。TradingView互換。 | `calculate_ema_tv(close, n)` (SMAをシードとした再帰計算) |
+| `atr_14` | FLOAT | ボラティリティ指標（Average True Range）。 | 14日間の True Range の平均 |
+| `atr_pct_14` | FLOAT | Closeに対するATRの割合(%)。 | `(atr_14 / close) * 100` |
+| `adr_pct_21` | FLOAT | 21日間の平均日次レンジ(%)。ボラティリティの強さ判定に使用。 | `mean( (high - low) / low * 100 )` |
+| `dist_sma50_atr` | FLOAT | SMA50からの距離をATRで正規化した値。 | `((close / sma_50 * 100) - 100) / atr_pct_14` |
+| `td9` | INT | Tom DeMark Sequential。過熱感の判定に使用。 | 4日前の終値との比較による 1〜9 のカウントアップ/ダウン |
+| `market_cap` | FLOAT | 日次時価総額（米ドル）。スクリーナーでのサイズ制限に使用。 | `close * shares_outstanding` |
+| `relative_strength_spy` | FLOAT | SPYに対する単純相対強度。 | `close / spy_close` |
+| `rs_condition_n` | FLOAT | RSのトレンド強度 (14, 21, 63)。 | `RS / SMA(RS, n)` |
+| `rs_ema_n` | FLOAT | RSの平滑化 (14, 21, 63)。RRG計算の前処理に使用。 | `calculate_ema_tv(relative_strength_spy, n)` |
+| `rs_ratio_n` | FLOAT | RSの正規化スコア (14, 21, 63)。RRGのX軸（Ratio）に相当。 | `(rs_ema_n - mean(rs_ema_n, n)) / std(rs_ema_n, n)` |
+| `rs_momentum_n` | FLOAT | RS Ratioの勢い (14, 21, 63)。RRGのY軸（Momentum）に相当。 | `(rs_ratio_n - mean(rs_ratio_n, n)) / std(rs_ratio_n, n)` |
+| `vol_surge_21` | FLOAT | 出来高急増倍率。 | `volume / mean(volume, 21)` |
+| `rel_vol_vs_spy_21` | FLOAT | SPYに対する出来高の相対的な強さ。 | `vol_surge_21 / spy_vol_surge_21` |
+| `pct_from_52w_high` | FLOAT | 52週（252日）高値からの下落率(%)。 | `(close - max(high, 252)) / max(high, 252) * 100` |
+| `trend_template_ok` | SMALLINT | ミネルヴィニのトレンドテンプレート適合フラグ（1:適合, 0:不適合）。 | 右記5条件: ①close>sma50, ②sma50>sma150, ③sma150>sma200, ④sma200上昇中(20日前比), ⑤52週高値から30%以内 |
 
 ### 3.5 T4: 相対評価データ (`relative_ranks`)
-*   **特徴**: 同一カテゴリ内で特定指標（RSスコア等）を横並び比較し、パーセンタイル(0〜1)で順位付けしたデータ。
-*   **カラム**: `id` (PK), `symbol_id` (FK), `date`, `group_name`, `indicator_name`, `percent_rank`
+
+同一カテゴリ内で特定指標（RSスコア等）を横並び比較し、パーセンタイル(0〜1)で順位付けしたデータです。
+
+| カラム名 | 型 | 説明・用途 | 計算式 / 論理 |
+| :--- | :--- | :--- | :--- |
+| `id` | INTEGER | 主キー。 | |
+| `symbol_id` | INTEGER | `symbols.id` への外部キー。 | |
+| `date` | DATE | 評価日。 | |
+| `group_name` | STRING | 比較対象のグループ（`個別`, `テーマ` などの種類ごと）。 | |
+| `indicator_name` | STRING | ランク付けの対象指標名（例: `rs_ratio_21`）。 | |
+| `percent_rank` | FLOAT | そのグループ内でのパーセンタイル順位 (0.00 〜 1.00)。 | `group.rank(pct=True)`。1.0が最強。 |
 
 ### 3.6 T5: マーケットシグナル (`market_signals`)
-*   **特徴**: S&P500の動向から算出される市場全体の方向性（`market_phase`）や「Follow Through Day（FTD）」などの定性的シグナルに加え、0〜100 の定量的な「Market Trend Score」を保存。
-*   **カラム**: `id` (PK), `date`, `spy_above_sma200`, `distribution_days`, `follow_through_day`, `market_phase`, `market_trend_score`
+
+S&P500（SPY）の動向や市場全体の統計から算出される、市場フェーズと健康度の指標です。
+
+| カラム名 | 型 | 説明・用途 | 計算式 / 論理 |
+| :--- | :--- | :--- | :--- |
+| `id` | INTEGER | 主キー。 | |
+| `date` | DATE | 評価日。 | |
+| `spy_above_sma200` | SMALLINT | 長期トレンド判定（1:SMA200より上）。 | |
+| `distribution_days` | INTEGER | 過去25日間のディストリビューション・デーの数。 | 下落(-0.2%以下)かつ出来高増の日数 |
+| `follow_through_day` | SMALLINT | フォロースルーデーの発生フラグ（1:発生）。 | 下落局面からの反発（+1.7%以上かつ出来高増） |
+| `market_phase` | STRING | 市場のフェーズ（BULL, CORRECTION, BEAR 等）。 | SPYのトレンドと売りの圧力により判定 |
+| `market_trend_score` | FLOAT | 市場全体の健康度を 0〜100 で数値化したもの。 | 右記4項目の加重合計: ①SPYトレンド(25), ②市場の幅(25), ③Momentum Ratio(25), ④VIX(25) |
+
+**Market Trend Score の内訳:**
+- **SPYトレンド (25pt)**: 終値が EMA21, SMA50, SMA200 を上回っているか。
+- **市場の幅 (25pt)**: SMA50を上回っている銘柄の割合。
+- **Momentum Ratio (25pt)**: 市場全体の RS Momentum のポジティブ率。
+- **VIXスコア (25pt)**: VIXが12（25pt）〜35（0pt）の間で線形補完。
 
 #### 3.6.1 各定性的シグナルの定義
 ダッシュボードに表示される市場の健康状態は、S&P500 (SPY) の日足データから以下のロジックで判定されます。
@@ -340,3 +408,24 @@ periods = [
     - これにより、Pandas 内部での「Timestamp と date の比較不全」によるシグナル誤検知やランタイムエラーを防止しています。
 *   **ループ内外での走査分離**: `unique()` や `max()` のような DataFrame 全体の検索走査は、日付毎のループ内では極力使わず、ループ外での事前抽出によって O(N^2) のボトルネックを排除し、処理の破綻を防いでいます。
 *   **動的データ供給**: スクリーン時に必要な `gain_1d_pct` （1日騰落率）等のカラムが DB に存在しない場合でも、 `backtest_screener.py` が始値・終値からオンザフライで算出・注入することで、データの欠損による `KeyError` を回避します。
+
+## 7. 開発・検証プロセス (Development & Verification Process)
+
+本プロジェクトでは、データの整合性と本番環境の安全性を担保するため、以下の検証フローを原則とします。
+
+### 7.1 検証用サンドボックス環境の活用
+ロジックの変更、DBスキーマの拡張、または大規模なデータリフレッシュを伴う作業を行う際は、必ず**サンドボックスDB (`data/stocktool_sandbox.db`)** を使用して検証を行います。
+
+1.  **Sandbox ステージ**:
+    - 新しいロジックの実装後、サンドボックスDBに対してマイグレーションおよびデータ更新を実行。
+    - ユニットテスト (`pytest`) を実行し、ロジックの正当性を確認。
+2.  **Verify ステージ (視覚的確認)**:
+    - APIサーバーの接続先を一時的にサンドボックスに切り替え（環境変数 `STOCKTOOL_DB_PATH` を推奨）。
+    - フロントエンドの「Data View」等で、実際に意図した数値が表示されているかを目視確認。
+    - **完了条件**: 画面ヘッダーの「DB識別バッジ」が対象のサンドボックスDB名を表示していることを確認すること。
+3.  **Production ステージ**:
+    - 上記すべての確認が完了した後、本番DB (`data/stocktool.db`) に対して同一の手順（マイグレーション・データリフレッシュ）を適用。
+
+### 7.2 安全性の担保
+- **APIによる確認**: `/api/system/info` エンドポイントを叩き、`is_production` フラグが意図した状態であるかを確認する。
+- **視覚的警告**: フロントエンドは本番以外のDB接続を検知するとオレンジ色の警告バッジを常時表示し、環境の取り違えを防止する。

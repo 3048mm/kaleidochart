@@ -4,7 +4,7 @@ from sqlalchemy import desc, func, or_, and_, Column as SAColumn
 from typing import List, Optional, Dict, Any
 from datetime import date as dt_date, timedelta
 import os, re, logging, tomli
-from db.database import get_db
+from db.database import get_db, engine
 from db.models import Symbol, DailyPrice, Indicator, RelativeRank, MarketSignal, ThemeConstituent, Earning
 from api import schemas
 
@@ -14,6 +14,21 @@ router = APIRouter()
 @router.get("/ping")
 def ping():
     return {"ping": "pong"}
+
+@router.get("/system/info", response_model=schemas.SystemInfoResponse)
+def get_system_info():
+    """Return current system configuration details, primarily for DB verification."""
+    from db import database
+    # Access database.engine instead of a stale import
+    full_path = str(database.engine.url.database) if database.engine else "unknown"
+    db_name = os.path.basename(full_path)
+    is_production = db_name == "stocktool.db"
+    
+    return schemas.SystemInfoResponse(
+        db_path=full_path,
+        db_name=db_name,
+        is_production=is_production
+    )
 
 # ============================================================
 # Screener Engine: External Config & Dynamic Filter
@@ -58,6 +73,7 @@ _COLUMN_CATEGORIES = {
                             "td9", "vol_surge_21", "rel_vol_vs_spy_21"],
     "Momentum & RS": ["relative_strength_spy",
                       "rs_condition_14", "rs_condition_21", "rs_condition_63",
+                      "rs_ema_14", "rs_ema_21", "rs_ema_63",
                       "rs_momentum_14", "rs_momentum_21", "rs_momentum_63",
                       "rs_ratio_14", "rs_ratio_21", "rs_ratio_63"],
     "Fundamentals": ["market_cap"],
@@ -346,6 +362,9 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db)):
                 "rs_momentum_14": ind.rs_momentum_14,
                 "rs_momentum_21": ind.rs_momentum_21,
                 "rs_momentum_63": ind.rs_momentum_63,
+                "rs_ema_14": ind.rs_ema_14,
+                "rs_ema_21": ind.rs_ema_21,
+                "rs_ema_63": ind.rs_ema_63,
                 "rs_ratio_14": ind.rs_ratio_14,
                 "rs_ratio_21": ind.rs_ratio_21,
                 "rs_ratio_63": ind.rs_ratio_63,

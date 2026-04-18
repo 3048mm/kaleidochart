@@ -14,6 +14,7 @@ const API = '/api'
 
 export default function App() {
     const [symbols, setSymbols] = useState<Symbol[]>([])
+    const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null)
     const [search, setSearch] = useState('')
     const navigate = useNavigate()
     const location = useLocation()
@@ -22,6 +23,9 @@ export default function App() {
     useEffect(() => {
         fetch(`${API}/symbols`).then(r => r.json()).then((data: Symbol[]) => {
             setSymbols(data)
+        })
+        fetch(`${API}/system/info`).then(r => r.json()).then((data: SystemInfo) => {
+            setSystemInfo(data)
         })
     }, [])
 
@@ -77,6 +81,26 @@ export default function App() {
                         <span>Stock Analyzer</span>
                     </div>
                 </Link>
+
+                {systemInfo && !systemInfo.is_production && (
+                    <div style={{
+                        marginLeft: '12px',
+                        padding: '2px 8px',
+                        backgroundColor: '#ff9800',
+                        color: '#000',
+                        borderRadius: '4px',
+                        fontSize: '10px',
+                        fontWeight: 'bold',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        boxShadow: '0 0 10px rgba(255, 152, 0, 0.3)'
+                    }}>
+                        <span style={{ fontSize: '12px' }}>⚠️</span>
+                        <span>DB: {systemInfo.db_name}</span>
+                    </div>
+                )}
+
                 <div className="header-spacer" />
                 <nav style={{ display: 'flex', gap: '20px', marginRight: '20px' }}>
                     <Link to="/" style={{ color: location.pathname === '/' ? '#00ff88' : '#d1d4dc', textDecoration: 'none' }}>Dashboard</Link>
