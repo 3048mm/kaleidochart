@@ -148,7 +148,7 @@ export interface LeadingIndicatorItem {
     sparkline: number[];
 }
 
-export interface SpyFeatureItem {
+export interface EtfFeatureItem {
     id: number;
     ticker: string;
     name: string;
@@ -162,6 +162,7 @@ export interface SpyFeatureItem {
     dist_sma63_pct: number;
     sma21_sma63_pct: number;
     chart_data: ChartDataPoint[];
+    group_type?: 'sector' | 'theme';
 }
 
 export interface MarketTrendScoreHistoryItem {
@@ -175,7 +176,7 @@ export interface DashboardResponse {
     distribution_days: number
     market_trend_score: number
     trend_score_history: MarketTrendScoreHistoryItem[]
-    spy_feature?: SpyFeatureItem
+    spy_feature?: EtfFeatureItem
     leading: LeadingIndicatorItem[]
     indices: DashboardPanelItem[]
     sectors: DashboardPanelItem[]
@@ -227,6 +228,14 @@ export interface ThemeDetailResponse {
     rs63_sparkline: number[];
     chart_data: ChartDataPoint[];
     constituents: ThemeConstituentItem[];
+}
+
+export interface GroupDataResponse {
+    ticker: string;
+    name: string;
+    group_type: 'sector' | 'theme';
+    feature: EtfFeatureItem;
+    constituents: DashboardPanelItem[];
 }
 
 export interface EarningData {

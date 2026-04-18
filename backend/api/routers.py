@@ -11,6 +11,10 @@ from api import schemas
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+@router.get("/ping")
+def ping():
+    return {"ping": "pong"}
+
 # ============================================================
 # Screener Engine: External Config & Dynamic Filter
 # ============================================================
@@ -423,34 +427,212 @@ def get_rankings(db: Session = Depends(get_api_db), limit: int = 20, asc: bool =
     By default gets the highest percent rank (descending). Set asc=True to get lowest.
     """
     # 1. We only want the latest date available in T4
-    latest_date_row = db.query(RelativeRank.date).order_by(RelativeRank.date.desc()).first()
+    latest_date_row = db.query(RelativeRank.date).order_by(desc(RelativeRank.date)).first()
     if not latest_date_row:
         return []
         
     latest_date = latest_date_row.date
     
-    order_col = RelativeRank.percent_rank.asc() if asc else RelativeRank.percent_rank.desc()
+    # We return grouped by indicator
+    indicators = db.query(RelativeRank.indicator_name).filter(RelativeRank.date == latest_date).distinct().all()
     
-    # Join with Symbol to get ticker names
-    results = db.query(RelativeRank, Symbol).join(
-        Symbol, RelativeRank.symbol_id == Symbol.id
-    ).filter(
-        RelativeRank.date == latest_date
-    ).order_by(order_col).limit(limit).all()
-    
-    rankings = []
-    for rank_row, sym_row in results:
-        rankings.append(schemas.RankingResponse(
-            symbol_id=sym_row.id,
-            ticker=sym_row.ticker,
-            name=sym_row.name,
-            group_name=rank_row.group_name,
-            indicator_name=rank_row.indicator_name,
-            percent_rank=rank_row.percent_rank,
-            date=str(rank_row.date)
-        ))
+    resp = []
+    for (ind_name,) in indicators:
+        order_col = RelativeRank.percent_rank.asc() if asc else RelativeRank.percent_rank.desc()
         
-    return rankings
+        # Join with Symbol to get ticker names
+        results = db.query(RelativeRank, Symbol).join(
+            Symbol, RelativeRank.symbol_id == Symbol.id
+        ).filter(
+            RelativeRank.date == latest_date,
+            RelativeRank.indicator_name == ind_name
+        ).order_by(order_col).limit(limit).all()
+        
+        items = []
+        for rank_row, sym_row in results:
+            items.append(schemas.RankingItem(
+                symbol_id=sym_row.id,
+                ticker=sym_row.ticker,
+                name=sym_row.name,
+                group_name=rank_row.group_name,
+                indicator_name=rank_row.indicator_name,
+                percent_rank=rank_row.percent_rank,
+                date=str(rank_row.date)
+            ))
+        
+        if items:
+            resp.append(schemas.RankingResponse(
+                indicator_name=ind_name,
+                items=items
+            ))
+            
+    return resp
+
+# --- Helper functions for dashboard & group pages ---
+
+def _get_sparkline_data(db: Session, sym_id: int, target_date: str):
+    ranks = db.query(RelativeRank.percent_rank).filter(
+        RelativeRank.symbol_id == sym_id,
+        RelativeRank.indicator_name == "rs_ratio_21",
+        RelativeRank.date <= target_date
+    ).order_by(desc(RelativeRank.date)).limit(30).all()
+    
+    vals = [r[0] for r in reversed(ranks)]
+    if not vals:
+        return [0.5] * 5
+    return vals
+
+def _build_panel_item(db: Session, sym: Symbol, dp: DailyPrice, rank_val_21: float, rank_val_63: float, target_date: str):
+    sparkline = _get_sparkline_data(db, sym.id, target_date)
+    
+    history = db.query(DailyPrice.close).filter(
+        DailyPrice.symbol_id == sym.id,
+        DailyPrice.date <= target_date
+    ).order_by(desc(DailyPrice.date)).limit(22).all()
+    
+    hist_closes = [h[0] for h in history]
+    
+    change_1d_pct = 0.0
+    change_1w_pct = 0.0
+    change_1m_pct = 0.0
+    
+    if len(hist_closes) > 1 and hist_closes[1] > 0:
+        change_1d_pct = ((dp.close - hist_closes[1]) / hist_closes[1]) * 100
+        
+    if len(hist_closes) >= 6 and hist_closes[5] > 0:
+        change_1w_pct = ((dp.close - hist_closes[5]) / hist_closes[5]) * 100
+        
+    if len(hist_closes) >= 22 and hist_closes[21] > 0:
+        change_1m_pct = ((dp.close - hist_closes[21]) / hist_closes[21]) * 100
+    elif len(hist_closes) > 1 and hist_closes[-1] > 0:
+        change_1m_pct = ((dp.close - hist_closes[-1]) / hist_closes[-1]) * 100
+        
+    ind = db.query(Indicator).filter(
+        Indicator.symbol_id == sym.id,
+        Indicator.date == dp.date
+    ).first()
+    dist_21ema_pct = 0.0
+    if ind and ind.ema_21 and ind.ema_21 > 0:
+        dist_21ema_pct = ((dp.close - ind.ema_21) / ind.ema_21) * 100
+
+    return schemas.DashboardPanelItem(
+        id=sym.id,
+        ticker=sym.ticker,
+        name=sym.name,
+        category=sym.category,
+        close=dp.close,
+        change_pct=change_1d_pct,
+        change_1w_pct=change_1w_pct,
+        change_1m_pct=change_1m_pct,
+        dist_21ema_pct=dist_21ema_pct,
+        sparkline=sparkline if sparkline else [],
+        intensity_score=float(rank_val_21 or 0.0),
+        rs_ratio_21_rank=float(rank_val_21 or 0.0),
+        rs_ratio_63_rank=float(rank_val_63 or 0.0),
+        rs_ratio_21=ind.rs_ratio_21 if ind else None,
+        rs_ratio_63=ind.rs_ratio_63 if ind else None,
+        rs_momentum_21=ind.rs_momentum_21 if ind else None
+    )
+
+def _build_leading_item(db: Session, sym: Symbol, dp: DailyPrice, target_date: str):
+    history = db.query(DailyPrice.close).filter(
+        DailyPrice.symbol_id == sym.id,
+        DailyPrice.date <= target_date
+    ).order_by(desc(DailyPrice.date)).limit(22).all()
+    
+    hist_closes = [h[0] for h in history]
+    sparkline_raw = list(reversed(hist_closes))
+    
+    change_1d_pct = 0.0
+    change_1w_pct = 0.0
+    change_1m_pct = 0.0
+    
+    if len(hist_closes) > 1 and hist_closes[1] > 0:
+        change_1d_pct = ((dp.close - hist_closes[1]) / hist_closes[1]) * 100
+    if len(hist_closes) >= 6 and hist_closes[5] > 0:
+        change_1w_pct = ((dp.close - hist_closes[5]) / hist_closes[5]) * 100
+    if len(hist_closes) >= 22 and hist_closes[21] > 0:
+        change_1m_pct = ((dp.close - hist_closes[21]) / hist_closes[21]) * 100
+        
+    ind = db.query(Indicator).filter(
+        Indicator.symbol_id == sym.id,
+        Indicator.date == target_date
+    ).first()
+    dist_21ema_pct = 0.0
+    if ind and ind.ema_21 and ind.ema_21 > 0:
+        dist_21ema_pct = ((dp.close - ind.ema_21) / ind.ema_21) * 100
+        
+    return schemas.LeadingIndicatorItem(
+        id=sym.id,
+        ticker=sym.ticker,
+        name=sym.name,
+        category=sym.category,
+        close=float(dp.close or 0.0),
+        change_1d_pct=float(change_1d_pct or 0.0),
+        change_1w_pct=float(change_1w_pct or 0.0),
+        change_1m_pct=float(change_1m_pct or 0.0),
+        dist_21ema_pct=float(dist_21ema_pct or 0.0),
+        sparkline=sparkline_raw if sparkline_raw else []
+    )
+
+def _build_etf_feature(db: Session, sym: Symbol, dp: DailyPrice, target_date: str):
+    history = db.query(DailyPrice).filter(
+        DailyPrice.symbol_id == sym.id,
+        DailyPrice.date <= target_date
+    ).order_by(desc(DailyPrice.date)).limit(252).all()
+    
+    hist_closes = [h.close for h in history]
+    
+    change_1d_pct = 0.0
+    change_1w_pct = 0.0
+    change_1m_pct = 0.0
+    change_1y_pct = 0.0
+    
+    if len(hist_closes) > 1 and hist_closes[1] > 0:
+        change_1d_pct = ((dp.close - hist_closes[1]) / hist_closes[1]) * 100
+    if len(hist_closes) >= 6 and hist_closes[5] > 0:
+        change_1w_pct = ((dp.close - hist_closes[5]) / hist_closes[5]) * 100
+    if len(hist_closes) >= 22 and hist_closes[21] > 0:
+        change_1m_pct = ((dp.close - hist_closes[21]) / hist_closes[21]) * 100
+    if len(hist_closes) >= 252 and hist_closes[251] > 0:
+        change_1y_pct = ((dp.close - hist_closes[251]) / hist_closes[251]) * 100
+        
+    ind = db.query(Indicator).filter(
+        Indicator.symbol_id == sym.id,
+        Indicator.date == target_date
+    ).first()
+    
+    dist_sma5_pct = 0.0
+    dist_sma21_pct = 0.0
+    dist_sma63_pct = 0.0
+    sma21_sma63_pct = 0.0
+    
+    if ind:
+        if ind.sma_5 and ind.sma_5 > 0:
+            dist_sma5_pct = ((dp.close - ind.sma_5) / ind.sma_5) * 100
+        if ind.sma_21 and ind.sma_21 > 0:
+            dist_sma21_pct = ((dp.close - ind.sma_21) / ind.sma_21) * 100
+        if ind.sma_63 and ind.sma_63 > 0:
+            dist_sma63_pct = ((dp.close - ind.sma_63) / ind.sma_63) * 100
+        if ind.sma_21 and ind.sma_63 and ind.sma_63 > 0:
+            sma21_sma63_pct = ((ind.sma_21 - ind.sma_63) / ind.sma_63) * 100
+            
+    # Mini chart (6 months = 126 days)
+    six_m_hist = history[:126]
+    chart_data = [
+        schemas.ChartDataPoint(
+            time=str(h.date), open=h.open, high=h.high, low=h.low, close=h.close, volume=h.volume
+        ) for h in reversed(six_m_hist)
+    ]
+    
+    return schemas.EtfFeatureItem(
+        id=sym.id, ticker=sym.ticker, name=sym.name, close=float(dp.close or 0.0),
+        change_1d_pct=float(change_1d_pct or 0.0), change_1w_pct=float(change_1w_pct or 0.0),
+        change_1m_pct=float(change_1m_pct or 0.0), change_1y_pct=float(change_1y_pct or 0.0),
+        dist_sma5_pct=float(dist_sma5_pct or 0.0), dist_sma21_pct=float(dist_sma21_pct or 0.0),
+        dist_sma63_pct=float(dist_sma63_pct or 0.0), sma21_sma63_pct=float(sma21_sma63_pct or 0.0),
+        chart_data=chart_data
+    )
 
 @router.get("/available_dates", response_model=schemas.AvailableDatesResponse)
 def get_available_dates(db: Session = Depends(get_api_db)):
@@ -512,202 +694,7 @@ def get_dashboard(
         themes_bottom=[]
     )
 
-    # Helper function to get N days history for sparklines
-    def get_sparkline_data(sym_id: int):
-        ranks = db.query(RelativeRank.percent_rank).filter(
-            RelativeRank.symbol_id == sym_id,
-            RelativeRank.indicator_name == "rs_ratio_21",
-            RelativeRank.date <= target_date
-        ).order_by(desc(RelativeRank.date)).limit(30).all()
-        
-        # reverse back to chron order; values are already 0-1
-        vals = [r[0] for r in reversed(ranks)]
-        if not vals:
-            return [0.5] * 5  # fallback
-        return vals
-
-    # Helper function to build PanelItem
-    def build_panel_item(sym: Symbol, dp: DailyPrice, rank_val_21: float, rank_val_63: float):
-        sparkline = get_sparkline_data(sym.id)
-        
-        # We need historical prices up to target_date for 1W/1M
-        history = db.query(DailyPrice.close).filter(
-            DailyPrice.symbol_id == sym.id,
-            DailyPrice.date <= target_date
-        ).order_by(desc(DailyPrice.date)).limit(21).all()
-        
-        hist_closes = [h[0] for h in history]
-        
-        change_1d_pct = 0.0
-        change_1w_pct = 0.0
-        change_1m_pct = 0.0
-        
-        if len(hist_closes) > 1 and hist_closes[1] > 0:
-            change_1d_pct = ((dp.close - hist_closes[1]) / hist_closes[1]) * 100
-            
-        if len(hist_closes) >= 5 and hist_closes[4] > 0:
-            change_1w_pct = ((dp.close - hist_closes[4]) / hist_closes[4]) * 100
-            
-        if len(hist_closes) >= 21 and hist_closes[20] > 0:
-            change_1m_pct = ((dp.close - hist_closes[20]) / hist_closes[20]) * 100
-        elif len(hist_closes) > 1 and hist_closes[-1] > 0:
-            change_1m_pct = ((dp.close - hist_closes[-1]) / hist_closes[-1]) * 100
-            
-        # Get dist_21ema_pct
-        ind = db.query(Indicator).filter(
-            Indicator.symbol_id == sym.id,
-            Indicator.date == dp.date
-        ).first()
-        dist_21ema_pct = 0.0
-        if ind and ind.ema_21 and ind.ema_21 > 0:
-            dist_21ema_pct = ((dp.close - ind.ema_21) / ind.ema_21) * 100
- 
-        return schemas.DashboardPanelItem(
-            id=sym.id,
-            ticker=sym.ticker,
-            name=sym.name,
-            category=sym.category,
-            close=dp.close,
-            change_pct=change_1d_pct,
-            change_1w_pct=change_1w_pct,
-            change_1m_pct=change_1m_pct,
-            dist_21ema_pct=dist_21ema_pct,
-            sparkline=sparkline,
-            intensity_score=rank_val_21,
-            rs_ratio_21_rank=rank_val_21,
-            rs_ratio_63_rank=rank_val_63,
-            rs_ratio_21=ind.rs_ratio_21 if ind else None,
-            rs_ratio_63=ind.rs_ratio_63 if ind else None,
-            rs_momentum_21=ind.rs_momentum_21 if ind else None
-        )
-
-    # Helper function to build LeadingIndicatorItem
-    def build_leading_item(sym: Symbol, dp: DailyPrice):
-        # We need historical prices up to target_date
-        history = db.query(DailyPrice.close).filter(
-            DailyPrice.symbol_id == sym.id,
-            DailyPrice.date <= target_date
-        ).order_by(desc(DailyPrice.date)).limit(21).all()
-        
-        hist_closes = [h[0] for h in history]
-        sparkline_raw = list(reversed(hist_closes)) # chron order
-        
-        change_1d_pct = 0.0
-        change_1w_pct = 0.0
-        change_1m_pct = 0.0
-        
-        if len(hist_closes) > 1 and hist_closes[1] > 0:
-            change_1d_pct = ((dp.close - hist_closes[1]) / hist_closes[1]) * 100
-            
-        if len(hist_closes) >= 5 and hist_closes[4] > 0:
-            change_1w_pct = ((dp.close - hist_closes[4]) / hist_closes[4]) * 100
-            
-        if len(hist_closes) >= 21 and hist_closes[20] > 0:
-            change_1m_pct = ((dp.close - hist_closes[20]) / hist_closes[20]) * 100
-        elif len(hist_closes) > 1 and hist_closes[-1] > 0:
-            change_1m_pct = ((dp.close - hist_closes[-1]) / hist_closes[-1]) * 100
-            
-        # Get dist_21ema_pct
-        ind = db.query(Indicator).filter(
-            Indicator.symbol_id == sym.id,
-            Indicator.date == target_date
-        ).first()
-        
-        dist_21ema_pct = 0.0
-        if ind and ind.ema_21 and ind.ema_21 > 0:
-            dist_21ema_pct = ((dp.close - ind.ema_21) / ind.ema_21) * 100
-            
-        return schemas.LeadingIndicatorItem(
-            id=sym.id,
-            ticker=sym.ticker,
-            name=sym.name,
-            category=sym.category,
-            close=dp.close,
-            change_1d_pct=change_1d_pct,
-            change_1w_pct=change_1w_pct,
-            change_1m_pct=change_1m_pct,
-            dist_21ema_pct=dist_21ema_pct,
-            sparkline=sparkline_raw
-        )
-
-    # Helper function for SPY
-    def build_spy_item(sym: Symbol, dp: DailyPrice):
-        # Fetch 1 year of history (approx 252 days)
-        history = db.query(DailyPrice).filter(
-            DailyPrice.symbol_id == sym.id,
-            DailyPrice.date <= target_date
-        ).order_by(desc(DailyPrice.date)).limit(252).all()
-        
-        hist_closes = [h.close for h in history]
-        
-        change_1d_pct = 0.0
-        change_1w_pct = 0.0
-        change_1m_pct = 0.0
-        change_1y_pct = 0.0
-        
-        if len(hist_closes) > 1 and hist_closes[1] > 0:
-            change_1d_pct = ((dp.close - hist_closes[1]) / hist_closes[1]) * 100
-        if len(hist_closes) >= 5 and hist_closes[4] > 0:
-            change_1w_pct = ((dp.close - hist_closes[4]) / hist_closes[4]) * 100
-        if len(hist_closes) >= 21 and hist_closes[20] > 0:
-            change_1m_pct = ((dp.close - hist_closes[20]) / hist_closes[20]) * 100
-        elif len(hist_closes) > 1 and hist_closes[-1] > 0:
-            change_1m_pct = ((dp.close - hist_closes[-1]) / hist_closes[-1]) * 100
-            
-        if len(hist_closes) >= 252 and hist_closes[251] > 0:
-            change_1y_pct = ((dp.close - hist_closes[251]) / hist_closes[251]) * 100
-        elif len(hist_closes) > 1 and hist_closes[-1] > 0:
-            change_1y_pct = ((dp.close - hist_closes[-1]) / hist_closes[-1]) * 100
-            
-        ind = db.query(Indicator).filter(
-            Indicator.symbol_id == sym.id,
-            Indicator.date == target_date
-        ).first()
-        
-        dist_sma5_pct = 0.0
-        dist_sma21_pct = 0.0
-        dist_sma63_pct = 0.0
-        sma21_sma63_pct = 0.0
-        
-        if ind:
-            if ind.sma_5 and ind.sma_5 > 0:
-                dist_sma5_pct = ((dp.close - ind.sma_5) / ind.sma_5) * 100
-            if ind.sma_21 and ind.sma_21 > 0:
-                dist_sma21_pct = ((dp.close - ind.sma_21) / ind.sma_21) * 100
-            if ind.sma_63 and ind.sma_63 > 0:
-                dist_sma63_pct = ((dp.close - ind.sma_63) / ind.sma_63) * 100
-            if ind.sma_21 and ind.sma_63 and ind.sma_63 > 0:
-                sma21_sma63_pct = ((ind.sma_21 - ind.sma_63) / ind.sma_63) * 100
-                
-        # Chart Data (6 months = approx 126 days)
-        chart_data = []
-        six_m_hist = history[:126]
-        # TradeView expects chronological order
-        for h in reversed(six_m_hist):
-            chart_data.append(schemas.ChartDataPoint(
-                time=str(h.date),
-                open=h.open,
-                high=h.high,
-                low=h.low,
-                close=h.close,
-                volume=h.volume
-            ))
-            
-        return schemas.SpyFeatureItem(
-            id=sym.id,
-            ticker=sym.ticker,
-            name=sym.name,
-            close=dp.close,
-            change_1d_pct=change_1d_pct,
-            change_1w_pct=change_1w_pct,
-            change_1m_pct=change_1m_pct,
-            change_1y_pct=change_1y_pct,
-            dist_sma5_pct=dist_sma5_pct,
-            dist_sma21_pct=dist_sma21_pct,
-            dist_sma63_pct=dist_sma63_pct,
-            sma21_sma63_pct=sma21_sma63_pct,
-            chart_data=chart_data
-        )
+    # --- Dashboard Data fetching logic follows ---
 
     # 3. Get Indices, Sectors, Themes
     symbols = db.query(Symbol).filter(Symbol.active == 1).all()
@@ -739,16 +726,16 @@ def get_dashboard(
         r63_rank = rank_63_dict.get(sym_id, 0.0)
         
         if s.category == "市場":
-            resp.indices.append(build_panel_item(s, dp, r21_rank, r63_rank))
+            resp.indices.append(_build_panel_item(db, s, dp, r21_rank, r63_rank, target_date))
         elif s.category == "指標":
             if s.ticker == "SPY":
-                resp.spy_feature = build_spy_item(s, dp)
+                resp.spy_feature = _build_etf_feature(db, s, dp, target_date)
             else:
-                resp.leading.append(build_leading_item(s, dp))
+                resp.leading.append(_build_leading_item(db, s, dp, target_date))
         elif s.category == "セクタ":
-            resp.sectors.append(build_panel_item(s, dp, r21_rank, r63_rank))
+            resp.sectors.append(_build_panel_item(db, s, dp, r21_rank, r63_rank, target_date))
         elif s.category == "テーマ":
-            item = build_panel_item(s, dp, r21_rank, r63_rank)
+            item = _build_panel_item(db, s, dp, r21_rank, r63_rank, target_date)
             resp.themes_top.append(item)
             
     # Sort and slice
@@ -817,7 +804,7 @@ def get_theme_detail(
     rs21_spark = get_rs_sparkline(symbol_id, 21)
     rs63_spark = get_rs_sparkline(symbol_id, 63)
 
-    # 6-Month chart data (approx 126 trading days) — with indicator RS values for RRG
+    # 6-Month chart data (approx 126 trading days)
     six_m_hist = list(reversed(history[:126]))
     theme_inds = db.query(Indicator).filter(
         Indicator.symbol_id == symbol_id,
@@ -846,12 +833,11 @@ def get_theme_detail(
         ))
 
     # Get constituent stocks
-    # Strategy 1: ThemeConstituent table (virtual themes)
     mappings = db.query(ThemeConstituent).filter(ThemeConstituent.theme_id == symbol_id).all()
     constituent_symbols = [db.query(Symbol).filter(Symbol.id == m.symbol_id).first() for m in mappings]
     constituent_symbols = [s for s in constituent_symbols if s is not None]
 
-    # Strategy 2: Tag-based lookup for ETF themes (stocks tagged with the ETF ticker)
+    # Tag-based lookup for ETF themes
     if not constituent_symbols and sym.theme_type == 'etf':
         constituent_symbols = db.query(Symbol).filter(
             Symbol.active == 1,
@@ -860,7 +846,6 @@ def get_theme_detail(
         ).order_by(Symbol.ticker).all()
 
     constituents = []
-
     for c_sym in constituent_symbols:
         c_id = c_sym.id
         c_dp = db.query(DailyPrice).filter(DailyPrice.symbol_id == c_id).order_by(desc(DailyPrice.date)).first()
@@ -882,15 +867,14 @@ def get_theme_detail(
             Indicator.date == c_dp.date
         ).first()
 
+        # metrics
         c_rs14 = c_ind.rs_ratio_14 if c_ind else None
         c_rs21 = c_ind.rs_ratio_21 if c_ind else None
         c_rs63 = c_ind.rs_ratio_63 if c_ind else None
         c_rsmom21 = c_ind.rs_momentum_21 if c_ind else None
-
-        # RS sparkline for constituent
         c_rs_spark = get_rs_sparkline(c_id, 21)
 
-        # Full chart history for RRG
+        # short history for RRG
         c_full_hist = db.query(DailyPrice).filter(
             DailyPrice.symbol_id == c_id,
             DailyPrice.date <= c_dp.date
@@ -904,67 +888,115 @@ def get_theme_detail(
         for h in reversed(c_full_hist):
             i = c_ind_dict.get(str(h.date))
             c_chart_data.append(schemas.ChartDataPoint(
-                time=str(h.date),
-                open=h.open or 0.0,
-                high=h.high or 0.0,
-                low=h.low or 0.0,
-                close=h.close,
-                volume=h.volume or 0,
-                rs_ratio_14=i.rs_ratio_14 if i else None,
-                rs_ratio_21=i.rs_ratio_21 if i else None,
-                rs_ratio_63=i.rs_ratio_63 if i else None,
-                rs_momentum_14=i.rs_momentum_14 if i else None,
-                rs_momentum_21=i.rs_momentum_21 if i else None,
-                rs_momentum_63=i.rs_momentum_63 if i else None,
-                rs_condition_14=i.rs_condition_14 if i else None,
-                rs_condition_21=i.rs_condition_21 if i else None,
-                rs_condition_63=i.rs_condition_63 if i else None,
+                time=str(h.date), open=h.open or 0.0, high=h.high or 0.0, low=h.low or 0.0, close=h.close,
+                volume=h.volume or 0, rs_ratio_14=i.rs_ratio_14 if i else None, rs_ratio_21=i.rs_ratio_21 if i else None,
+                rs_ratio_63=i.rs_ratio_63 if i else None, rs_momentum_14=i.rs_momentum_14 if i else None,
+                rs_momentum_21=i.rs_momentum_21 if i else None, rs_momentum_63=i.rs_momentum_63 if i else None,
             ))
 
         constituents.append(schemas.ThemeConstituentItem(
-            id=c_sym.id,
-            ticker=c_sym.ticker,
-            name=c_sym.name,
-            close=c_dp.close,
-            change_1d_pct=c_1d,
-            change_1w_pct=c_1w,
-            change_1m_pct=c_1m,
-            rs_ratio_14=c_rs14,
-            rs_ratio_21=c_rs21,
-            rs_ratio_63=c_rs63,
-            rs_momentum_21=c_rsmom21,
-            rs_sparkline=c_rs_spark,
-            chart_data=c_chart_data,
+            id=c_sym.id, ticker=c_sym.ticker, name=c_sym.name, close=c_dp.close,
+            change_1d_pct=c_1d, change_1w_pct=c_1w, change_1m_pct=c_1m,
+            rs_ratio_14=c_rs14, rs_ratio_21=c_rs21, rs_ratio_63=c_rs63, rs_momentum_21=c_rsmom21,
+            rs_sparkline=c_rs_spark, chart_data=c_chart_data,
         ))
 
     return schemas.ThemeDetailResponse(
-        id=sym.id,
+        id=sym.id, ticker=sym.ticker, name=sym.name, close=dp.close,
+        change_1d_pct=change_1d, change_1w_pct=change_1w, change_1m_pct=change_1m,
+        dist_sma5_pct=dist_sma5, dist_sma21_pct=dist_sma21, dist_sma63_pct=dist_sma63,
+        sma21_sma63_pct=sma21_sma63, rs_ratio_14=ind.rs_ratio_14 if ind else None,
+        rs_ratio_21=ind.rs_ratio_21 if ind else None, rs_ratio_63=ind.rs_ratio_63 if ind else None,
+        rs_momentum_14=ind.rs_momentum_14 if ind else None, rs_momentum_21=ind.rs_momentum_21 if ind else None,
+        rs_momentum_63=ind.rs_momentum_63 if ind else None, rs_condition_14=ind.rs_condition_14 if ind else None,
+        rs_condition_21=ind.rs_condition_21 if ind else None, rs_condition_63=ind.rs_condition_63 if ind else None,
+        adr_pct_21=ind.adr_pct_21 if ind else None, dist_sma50_atr=ind.dist_sma50_atr if ind else None,
+        rs14_sparkline=rs14_spark, rs21_sparkline=rs21_spark, rs63_sparkline=rs63_spark,
+        chart_data=chart_data, constituents=constituents,
+    )
+
+@router.get("/group_data/{ticker}", response_model=schemas.GroupDataResponse)
+def get_group_data(
+    ticker: str,
+    date: Optional[str] = Query(None),
+    db: Session = Depends(get_api_db)
+):
+    """
+    Get metadata, ETF feature, and constituents for a Sector or Theme group.
+    """
+    sym = db.query(Symbol).filter(Symbol.ticker == ticker).first()
+    if not sym:
+        raise HTTPException(status_code=404, detail="Group symbol not found")
+
+    # 1. Determine target date
+    if date:
+        target_date = date
+    else:
+        latest = db.query(func.max(DailyPrice.date)).filter(DailyPrice.symbol_id == sym.id).scalar()
+        if not latest:
+            raise HTTPException(status_code=404, detail="No price data available for group")
+        target_date = str(latest)
+
+    # 2. Get ETF feature (Header)
+    dp = db.query(DailyPrice).filter(DailyPrice.symbol_id == sym.id, DailyPrice.date == target_date).first()
+    if not dp:
+        # Fallback to closest previous
+        dp = db.query(DailyPrice).filter(DailyPrice.symbol_id == sym.id, DailyPrice.date <= target_date).order_by(desc(DailyPrice.date)).first()
+        if not dp:
+             raise HTTPException(status_code=404, detail="No price data found for group on or before target date")
+        target_date = str(dp.date)
+    
+    feature = _build_etf_feature(db, sym, dp, target_date)
+
+    # 3. Get Constituents (List)
+    constituents = []
+    if sym.category == "セクタ":
+        group_type = "sector"
+        # Find themes that have this sector ticker in tags
+        child_themes = db.query(Symbol).filter(
+            Symbol.active == 1,
+            Symbol.category == "テーマ",
+            Symbol.tags.like(f"%{ticker}%")
+        ).all()
+        child_ids = [s.id for s in child_themes]
+    elif sym.category == "テーマ":
+        group_type = "theme"
+        # Find individual stocks via theme_constituents
+        child_mappings = db.query(ThemeConstituent).filter(ThemeConstituent.theme_id == sym.id).all()
+        child_ids = [m.symbol_id for m in child_mappings]
+    else:
+        raise HTTPException(status_code=400, detail="Requested ticker is not a Sector or Theme group")
+
+    # Fetch metrics for children
+    if child_ids:
+        c_prices = db.query(DailyPrice).filter(DailyPrice.date == target_date, DailyPrice.symbol_id.in_(child_ids)).all()
+        c_price_dict = {p.symbol_id: p for p in c_prices}
+        
+        c_ranks_21 = db.query(RelativeRank).filter(RelativeRank.date == target_date, RelativeRank.indicator_name == "rs_ratio_21", RelativeRank.symbol_id.in_(child_ids)).all()
+        c_rank_21_dict = {r.symbol_id: r.percent_rank for r in c_ranks_21}
+        
+        c_ranks_63 = db.query(RelativeRank).filter(RelativeRank.date == target_date, RelativeRank.indicator_name == "rs_ratio_63", RelativeRank.symbol_id.in_(child_ids)).all()
+        c_rank_63_dict = {r.symbol_id: r.percent_rank for r in c_ranks_63}
+        
+        c_symbols = db.query(Symbol).filter(Symbol.id.in_(child_ids)).all()
+        for cs in c_symbols:
+            if cs.id in c_price_dict:
+                constituents.append(_build_panel_item(
+                    db, cs, c_price_dict[cs.id], 
+                    c_rank_21_dict.get(cs.id, 0.0), 
+                    c_rank_63_dict.get(cs.id, 0.0), 
+                    target_date
+                ))
+
+    # Sort constituents by intensity score (default)
+    constituents.sort(key=lambda x: x.intensity_score, reverse=True)
+
+    return schemas.GroupDataResponse(
         ticker=sym.ticker,
         name=sym.name,
-        close=dp.close,
-        change_1d_pct=change_1d,
-        change_1w_pct=change_1w,
-        change_1m_pct=change_1m,
-        dist_sma5_pct=dist_sma5,
-        dist_sma21_pct=dist_sma21,
-        dist_sma63_pct=dist_sma63,
-        sma21_sma63_pct=sma21_sma63,
-        rs_ratio_14=ind.rs_ratio_14 if ind else None,
-        rs_ratio_21=ind.rs_ratio_21 if ind else None,
-        rs_ratio_63=ind.rs_ratio_63 if ind else None,
-        rs_momentum_14=ind.rs_momentum_14 if ind else None,
-        rs_momentum_21=ind.rs_momentum_21 if ind else None,
-        rs_momentum_63=ind.rs_momentum_63 if ind else None,
-        rs_condition_14=ind.rs_condition_14 if ind else None,
-        rs_condition_21=ind.rs_condition_21 if ind else None,
-        rs_condition_63=ind.rs_condition_63 if ind else None,
-        adr_pct_21=ind.adr_pct_21 if ind else None,
-        dist_sma50_atr=ind.dist_sma50_atr if ind else None,
-        rs14_sparkline=rs14_spark,
-        rs21_sparkline=rs21_spark,
-        rs63_sparkline=rs63_spark,
-        chart_data=chart_data,
-        constituents=constituents,
+        group_type=group_type,
+        feature=feature,
+        constituents=constituents
     )
 
 @router.get("/screener/dashboard", response_model=schemas.ScreenerDashboardResponse)

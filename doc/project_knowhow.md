@@ -112,7 +112,50 @@ CLI スクリプトや検証コードで直接 `from db.database import SessionL
 
 ---
 
+## 8. 環境間でのデータベース・スキーマの不整合 (Schema Drift)
+
+### 問題
+`models.py` に新しいカラムを追加しても、既存の `stocktool.db` や `stocktool_sandbox.db` には自動反映されない（SQLite のため）。
+別環境や古いブランチから持ち込んだ DB ファイルを使用すると、新機能アクセス時に `sqlalchemy.exc.OperationalError: no such column: ...` が発生し、API が 500 エラーを返す。
+
+### 対策ルール
+- **スキーマ変更時の必須ルール** : 最初は本番 DB ではなく sandbox DB を使用すること。 全ての検証完了後に最終確認として本番 DB にも適用することをタスクリストに追加すること。
+- **検証前のチェック**: API が 500 エラーを出し、ログに `no such column` が出た場合は、まず DB のスキーマを確認する。
+- **サンドボックスの初期化**: 迷った場合は、`backend/scripts/update_pipeline.py` を使ってサンドボックス DB を最新スキーマで再作成する。
+
+---
+
+## 9. フロントエンドにおける数値フィールドの Null-safety
+
+### 問題
+バックエンドから新しい指標や、未計算のデータが `null` で返ってきた場合、フロントエンドで `.toFixed()` や比較演算を行うとランタイムエラー（クラッシュ）が発生し、画面が空白になる。
+
+### 対策ルール (Backend)
+- API レスポンスを構築するヘルパー関数（`_build_panel_item` 等）では、必ず `float(val or 0.0)` のように **None を数値にキャスト**してから返すこと。これにより、フロントエンドでの型不一致を最小限に抑える。
+
+### 対策ルール (Frontend)
+- 数値を表示するコンポーネント内では、`(value || 0).toFixed(2)` のように、**常に fallback 値（0など）を持たせる**こと。
+- 共通コンポーネント（`SummaryTable`, `EtfFeaturePanel` 等）を修正する際は、既存の全画面に影響が及ぶため、特に厳格な Null チェックを行う。
+
+---
+
+## 10. サンドボックスDBを使用したテスト実行ルール (Sandbox Testing Protocol)
+
+### 原則
+本作業環境では、本番データ (`data/stocktool.db`) を保護するため、実験や破壊的なテストにはサンドボックスDB (`data/stocktool_sandbox.db`) を使用する。その際、**`config.toml` は書き換えず、環境変数によって動的に切り替えること。**
+
+### ルール
+- **環境変数の利用**: テスト実行時のみ、一時的な環境変数 `STOCKTOOL_DB_PATH` をセットして実行する。
+  - PowerShell 例: `$env:STOCKTOOL_DB_PATH = "data/stocktool_sandbox.db"; python backend/api/server.py`
+  - 完了後は必ずセッションを閉じるか、環境変数をクリア (`$env:STOCKTOOL_DB_PATH = $null`) する。
+- **グローバル設定の禁止**: OS のシステム環境変数や、プロジェクトの `config.toml` にサンドボックスのパスを永続的に書き込んではならない。
+- **ログによる判別**: `init_db()` 実行時に、参照している DB パスが本番以外である場合は、コンソールに警告を表示するように設計する。
+
+---
+
 ## 更新履歴
-- 2026-04-10: 初版作成（DB未初期化、APIタイムアウト、TOMLパーサー注意点、キャッシュ整合性の4項目）
+- 2026-04-10: 初版作成
 - 2026-04-11: 課題リストの方針 (doc/issue_list.md) を追記
 - 2026-04-12: 大規模ファイルに対する `grep_search` のタイムアウト対策を追記
+- 2026-04-18: 環境間スキーマ不整合 (Schema Drift) および Null-safety ルールの追記
+- 2026-04-18: サンドボックスDB使用ルールの明文化および警告表示の実装

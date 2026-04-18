@@ -154,7 +154,7 @@ class LeadingIndicatorItem(BaseModel):
     dist_21ema_pct: float
     sparkline: List[float] = []
 
-class SpyFeatureItem(BaseModel):
+class EtfFeatureItem(BaseModel):
     id: int
     ticker: str
     name: str
@@ -183,7 +183,7 @@ class DashboardResponse(BaseModel):
     distribution_days: int
     market_trend_score: float = 0.0
     trend_score_history: List[MarketTrendScoreHistoryItem] = []
-    spy_feature: Optional[SpyFeatureItem] = None
+    spy_feature: Optional[EtfFeatureItem] = None
     leading: List[LeadingIndicatorItem] = []
     indices: List[DashboardPanelItem] = []
     sectors: List[DashboardPanelItem] = []
@@ -233,6 +233,13 @@ class ThemeDetailResponse(BaseModel):
     rs63_sparkline: List[float] = []
     chart_data: List[ChartDataPoint] = []  # 6-month OHLCV for MiniChart
     constituents: List[ThemeConstituentItem] = []
+
+class GroupDataResponse(BaseModel):
+    ticker: str
+    name: str
+    group_type: str  # 'sector' | 'theme'
+    feature: EtfFeatureItem
+    constituents: List[DashboardPanelItem]
 
 class EarningResponse(BaseModel):
     period_date: str

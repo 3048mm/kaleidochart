@@ -7,6 +7,7 @@ import { ScreenerPage } from './pages/ScreenerPage'
 import { ScreenerResultPage } from './pages/ScreenerResultPage'
 import { ThemePage } from './pages/ThemePage'
 import { WatchlistPage } from './pages/WatchlistPage'
+import { GroupPage } from './pages/GroupPage'
 
 
 const API = '/api'
@@ -132,6 +133,7 @@ export default function App() {
                     <Route path="/screener" element={<ScreenerPage />} />
                     <Route path="/screener/result/:presetId" element={<ScreenerResultPage />} />
                     <Route path="/watchlist" element={<WatchlistPage />} />
+                    <Route path="/group/:ticker" element={<GroupPage />} />
 
                 </Routes>
             </main>
