@@ -223,6 +223,9 @@ class ThemeDetailResponse(BaseModel):
     rs_ratio_14: Optional[float] = None
     rs_ratio_21: Optional[float] = None
     rs_ratio_63: Optional[float] = None
+    rs_roc_ema_14: Optional[float] = None
+    rs_roc_ema_21: Optional[float] = None
+    rs_roc_ema_63: Optional[float] = None
     rs_momentum_14: Optional[float] = None
     rs_momentum_21: Optional[float] = None
     rs_momentum_63: Optional[float] = None

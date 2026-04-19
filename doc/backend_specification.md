@@ -80,7 +80,8 @@ T2の価格データを元に算出される各種テクニカル・モメンタ
 | `rs_condition_n` | FLOAT | RSのトレンド強度 (14, 21, 63)。 | `RS / SMA(RS, n)` |
 | `rs_ema_n` | FLOAT | RSの平滑化 (14, 21, 63)。RRG計算の前処理に使用。 | `calculate_ema_tv(relative_strength_spy, n)` |
 | `rs_ratio_n` | FLOAT | RSの正規化スコア (14, 21, 63)。RRGのX軸（Ratio）に相当。 | `(rs_ema_n - mean(rs_ema_n, n)) / std(rs_ema_n, n)` |
-| `rs_momentum_n` | FLOAT | RS Ratioの勢い (14, 21, 63)。RRGのY軸（Momentum）に相当。 | `(rs_ratio_n - mean(rs_ratio_n, n)) / std(rs_ratio_n, n)` |
+| `rs_roc_ema_n` | FLOAT | RS-Ratioの14日間変化率(ROC)の平滑化。 | `calculate_ema_tv(ROC(rs_ratio_n + 100), n)` |
+| `rs_momentum_n` | FLOAT | RS-Ratioの勢い (14, 21, 63)。RRGのY軸（Momentum）に相当。 | `(rs_roc_ema_n - mean(rs_roc_ema_n, n)) / std(rs_roc_ema_n, n)` |
 | `vol_surge_21` | FLOAT | 出来高急増倍率。 | `volume / mean(volume, 21)` |
 | `rel_vol_vs_spy_21` | FLOAT | SPYに対する出来高の相対的な強さ。 | `vol_surge_21 / spy_vol_surge_21` |
 | `pct_from_52w_high` | FLOAT | 52週（252日）高値からの下落率(%)。 | `(close - max(high, 252)) / max(high, 252) * 100` |
@@ -96,7 +97,7 @@ T2の価格データを元に算出される各種テクニカル・モメンタ
 | `symbol_id` | INTEGER | `symbols.id` への外部キー。 | |
 | `date` | DATE | 評価日。 | |
 | `group_name` | STRING | 比較対象のグループ（`個別`, `テーマ` などの種類ごと）。 | |
-| `indicator_name` | STRING | ランク付けの対象指標名（例: `rs_ratio_21`）。 | |
+| `indicator_name` | STRING | ランク付けの対象指標名。<br>現在、以下の T3 指標が対象：<br> - `relative_strength_spy`<br> - `rs_ratio_14 / 21 / 63`<br> - `rs_momentum_14 / 21 / 63`<br> - `rs_condition_14 / 21 / 63` | |
 | `percent_rank` | FLOAT | そのグループ内でのパーセンタイル順位 (0.00 〜 1.00)。 | `group.rank(pct=True)`。1.0が最強。 |
 
 ### 3.6 T5: マーケットシグナル (`market_signals`)

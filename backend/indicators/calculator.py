@@ -5,23 +5,39 @@ import ta
 def calculate_ema_tv(series: pd.Series, period: int) -> pd.Series:
     """
     Exponential Moving Average matching TradingView (Pine Script 'ta.ema').
-    Starts with SMA(period) as the initial value at index period-1.
+    Starts with SMA(period) as the initial value after skipping leading NaNs.
     """
-    if len(series) < period:
+    valid_series = series.dropna()
+    if len(valid_series) < period:
         return pd.Series([np.nan] * len(series), index=series.index)
     
     alpha = 2 / (period + 1)
     ema_values = np.full(len(series), np.nan)
     
-    # Simple Moving Average for the first 'period' entries
-    initial_sma = series.iloc[:period].mean()
-    ema_values[period-1] = initial_sma
+    # Use original indices but work on valid data
+    first_valid_idx = valid_series.index[0]
+    # find the position in the original series
+    start_pos = series.index.get_loc(first_valid_idx)
     
-    # Recursive calculation from index 'period' onwards
+    # Calculate initial SMA from the first 'period' non-NaN elements
+    initial_sma = valid_series.iloc[:period].mean()
+    
+    # The first EMA value is placed at the end of the first 'period' non-NaN block
+    seed_idx_in_valid = period - 1
+    seed_actual_idx = valid_series.index[seed_idx_in_valid]
+    seed_pos = series.index.get_loc(seed_actual_idx)
+    
+    ema_values[seed_pos] = initial_sma
+    
+    # Recursive calculation from the next valid element onwards
     curr_ema = initial_sma
-    for i in range(period, len(series)):
-        curr_ema = series.iloc[i] * alpha + curr_ema * (1 - alpha)
-        ema_values[i] = curr_ema
+    for i in range(seed_idx_in_valid + 1, len(valid_series)):
+        val = valid_series.iloc[i]
+        actual_idx = valid_series.index[i]
+        pos = series.index.get_loc(actual_idx)
+        
+        curr_ema = val * alpha + curr_ema * (1 - alpha)
+        ema_values[pos] = curr_ema
         
     return pd.Series(ema_values, index=series.index)
 
@@ -131,28 +147,36 @@ def calculate_indicators(df_daily: pd.DataFrame, df_spy: pd.DataFrame = None) ->
                 rs_sma.isna() | (rs_sma == 0), np.nan, rs / rs_sma
             )
 
-        # RS-EMA, RS-Ratio and RS-Momentum
+        # RS-EMA, RS-Ratio and RS-Momentum (Refined JdK methodology)
         # We smooth RS first to get a cleaner rotation in RRG graphs.
         for n in [14, 21, 63]:
-            # 1. Smoothing
+            # 1. RS-EMA (Smoothing of Relative Strength)
             rs_ema = calculate_ema_tv(rs, n)
             df[f'rs_ema_{n}'] = rs_ema
             
-            # 2. RS-Ratio (Z-score of smoothed RS)
+            # 2. RS-Ratio (Z-score of smoothed RS over n days)
             rs_mean = rs_ema.rolling(window=n, min_periods=max(1, n//2)).mean()
             rs_std  = rs_ema.rolling(window=n, min_periods=max(1, n//2)).std()
             df[f'rs_ratio_{n}'] = np.where(
                 rs_std.isna() | (rs_std == 0), np.nan, (rs_ema - rs_mean) / rs_std
             )
+
+            # 3. RS-Momentum (ROC of Ratio + EMA Smoothing + Z-score)
+            # Use internal 100-offset ROC to allow division of Z-scores and match JdK intent.
+            ratio_val = df[f'rs_ratio_{n}']
+            ratio_offset = ratio_val + 100.0
+            # Standard daily RRG uses a 14-day ROC period.
+            roc = (ratio_offset / ratio_offset.shift(14)) * 100.0
             
-        # RS-Momentum (Z-score of RS-Ratio)
-        # Ratio is already smoothed, so Z-score of Ratio yields a leading, stable momentum signal.
-        for n in [14, 21, 63]:
-            ratio_col = df[f'rs_ratio_{n}']
-            ratio_mean = ratio_col.rolling(window=n, min_periods=max(1, n//2)).mean()
-            ratio_std  = ratio_col.rolling(window=n, min_periods=max(1, n//2)).std()
+            # Smooth the ROC recursively (rs_roc_ema_n) for stability and daily update speed.
+            roc_ema = calculate_ema_tv(roc, n)
+            df[f'rs_roc_ema_{n}'] = roc_ema
+            
+            # Standardize the smoothed ROC to get our final rs_momentum_n (centered at 0).
+            roc_mean = roc_ema.rolling(window=n, min_periods=max(1, n//2)).mean()
+            roc_std  = roc_ema.rolling(window=n, min_periods=max(1, n//2)).std()
             df[f'rs_momentum_{n}'] = np.where(
-                ratio_std.isna() | (ratio_std == 0), np.nan, (ratio_col - ratio_mean) / ratio_std
+                roc_std.isna() | (roc_std == 0), np.nan, (roc_ema - roc_mean) / roc_std
             )
 
         # --- Relative Volume vs SPY ---

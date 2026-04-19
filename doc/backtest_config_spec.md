@@ -39,8 +39,8 @@
 ### 1.4 RRG (Relative Rotation Graph) 関連
 | 変数名 | DB 参照元 (Table.Column) | 計算論理・説明 |
 | :--- | :--- | :--- |
-| `rrg_leading_in` | `indicators.rs_ratio_21`<br>`indicators.rs_momentum_21` | **Leading入り**: 前日に Leading 象限 (Ratio>0, Mom>0) 以外にいた銘柄が、当日に Leading 象限に入った瞬間。 |
-| `rrg_lagging_in` | 同上 | **Lagging入り**: 前日に Lagging 象限 (Ratio<0, Mom<0) 以外から Lagging に入った瞬間（逆張り等に使用）。 |
+| `rrg_leading_in` | `indicators.rs_ratio_21`<br>`indicators.rs_momentum_21` | **Leading入り**: 前日に Leading 象限 (Ratio>0, Mom>0) 以外にいた銘柄が、当日に Leading 象限に入った瞬間。モメンタムは Ratio の 14日 ROC をベースとしており、トレンド転換を先行して示唆する。 |
+| `rrg_lagging_in` | 同上 | **Lagging入り**: 前日に Lagging 象限 (Ratio<0, Mom<0) 以外から Lagging に入った瞬間。 |
 
 ---
 

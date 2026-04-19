@@ -124,6 +124,9 @@ class Indicator(Base):
     rs_ratio_14      = Column(Float)     # NEW: RS-Ratio (Z-score of smoothed RS over 14 days)
     rs_ratio_21      = Column(Float)     # NEW: RS-Ratio (Z-score of smoothed RS over 21 days)
     rs_ratio_63      = Column(Float)     # NEW: RS-Ratio (Z-score of smoothed RS over 63 days)
+    rs_roc_ema_14    = Column(Float)     # NEW: EMA of the 14-day ROC of RS-Ratio
+    rs_roc_ema_21    = Column(Float)     # NEW: EMA of the 14-day ROC of RS-Ratio (smoothed by 21)
+    rs_roc_ema_63    = Column(Float)     # NEW: EMA of the 14-day ROC of RS-Ratio (smoothed by 63)
     
     # --- Volume ---
     vol_surge_21     = Column(Float)     # NEW: Volume / SMA(Volume,21)
