@@ -7,6 +7,10 @@ from db.models import Base
 # DB engine and session factory will be initialized after loading config
 engine = None
 SessionLocal = None
+_active_db_path = None
+
+def get_active_db_path():
+    return _active_db_path
 
 def init_db(db_path: str):
     """
@@ -22,6 +26,8 @@ def init_db(db_path: str):
         print(f"!!! [WARNING] DATABASE OVERRIDDEN BY ENVIRONMENT VARIABLE !!!")
         print(f"!!! Target DB: {db_path} ")
         print("!" * 60 + "\n")
+    
+    _active_db_path = db_path
     
     # Ensure directory exists
     db_dir = os.path.dirname(db_path)

@@ -10,11 +10,15 @@ from logging.handlers import RotatingFileHandler
 from datetime import datetime, timedelta, date
 from typing import List, Optional
 from sqlalchemy import func, text
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import multiprocessing
 
 # Add backend directory to sys.path
 backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if backend_dir not in sys.path:
     sys.path.append(backend_dir)
+
+from db.database import get_active_db_path
 
 # Add project root for config.toml access
 project_root = os.path.dirname(backend_dir)
@@ -111,44 +115,134 @@ def sync_phase_t2_prices(db, sheet_data, symbol_id_map, initial_fetch_days, skip
                     logger.debug(f"[{ticker}] Updated +{len(new_recs)} rows.")
     return spy_latest_date
 
-def sync_phase_t3_indicators(db, sheet_data, symbol_id_map, spy_latest_date, skip_fetch=False):
-    """Phase 3: Indicators (T3) - Per-ticker catch-up using T2 price data."""
-    logger.info("--- Phase 3: Indicator calculation START ---")
-    if not spy_latest_date: return
-    spy_sym_id = symbol_id_map.get(("SPY", "NYSE" if ("SPY", "NYSE") in symbol_id_map else "AMEX")) or db.query(Symbol.id).filter(Symbol.ticker == "SPY").scalar()
-    spy_all = db.query(DailyPrice).filter(DailyPrice.symbol_id == spy_sym_id).order_by(DailyPrice.date).all()
-    spy_df = pd.DataFrame([{"date": r.date, "close": r.close, "volume": r.volume} for r in spy_all])
-    p_max_map = {sid: mdt for sid, mdt in db.query(DailyPrice.symbol_id, func.max(DailyPrice.date)).group_by(DailyPrice.symbol_id).all()}
-    i_max_map = {sid: mdt for sid, mdt in db.query(Indicator.symbol_id, func.max(Indicator.date)).group_by(Indicator.symbol_id).all()}
-    update_count = 0
-    for item in sheet_data:
-        ticker, sid = item['ticker'], symbol_id_map.get((item['ticker'], item['exchange']))
-        if not sid: continue
-        t2_max, t3_max = p_max_map.get(sid), i_max_map.get(sid)
-        if t2_max and (not t3_max or t3_max < t2_max):
-            logger.info(f"[{ticker}] Calculating T3 indicators (Gap: {t3_max} -> {t2_max}).")
-            df_price = pd.DataFrame([{'date': p.date, 'open': p.open, 'high': p.high, 'low': p.low, 'close': p.close, 'volume': p.volume} for p in db.query(DailyPrice).filter(DailyPrice.symbol_id == sid).order_by(DailyPrice.date).all()])
+def _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_virtual=False):
+    """Worker function to calculate T3 for a single ticker in a separate process."""
+    try:
+        # Each worker needs its own DB session (scoped to this function)
+        from db.database import init_db, get_db
+        from db.models import DailyPrice, Indicator
+        import pandas as pd
+        from datetime import date
+        
+        init_db(db_path)
+        with get_db() as db:
+            # 1. Fetch Price Data
+            prices_all = db.query(DailyPrice).filter(DailyPrice.symbol_id == sid).order_by(DailyPrice.date).all()
+            if not prices_all:
+                return ticker, sid, []
+                
+            df_price = pd.DataFrame([{'date': p.date, 'open': p.open, 'high': p.high, 'low': p.low, 'close': p.close, 'volume': p.volume} for p in prices_all])
+            
+            # 2. Calculate Indicators
+            from indicators.calculator import calculate_indicators
             df_ind = calculate_indicators(df_price, spy_df if ticker != "SPY" else None)
-            fund_res = {} if skip_fetch else fetch_fundamentals(ticker)
-            shares_df, info = fund_res.get("shares"), fund_res.get("info")
-            df_ind['market_cap'] = None
-            if shares_df is not None and not shares_df.empty:
-                try:
-                    s_series = shares_df.iloc[:, 0]
-                    s_series.index = pd.to_datetime(s_series.index).tz_localize(None).normalize()
-                    s_df = s_series.reset_index(); s_df.columns = ['date', 'shares']
-                    merged = pd.merge_asof(pd.DataFrame({'date': pd.to_datetime(df_price['date'])}), s_df.sort_values('date'), on='date', direction='backward')
-                    df_ind['market_cap'] = df_price['close'].values * merged['shares'].values
-                except Exception as e: logger.error(f"[{ticker}] Market cap calc error: {e}")
-            if info and 'marketCap' in info: df_ind['market_cap'] = df_ind['market_cap'].fillna(info['marketCap'])
+            
+            # 3. Fundamentals Fetch (yfinance)
+            if not skip_fetch and not is_virtual:
+                from data_collection.fetcher import fetch_fundamentals
+                fund_res = fetch_fundamentals(ticker)
+                shares_df, info = fund_res.get("shares"), fund_res.get("info")
+                df_ind['market_cap'] = None
+                if shares_df is not None and not shares_df.empty:
+                    try:
+                        s_series = shares_df.iloc[:, 0]
+                        s_series.index = pd.to_datetime(s_series.index).tz_localize(None).normalize()
+                        s_df = s_series.reset_index(); s_df.columns = ['date', 'shares']
+                        merged = pd.merge_asof(pd.DataFrame({'date': pd.to_datetime(df_price['date'])}), s_df.sort_values('date'), on='date', direction='backward')
+                        df_ind['market_cap'] = df_price['close'].values * merged['shares'].values
+                    except Exception: pass
+                if info and 'marketCap' in info:
+                    df_ind['market_cap'] = df_ind['market_cap'].fillna(info['marketCap'])
+            else:
+                df_ind['market_cap'] = None
+            
+            # 4. Filter for new rows
             existing_i_dates = {r[0] for r in db.query(Indicator.date).filter(Indicator.symbol_id == sid).all()}
             delta_df = df_ind[(df_ind['date'] > (t3_max if t3_max else date(2000, 1, 1))) & (~df_ind['date'].isin(existing_i_dates))]
             
-            if not delta_df.empty:
-                t3_recs = [Indicator(symbol_id=sid, date=row['date'], sma_5=_to_val(row, 'sma_5'), sma_21=_to_val(row, 'sma_21'), sma_50=_to_val(row, 'sma_50'), sma_63=_to_val(row, 'sma_63'), sma_150=_to_val(row, 'sma_150'), sma_200=_to_val(row, 'sma_200'), ema_5=_to_val(row, 'ema_5'), ema_21=_to_val(row, 'ema_21'), ema_50=_to_val(row, 'ema_50'), ema_63=_to_val(row, 'ema_63'), ema_150=_to_val(row, 'ema_150'), ema_200=_to_val(row, 'ema_200'), td9=int(row['td9']) if _to_val(row, 'td9') is not None else 0, atr_14=_to_val(row, 'atr_14'), atr_pct_14=_to_val(row, 'atr_pct_14'), adr_pct_21=_to_val(row, 'adr_pct_21'), dist_sma50_atr=_to_val(row, 'dist_sma50_atr'), market_cap=_to_val(row, 'market_cap'), relative_strength_spy=_to_val(row, 'relative_strength_spy'), rs_condition_14=_to_val(row, 'rs_condition_14'), rs_condition_21=_to_val(row, 'rs_condition_21'), rs_condition_63=_to_val(row, 'rs_condition_63'), rs_momentum_14=_to_val(row, 'rs_momentum_14'), rs_momentum_21=_to_val(row, 'rs_momentum_21'), rs_momentum_63=_to_val(row, 'rs_momentum_63'), rs_ratio_14=_to_val(row, 'rs_ratio_14'), rs_ratio_21=_to_val(row, 'rs_ratio_21'), rs_ratio_63=_to_val(row, 'rs_ratio_63'), vol_surge_21=_to_val(row, 'vol_surge_21'), rel_vol_vs_spy_21=_to_val(row, 'rel_vol_vs_spy_21'), pct_from_63d_high=_to_val(row, 'pct_from_63d_high'), pct_from_52w_high=_to_val(row, 'pct_from_52w_high'), trend_template_ok=int(row['trend_template_ok']) if _to_val(row, 'trend_template_ok') is not None else None) for _, row in delta_df.iterrows()]
-                db.bulk_save_objects(t3_recs)
-                db.commit()
-                update_count += 1
+            if delta_df.empty:
+                return ticker, sid, []
+            
+            # Return list of dictionaries to avoid pickling SQLAlchemy objects
+            # These will be converted back to Indicator objects in the main process
+            return ticker, sid, delta_df.to_dict('records')
+            
+    except Exception as e:
+        return ticker, sid, e
+
+def sync_phase_t3_indicators(db, sheet_data, symbol_id_map, spy_latest_date, skip_fetch=False):
+    """Phase 3: Indicators (T3) - Per-ticker catch-up using T2 price data with Parallel Processing."""
+    logger.info("--- Phase 3: Indicator calculation START (Parallel) ---")
+    if not spy_latest_date: return
+    
+    spy_sym_id = symbol_id_map.get(("SPY", "NYSE" if ("SPY", "NYSE") in symbol_id_map else "AMEX")) or db.query(Symbol.id).filter(Symbol.ticker == "SPY").scalar()
+    spy_all = db.query(DailyPrice).filter(DailyPrice.symbol_id == spy_sym_id).order_by(DailyPrice.date).all()
+    spy_df = pd.DataFrame([{"date": r.date, "close": r.close, "volume": r.volume} for r in spy_all])
+    
+    p_max_map = {sid: mdt for sid, mdt in db.query(DailyPrice.symbol_id, func.max(DailyPrice.date)).group_by(DailyPrice.symbol_id).all()}
+    i_max_map = {sid: mdt for sid, mdt in db.query(Indicator.symbol_id, func.max(Indicator.date)).group_by(Indicator.symbol_id).all()}
+    
+    # Identify tickers needing update (Deduplicated by sid)
+    tasks_map = {}
+    for item in sheet_data:
+        ticker, sid = item['ticker'], symbol_id_map.get((item['ticker'], item['exchange']))
+        if not sid: continue
+        if sid in tasks_map: continue
+        
+        t2_max, t3_max = p_max_map.get(sid), i_max_map.get(sid)
+        if t2_max and (not t3_max or t3_max < t2_max):
+            is_virt = (item.get('exchange') == 'VIRTUAL')
+            tasks_map[sid] = (sid, ticker, t3_max, is_virt)
+    
+    tasks = list(tasks_map.values())
+    
+    if not tasks:
+        logger.info("Phase 3: No tickers need indicator update.")
+        return
+
+    config = load_config()
+    db_path = get_active_db_path() or config["system"]["db_path"]
+    
+    # Parallel execution
+    num_workers = min(4, multiprocessing.cpu_count() // 2)
+    logger.info(f"Phase 3: Spawning {num_workers} parallel workers for {len(tasks)} tickers.")
+    
+    # Identify all indicator columns except metadata
+    indicator_cols = [c.name for c in Indicator.__table__.columns if c.name not in ('id', 'symbol_id', 'date')]
+    
+    update_count = 0
+    with ProcessPoolExecutor(max_workers=num_workers) as executor:
+        futures = {executor.submit(_calculate_t3_worker, sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_virt): ticker for sid, ticker, t3_max, is_virt in tasks}
+        
+        for future in as_completed(futures):
+            ticker = futures[future]
+            try:
+                res_ticker, sid, records = future.result()
+                if isinstance(records, Exception):
+                    logger.error(f"[{ticker}] Parallel worker failed: {records}")
+                    continue
+                
+                if records:
+                    t3_recs = []
+                    for row in records:
+                        kwargs = {'symbol_id': sid, 'date': row['date']}
+                        for col in indicator_cols:
+                            val = row.get(col)
+                            if col in ('td9', 'trend_template_ok'):
+                                kwargs[col] = int(val) if val is not None else None
+                            else:
+                                kwargs[col] = val
+                        t3_recs.append(Indicator(**kwargs))
+                        
+                    db.bulk_save_objects(t3_recs)
+                    db.commit()
+                    update_count += 1
+                    logger.info(f"[{ticker}] Calculated indicators: +{len(records)} rows.")
+                else:
+                    logger.debug(f"[{ticker}] No new indicator rows.")
+            except Exception as e:
+                logger.error(f"[{ticker}] Error processing result: {e}")
+                db.rollback()
     logger.info(f"Phase 3 COMPLETE: Updated {update_count} tickers.")
 
 def sync_phase_t4_ranks(db, spy_latest_date):
@@ -160,7 +254,13 @@ def sync_phase_t4_ranks(db, spy_latest_date):
     if not gap_dates: return
     total_dates = len(gap_dates)
     logger.info(f"Phase 4: Processing relative ranks for {total_dates} dates.")
-    indicators_to_rank = ['relative_strength_spy', 'rs_ratio_14', 'rs_ratio_21', 'rs_ratio_63', 'rs_momentum_14', 'rs_momentum_21', 'rs_momentum_63', 'rs_condition_14', 'rs_condition_21', 'rs_condition_63']
+    indicators_to_rank = [
+        'relative_strength_spy', 
+        'rs_ratio_14', 'rs_ratio_21', 'rs_ratio_63', 
+        'rs_momentum_14', 'rs_momentum_21', 'rs_momentum_63', 
+        'rs_condition_14', 'rs_condition_21', 'rs_condition_63',
+        'rs_roc_ema_14', 'rs_roc_ema_21', 'rs_roc_ema_63'
+    ]
     for i, d in enumerate(gap_dates):
         if i % 10 == 0 or i == total_dates - 1:
             logger.info(f"Phase 4 Progress: {i+1}/{total_dates} (Date: {d})")

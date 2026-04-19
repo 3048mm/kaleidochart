@@ -1,6 +1,36 @@
 import pandas as pd
 import numpy as np
 import ta
+from numba import njit
+
+@njit
+def _ema_kernel(values, alpha, initial_sma, start_idx):
+    """Numba-accelerated recursive EMA loop."""
+    res = np.full(values.shape, np.nan)
+    res[start_idx] = initial_sma
+    curr_ema = initial_sma
+    for i in range(start_idx + 1, len(values)):
+        val = values[i]
+        if not np.isnan(val):
+            curr_ema = val * alpha + curr_ema * (1 - alpha)
+            res[i] = curr_ema
+    return res
+
+@njit
+def _td9_kernel(close_values, compare_values):
+    """Numba-accelerated TD Sequential (TD9) loop."""
+    n = len(close_values)
+    res = np.zeros(n)
+    for i in range(4, n):
+        if close_values[i] > compare_values[i]: # close > close[i-4]
+            prev = res[i-1]
+            count = prev if (0 < prev < 9) else 0
+            res[i] = count + 1
+        elif close_values[i] < compare_values[i]: # close < close[i-4]
+            prev = res[i-1]
+            count = prev if (-9 < prev < 0) else 0
+            res[i] = count - 1
+    return res
 
 def calculate_ema_tv(series: pd.Series, period: int) -> pd.Series:
     """
@@ -27,19 +57,11 @@ def calculate_ema_tv(series: pd.Series, period: int) -> pd.Series:
     seed_actual_idx = valid_series.index[seed_idx_in_valid]
     seed_pos = series.index.get_loc(seed_actual_idx)
     
-    ema_values[seed_pos] = initial_sma
+    # Use Numba kernel for the recursive loop
+    # We pass the full series values but only calculate from seed_pos onwards
+    ema_vals = _ema_kernel(series.values, alpha, initial_sma, seed_pos)
     
-    # Recursive calculation from the next valid element onwards
-    curr_ema = initial_sma
-    for i in range(seed_idx_in_valid + 1, len(valid_series)):
-        val = valid_series.iloc[i]
-        actual_idx = valid_series.index[i]
-        pos = series.index.get_loc(actual_idx)
-        
-        curr_ema = val * alpha + curr_ema * (1 - alpha)
-        ema_values[pos] = curr_ema
-        
-    return pd.Series(ema_values, index=series.index)
+    return pd.Series(ema_vals, index=series.index)
 
 def calculate_indicators(df_daily: pd.DataFrame, df_spy: pd.DataFrame = None) -> pd.DataFrame:
     """
@@ -106,19 +128,10 @@ def calculate_indicators(df_daily: pd.DataFrame, df_spy: pd.DataFrame = None) ->
     # =========================================================
     # 6. TD Sequential (TD9)
     # =========================================================
-    td9_series = np.zeros(len(close))
-    for i in range(len(close)):
-        if i >= 4:
-            if close.iloc[i] > close.iloc[i-4]:
-                prev = td9_series[i-1]
-                # Reset after completing a 9-count, or start fresh if previous was bearish/zero
-                count = prev if (0 < prev < 9) else 0
-                td9_series[i] = count + 1
-            elif close.iloc[i] < close.iloc[i-4]:
-                prev = td9_series[i-1]
-                count = prev if (-9 < prev < 0) else 0
-                td9_series[i] = count - 1
-    df['td9'] = td9_series
+    # Use Numba kernel for TD9 calculation (compares with price 4 bars ago)
+    close_vals = close.values
+    compare_vals = close.shift(4).values
+    df['td9'] = _td9_kernel(close_vals, compare_vals)
 
     # =========================================================
     # 7. Relative Strength vs SPY  +  RS Momentum  +  RS Ratio(Z-score)
