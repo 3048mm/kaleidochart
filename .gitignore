@@ -55,6 +55,7 @@ token.json
 
 # Application specific
 tmp/
+scratch/
 *.lock
 update_pipeline.lock
 !package-lock.json

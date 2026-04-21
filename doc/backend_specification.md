@@ -44,7 +44,7 @@
 | `weight` | FLOAT | 構成比率（現在は主に 1.0 = 均等ウェイト）。 |
 
 **紐付けロジック:**
-- 仮想テーマ（tickerが `_` で囲まれている等）の場合、`symbols.tags` にテーマ名（PHNC等）を含む銘柄を自動的に抽出して紐付けます。
+- 仮想テーマ（exchangeが `VIRTUAL` または ticker が `_` で囲まれている等）の場合、`symbols.tags` にテーマ名（PHNC等）を含む銘柄を自動的に抽出して紐付けます。
 - 実在するETF（GDX, WCLD等）についても、同様にタグベースで構成銘柄を特定し、テーマ全体の強さを個別銘柄に波及させるために利用されます。
 
 ### 3.3 T2: 日足データ (`daily_prices`)
@@ -79,9 +79,9 @@ T2の価格データを元に算出される各種テクニカル・モメンタ
 | `relative_strength_spy` | FLOAT | SPYに対する単純相対強度。 | `close / spy_close` |
 | `rs_condition_n` | FLOAT | RSのトレンド強度 (14, 21, 63)。 | `RS / SMA(RS, n)` |
 | `rs_ema_n` | FLOAT | RSの平滑化 (14, 21, 63)。RRG計算の前処理に使用。 | `calculate_ema_tv(relative_strength_spy, n)` |
-| `rs_ratio_n` | FLOAT | RSの正規化スコア (14, 21, 63)。RRGのX軸（Ratio）に相当。 | `(rs_ema_n - mean(rs_ema_n, n)) / std(rs_ema_n, n)` |
+| `rs_ratio_n` | FLOAT | RSの正規化スコア (14, 21, 63)。RRGのX軸（Ratio）に相当。ただしオフセット100が無いので 0センター | `(rs_ema_n - mean(rs_ema_n, n)) / std(rs_ema_n, n)` |
 | `rs_roc_ema_n` | FLOAT | RS-Ratioの14日間変化率(ROC)の平滑化。 | `calculate_ema_tv(ROC(rs_ratio_n + 100), n)` |
-| `rs_momentum_n` | FLOAT | RS-Ratioの勢い (14, 21, 63)。RRGのY軸（Momentum）に相当。 | `(rs_roc_ema_n - mean(rs_roc_ema_n, n)) / std(rs_roc_ema_n, n)` |
+| `rs_momentum_n` | FLOAT | RS-Ratioの勢い (14, 21, 63)。RRGのY軸（Momentum）に相当。ただしオフセット100が無いので 0センター | `(rs_roc_ema_n - mean(rs_roc_ema_n, n)) / std(rs_roc_ema_n, n)` |
 | `vol_surge_21` | FLOAT | 出来高急増倍率。 | `volume / mean(volume, 21)` |
 | `rel_vol_vs_spy_21` | FLOAT | SPYに対する出来高の相対的な強さ。 | `vol_surge_21 / spy_vol_surge_21` |
 | `pct_from_52w_high` | FLOAT | 52週（252日）高値からの下落率(%)。 | `(close - max(high, 252)) / max(high, 252) * 100` |

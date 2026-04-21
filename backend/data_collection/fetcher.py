@@ -91,9 +91,21 @@ def fetch_daily_data(ticker: str, start_date: str, end_date: str = None) -> pd.D
         # Drop any unexpected columns (Adj Close etc)
         expected_cols = ['date', 'open', 'high', 'low', 'close', 'volume']
         cols_to_keep = [c for c in expected_cols if c in df.columns]
+        df = df[cols_to_keep]
+        
+        # --- 安全装置: 市場が完全に閉まる前（EST 18:00）は当日付の取得を無効化（Drop）する ---
+        if not df.empty:
+            import pytz
+            from datetime import datetime as dt_now
+            
+            # US/Eastern は自動的にEST/EDT（サマータイム等）を吸収してくれます
+            now_est = dt_now.now(pytz.timezone('US/Eastern'))
+            if now_est.hour < 18:
+                df = df[df['date'] < now_est.date()]
+        # -----------------------------------------------------------------------------------
         
         logger.info(f"[{ticker}] Retrieved {len(df)} records.")
-        return df[cols_to_keep]
+        return df
         
     except Exception as e:
         logger.error(f"[{ticker}] Failed to fetch data: {str(e)}")

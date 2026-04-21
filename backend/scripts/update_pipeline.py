@@ -261,18 +261,38 @@ def sync_phase_t4_ranks(db, spy_latest_date):
         'rs_condition_14', 'rs_condition_21', 'rs_condition_63',
         'rs_roc_ema_14', 'rs_roc_ema_21', 'rs_roc_ema_63'
     ]
+    
+    # Optimize for massive DML on SATA HDD:
+    # 4GB Cache (-4000000), Disable flush-sync, RAM Journal caching
+    from sqlalchemy import text
+    db.execute(text("PRAGMA cache_size = -4000000;"))
+    db.execute(text("PRAGMA synchronous = OFF;"))
+    db.execute(text("PRAGMA journal_mode = MEMORY;"))
+    db.execute(text("PRAGMA temp_store = MEMORY;"))
+    
     for i, d in enumerate(gap_dates):
         if i % 10 == 0 or i == total_dates - 1:
             logger.info(f"Phase 4 Progress: {i+1}/{total_dates} (Date: {d})")
-        df_date = pd.read_sql(db.query(Indicator.symbol_id, Indicator.date, Symbol.category, *[getattr(Indicator, col) for col in indicators_to_rank]).join(Symbol, Symbol.id == Indicator.symbol_id).filter(Indicator.date == d).statement, db.bind)
-        if df_date.empty: continue
-        t4_recs = []
-        for ind_col in indicators_to_rank:
-            if ind_col not in df_date.columns: continue
-            df_ranked = calculate_relative_ranks(df_date, group_col='category', indicator_col=ind_col)
-            t4_recs.extend([RelativeRank(symbol_id=int(r['symbol_id']), date=r['date'], group_name=r['group_name'], indicator_name=r['indicator_name'], percent_rank=float(r['percent_rank'])) for r in df_ranked[df_ranked['percent_rank'].notna()].to_dict('records')])
         db.query(RelativeRank).filter(RelativeRank.date == d).delete()
-        db.bulk_save_objects(t4_recs)
+        for ind_col in indicators_to_rank:
+            query = f"""
+                INSERT INTO relative_ranks (symbol_id, date, group_name, indicator_name, percent_rank)
+                SELECT
+                    i.symbol_id,
+                    i.date,
+                    s.category as group_name,
+                    '{ind_col}' as indicator_name,
+                    PERCENT_RANK() OVER(
+                        PARTITION BY s.category 
+                        ORDER BY i.{ind_col} ASC
+                    ) as percent_rank
+                FROM indicators i
+                JOIN symbols s ON i.symbol_id = s.id
+                WHERE i.date = :d
+                  AND i.{ind_col} IS NOT NULL
+            """
+            from sqlalchemy import text
+            db.execute(text(query), {"d": d})
         db.commit()
     logger.info("Phase 4 COMPLETE.")
 
@@ -319,52 +339,42 @@ def sync_phase_t5_signals(db):
     
     if not active_stock_ids:
         logger.warning("No active '個別' stocks found for metrics calculation.")
+        metrics_df = pd.DataFrame(columns=['date', 'breadth_sma50', 'momentum_ratio'])
     else:
-        total_dates = len(gap_dates)
-        logger.info(f"Phase 5: Calculating breadth and momentum for {total_dates} dates.")
-        for i, d in enumerate(gap_dates):
-            if i % 10 == 0 or i == total_dates - 1:
-                logger.info(f"Phase 5 Progress: {i+1}/{total_dates} (Date: {d})")
-            # Breadth (% above SMA50)
-            # We want: (Count of stocks where close > sma_50) / (Count of stocks)
-            # Joining indicators and daily_prices for the same day
-            # Revised approach: Use a join on active symbols
-            # Breadth
-            breadth_val = db.execute(text(f"""
-                SELECT CAST(SUM(CASE WHEN dp.close > i.sma_50 THEN 1 ELSE 0 END) AS FLOAT) / COUNT(*)
-                FROM indicators i
-                JOIN daily_prices dp ON i.symbol_id = dp.symbol_id AND i.date = dp.date
-                JOIN symbols s ON i.symbol_id = s.id
-                WHERE i.date = '{d}' AND s.active = 1 AND s.category = '個別'
-            """)).scalar() or 0.5
+        logger.info(f"Phase 5: Vectorizing breadth and momentum calculations for {len(gap_dates)} dates...")
+        
+        # 1. 必要な履歴データを全てPandasに一括ロード (Bulk fetch to memory for vectorization)
+        # We fetch data for the gap_dates, but we also need the day BEFORE the first gap_date to calculate momentum.
+        # But for simplicity and correctness (since previous trading days vary), fetching all history or relying on SQLite Window function is best.
+        # Fetching all history for active symbols:
+        query_metrics = """
+            SELECT dp.date, dp.symbol_id, dp.close, i.sma_50
+            FROM daily_prices dp
+            JOIN symbols s ON s.id = dp.symbol_id
+            JOIN indicators i ON i.symbol_id = dp.symbol_id AND i.date = dp.date
+            WHERE s.active = 1 AND s.category = '個別'
+            ORDER BY dp.symbol_id, dp.date
+        """
+        raw_df = pd.read_sql(query_metrics, db.bind)
+        
+        if not raw_df.empty:
+            raw_df['date'] = pd.to_datetime(raw_df['date'])
+            # Momentum: Compare to previous day's close
+            raw_df['prev_close'] = raw_df.groupby('symbol_id')['close'].shift(1)
+            raw_df['is_up'] = raw_df['close'] > raw_df['prev_close']
             
-            # Momentum (% daily change > 0)
-            # We need daily_prices for today (dp) and previous trading day (dp_prev)
-            momentum_val = db.execute(text(f"""
-                WITH current_prices AS (
-                    SELECT symbol_id, close FROM daily_prices WHERE date = '{d}'
-                ),
-                prev_prices AS (
-                    SELECT dp.symbol_id, dp.close
-                    FROM daily_prices dp
-                    JOIN (
-                        SELECT symbol_id, MAX(date) as max_date FROM daily_prices WHERE date < '{d}' GROUP BY symbol_id
-                    ) dp_last ON dp.symbol_id = dp_last.symbol_id AND dp.date = dp_last.max_date
-                )
-                SELECT CAST(SUM(CASE WHEN cp.close > pp.close THEN 1 ELSE 0 END) AS FLOAT) / COUNT(*)
-                FROM current_prices cp
-                JOIN prev_prices pp ON cp.symbol_id = pp.symbol_id
-                JOIN symbols s ON cp.symbol_id = s.id
-                WHERE s.active = 1 AND s.category = '個別'
-            """)).scalar() or 0.5
+            # Breadth: Close above SMA50
+            raw_df['is_above_sma50'] = raw_df['close'] > raw_df['sma_50']
             
-            metrics_list.append({
-                'date': pd.to_datetime(d),
-                'breadth_sma50': breadth_val,
-                'momentum_ratio': momentum_val
-            })
-            
-    metrics_df = pd.DataFrame(metrics_list) if metrics_list else pd.DataFrame(columns=['date', 'breadth_sma50', 'momentum_ratio'])
+            # Aggregate by date
+            metrics_df = raw_df.groupby('date').agg(
+                breadth_sma50=('is_above_sma50', lambda x: x.mean(skipna=True) if not x.isna().all() else 0.5),
+                momentum_ratio=('is_up', lambda x: x.mean(skipna=True) if not x.isna().all() else 0.5)
+            ).reset_index()
+            # Convert NaN to 0.5 for days with no valid calculation
+            metrics_df = metrics_df.fillna(0.5)
+        else:
+            metrics_df = pd.DataFrame(columns=['date', 'breadth_sma50', 'momentum_ratio'])
 
     # 5. Execute core calculator
     ms_df = calculate_market_signals(spy_df, vix_df, metrics_df)
