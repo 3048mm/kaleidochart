@@ -41,6 +41,7 @@ const BOOLEAN_FILTERS = [
     { id: 'theme_rs21_gt_63', label: 'Theme RS21 > RS63', param: 'theme_rs21_gt_63' },
     { id: 'rrg_leading_in', label: 'RRG Leading In', param: 'rrg_leading_in' },
     { id: 'rrg_lagging_in', label: 'RRG Lagging In', param: 'rrg_lagging_in' },
+    { id: 'rrg_improving_in', label: 'RRG Improving In', param: 'rrg_improving_in' },
 ];
 
 // --- Dynamic Filter Row ---

@@ -116,7 +116,7 @@ def scan_signals_for_date(
         )
         merged = merged.merge(ind_prev, on='symbol_id', how='left').reset_index(drop=True)
 
-    if strategy.get('rrg_lagging_in') and prev_date is not None:
+    if (strategy.get('rrg_lagging_in') or strategy.get('rrg_improving_in')) and prev_date is not None:
         if 'prev_rs_ratio_21' not in merged.columns:
             ind_prev = df_ind[df_ind['date'] == prev_date][['symbol_id', 'rs_ratio_21', 'rs_momentum_21']].rename(
                 columns={'rs_ratio_21': 'prev_rs_ratio_21', 'rs_momentum_21': 'prev_rs_momentum_21'}
@@ -206,6 +206,13 @@ def scan_signals_for_date(
         mask &= (
             (merged['rs_ratio_21'] < 0) & (merged['rs_momentum_21'] < 0) &
             ((merged['prev_rs_ratio_21'] >= 0) | (merged['prev_rs_momentum_21'] >= 0))
+        )
+
+    # RRG Improving In
+    if strategy.get('rrg_improving_in') and 'prev_rs_ratio_21' in merged.columns:
+        mask &= (
+            (merged['rs_ratio_21'] < 0) & (merged['rs_momentum_21'] > 0) &
+            (merged['prev_rs_ratio_21'] < 0) & (merged['prev_rs_momentum_21'] <= 0)
         )
 
     # Apply final mask

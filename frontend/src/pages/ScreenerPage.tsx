@@ -112,6 +112,7 @@ export const ScreenerPage: React.FC = () => {
             // Map special flags to boolean params
             if (preset.special === 'rrg_leading_in') params.set('rrg_leading_in', 'true');
             if (preset.special === 'rrg_lagging_in') params.set('rrg_lagging_in', 'true');
+            if (preset.special === 'rrg_improving_in') params.set('rrg_improving_in', 'true');
             if (preset.special === 'theme_rs21_gt_63') params.set('theme_rs21_gt_63', 'true');
         }
         return `/screener/result/${preset.id}?${params.toString()}`;
