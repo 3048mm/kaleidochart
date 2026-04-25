@@ -111,7 +111,17 @@ def calculate_indicators(df_daily: pd.DataFrame, df_spy: pd.DataFrame = None) ->
         df['atr_pct_14'] = np.nan
 
     # =========================================================
-    # 4. ADR% (21日) — Average Daily Range as % of Low
+    # 5. Volatility Contraction Ratio (VCR = ATR10 / ATR50)
+    # =========================================================
+    try:
+        atr_10 = ta.volatility.AverageTrueRange(high=high, low=low, close=close, window=10).average_true_range()
+        atr_50 = ta.volatility.AverageTrueRange(high=high, low=low, close=close, window=50).average_true_range()
+        df['vcr'] = np.where(atr_50 == 0, np.nan, atr_10 / atr_50)
+    except Exception:
+        df['vcr'] = np.nan
+
+    # =========================================================
+    # 6. ADR% (21日) — Average Daily Range as % of Low
     # =========================================================
     daily_range_pct = np.where(low == 0, np.nan, (high - low) / low * 100)
     df['adr_pct_21'] = pd.Series(daily_range_pct).rolling(window=21, min_periods=1).mean().values
@@ -208,25 +218,6 @@ def calculate_indicators(df_daily: pd.DataFrame, df_spy: pd.DataFrame = None) ->
             df['vol_surge_21'] / spy_vol_surge
         )
 
-        df = df.drop(columns=['spy_close', 'spy_volume'])
-    else:
-        # If no SPY benchmark is provided (i.e. this IS SPY), 
-        # set relative strength to 1.0 and Z-scores (Ratio/Momentum) to 0.0 to avoid NULLs.
-        df['relative_strength_spy'] = 1.0
-        for n in [14, 21, 63]:
-            df[f'rs_condition_{n}'] = 1.0
-            df[f'rs_ratio_{n}']     = 0.0
-            df[f'rs_momentum_{n}']  = 0.0
-        df['rel_vol_vs_spy_21'] = 1.0
-        # vol_surge can still be computed without SPY
-        vol_sma_21 = volume.rolling(window=21, min_periods=1).mean()
-        df['vol_surge_21'] = np.where(vol_sma_21 == 0, np.nan, volume / vol_sma_21)
-
-    # Volume surge without SPY (covers VIX/DXY for vol_surge_21 column)
-    if 'vol_surge_21' not in df.columns:
-        vol_sma_21 = volume.rolling(window=21, min_periods=1).mean()
-        df['vol_surge_21'] = np.where(vol_sma_21 == 0, np.nan, volume / vol_sma_21)
-
     # =========================================================
     # 8. % from N-day Highs
     # =========================================================
@@ -237,9 +228,61 @@ def calculate_indicators(df_daily: pd.DataFrame, df_spy: pd.DataFrame = None) ->
     df['pct_from_52w_high']  = np.where(max_252d == 0, np.nan, (close - max_252d) / max_252d * 100)
 
     # =========================================================
-    # 9. Trend Template フラグ
+    # 9. Up/Down Volume Ratio (50-day)
     # =========================================================
-    # Condition 4: SMA200 today >= SMA200 20 days ago (rolling check)
+    close_change = close.diff()
+    up_vol = volume.where(close_change > 0, 0.0).rolling(window=50, min_periods=50).sum()
+    down_vol = volume.where(close_change < 0, 0.0).rolling(window=50, min_periods=50).sum()
+    df['up_down_vol_ratio_50'] = np.where(
+        (down_vol == 0) | down_vol.isna(), np.nan, up_vol / down_vol
+    )
+
+    # =========================================================
+    # 10. RS Leading Signals (Blue Dot / Red Dot)
+    # =========================================================
+    if df_spy is not None and 'relative_strength_spy' in df.columns:
+        rs = df['relative_strength_spy']
+        # 1. RS Blue Dot (Bullish Leading)
+        rs_252_high = rs.rolling(window=252, min_periods=1).max()
+        close_252_high = close.rolling(window=252, min_periods=1).max()
+        
+        df['rs_blue_dot'] = np.where(
+            rs.isna() | rs_252_high.isna(),
+            0,
+            np.where((rs >= rs_252_high) & (close < close_252_high), 1, 0)
+        )
+
+        # 2. RS Red Dot (Bearish Leading)
+        rs_252_low = rs.rolling(window=252, min_periods=1).min()
+        close_252_low = close.rolling(window=252, min_periods=1).min()
+        
+        df['rs_red_dot'] = np.where(
+            rs.isna() | rs_252_low.isna(),
+            0,
+            np.where((rs <= rs_252_low) & (close > close_252_low), 1, 0)
+        )
+    else:
+        df['rs_blue_dot'] = 0
+        df['rs_red_dot'] = 0
+
+    # =========================================================
+    # 11. Volatility Contraction Ratio (VCR) = ATR(10) / ATR(50)
+    # =========================================================
+    # Using raw TR calculation to match cca90ee9
+    tr_vals = pd.concat([
+        high - low,
+        (high - close.shift(1)).abs(),
+        (low - close.shift(1)).abs()
+    ], axis=1).max(axis=1)
+    atr_10 = tr_vals.rolling(window=10, min_periods=10).mean()
+    atr_50 = tr_vals.rolling(window=50, min_periods=50).mean()
+    df['vcr'] = np.where(
+        atr_50.isna() | (atr_50 == 0), np.nan, atr_10 / atr_50
+    )
+
+    # =========================================================
+    # 12. Trend Template フラグ (Reverted to 5 conditions per cca90ee9)
+    # =========================================================
     sma200_20d_ago = df['sma_200'].shift(20)
 
     cond1 = close > df['sma_50']
@@ -249,7 +292,7 @@ def calculate_indicators(df_daily: pd.DataFrame, df_spy: pd.DataFrame = None) ->
     cond5 = close >= (max_252d * 0.70)  # within 30% of 52w high
 
     df['trend_template_ok'] = np.where(
-        sma200_20d_ago.isna(),   # not enough data yet → NULL
+        sma200_20d_ago.isna(), 
         None,
         np.where(cond1 & cond2 & cond3 & cond4 & cond5, 1, 0)
     )

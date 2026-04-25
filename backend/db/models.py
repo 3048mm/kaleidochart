@@ -45,7 +45,7 @@ class DailyPrice(Base):
     __tablename__ = 'daily_prices'
     
     id = Column(Integer, primary_key=True)
-    symbol_id = Column(Integer, ForeignKey('symbols.id'), nullable=False)
+    symbol_id = Column(Integer, ForeignKey('symbols.id'), nullable=False, index=True)
     date = Column(Date, nullable=False, index=True)
     open = Column(Float)
     high = Column(Float)
@@ -64,7 +64,7 @@ class Earning(Base):
     __tablename__ = 'earnings'
     
     id = Column(Integer, primary_key=True)
-    symbol_id = Column(Integer, ForeignKey('symbols.id'), nullable=False)
+    symbol_id = Column(Integer, ForeignKey('symbols.id'), nullable=False, index=True)
     period_date = Column(Date, nullable=False, index=True)
     eps_basic = Column(Float)
     eps_diluted = Column(Float)
@@ -81,7 +81,7 @@ class Indicator(Base):
     __tablename__ = 'indicators'
     
     id = Column(Integer, primary_key=True)
-    symbol_id = Column(Integer, ForeignKey('symbols.id'), nullable=False)
+    symbol_id = Column(Integer, ForeignKey('symbols.id'), nullable=False, index=True)
     date = Column(Date, nullable=False, index=True)
     
     # --- Simple Moving Averages ---
@@ -131,11 +131,19 @@ class Indicator(Base):
     # --- Volume ---
     vol_surge_21     = Column(Float)     # NEW: Volume / SMA(Volume,21)
     rel_vol_vs_spy_21 = Column(Float)    # NEW: vol_surge_21 / SPY_vol_surge_21
+    up_down_vol_ratio_50 = Column(Float) # NEW: Sum(Vol on Up days) / Sum(Vol on Down days)
     
     # --- Price Range from Highs ---
     pct_from_63d_high  = Column(Float)   # NEW: % below 63-day high (swing)
     pct_from_52w_high  = Column(Float)   # NEW: % below 52-week / 252-day high (long)
     
+    # --- RS Leading Signals ---
+    rs_blue_dot        = Column(SmallInteger) # NEW: 1 if RS at 252d high AND price is NOT at 252d high
+    rs_red_dot         = Column(SmallInteger) # NEW: 1 if RS at 252d low AND price is NOT at 252d low
+
+    # --- Volatility Contraction ---
+    vcr                = Column(Float)        # NEW: Volatility Contraction Ratio = ATR(10) / ATR(50)
+
     # --- Trend Quality ---
     trend_template_ok  = Column(SmallInteger)  # NEW: 1 if all Trend Template conditions met
     
@@ -149,7 +157,7 @@ class RelativeRank(Base):
     __tablename__ = 'relative_ranks'
     
     id = Column(Integer, primary_key=True)
-    symbol_id = Column(Integer, ForeignKey('symbols.id'), nullable=False)
+    symbol_id = Column(Integer, ForeignKey('symbols.id'), nullable=False, index=True)
     date = Column(Date, nullable=False, index=True)
     group_name = Column(String, nullable=False)
     indicator_name = Column(String, nullable=False)
@@ -192,7 +200,7 @@ class Watchlist(Base):
     __tablename__ = 'watchlist'
 
     id = Column(Integer, primary_key=True)
-    symbol_id = Column(Integer, ForeignKey('symbols.id'), nullable=False)
+    symbol_id = Column(Integer, ForeignKey('symbols.id'), nullable=False, index=True)
     entry_date = Column(Date, nullable=False)          # 指定日（パフォーマンス基準日）
     entry_price = Column(Float, nullable=False)        # 指定日の終値スナップショット
     status = Column(String, nullable=False, default='active')  # 'active' | 'removed'

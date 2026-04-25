@@ -125,23 +125,34 @@ def _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_vi
         from datetime import date
         
         init_db(db_path)
+        start_t = time.time()
         with get_db() as db:
             # 1. Fetch Price Data
+            fp_start = time.time()
             prices_all = db.query(DailyPrice).filter(DailyPrice.symbol_id == sid).order_by(DailyPrice.date).all()
+            fp_end = time.time()
             if not prices_all:
                 return ticker, sid, []
                 
             df_price = pd.DataFrame([{'date': p.date, 'open': p.open, 'high': p.high, 'low': p.low, 'close': p.close, 'volume': p.volume} for p in prices_all])
             
             # 2. Calculate Indicators
+            calc_start = time.time()
             from indicators.calculator import calculate_indicators
             df_ind = calculate_indicators(df_price, spy_df if ticker != "SPY" else None)
+            calc_end = time.time()
             
             # 3. Fundamentals Fetch (yfinance)
+            fund_start = time.time()
+            fund_res = {"shares": None, "info": None}
             if not skip_fetch and not is_virtual:
                 from data_collection.fetcher import fetch_fundamentals
                 fund_res = fetch_fundamentals(ticker)
-                shares_df, info = fund_res.get("shares"), fund_res.get("info")
+                
+            fund_end = time.time()
+            shares_df, info = fund_res.get("shares"), fund_res.get("info")
+
+            if not is_virtual:
                 df_ind['market_cap'] = None
                 if shares_df is not None and not shares_df.empty:
                     try:
@@ -155,16 +166,17 @@ def _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_vi
                     df_ind['market_cap'] = df_ind['market_cap'].fillna(info['marketCap'])
             else:
                 df_ind['market_cap'] = None
+                df_ind['market_cap'] = None
             
-            # 4. Filter for new rows
-            existing_i_dates = {r[0] for r in db.query(Indicator.date).filter(Indicator.symbol_id == sid).all()}
-            delta_df = df_ind[(df_ind['date'] > (t3_max if t3_max else date(2000, 1, 1))) & (~df_ind['date'].isin(existing_i_dates))]
+            # 4. Filter for new rows (Optimization: rely on t3_max to avoid contention)
+            delta_df = df_ind[(df_ind['date'] > (t3_max if t3_max else date(2000, 1, 1)))]
+            
+            total_t = time.time() - start_t
+            logger.info(f"[{ticker}] T3 Worker DONE in {total_t:.2f}s (FetchP:{fp_end-fp_start:.2f}s, Calc:{calc_end-calc_start:.2f}s, Fund:{fund_end-fund_start:.2f}s)")
             
             if delta_df.empty:
                 return ticker, sid, []
             
-            # Return list of dictionaries to avoid pickling SQLAlchemy objects
-            # These will be converted back to Indicator objects in the main process
             return ticker, sid, delta_df.to_dict('records')
             
     except Exception as e:
@@ -228,7 +240,7 @@ def sync_phase_t3_indicators(db, sheet_data, symbol_id_map, spy_latest_date, ski
                         kwargs = {'symbol_id': sid, 'date': row['date']}
                         for col in indicator_cols:
                             val = row.get(col)
-                            if col in ('td9', 'trend_template_ok'):
+                            if col in ('td9', 'trend_template_ok', 'rs_blue_dot', 'rs_red_dot'):
                                 kwargs[col] = int(val) if val is not None else None
                             else:
                                 kwargs[col] = val
