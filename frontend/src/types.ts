@@ -52,6 +52,10 @@ export interface ChartDataPoint {
     pct_from_52w_high?: number | null
     trend_template_ok?: number | null
     market_cap?: number | null
+    up_down_vol_ratio_50?: number | null
+    rs_blue_dot?: number | null
+    rs_red_dot?: number | null
+    vcr?: number | null
 
     // Bollinger Bands (Calculated on the fly)
     bb_upper?: number | null
@@ -116,6 +120,10 @@ export interface ScreenerResultItem extends DashboardPanelItem {
     dist_sma50_atr?: number | null;
     trend_template_ok?: number | null;
     market_cap?: number | null;
+    up_down_vol_ratio_50?: number | null;
+    rs_blue_dot?: number | null;
+    rs_red_dot?: number | null;
+    vcr?: number | null;
 }
 
 export interface ScreenerDashboardItem {

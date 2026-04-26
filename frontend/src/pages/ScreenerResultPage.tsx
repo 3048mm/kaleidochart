@@ -7,7 +7,7 @@ import { useWatchlist } from '../hooks/useWatchlist';
 import { WatchlistButton } from '../components/WatchlistButton';
 
 
-type SortKey = 'change_pct' | 'rs_ratio_21_rank' | 'vol_surge_21';
+type SortKey = 'change_pct' | 'rs_ratio_21_rank' | 'vol_surge_21' | 'up_down_vol_ratio_50' | 'vcr';
 
 // --- Types for Meta API ---
 interface ColumnMeta {
@@ -304,6 +304,21 @@ export const ScreenerResultPage: React.FC = () => {
                         Vol SG {sortKey === 'vol_surge_21' ? (sortDesc ? '▼' : '▲') : ''}
                     </div>
                     <div style={{ width: '36px', textAlign: 'right' }}>ADR%</div>
+                    <div
+                        style={{ width: '36px', textAlign: 'right', cursor: 'pointer', color: sortKey === 'up_down_vol_ratio_50' ? '#fff' : '#aaa' }}
+                        onClick={() => handleSort('up_down_vol_ratio_50')}
+                        title="U/D Volume Ratio (50d)"
+                    >
+                        U/D {sortKey === 'up_down_vol_ratio_50' ? (sortDesc ? '▼' : '▲') : ''}
+                    </div>
+                    <div
+                        style={{ width: '36px', textAlign: 'right', cursor: 'pointer', color: sortKey === 'vcr' ? '#fff' : '#aaa' }}
+                        onClick={() => handleSort('vcr')}
+                        title="Volume Contraction Ratio"
+                    >
+                        VCR {sortKey === 'vcr' ? (sortDesc ? '▼' : '▲') : ''}
+                    </div>
+                    <div style={{ width: '24px', textAlign: 'center' }} title="RS Leading Dots">RS.</div>
                     <div style={{ width: '40px', textAlign: 'right' }}>50dATR</div>
                     <div style={{ width: '60px', textAlign: 'center' }}>Trend</div>
                     <div
@@ -354,6 +369,12 @@ export const ScreenerResultPage: React.FC = () => {
                             <div style={{ width: '50px', textAlign: 'right', paddingRight: '5px', color: colorNeutral(item.dist_21ema_pct), fontSize: '11px', fontWeight: '600', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{formatPct(item.dist_21ema_pct)}</div>
                             <div style={{ width: '50px', textAlign: 'right', fontSize: '11px', fontVariantNumeric: 'tabular-nums', fontWeight: item.vol_surge_21 && item.vol_surge_21 > 1.5 ? 'bold' : 'normal', color: item.vol_surge_21 && item.vol_surge_21 > 2.0 ? appConfig.colors.accent : '#fff', flexShrink: 0 }}>{formatNum(item.vol_surge_21, 1)}x</div>
                             <div style={{ width: '36px', textAlign: 'right', fontSize: '11px', fontVariantNumeric: 'tabular-nums', color: '#ccc', flexShrink: 0 }}>{formatNum(item.adr_pct_21, 1)}</div>
+                            <div style={{ width: '36px', textAlign: 'right', fontSize: '11px', fontVariantNumeric: 'tabular-nums', color: item.up_down_vol_ratio_50 && item.up_down_vol_ratio_50 > 1.5 ? appConfig.colors.good : '#ccc', fontWeight: item.up_down_vol_ratio_50 && item.up_down_vol_ratio_50 > 1.5 ? 'bold' : 'normal', flexShrink: 0 }}>{formatNum(item.up_down_vol_ratio_50, 1)}</div>
+                            <div style={{ width: '36px', textAlign: 'right', fontSize: '11px', fontVariantNumeric: 'tabular-nums', color: item.vcr && item.vcr < 0.5 ? appConfig.colors.accent : '#ccc', fontWeight: item.vcr && item.vcr < 0.5 ? 'bold' : 'normal', flexShrink: 0 }}>{formatNum(item.vcr, 2)}</div>
+                            <div style={{ width: '24px', textAlign: 'center', flexShrink: 0, display: 'flex', justifyContent: 'center', gap: '2px' }}>
+                                {item.rs_blue_dot === 1 && <span style={{ color: '#00d0ff', fontSize: '14px', lineHeight: 1 }}>●</span>}
+                                {item.rs_red_dot === 1 && <span style={{ color: '#ff4444', fontSize: '14px', lineHeight: 1 }}>●</span>}
+                            </div>
                             <div style={{ width: '40px', textAlign: 'right', fontSize: '11px', fontVariantNumeric: 'tabular-nums', fontWeight: item.dist_sma50_atr && Math.abs(item.dist_sma50_atr) > 2.0 ? 'bold' : 'normal', color: item.dist_sma50_atr && item.dist_sma50_atr > 2.0 ? appConfig.colors.good : item.dist_sma50_atr && item.dist_sma50_atr < -2.0 ? appConfig.colors.bad : '#ccc', flexShrink: 0 }}>{formatNum(item.dist_sma50_atr, 1)}</div>
                             <div style={{ width: '60px', flexShrink: 0 }}>
                                 <Sparkline data={item.sparkline} width={60} height={22} color={item.change_1m_pct >= 0 ? appConfig.colors.good : appConfig.colors.bad} fixedRange={true} />

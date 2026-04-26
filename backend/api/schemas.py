@@ -66,6 +66,11 @@ class ChartDataPoint(BaseModel):
     trend_template_ok: Optional[int] = None
     market_cap: Optional[float] = None
     
+    up_down_vol_ratio_50: Optional[float] = None
+    rs_blue_dot: Optional[int] = None
+    rs_red_dot: Optional[int] = None
+    vcr: Optional[float] = None
+    
     # Bollinger Bands (Calculated on the fly)
     bb_upper: Optional[float] = None
     bb_lower: Optional[float] = None
@@ -127,6 +132,10 @@ class ScreenerResultItem(DashboardPanelItem):
     dist_sma50_atr: Optional[float] = None
     trend_template_ok: Optional[int] = None
     market_cap: Optional[float] = None
+    up_down_vol_ratio_50: Optional[float] = None
+    rs_blue_dot: Optional[int] = None
+    rs_red_dot: Optional[int] = None
+    vcr: Optional[float] = None
 
 class ScreenerDashboardItem(BaseModel):
     id: int

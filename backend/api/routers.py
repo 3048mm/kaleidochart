@@ -70,12 +70,13 @@ _COLUMN_CATEGORIES = {
                       "trend_template_ok", "1d_gain_pct", "dist_21ema_pct", "dist_sma50_pct",
                       "pct_from_63d_high", "pct_from_52w_high"],
     "Volume & Volatility": ["atr_14", "atr_pct_14", "adr_pct_21", "dist_sma50_atr",
-                            "td9", "vol_surge_21", "rel_vol_vs_spy_21"],
+                            "td9", "vol_surge_21", "rel_vol_vs_spy_21", "up_down_vol_ratio_50", "vcr"],
     "Momentum & RS": ["relative_strength_spy",
                       "rs_condition_14", "rs_condition_21", "rs_condition_63",
                       "rs_ema_14", "rs_ema_21", "rs_ema_63",
                       "rs_momentum_14", "rs_momentum_21", "rs_momentum_63",
-                      "rs_ratio_14", "rs_ratio_21", "rs_ratio_63"],
+                      "rs_ratio_14", "rs_ratio_21", "rs_ratio_63",
+                      "rs_blue_dot", "rs_red_dot"],
     "Fundamentals": ["market_cap"],
 }
 _COL_TO_CATEGORY = {}
@@ -374,6 +375,10 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db)):
                 "pct_from_52w_high": ind.pct_from_52w_high,
                 "trend_template_ok": ind.trend_template_ok,
                 "market_cap": ind.market_cap,
+                "up_down_vol_ratio_50": ind.up_down_vol_ratio_50,
+                "rs_blue_dot": ind.rs_blue_dot,
+                "rs_red_dot": ind.rs_red_dot,
+                "vcr": ind.vcr,
             })
             
             # Merge relative ranks if present
@@ -1350,7 +1355,11 @@ def get_screener(
             adr_pct_21=ind.adr_pct_21,
             dist_sma50_atr=ind.dist_sma50_atr,
             trend_template_ok=ind.trend_template_ok,
-            market_cap=ind.market_cap
+            market_cap=ind.market_cap,
+            up_down_vol_ratio_50=ind.up_down_vol_ratio_50,
+            rs_blue_dot=ind.rs_blue_dot,
+            rs_red_dot=ind.rs_red_dot,
+            vcr=ind.vcr
         ))
         
     out.sort(key=lambda x: x.rs_ratio_21_rank, reverse=True)

@@ -42,6 +42,14 @@
 | `rrg_leading_in` | `indicators.rs_ratio_21`<br>`indicators.rs_momentum_21` | **Leading入り**: 前日に Leading 象限 (Ratio>0, Mom>0) 以外にいた銘柄が、当日に Leading 象限に入った瞬間。モメンタムは Ratio の 14日 ROC をベースとしており、トレンド転換を先行して示唆する。 |
 | `rrg_lagging_in` | 同上 | **Lagging入り**: 前日に Lagging 象限 (Ratio<0, Mom<0) 以外から Lagging に入った瞬間。 |
 
+### 1.5 Accumulation・先行指標・ベース形成関連
+| 変数名 | DB 参照元 (Table.Column) | 計算論理・説明 |
+| :--- | :--- | :--- |
+| `min_up_down_vol_ratio_50` | `indicators.up_down_vol_ratio_50` | **Up/Down Volume Ratio（下限）**: 過去50日間の上昇日出来高合計 ÷ 下落日出来高合計。1.5以上で機関投資家のAccumulation（買い集め）が優勢であることを示す。 |
+| `rs_blue_dot` | `indicators.rs_blue_dot` | **RS Blue Dot**: RS（相対強度）が252日新高値を更新しているが、株価自体は252日新高値に到達していない状態。株価に先行してRSが強さを示すリーディングシグナル。 |
+| `rs_red_dot` | `indicators.rs_red_dot` | **RS Red Dot**: RS（相対強度）が252日新安値を更新しているが、株価自体は252日新安値に耐えている状態。株価に先行してRSが弱さを示す弱気シグナル。 |
+| `max_vcr` | `indicators.vcr` | **Volatility Contraction Ratio（上限）**: `ATR(10) / ATR(50)`。0.5以下で極度のボラティリティ収縮（VCPの第3〜4次収束）を示す。Trend Template適合 + 高RSランクと組み合わせることで、ブレイクアウト直前のベース形成銘柄を特定する。 |
+
 ---
 
 ## 2. 出口ルール設定 (`[exit_rules]`)

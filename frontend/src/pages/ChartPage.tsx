@@ -138,6 +138,7 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
     const [showVolume, setShowVolume] = useState(true);
     const [showTd9, setShowTd9] = useState(true);
     const [showBB, setShowBB] = useState(false);
+    const [showRsDots, setShowRsDots] = useState(true);
 
     const chartRef = useRef<IChartApi | null>(null);
     const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -272,6 +273,50 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
                 value: d.volume,
                 color: d.close >= d.open ? 'rgba(0, 255, 136, 0.25)' : 'rgba(255, 68, 68, 0.25)',
             })));
+        }
+
+        // --- RS Leading Dots (Fixed Height at top) ---
+        if (showRsDots) {
+            const signalsSeries = chart.addLineSeries({
+                color: 'transparent',
+                priceScaleId: 'signals',
+                lastValueVisible: false,
+                priceLineVisible: false,
+                crosshairMarkerVisible: false,
+            });
+            chart.priceScale('signals').applyOptions({
+                scaleMargins: { top: 0.05, bottom: 0.93 },
+                visible: false,
+            });
+
+            // Constant value to keep markers at same height
+            signalsSeries.setData(data.map(d => ({ time: d.time as any, value: 100 })));
+
+            const dotMarkers: SeriesMarker<any>[] = [];
+            data.forEach(d => {
+                if (d.rs_blue_dot === 1) {
+                    dotMarkers.push({
+                        time: d.time as any,
+                        position: 'inBar',
+                        color: '#00d0ff',
+                        shape: 'circle',
+                        text: '◆',
+                        size: 0,
+                    });
+                }
+                if (d.rs_red_dot === 1) {
+                    dotMarkers.push({
+                        time: d.time as any,
+                        position: 'inBar',
+                        color: '#ff4444',
+                        shape: 'circle',
+                        text: '◆',
+                        size: 0,
+                    });
+                }
+            });
+            dotMarkers.sort((a,b) => (a.time < b.time ? -1 : 1));
+            signalsSeries.setMarkers(dotMarkers);
         }
 
         // --- Comparison Series ---
@@ -453,7 +498,7 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
         data, compareData, showVolume, showTd9,
         showSma21, showSma50, showSma63, showSma150, showSma200,
         showEma5, showEma21, showEma50, showEma63, showEma200,
-        showBB
+        showBB, showRsDots
     ]);
 
     const latest = data.length > 0 ? data[data.length - 1] : null;
@@ -657,6 +702,7 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
                                 <button className={`toggle-btn ${showVolume ? 'active' : ''}`} onClick={() => setShowVolume(!showVolume)}>Vol</button>
                                 <button className={`toggle-btn ${showTd9 ? 'active' : ''}`} onClick={() => setShowTd9(!showTd9)}>TD9</button>
                                 <button className={`toggle-btn ${showBB ? 'active' : ''}`} onClick={() => setShowBB(!showBB)}>BB</button>
+                                <button className={`toggle-btn ${showRsDots ? 'active' : ''}`} onClick={() => setShowRsDots(!showRsDots)}>RS.</button>
 
                                 <div style={{ borderLeft: '1px solid #333', margin: '0 10px', height: '24px', alignSelf: 'center' }}></div>
 
