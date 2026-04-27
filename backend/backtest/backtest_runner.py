@@ -302,20 +302,31 @@ def run_single_strategy(strat_dict: dict, df_indicators, df_prices, df_ranks, df
             print(f"  Processed {i + 1}/{total_days} days, {len(trades)} trades so far...", flush=True)
 
     # --- Inject SPY benchmark returns into each trade ---
+    spy_period_return = 0.0
     spy_row = df_symbols[df_symbols['ticker'] == 'SPY']
-    if not spy_row.empty and trades:
+    if not spy_row.empty:
         spy_id = spy_row.iloc[0]['id']
         df_spy = df_prices[df_prices['symbol_id'] == spy_id].set_index('date')['close']
-        for t in trades:
-            spy_entry = df_spy.get(t.entry_date)
-            spy_exit = df_spy.get(t.exit_date)
-            if spy_entry is not None and spy_exit is not None and spy_entry > 0:
-                t.spy_pnl_pct = (spy_exit - spy_entry) / spy_entry * 100.0
-            else:
-                t.spy_pnl_pct = None
+        
+        # Calculate full period SPY return
+        if trading_dates:
+            spy_start = df_spy.get(trading_dates[0])
+            spy_end = df_spy.get(trading_dates[-1])
+            if spy_start is not None and spy_end is not None and spy_start > 0:
+                spy_period_return = (spy_end - spy_start) / spy_start
+                
+        # Inject per-trade SPY returns
+        if trades:
+            for t in trades:
+                spy_entry = df_spy.get(t.entry_date)
+                spy_exit = df_spy.get(t.exit_date)
+                if spy_entry is not None and spy_exit is not None and spy_entry > 0:
+                    t.spy_pnl_pct = (spy_exit - spy_entry) / spy_entry * 100.0
+                else:
+                    t.spy_pnl_pct = None
 
     elapsed = time.time() - t0
-    metrics = calculate_metrics(trades)
+    metrics = calculate_metrics(trades, spy_period_return=spy_period_return)
     if show_progress:
         print(f"  Completed: {len(trades)} trades in {elapsed:.1f}s", flush=True)
     

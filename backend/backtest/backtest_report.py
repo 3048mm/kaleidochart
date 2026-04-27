@@ -11,7 +11,7 @@ from datetime import date
 from backtest_simulator import TradeResult
 
 
-def calculate_metrics(trades: List[TradeResult]) -> Dict[str, Any]:
+def calculate_metrics(trades: List[TradeResult], spy_period_return: float = 0.0) -> Dict[str, Any]:
     """
     Calculate performance metrics from a list of trade results.
 
@@ -34,6 +34,7 @@ def calculate_metrics(trades: List[TradeResult]) -> Dict[str, Any]:
             'avg_gain': 0.0, 'avg_spy_gain': 0.0, 'alpha': 0.0,
             'total_trades': 0, 'win_trades': 0,
             'total_return_pct': 0.0, 'max_drawdown_pct': 0.0,
+            'strat_multiplier': 1.0, 'spy_multiplier': 1.0,
         }
 
     wins = [t for t in trades if t.pnl_pct > 0]
@@ -101,6 +102,11 @@ def calculate_metrics(trades: List[TradeResult]) -> Dict[str, Any]:
     total_return_pct = cumulative_pnl / avg_slots
     max_dd_norm = max_dd / avg_slots
 
+    # Calculate Portfolio Compound Multiplier for this period
+    strat_mult = 1.0
+    for t in sorted_trades:
+        strat_mult *= (1.0 + (t.pnl_pct / 100.0) / avg_slots)
+
     return {
         'trades': total,
         'wins': win_count,
@@ -119,7 +125,11 @@ def calculate_metrics(trades: List[TradeResult]) -> Dict[str, Any]:
         'total_trades': total,
         'win_trades': win_count,
         'total_return_pct': total_return_pct,
-        'max_drawdown_pct': -max_dd_norm
+        'max_drawdown_pct': -max_dd_norm,
+        
+        # Multipliers for multi-period compounding
+        'strat_multiplier': strat_mult,
+        'spy_multiplier': 1.0 + spy_period_return
     }
 
 

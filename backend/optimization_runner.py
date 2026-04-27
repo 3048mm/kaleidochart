@@ -241,6 +241,9 @@ def objective(trial: optuna.Trial, strategy_type: str, config, config_app, exit_
     max_dd_overall = 0.0
     periods_with_trades = 0
     
+    overall_strat_mult = 1.0
+    overall_spy_mult = 1.0
+    
     for start_date, end_date in periods:
         df_symbols, df_prices, df_indicators, df_ranks, df_theme_constituents, trading_dates = get_cached_data(config_app, start_date, end_date)
         metrics, _ = run_single_strategy(
@@ -275,6 +278,8 @@ def objective(trial: optuna.Trial, strategy_type: str, config, config_app, exit_
                 expectancy_sum += metrics.get('expectancy', 0.0)
                 avg_gain_sum += metrics.get('avg_gain', 0.0)
                 avg_spy_gain_sum += metrics.get('avg_spy_gain', 0.0)
+                overall_strat_mult *= metrics.get('strat_multiplier', 1.0)
+                overall_spy_mult *= metrics.get('spy_multiplier', 1.0)
                 periods_with_trades += 1
             
     # Average score across periods
@@ -300,7 +305,15 @@ def objective(trial: optuna.Trial, strategy_type: str, config, config_app, exit_
         trial.set_user_attr("avg_gain", 0.0)
         trial.set_user_attr("avg_spy_gain", 0.0)
         trial.set_user_attr("alpha", 0.0)
+        
+    portfolio_cagr = (overall_strat_mult - 1.0) * 100.0
+    spy_bh_cagr = (overall_spy_mult - 1.0) * 100.0
+    portfolio_vs_spy = portfolio_cagr - spy_bh_cagr
+
     trial.set_user_attr("max_drawdown", max_dd_overall)
+    trial.set_user_attr("port_cagr", round(portfolio_cagr, 2))
+    trial.set_user_attr("spy_cagr", round(spy_bh_cagr, 2))
+    trial.set_user_attr("port_vs_spy", round(portfolio_vs_spy, 2))
 
     return avg_score
 
@@ -362,10 +375,13 @@ def main():
         print(f"  Expectancy:     {trial.user_attrs['expectancy']:.3f}%")
         print(f"  Avg Gain/Trade: {trial.user_attrs['avg_gain']:.3f}%")
         print(f"  Avg SPY Gain:   {trial.user_attrs['avg_spy_gain']:.3f}%")
-        print(f"  Alpha:          {trial.user_attrs['alpha']:.3f}%")
-        print(f"  Max Drawdown:   {trial.user_attrs['max_drawdown']:.1f}%")
-        print(f"  Win Rate:       {trial.user_attrs['win_rate']:.1f}%")
-        print(f"  Total Trades:   {trial.user_attrs['total_trades']}")
+        print(f"  Alpha:          {trial.user_attrs.get('alpha', 0):.3f}%")
+        print(f"  Max Drawdown:   {trial.user_attrs.get('max_drawdown', 0):.1f}%")
+        print(f"  Win Rate:       {trial.user_attrs.get('win_rate', 0):.1f}%")
+        print(f"  Total Trades:   {trial.user_attrs.get('total_trades', 0)}")
+        print(f"  Port CAGR:      {trial.user_attrs.get('port_cagr', 0):.2f}%")
+        print(f"  SPY B&H CAGR:   {trial.user_attrs.get('spy_cagr', 0):.2f}%")
+        print(f"  Port vs SPY:    {trial.user_attrs.get('port_vs_spy', 0):.2f}%")
 
 if __name__ == "__main__":
     main()
