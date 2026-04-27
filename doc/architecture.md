@@ -34,7 +34,8 @@
     *   **`api/`**: バックエンドAPIサーバー（FastAPI）のロジック。
     *   **`data_collection/`**: データ取得、スクレイピングに関連するモジュール。
     *   **`db/`**: SQLAlchemyのモデル定義およびデータベース接続用コアロジック。
-    *   **`indicators/`**: 純粋なテクニカル指標・計算アルゴリズム用モジュール。
+    *   **`indicators/`**: 純粋なテクニカル指標・計算アルゴリズム用モジュール群（責務別にファイルを分割管理）。
+    *   **`pipeline/`**: データ取得・指標算出・DB保存などの一連の更新処理（T2〜T5フェーズ）を統括するモジュール。
     *   **`backtest/`**: バックテストエンジン（設定ファイル、シグナルスキャナー、トレードシミュレータ、レポート生成）。
     *   **`scripts/`**: バッチ処理の実行エントリポイント (`update_pipeline.py` 等)。
     *   **`tests/`**: 自動テストコード。
@@ -44,7 +45,8 @@
 *   **`doc/`**: アーキテクチャ設計および各機能仕様書。
 *   **`run/`**: 手動で実行する起動用バッチファイル（`.bat`）やシェルスクリプト（`.sh`）を格納。
 *   **`tools/`**: DBメンテナンスや補助的なユーティリティスクリプト。
-*   **`tmp/`**: 実験的なスクリプト、一時的なログ。
+*   **`tmp/`**: 一時的なスクリプト、検証用コード、一時ログの格納先。
+    *   🚨 **【重要ルール】** AIアシスタントや開発者が一時的な突合テスト・原因分析（Diag）用の使い捨てスクリプトを作成する場合は、**必ずこの `tmp/` ディレクトリ内に作成し、`backend/scripts/` などの主要ディレクトリを汚染してはならない。**用済み後は削除を推奨。
 
 ## 4. データ完全性ポリシー (Data Integrity Policy)
 
@@ -93,14 +95,14 @@
 3. **Refactor**: テストが通った状態を維持しながら、コードの品質（可読性・保守性）を改善する。
 
 #### テストコードの配置規約
-テストコードは **`backend/tests/`** ディレクトリに一元集約し、以下の命名規約に従います。
+テストコードは **`backend/tests/`** ディレクトリ配下に、実装モジュールのディレクトリ構造と `1:1` になるようにパッケージ単位で一元集約します。テストファイル名は元のモジュール名に `test_` プレフィックスを付与した形とします。
 
-| テスト対象モジュール | テストファイル名 | 例 |
+| テスト対象モジュール | テストファイル名・配置場所 | 備考 |
 | :--- | :--- | :--- |
-| `backend/api/routers.py` | `backend/tests/test_api.py` | API エンドポイントのテスト |
-| `backend/backtest/backtest_screener.py` | `backend/tests/test_backtest_screener.py` | スクリーナーロジックのテスト |
-| `backend/optimization_runner.py` | `backend/tests/test_optimization_runner.py` | 最適化パラメータ読み込みのテスト |
-| `backend/indicators/calculate.py` | `backend/tests/test_indicators.py` | インジケータ計算のテスト |
+| `backend/api/routers.py` | `backend/tests/api/test_routers.py` | API エンドポイント群の検証 |
+| `backend/backtest/backtest_screener.py` | `backend/tests/backtest/test_backtest_screener.py` | エンジンの主要・独自機能 |
+| `backend/pipeline/phases/t3_indicators.py` | `backend/tests/pipeline/phases/test_t3_indicators.py` | パイプライン連携部のテスト |
+| `backend/indicators/moving_averages.py` | `backend/tests/indicators/test_moving_averages.py` | 各種指標計算の単体テスト |
 
 #### テスト実行ルール
 - **フレームワーク**: `pytest` を使用する。
@@ -111,7 +113,17 @@
 - **コミット前の義務**: コードの変更をコミットする前に、ローカルで `pytest` を実行し、**全件パス（All Green）** を確認すること。
 - **適用範囲**: TDDルールは**新規機能から適用**する。既存コードに対するテスト追加は、改修のタイミングで段階的に行う。
 
-## 8. Python 実行環境 (Python Environment)
+## 8. コーディング規約・ファイルフォーマット (Coding Standards)
+
+当プロジェクトでは、Windows環境における文字化けやGit上での改行コード混在を防ぐため、全テキストファイル（`.py`, `.md`, `.toml`, `.json`, `.tsx` 等）において以下のフォーマットを強制します。
+
+- **文字エンコーディング**: `UTF-8 (BOMなし)`
+- **改行コード**: `LF (\n)`
+
+> [!WARNING]
+> Windows標準のメモ帳や PowerShell の単純なリダイレクト（`>`）によって、意図せず `Shift-JIS (CP932)` や `UTF-8 (BOM付き)`、あるいは `CRLF (\r\n)` が混入する事故が発生しうるため注意すること。AIアシスタント等によるファイル書き込み時も、このフォーマットを厳守してください。
+
+## 9. Python 実行環境 (Python Environment)
 
 当プロジェクトのバックエンド処理（Pipeline, API, Backtest等）は、プロジェクトルート直下の仮想環境（`venv`）を標準の実行環境とします。
 

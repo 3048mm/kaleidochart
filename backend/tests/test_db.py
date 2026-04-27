@@ -1,4 +1,4 @@
-﻿import sqlite3
+import sqlite3
 import pandas as pd
 conn = sqlite3.connect('data/stocktool.db')
 print('=== Database Verification ===')

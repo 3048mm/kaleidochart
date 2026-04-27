@@ -88,7 +88,7 @@ T2の価格データを元に算出される各種テクニカル・モメンタ
 | `up_down_vol_ratio_50` | FLOAT | 50日間の上昇日出来高合計÷下落日出来高合計。機関投資家のAccumulationの強さを示す。1.5以上＝買い集め優勢。 | `sum(volume where close > prev_close, 50) / sum(volume where close < prev_close, 50)` |
 | `rs_blue_dot` | SMALLINT | RS新高値先行フラグ（1:点灯, 0:非点灯）。RSが株価に先行して52週新高値を更新した場合に点灯。 | `(relative_strength_spy >= max(RS, 252)) AND (close < max(close, 252))` |
 | `rs_red_dot` | SMALLINT | RS新安値先行フラグ（1:点灯, 0:非点灯）。RSが株価に先行して52週新安値を更新した場合に点灯。 | `(relative_strength_spy <= min(RS, 252)) AND (close > min(close, 252))` |
-| `vcr` | FLOAT | Volatility Contraction Ratio。VCP（ベース形成）のスクイーズ度合いを定量化。0.5未満＝極度の収縮。 | `ATR(10) / ATR(50)` |
+| `vcr` | FLOAT | Volatility Contraction Ratio。VCP（ベース形成）のスクイーズ度合いを定量化。0.5未満＝極度の収縮。 | `ATR(10) / ATR(50)` （True Rangeの単純移動平均として算出） |
 | `trend_template_ok` | SMALLINT | ミネルヴィニのトレンドテンプレート適合フラグ（1:適合, 0:不適合）。 | 右記5条件: ①close>sma50, ②sma50>sma150, ③sma150>sma200, ④sma200上昇中(20日前比), ⑤52週高値から30%以内 |
 
 ### 3.5 T4: 相対評価データ (`relative_ranks`)
