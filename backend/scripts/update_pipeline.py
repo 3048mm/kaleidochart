@@ -66,6 +66,45 @@ def _to_val(row, key):
         pass
     return v
 
+def _attach_market_cap(ticker: str, df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Fetch fundamentals and attach market_cap column to the price DataFrame.
+    """
+    df = df.copy()
+    df['market_cap'] = None
+    try:
+        fund_res = fetch_fundamentals(ticker)
+        shares_df, info = fund_res.get("shares"), fund_res.get("info")
+        
+        if shares_df is not None and not shares_df.empty:
+            try:
+                s_series = shares_df.iloc[:, 0]
+                s_series.index = pd.to_datetime(s_series.index).tz_localize(None).normalize()
+                s_df = s_series.reset_index()
+                s_df.columns = ['date', 'shares']
+                
+                # Ensure df['date'] is datetime for merging
+                df_dt = df.copy()
+                df_dt['date_dt'] = pd.to_datetime(df['date'])
+                
+                merged = pd.merge_asof(
+                    df_dt.sort_values('date_dt'), 
+                    s_df.sort_values('date'), 
+                    left_on='date_dt', 
+                    right_on='date', 
+                    direction='backward'
+                )
+                df['market_cap'] = df['close'].values * merged['shares'].values
+            except Exception as e:
+                logger.debug(f"[{ticker}] Failed to calc market_cap from shares: {e}")
+        
+        if info and 'marketCap' in info:
+            df['market_cap'] = df['market_cap'].fillna(info['marketCap'])
+    except Exception as e:
+        logger.warning(f"[{ticker}] Failed to attach market_cap: {e}")
+        
+    return df
+
 # --- Phase Functions (Modular) ---
 
 def sync_phase_t2_prices(db, sheet_data, symbol_id_map, initial_fetch_days, skip_fetch=False):
@@ -85,8 +124,20 @@ def sync_phase_t2_prices(db, sheet_data, symbol_id_map, initial_fetch_days, skip
         logger.info(f"Updating SPY from {spy_fetch_start}...")
         spy_df = fetch_daily_data("SPY", spy_fetch_start)
         if spy_df is not None and not spy_df.empty:
+            spy_df = _attach_market_cap("SPY", spy_df)
             existing_dates = {r[0] for r in db.query(DailyPrice.date).filter(DailyPrice.symbol_id == spy_sym_id).all()}
-            new_recs = [DailyPrice(symbol_id=spy_sym_id, date=row['date'], open=_to_val(row, 'open'), high=_to_val(row, 'high'), low=_to_val(row, 'low'), close=_to_val(row, 'close'), volume=int(row['volume']) if _to_val(row, 'volume') is not None else 0) for _, row in spy_df.iterrows() if row['date'] not in existing_dates]
+            new_recs = [
+                DailyPrice(
+                    symbol_id=spy_sym_id, 
+                    date=row['date'], 
+                    open=_to_val(row, 'open'), 
+                    high=_to_val(row, 'high'), 
+                    low=_to_val(row, 'low'), 
+                    close=_to_val(row, 'close'), 
+                    volume=int(row['volume']) if _to_val(row, 'volume') is not None else 0,
+                    market_cap=_to_val(row, 'market_cap')
+                ) for _, row in spy_df.iterrows() if row['date'] not in existing_dates
+            ]
             if new_recs:
                 db.bulk_save_objects(new_recs)
                 db.commit()
@@ -101,14 +152,29 @@ def sync_phase_t2_prices(db, sheet_data, symbol_id_map, initial_fetch_days, skip
     sym_latest_map = {sid: ldt for sid, ldt in latest_rows}
     update_needed = [(it['ticker'], symbol_id_map.get((it['ticker'], it['exchange'])), sym_latest_map.get(symbol_id_map.get((it['ticker'], it['exchange'])))) for it in real_items if not sym_latest_map.get(symbol_id_map.get((it['ticker'], it['exchange']))) or sym_latest_map.get(symbol_id_map.get((it['ticker'], it['exchange']))) < spy_latest_date]
     logger.info(f"Found {len(update_needed)} tickers needing price update.")
+    total_needed = len(update_needed)
     if not skip_fetch and update_needed:
-        for ticker, sid, current_max in update_needed:
+        for i, (ticker, sid, current_max) in enumerate(update_needed):
             f_start = default_start
             if current_max: f_start = (datetime.combine(current_max, datetime.min.time()) + timedelta(days=1)).strftime('%Y-%m-%d')
-            df = fetch_daily_data(ticker, f_start)
+            
+            progress_str = f"[{i+1}/{total_needed}]"
+            df = fetch_daily_data(ticker, f_start, progress=progress_str)
             if df is not None and not df.empty:
+                df = _attach_market_cap(ticker, df)
                 existing_dates = {r[0] for r in db.query(DailyPrice.date).filter(DailyPrice.symbol_id == sid).all()}
-                new_recs = [DailyPrice(symbol_id=sid, date=row['date'], open=_to_val(row, 'open'), high=_to_val(row, 'high'), low=_to_val(row, 'low'), close=_to_val(row, 'close'), volume=int(row['volume']) if _to_val(row, 'volume') is not None else 0) for _, row in df.iterrows() if row['date'] not in existing_dates]
+                new_recs = [
+                    DailyPrice(
+                        symbol_id=sid, 
+                        date=row['date'], 
+                        open=_to_val(row, 'open'), 
+                        high=_to_val(row, 'high'), 
+                        low=_to_val(row, 'low'), 
+                        close=_to_val(row, 'close'), 
+                        volume=int(row['volume']) if _to_val(row, 'volume') is not None else 0,
+                        market_cap=_to_val(row, 'market_cap')
+                    ) for _, row in df.iterrows() if row['date'] not in existing_dates
+                ]
                 if new_recs:
                     db.bulk_save_objects(new_recs)
                     db.commit()
@@ -142,37 +208,11 @@ def _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_vi
             df_ind = calculate_indicators(df_price, spy_df if ticker != "SPY" else None)
             calc_end = time.time()
             
-            # 3. Fundamentals Fetch (yfinance)
-            fund_start = time.time()
-            fund_res = {"shares": None, "info": None}
-            if not skip_fetch and not is_virtual:
-                from data_collection.fetcher import fetch_fundamentals
-                fund_res = fetch_fundamentals(ticker)
-                
-            fund_end = time.time()
-            shares_df, info = fund_res.get("shares"), fund_res.get("info")
-
-            if not is_virtual:
-                df_ind['market_cap'] = None
-                if shares_df is not None and not shares_df.empty:
-                    try:
-                        s_series = shares_df.iloc[:, 0]
-                        s_series.index = pd.to_datetime(s_series.index).tz_localize(None).normalize()
-                        s_df = s_series.reset_index(); s_df.columns = ['date', 'shares']
-                        merged = pd.merge_asof(pd.DataFrame({'date': pd.to_datetime(df_price['date'])}), s_df.sort_values('date'), on='date', direction='backward')
-                        df_ind['market_cap'] = df_price['close'].values * merged['shares'].values
-                    except Exception: pass
-                if info and 'marketCap' in info:
-                    df_ind['market_cap'] = df_ind['market_cap'].fillna(info['marketCap'])
-            else:
-                df_ind['market_cap'] = None
-                df_ind['market_cap'] = None
-            
-            # 4. Filter for new rows (Optimization: rely on t3_max to avoid contention)
+            # 3. Filter for new rows (Optimization: rely on t3_max to avoid contention)
             delta_df = df_ind[(df_ind['date'] > (t3_max if t3_max else date(2000, 1, 1)))]
             
             total_t = time.time() - start_t
-            logger.info(f"[{ticker}] T3 Worker DONE in {total_t:.2f}s (FetchP:{fp_end-fp_start:.2f}s, Calc:{calc_end-calc_start:.2f}s, Fund:{fund_end-fund_start:.2f}s)")
+            logger.info(f"[{ticker}] T3 Worker DONE in {total_t:.2f}s (FetchP:{fp_end-fp_start:.2f}s, Calc:{calc_end-calc_start:.2f}s)")
             
             if delta_df.empty:
                 return ticker, sid, []
@@ -523,7 +563,13 @@ def run_step3_pipeline(rebuild_from: Optional[str] = None, categories: Optional[
                     if categories: db.query(Indicator).filter(Indicator.symbol_id.in_(target_ids)).delete()
                     else: db.query(Indicator).delete()
                 if active_lvl <= 2: # Prices (Real tickers only, SPY is preserved unless explicit)
-                    if categories: db.query(DailyPrice).filter(DailyPrice.symbol_id.in_(target_ids), Symbol.ticker != 'SPY').delete()
+                    if categories:
+                        # SQLite doesn't support JOIN in DELETE. Use subquery to avoid join in delete.
+                        spy_id = db.query(Symbol.id).filter(Symbol.ticker == 'SPY').scalar()
+                        q = db.query(DailyPrice).filter(DailyPrice.symbol_id.in_(target_ids))
+                        if spy_id:
+                            q = q.filter(DailyPrice.symbol_id != spy_id)
+                        q.delete(synchronize_session=False)
                     # We move on, Phase 2 will fill the gaps
                 db.commit()
 

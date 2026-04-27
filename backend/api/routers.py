@@ -56,6 +56,10 @@ for _col_name, _col_obj in Indicator.__table__.columns.items():
     _python_type = "int" if "Integer" in str(type(_col_obj.type)) or "SmallInteger" in str(type(_col_obj.type)) else "float"
     _INDICATOR_COLUMN_TYPES[_col_name] = _python_type
 
+# Add DailyPrice columns that or functionally like indicators (like market_cap)
+_INDICATOR_COLUMNS["market_cap"] = DailyPrice.market_cap
+_INDICATOR_COLUMN_TYPES["market_cap"] = "float"
+
 # --- Virtual (computed) columns ---
 _VIRTUAL_COLUMNS = {
     "1d_gain_pct": lambda: (DailyPrice.close - DailyPrice.open) / DailyPrice.open * 100,
@@ -332,6 +336,7 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db)):
             "low": p.low,
             "close": p.close,
             "volume": p.volume,
+            "market_cap": p.market_cap,
             "bb_upper": bb.get('u'),
             "bb_lower": bb.get('l'),
         }
@@ -374,7 +379,6 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db)):
                 "pct_from_63d_high": ind.pct_from_63d_high,
                 "pct_from_52w_high": ind.pct_from_52w_high,
                 "trend_template_ok": ind.trend_template_ok,
-                "market_cap": ind.market_cap,
                 "up_down_vol_ratio_50": ind.up_down_vol_ratio_50,
                 "rs_blue_dot": ind.rs_blue_dot,
                 "rs_red_dot": ind.rs_red_dot,
@@ -1355,7 +1359,7 @@ def get_screener(
             adr_pct_21=ind.adr_pct_21,
             dist_sma50_atr=ind.dist_sma50_atr,
             trend_template_ok=ind.trend_template_ok,
-            market_cap=ind.market_cap,
+            market_cap=dp.market_cap,
             up_down_vol_ratio_50=ind.up_down_vol_ratio_50,
             rs_blue_dot=ind.rs_blue_dot,
             rs_red_dot=ind.rs_red_dot,

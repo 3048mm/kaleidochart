@@ -52,6 +52,7 @@ class DailyPrice(Base):
     low = Column(Float)
     close = Column(Float)
     volume = Column(BigInteger, default=0) # ^VIX etc can have 0 volume.
+    market_cap = Column(Float)             # yfinance: close × shares_outstanding
     
     __table_args__ = (
         UniqueConstraint('symbol_id', 'date', name='uq_daily_prices_symbol_date'),
@@ -108,7 +109,7 @@ class Indicator(Base):
     dist_sma50_atr   = Column(Float)     # NEW: (Close - SMA50) / ATR14
     
     # --- Fundamentals & Size ---
-    market_cap       = Column(Float)     # Historical daily market cap (from shares outstanding * close)
+    # market_cap moved to DailyPrice
     
     # --- Relative Strength (vs SPY) ---
     relative_strength_spy = Column(Float)

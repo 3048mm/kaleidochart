@@ -19,7 +19,7 @@ def _normalize_ticker(ticker: str) -> str:
         logger.debug(f"Ticker normalized: {ticker} -> {normalized}")
     return normalized
 
-def fetch_daily_data(ticker: str, start_date: str, end_date: str = None) -> pd.DataFrame:
+def fetch_daily_data(ticker: str, start_date: str, end_date: str = None, progress: str = "") -> pd.DataFrame:
     """
     yfinanceを用いて指定銘銘柄の株価データを取得します。
     例外ハンドリング(Volume欠損値)やffillによる欠損日補完を行います。
@@ -27,7 +27,8 @@ def fetch_daily_data(ticker: str, start_date: str, end_date: str = None) -> pd.D
     # Normalize ticker symbol for yfinance (e.g., BRK/B -> BRK-B)
     yf_ticker = _normalize_ticker(ticker)
     
-    logger.info(f"[{ticker}] Fetching data (as {yf_ticker}) from {start_date} to {end_date or 'today'}...")
+    prog_prefix = f"{progress} " if progress else ""
+    logger.info(f"{prog_prefix}[{ticker}] Fetching data (as {yf_ticker}) from {start_date} to {end_date or 'today'}...")
     try:
         if end_date:
             df = yf.download(yf_ticker, start=start_date, end=end_date, progress=False)
@@ -129,9 +130,11 @@ def fetch_multiple_daily_data(
     """
     results = {}
     overrides = start_date_overrides or {}
+    total = len(tickers)
     for i, ticker in enumerate(tickers):
         ticker_start = overrides.get(ticker, start_date)
-        df = fetch_daily_data(ticker, ticker_start)
+        progress_str = f"[{i+1}/{total}]"
+        df = fetch_daily_data(ticker, ticker_start, progress=progress_str)
         if not df.empty:
             results[ticker] = df
             

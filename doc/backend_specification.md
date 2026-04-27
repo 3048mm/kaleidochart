@@ -61,6 +61,7 @@ yfinance等から取得した生の日足データ、または合成された仮
 | `low` | FLOAT | 安値。損切り判定やATRの計算に使用。 |
 | `close` | FLOAT | 終値。すべてのテクニカル指標計算のベース。 |
 | `volume` | BIGINT | 出来高。出来高急増（`vol_surge`）の計算に使用。 |
+| `market_cap` | FLOAT | 日次時価総額（米ドル）。yfinance から取得。スクリーナーでのサイズ制限に使用。 |
 
 ### 3.4 T3: インジケータデータ (`indicators`)
 
@@ -75,7 +76,6 @@ T2の価格データを元に算出される各種テクニカル・モメンタ
 | `adr_pct_21` | FLOAT | 21日間の平均日次レンジ(%)。ボラティリティの強さ判定に使用。 | `mean( (high - low) / low * 100 )` |
 | `dist_sma50_atr` | FLOAT | SMA50からの距離をATRで正規化した値。 | `((close / sma_50 * 100) - 100) / atr_pct_14` |
 | `td9` | INT | Tom DeMark Sequential。過熱感の判定に使用。 | 4日前の終値との比較による 1〜9 のカウントアップ/ダウン |
-| `market_cap` | FLOAT | 日次時価総額（米ドル）。スクリーナーでのサイズ制限に使用。 | `close * shares_outstanding` |
 | `relative_strength_spy` | FLOAT | SPYに対する単純相対強度。 | `close / spy_close` |
 | `rs_condition_n` | FLOAT | RSのトレンド強度 (14, 21, 63)。 | `RS / SMA(RS, n)` |
 | `rs_ema_n` | FLOAT | RSの平滑化 (14, 21, 63)。RRG計算の前処理に使用。 | `calculate_ema_tv(relative_strength_spy, n)` |
