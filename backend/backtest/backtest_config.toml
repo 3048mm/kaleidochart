@@ -24,6 +24,9 @@ time_stop_days = 7
 [[strategy]]
 name = "A_momentum_breakout"
 description = "出来高を伴った急騰銘柄 (攻撃的)"
+max_hits_per_day = 10
+sort_column = "rs21_rank"
+sort_ascending = false
 min_1d_gain_pct = 4.0
 min_vol_surge_21 = 1.5
 min_adr_pct_21 = 4.0
@@ -34,6 +37,9 @@ rs_rank_21_gt_63 = true
 [[strategy]]
 name = "B_theme_momentum"
 description = "強いテーマに属する銘柄のモメンタム"
+max_hits_per_day = 10
+sort_column = "rs21_rank"
+sort_ascending = false
 min_1d_gain_pct = 2.0
 min_vol_surge_21 = 1.0
 min_adr_pct_21 = 4.0
@@ -44,6 +50,9 @@ theme_rs21_gt_63 = true
 [[strategy]]
 name = "C_rrg_leading_in"
 description = "RRG Leading象限に転換した銘柄"
+max_hits_per_day = 10
+sort_column = "rs21_rank"
+sort_ascending = false
 rrg_leading_in = true
 min_vol_surge_21 = 1.0
 min_adr_pct_21 = 4.0
@@ -53,6 +62,9 @@ min_market_cap = 1e9
 [[strategy]]
 name = "D_ema21_pullback"
 description = "上昇トレンド中のEMA21押し目買い"
+max_hits_per_day = 10
+sort_column = "rs21_rank"
+sort_ascending = false
 min_dist_21ema_pct = -2.0
 max_dist_21ema_pct = 2.0
 max_dist_sma50_atr = 4.0
@@ -63,6 +75,9 @@ trend_template_ok = 1
 [[strategy]]
 name = "E_vcp"
 description = "ボラティリティ収縮パターン"
+max_hits_per_day = 10
+sort_column = "rs21_rank"
+sort_ascending = false
 max_adr_pct_21 = 3.0
 close_gt_sma50 = true
 min_rs_condition_21 = 1.0
@@ -72,6 +87,9 @@ min_market_cap = 1e9
 [[strategy]]
 name = "F_elite_momentum97"
 description = "RS上位3%のエリート銘柄"
+max_hits_per_day = 10
+sort_column = "rs21_rank"
+sort_ascending = false
 min_rs_ratio_21_rank = 0.97
 trend_template_ok = 1
 min_market_cap = 3e8

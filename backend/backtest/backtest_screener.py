@@ -57,7 +57,7 @@ def scan_signals_for_date(
 
     # Merge indicator + price + symbol info
     merged = ind_day.merge(
-        price_day[['symbol_id', 'date', 'open', 'high', 'low', 'close', 'volume']],
+        price_day[['symbol_id', 'date', 'open', 'high', 'low', 'close', 'volume', 'market_cap']],
         on=['symbol_id', 'date'],
         how='inner'
     )
@@ -89,18 +89,23 @@ def scan_signals_for_date(
     )
 
     # --- RS Rank merge (do all merges first, then filter) ---
-    if 'min_rs_ratio_21_rank' in strategy or strategy.get('rs_rank_21_gt_63'):
+    sort_col = strategy.get('sort_column', 'rs21_rank')
+    needs_rs21 = 'min_rs_ratio_21_rank' in strategy or strategy.get('rs_rank_21_gt_63') or sort_col in ('rs21_rank', 'rs_ratio_21_rank')
+    needs_rs63 = strategy.get('rs_rank_21_gt_63') or sort_col in ('rs63_rank', 'rs_ratio_63_rank')
+
+    if needs_rs21 or needs_rs63:
         past_ranks = df_ranks[df_ranks['date'] <= target_date]
         if not past_ranks.empty:
             rank_date = past_ranks['date'].max()
             ranks_day = df_ranks[df_ranks['date'] == rank_date]
 
-            r21 = ranks_day[ranks_day['indicator_name'] == 'rs_ratio_21'][['symbol_id', 'percent_rank']].rename(
-                columns={'percent_rank': 'rs21_rank'}
-            )
-            merged = merged.merge(r21, on='symbol_id', how='left').reset_index(drop=True)
+            if needs_rs21:
+                r21 = ranks_day[ranks_day['indicator_name'] == 'rs_ratio_21'][['symbol_id', 'percent_rank']].rename(
+                    columns={'percent_rank': 'rs21_rank'}
+                )
+                merged = merged.merge(r21, on='symbol_id', how='left').reset_index(drop=True)
 
-            if strategy.get('rs_rank_21_gt_63'):
+            if needs_rs63:
                 r63 = ranks_day[ranks_day['indicator_name'] == 'rs_ratio_63'][['symbol_id', 'percent_rank']].rename(
                     columns={'percent_rank': 'rs63_rank'}
                 )
@@ -133,50 +138,52 @@ def scan_signals_for_date(
     # --- Now build the mask after all merges are done ---
     mask = pd.Series(True, index=merged.index)
 
-    # Price & Trend filters
-    if 'min_1d_gain_pct' in strategy:
-        mask &= merged['gain_1d_pct'] >= strategy['min_1d_gain_pct']
-    if 'max_1d_gain_pct' in strategy:
-        mask &= merged['gain_1d_pct'] <= strategy['max_1d_gain_pct']
-    if 'min_dist_21ema_pct' in strategy:
-        mask &= merged['dist_21ema_pct'] >= strategy['min_dist_21ema_pct']
-    if 'max_dist_21ema_pct' in strategy:
-        mask &= merged['dist_21ema_pct'] <= strategy['max_dist_21ema_pct']
-    if strategy.get('close_gt_sma50'):
+    # Alias map for handling legacy TOML names vs actual DataFrame column names
+    alias_map = {
+        '1d_gain_pct': 'gain_1d_pct',
+        'rs_ratio_21_rank': 'rs21_rank',
+        'rs_ratio_63_rank': 'rs63_rank',
+        'trend_template_ok': 'trend_template_ok'
+    }
+
+    # 1. Generic Dynamic Filters
+    for key, value in strategy.items():
+        if key in ('name', 'description', 'max_hits_per_day', 'sort_column', 'sort_ascending'):
+            continue
+            
+        col = key
+        op = None
+
+        if key.startswith('min_'):
+            col = key[4:]
+            op = '>='
+        elif key.startswith('max_'):
+            col = key[4:]
+            op = '<='
+        elif isinstance(value, bool) or key.startswith('bool_') or key.startswith('is_') or key.startswith('has_'):
+            op = '=='
+            if key.startswith('bool_'): col = key[5:]
+            elif key.startswith('is_'): col = key[3:]
+            elif key.startswith('has_'): col = key[4:]
+
+        if op:
+            col = alias_map.get(col, col)
+            
+            # Special exemption for market_cap logic on themes
+            if col == 'market_cap' and 'market_cap' in merged.columns and op == '>=':
+                mask &= (merged['market_cap'] >= value) | (merged['category'] == 'テーマ')
+            elif col in merged.columns:
+                if op == '>=':   mask &= merged[col] >= value
+                elif op == '<=': mask &= merged[col] <= value
+                elif op == '==': mask &= merged[col] == value
+
+    # 2. Explicit / Complex Filters
+    if strategy.get('close_gt_sma50') and 'close' in merged.columns and 'sma_50' in merged.columns:
         mask &= merged['close'] > merged['sma_50']
-    if strategy.get('trend_template_ok') is not None:
-        mask &= merged['trend_template_ok'] == strategy['trend_template_ok']
 
-    # Volume & Volatility filters
-    if 'min_vol_surge_21' in strategy:
-        mask &= merged['vol_surge_21'] >= strategy['min_vol_surge_21']
-    if 'min_adr_pct_21' in strategy:
-        mask &= merged['adr_pct_21'] >= strategy['min_adr_pct_21']
-    if 'max_adr_pct_21' in strategy:
-        mask &= merged['adr_pct_21'] <= strategy['max_adr_pct_21']
-    if 'min_dist_sma50_atr' in strategy:
-        mask &= merged['dist_sma50_atr'] >= strategy['min_dist_sma50_atr']
-    if 'max_dist_sma50_atr' in strategy:
-        mask &= merged['dist_sma50_atr'] <= strategy['max_dist_sma50_atr']
-
-    # Fundamentals
-    if 'min_market_cap' in strategy:
-        # Exempt 'テーマ' category from min_market_cap to allow theme RS to be evaluated
-        # Individual stocks still must meet the requirement if they are to be traded
-        mc_mask = (merged['market_cap'] >= strategy['min_market_cap']) | (merged['category'] == 'テーマ')
-        mask &= mc_mask
-
-    # RS Condition
-    if 'min_rs_condition_21' in strategy:
-        mask &= merged['rs_condition_21'] >= strategy['min_rs_condition_21']
-
-    # RS Rank filters
-    if 'min_rs_ratio_21_rank' in strategy and 'rs21_rank' in merged.columns:
-        mask &= merged['rs21_rank'] >= strategy['min_rs_ratio_21_rank']
     if strategy.get('rs_rank_21_gt_63') and 'rs21_rank' in merged.columns and 'rs63_rank' in merged.columns:
         mask &= merged['rs21_rank'] > merged['rs63_rank']
 
-    # Theme RS21 > RS63 filter
     if strategy.get('theme_rs21_gt_63'):
         theme_ind = df_ind[(df_ind['date'] == target_date)].merge(
             df_symbols[df_symbols['category'] == 'テーマ'][['id']],
@@ -194,21 +201,19 @@ def scan_signals_for_date(
         )
         mask &= theme_mask
 
-    # RRG Leading In
+    # RRG Transition Logic
     if strategy.get('rrg_leading_in') and 'prev_rs_ratio_21' in merged.columns:
         mask &= (
             (merged['rs_ratio_21'] > 0) & (merged['rs_momentum_21'] > 0) &
             ((merged['prev_rs_ratio_21'] <= 0) | (merged['prev_rs_momentum_21'] <= 0))
         )
 
-    # RRG Lagging In
     if strategy.get('rrg_lagging_in') and 'prev_rs_ratio_21' in merged.columns:
         mask &= (
             (merged['rs_ratio_21'] < 0) & (merged['rs_momentum_21'] < 0) &
             ((merged['prev_rs_ratio_21'] >= 0) | (merged['prev_rs_momentum_21'] >= 0))
         )
 
-    # RRG Improving In
     if strategy.get('rrg_improving_in') and 'prev_rs_ratio_21' in merged.columns:
         mask &= (
             (merged['rs_ratio_21'] < 0) & (merged['rs_momentum_21'] > 0) &
@@ -216,7 +221,20 @@ def scan_signals_for_date(
         )
 
     # Apply final mask
-    filtered = merged[mask]
+    filtered = merged[mask].copy()
+
+    # --- Top-N Extraction Filter ---
+    max_hits = strategy.get('max_hits_per_day')
+    if max_hits and max_hits > 0 and len(filtered) > max_hits:
+        sort_col = strategy.get('sort_column', 'rs21_rank')
+        sort_col = alias_map.get(sort_col, sort_col)
+        sort_asc = strategy.get('sort_ascending', False)
+        
+        if sort_col in filtered.columns:
+            filtered = filtered.sort_values(by=sort_col, ascending=sort_asc).head(max_hits)
+        else:
+            # Fallback to random or index if sort column doesn't exist
+            filtered = filtered.head(max_hits)
 
     # Build signal records
     signals = []
