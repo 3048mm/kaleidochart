@@ -367,9 +367,17 @@ def main():
     print("Best trial:")
     trial = study.best_trial
     print(f"  Value (Score): {trial.value:.2f}")
-    print("  Params: ")
+    print("\n  [TOML Params for copy-paste]")
+    print("  " + "-"*30)
     for key, value in trial.params.items():
-        print(f"    {key}: {value}")
+        if isinstance(value, bool):
+            toml_val = "true" if value else "false"
+        elif isinstance(value, str):
+            toml_val = f'"{value}"'
+        else:
+            toml_val = value
+        print(f"  {key} = {toml_val}")
+    print("  " + "-"*30 + "\n")
         
     if "expectancy" in trial.user_attrs:
         print(f"  Expectancy:     {trial.user_attrs['expectancy']:.3f}%")

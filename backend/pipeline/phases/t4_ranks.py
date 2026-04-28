@@ -58,7 +58,6 @@ def sync_phase_t4_ranks(db, spy_latest_date: Optional[date], logger: logging.Log
                 WHERE i.date = :d
                   AND i.{ind_col} IS NOT NULL
             """
-            from sqlalchemy import text
             db.execute(text(query), {"d": d})
         db.commit()
         

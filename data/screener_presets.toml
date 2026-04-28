@@ -33,9 +33,9 @@ name = "Thema Momentum"
 group = "Check"
 special = "theme_rs21_gt_63"
 [rise.filters]
-min_1d_gain_pct = 5.0
+min_1d_gain_pct = 1.0
 min_vol_surge_21 = 2.9
-min_adr_pct_21 = 6.0
+min_adr_pct_21 = 5.0
 max_dist_sma50_atr = 5.0
 min_market_cap =  1e7
 
