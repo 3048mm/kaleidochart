@@ -59,9 +59,14 @@
         *   **ATR乖離マーカー**: 50日SMAからATRの一定倍率以上乖離した場合に丸型マーカーを表示。乖離率を警告として可視化。
     *   **比較機能 (Comparison)**: 他のティッカー（例: `QQQ`）を入力して同じチャート上に相対推移ライン（左Y軸）をオーバーレイ。
 
-*   **RSビュー (Relative Rotation Graph)**:
-    *   「RS View」タブに切り替えると、JS Custom RRG（相対回転グラフ）が表示される。
-    *   **メインチャート**: X軸に `RS-Ratio`、Y軸に `RS-Momentum` を取った散布図の軌跡（Trail）を描画。Quadrant（象限）により、Leading(先導), Weakening(弱体化), Lagging(出遅れ), Improving(改善) を視覚化。
+    *   **RSビュー (Relative Rotation Graph & RS Line Chart)**:
+    *   「RS View」タブに切り替えると、JS Custom RRG（相対回転グラフ）と、TradingViewベースのRSラインチャートが表示される。
+    *   **RSラインチャート (上部)**:
+        *   `relative_strength_spy` をメインシリーズとして表示。
+        *   `rs_ema_14`, `rs_ema_21`, `rs_ema_63` をオーバーレイ表示（デフォルトON）。
+        *   市場に対する相対的な強さの時系列推移を可視化。
+    *   **RRGチャート (下部)**:
+        *   X軸に `RS-Ratio`、Y軸に `RS-Momentum` を取った散布図の軌跡（Trail）を描画。Quadrant（象限）により、Leading(先導), Weakening(弱体化), Lagging(出遅れ), Improving(改善) を視覚化。
     *   **ミニマップ**: RSスコア郡の%Rankの直近30日の時系列推移を左側サイドパネルに表示。
 
 ### 3.4 スクリーナーダッシュボード画面 (`/screener` - `ScreenerPage`)
