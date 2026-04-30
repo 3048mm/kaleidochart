@@ -305,3 +305,5 @@ export const RrgChart: React.FC<RrgChartProps> = ({ data, ticker, series: propSe
         </div>
     );
 };
+
+export default RrgChart;

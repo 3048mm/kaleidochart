@@ -4,6 +4,7 @@ import { ThemeDetailResponse, ThemeConstituentItem } from '../types';
 import { MiniChart } from '../components/MiniChart';
 import { Sparkline } from '../components/Sparkline';
 import { RrgChart, RrgSeries } from '../components/RrgChart';
+import RsLineChart from '../components/RsLineChart';
 import { appConfig } from '../config';
 
 // Colour palette for multi-ticker RRG
@@ -188,6 +189,11 @@ export const ThemePage: React.FC = () => {
                     <div style={{ fontSize: '11px', color: '#aaa', marginBottom: '8px', textAlign: 'center' }}>6-Month Trend</div>
                     <MiniChart data={data.chart_data} height={180} />
                 </div>
+            </div>
+
+            {/* RS Line Chart */}
+            <div className="glass-panel" style={{ padding: '20px', marginBottom: '20px' }}>
+                <RsLineChart data={data.chart_data} />
             </div>
 
             {/* ── Section 2: Constituent Stocks ── */}

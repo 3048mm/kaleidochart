@@ -3,6 +3,7 @@ import { useParams, useSearchParams } from 'react-router-dom';
 import { GroupDataResponse } from '../types';
 import { EtfFeaturePanel } from '../components/EtfFeaturePanel';
 import { SummaryTable } from '../components/SummaryTable';
+import RsLineChart from '../components/RsLineChart';
 import { appConfig } from '../config';
 
 export const GroupPage: React.FC = () => {
@@ -92,6 +93,11 @@ export const GroupPage: React.FC = () => {
 
             {/* upper panel: ETF feature */}
             <EtfFeaturePanel feature={data.feature} titleSuffix={data.group_type === 'sector' ? 'Sector ETF' : 'Theme ETF'} />
+
+            {/* RS Line Chart */}
+            <div className="glass-panel" style={{ padding: '20px', marginBottom: '20px' }}>
+                <RsLineChart data={data.feature.chart_data} />
+            </div>
 
             {/* lower panel: Constituents list */}
             <div className="glass-panel" style={{ padding: '20px' }}>
