@@ -285,144 +285,105 @@ def get_symbols(db: Session = Depends(get_api_db)):
     symbols = db.query(Symbol).filter(Symbol.active == 1).order_by(Symbol.category, Symbol.ticker).all()
     return symbols
 
-@router.get("/chart/{symbol_id}", response_model=schemas.ChartResponse)
+@router.get("/chart/{symbol_id}")
 def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db)):
-    """
-    T2+T3: Get combined daily prices and indicators for rendering charts
-    TradingView lightweight-charts expects data sorted by time ascending.
-    """
-    # Verify symbol exists
-    symbol = db.query(Symbol).filter(Symbol.id == symbol_id).first()
+    """T2+T3: Get combined daily prices and indicators for rendering charts (High speed)"""
+    symbol = db.query(Symbol).filter(Symbol.id == symbol_id, Symbol.active == 1).first()
     if not symbol:
         raise HTTPException(status_code=404, detail="Symbol not found")
         
+    # Fetch all prices
     prices = db.query(DailyPrice).filter(DailyPrice.symbol_id == symbol_id).order_by(DailyPrice.date.asc()).all()
-    indicators = db.query(Indicator).filter(Indicator.symbol_id == symbol_id).order_by(Indicator.date.asc()).all()
-    
-    # Map indicators by date string for fast merging
-    ind_map = {ind.date.strftime('%Y-%m-%d'): ind for ind in indicators}
-    
-    # Pre-fetch all RelativeRanks for this symbol to populate the minimaps
-    ranks = db.query(RelativeRank).filter(RelativeRank.symbol_id == symbol_id).all()
-    rank_map = {}
-    for r in ranks:
-        d_str = r.date.strftime('%Y-%m-%d')
-        if d_str not in rank_map:
-            rank_map[d_str] = {}
-        rank_map[d_str][r.indicator_name] = r.percent_rank
+    if not prices:
+        return JSONResponse(content={"data": [], "themes": []})
 
-    # Pre-calculate Bollinger Bands (21, 2) efficiently using Pandas
-    bb_map = {}
-    if len(prices) >= 21:
-        import pandas as pd
-        df_bb = pd.DataFrame([{'d': p.date.strftime('%Y-%m-%d'), 'c': p.close} for p in prices])
-        df_bb['std'] = df_bb['c'].rolling(window=21).std()
-        df_bb['sma'] = df_bb['c'].rolling(window=21).mean()
-        df_bb['u'] = df_bb['sma'] + (2 * df_bb['std'])
-        df_bb['l'] = df_bb['sma'] - (2 * df_bb['std'])
-        # Convert to dict for fast lookup
-        bb_map = df_bb.set_index('d')[['u', 'l']].to_dict('index')
-    
-    chart_data = []
-    for p in prices:
-        date_str = p.date.strftime('%Y-%m-%d')
-        ind = ind_map.get(date_str)
-        bb = bb_map.get(date_str, {})
-        
-        point = {
-            "time": date_str,
-            "open": p.open,
-            "high": p.high,
-            "low": p.low,
-            "close": p.close,
-            "volume": p.volume,
-            "market_cap": p.market_cap,
-            "bb_upper": bb.get('u'),
-            "bb_lower": bb.get('l'),
-        }
-        
-        # Merge indicator data if present
-        if ind:
-            point.update({
-                "sma_5": ind.sma_5,
-                "sma_21": ind.sma_21,
-                "sma_50": ind.sma_50,
-                "sma_63": ind.sma_63,
-                "sma_150": ind.sma_150,
-                "sma_200": ind.sma_200,
-                "ema_5": ind.ema_5,
-                "ema_21": ind.ema_21,
-                "ema_50": ind.ema_50,
-                "ema_63": ind.ema_63,
-                "ema_150": ind.ema_150,
-                "ema_200": ind.ema_200,
-                "td9": ind.td9,
-                "atr_14": ind.atr_14,
-                "atr_pct_14": ind.atr_pct_14,
-                "adr_pct_21": ind.adr_pct_21,
-                "dist_sma50_atr": ind.dist_sma50_atr,
-                "relative_strength_spy": ind.relative_strength_spy,
-                "rs_condition_14": ind.rs_condition_14,
-                "rs_condition_21": ind.rs_condition_21,
-                "rs_condition_63": ind.rs_condition_63,
-                "rs_momentum_14": ind.rs_momentum_14,
-                "rs_momentum_21": ind.rs_momentum_21,
-                "rs_momentum_63": ind.rs_momentum_63,
-                "rs_ema_14": ind.rs_ema_14,
-                "rs_ema_21": ind.rs_ema_21,
-                "rs_ema_63": ind.rs_ema_63,
-                "rs_ratio_14": ind.rs_ratio_14,
-                "rs_ratio_21": ind.rs_ratio_21,
-                "rs_ratio_63": ind.rs_ratio_63,
-                "vol_surge_21": ind.vol_surge_21,
-                "rel_vol_vs_spy_21": ind.rel_vol_vs_spy_21,
-                "pct_from_63d_high": ind.pct_from_63d_high,
-                "pct_from_52w_high": ind.pct_from_52w_high,
-                "trend_template_ok": ind.trend_template_ok,
-                "up_down_vol_ratio_50": ind.up_down_vol_ratio_50,
-                "rs_blue_dot": ind.rs_blue_dot,
-                "rs_red_dot": ind.rs_red_dot,
-                "vcr": ind.vcr,
-            })
-            
-            # Merge relative ranks if present
-            d_ranks = rank_map.get(date_str, {})
-            for k, v in d_ranks.items():
-                point[f"rank_{k}"] = v
-                
-        chart_data.append(schemas.ChartDataPoint(**point))
+    dates = [p.date for p in prices]
+    date_strs = [d.strftime('%Y-%m-%d') for d in dates]
 
-    # Fetch associated themes (from tags column and theme_constituents)
+    # Indicators
+    # Fetch related indicators (More efficient query without large IN clause)
+    start_date = prices[0].date
+    end_date = prices[-1].date
+    indicators = db.query(Indicator).filter(
+        Indicator.symbol_id == symbol_id,
+        Indicator.date >= start_date,
+        Indicator.date <= end_date
+    ).all()
+    ind_map = {i.date.strftime('%Y-%m-%d'): i for i in indicators}
+    
+    # RS Ranks (Optimized range query)
+    ranks = db.query(RelativeRank).filter(
+        RelativeRank.symbol_id == symbol_id,
+        RelativeRank.date >= start_date,
+        RelativeRank.date <= end_date,
+        RelativeRank.group_name == '個別',
+        RelativeRank.indicator_name == 'rs_ratio_21'
+    ).all()
+    rank_map = {r.date.strftime('%Y-%m-%d'): r.percent_rank for r in ranks}
+
+    # Themes
     theme_meta = []
-    
-    # 1. From tags
     if symbol.tags:
         tag_list = [t.strip() for t in symbol.tags.split(',') if t.strip()]
-        if tag_list:
-            tag_themes = db.query(Symbol).filter(Symbol.ticker.in_(tag_list)).all()
-            for t in tag_themes:
-                theme_meta.append(schemas.ChartSymbolMeta(id=t.id, ticker=t.ticker, name=t.name))
-                
-    # 2. From theme_constituents
-    tc_themes = db.query(Symbol).join(
-        ThemeConstituent, Symbol.id == ThemeConstituent.theme_id
-    ).filter(
-        ThemeConstituent.symbol_id == symbol_id
-    ).all()
+        tag_themes = db.query(Symbol).filter(Symbol.ticker.in_(tag_list)).all()
+        for t in tag_themes:
+            theme_meta.append({"id": t.id, "ticker": t.ticker, "name": t.name})
     
+    tc_themes = db.query(Symbol).join(ThemeConstituent, Symbol.id == ThemeConstituent.theme_id).filter(ThemeConstituent.symbol_id == symbol_id).all()
     for t in tc_themes:
-        if not any(tm.ticker == t.ticker for tm in theme_meta):
-            theme_meta.append(schemas.ChartSymbolMeta(id=t.id, ticker=t.ticker, name=t.name))
+        if not any(tm['ticker'] == t.ticker for tm in theme_meta):
+            theme_meta.append({"id": t.id, "ticker": t.ticker, "name": t.name})
 
-    return schemas.ChartResponse(
-        metadata=schemas.ChartSymbolMeta(
-            id=symbol.id, 
-            ticker=symbol.ticker, 
-            name=symbol.name,
-            category=symbol.category
-        ),
-        themes=theme_meta,
-        data=chart_data
+    # Optimized mapping to dict (bypasses Pydantic validation for speed)
+    chart_data = []
+    for p, d_str in zip(prices, date_strs):
+        ind = ind_map.get(d_str)
+        point = {
+            "time": d_str, "open": p.open, "high": p.high, "low": p.low, "close": p.close, "volume": p.volume,
+            "market_cap": p.market_cap
+        }
+        if ind:
+            point.update({
+                "sma_21": ind.sma_21, "sma_50": ind.sma_50, "sma_63": ind.sma_63,
+                "sma_150": ind.sma_150, "sma_200": ind.sma_200,
+                "ema_5": ind.ema_5, "ema_21": ind.ema_21, "ema_50": ind.ema_50,
+                "ema_63": ind.ema_63, "ema_150": ind.ema_150, "ema_200": ind.ema_200,
+                "td9": ind.td9, "atr_14": ind.atr_14, "atr_pct_14": ind.atr_pct_14,
+                "adr_pct_21": ind.adr_pct_21, "dist_sma50_atr": ind.dist_sma50_atr,
+                "relative_strength_spy": ind.relative_strength_spy,
+                "rs_blue_dot": ind.rs_blue_dot, "rs_red_dot": ind.rs_red_dot,
+                "vcr": ind.vcr, "trend_template_ok": ind.trend_template_ok,
+                "bb_upper": (ind.sma_21 + 2*ind.atr_14) if ind.sma_21 and ind.atr_14 else None,
+                "bb_lower": (ind.sma_21 - 2*ind.atr_14) if ind.sma_21 and ind.atr_14 else None,
+            })
+            # Include rank if available (for RS line)
+            point["rs_ratio"] = rank_map.get(d_str)
+        
+        chart_data.append(point)
+
+    import json
+    from fastapi import Response
+
+    # Custom encoder/cleaner to handle NaN/Inf which are invalid in standard JSON
+    def clean_data(obj):
+        if isinstance(obj, float):
+            if obj != obj or obj == float('inf') or obj == float('-inf'):
+                return None
+        return obj
+
+    # Apply cleaning to the entire data structure
+    cleaned_data = {
+        "metadata": {"id": symbol.id, "ticker": symbol.ticker, "name": symbol.name, "category": symbol.category},
+        "themes": theme_meta,
+        "data": [
+            {k: clean_data(v) for k, v in point.items()}
+            for point in chart_data
+        ]
+    }
+
+    return Response(
+        content=json.dumps(cleaned_data, allow_nan=False),
+        media_type="application/json"
     )
 
 @router.get("/earnings/{symbol_id}", response_model=List[schemas.EarningResponse])

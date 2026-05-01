@@ -34,7 +34,7 @@ class ThemeConstituent(Base):
     
     id = Column(Integer, primary_key=True)
     theme_id = Column(Integer, ForeignKey('symbols.id'), nullable=False)
-    symbol_id = Column(Integer, ForeignKey('symbols.id'), nullable=False)
+    symbol_id = Column(Integer, ForeignKey('symbols.id'), nullable=False, index=True)
     weight = Column(Float, default=1.0)
     
     __table_args__ = (

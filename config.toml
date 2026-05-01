@@ -1,6 +1,6 @@
 # System Configuration
 [system]
-db_path = "data/stocktool.db"
+db_path = "d:/My Documents/Programing/stocktool/data/stocktool.db"
 log_level = "INFO"
 
 [data_collection]

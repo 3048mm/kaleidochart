@@ -145,6 +145,9 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
     const smaSeriesRefs = useRef<Record<string, ISeriesApi<"Line"> | null>>({});
     const emaSeriesRefs = useRef<Record<string, ISeriesApi<"Line"> | null>>({});
     const bbSeriesRefs = useRef<{ upper: ISeriesApi<"Line"> | null, lower: ISeriesApi<"Line"> | null }>({ upper: null, lower: null });
+    const volSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+    const rsSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+    const compSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
 
     const selected = useMemo(() => {
         const parsedTicker = ticker?.includes(':') ? ticker.split(':')[1] : ticker;
@@ -154,10 +157,13 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
         });
     }, [symbols, ticker]);
 
+    // 1. Initial Load
     useEffect(() => {
         if (!selected) return;
+        
         setLoading(true);
         setError('');
+        
         fetch(`/api/chart/${selected.id}`)
             .then(res => {
                 if (!res.ok) throw new Error('Failed to fetch data');
@@ -181,6 +187,8 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
             .catch(err => console.error(err))
             .finally(() => setEarningsLoading(false));
     }, [selected]);
+
+
 
     // Fetch comparison data when user requests
     const handleCompare = (e: React.FormEvent) => {
@@ -211,8 +219,9 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
             .finally(() => setCompareLoading(false));
     };
 
+    // 3. Chart Initialization
     useEffect(() => {
-        if (!chartContainerRef.current || data.length === 0) return;
+        if (!chartContainerRef.current || !selected || loading) return;
 
         const chart = createChart(chartContainerRef.current, {
             layout: {
@@ -249,109 +258,41 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
         });
         candleSeriesRef.current = candleSeries;
 
-        const candleData = data.map(d => ({
+        return () => {
+            chart.remove();
+            chartRef.current = null;
+            candleSeriesRef.current = null;
+            smaSeriesRefs.current = {};
+            emaSeriesRefs.current = {};
+            bbSeriesRefs.current = { upper: null, lower: null };
+            volSeriesRef.current = null;
+            rsSeriesRef.current = null;
+            compSeriesRef.current = null;
+        };
+    }, [selected, loading]);
+
+    // 4. Data & Series Updates
+    useEffect(() => {
+        const chart = chartRef.current;
+        const candleSeries = candleSeriesRef.current;
+        if (!chart || !candleSeries || data.length === 0) return;
+
+        // --- Candle Data ---
+        candleSeries.setData(data.map(d => ({
             time: d.time as any,
             open: d.open,
             high: d.high,
             low: d.low,
             close: d.close,
-        }));
-        candleSeries.setData(candleData);
+        })));
 
-        // --- Volume Histogram ---
-        if (showVolume) {
-            const volSeries = chart.addHistogramSeries({
-                color: 'rgba(99, 120, 180, 0.3)',
-                priceFormat: { type: 'volume' },
-                priceScaleId: 'vol',
-            });
-            chart.priceScale('vol').applyOptions({
-                scaleMargins: { top: 0.85, bottom: 0 },
-            });
-            volSeries.setData(data.map(d => ({
-                time: d.time as any,
-                value: d.volume,
-                color: d.close >= d.open ? 'rgba(0, 255, 136, 0.25)' : 'rgba(255, 68, 68, 0.25)',
-            })));
-        }
-
-        // --- RS Leading Dots (Fixed Height at top) ---
-        if (showRsDots) {
-            const signalsSeries = chart.addLineSeries({
-                color: 'transparent',
-                priceScaleId: 'signals',
-                lastValueVisible: false,
-                priceLineVisible: false,
-                crosshairMarkerVisible: false,
-            });
-            chart.priceScale('signals').applyOptions({
-                scaleMargins: { top: 0.05, bottom: 0.93 },
-                visible: false,
-            });
-
-            // Constant value to keep markers at same height
-            signalsSeries.setData(data.map(d => ({ time: d.time as any, value: 100 })));
-
-            const dotMarkers: SeriesMarker<any>[] = [];
-            data.forEach(d => {
-                if (d.rs_blue_dot === 1) {
-                    dotMarkers.push({
-                        time: d.time as any,
-                        position: 'inBar',
-                        color: '#00d0ff',
-                        shape: 'circle',
-                        text: '◆',
-                        size: 0,
-                    });
-                }
-                if (d.rs_red_dot === 1) {
-                    dotMarkers.push({
-                        time: d.time as any,
-                        position: 'inBar',
-                        color: '#ff4444',
-                        shape: 'circle',
-                        text: '◆',
-                        size: 0,
-                    });
-                }
-            });
-            dotMarkers.sort((a,b) => (a.time < b.time ? -1 : 1));
-            signalsSeries.setMarkers(dotMarkers);
-        }
-
-        // --- Comparison Series ---
-        if (compareData.length > 0) {
-            const compSeries = chart.addLineSeries({
-                color: '#E040FB',
-                lineWidth: 2,
-                title: `Vs ${compareTicker.toUpperCase()}`,
-                priceScaleId: 'left',
-                crosshairMarkerVisible: false,
-            });
-
-            const cData = compareData.map(d => ({
-                time: d.time as any,
-                value: d.close
-            }));
-
-            compSeries.setData(cData);
-
-            chart.priceScale('left').applyOptions({
-                visible: true,
-                borderColor: 'rgba(255, 255, 255, 0.1)',
-            });
-        }
-
-        // --- Markers for TD9 and ATR Divergence ---
+        // --- Markers ---
         const markers: SeriesMarker<any>[] = [];
-
-        // Pre-compute which indices should show TD9 (only complete 1-9 sequences, or latest >=6)
         const validTd9Indices = new Set<number>();
         for (let i = 0; i < data.length; i++) {
             const td9 = data[i].td9;
             if (!td9) continue;
             const absTd9 = Math.abs(td9);
-
             if (absTd9 >= 9) {
                 let j = i;
                 while (j >= 0 && data[j].td9 && Math.sign(data[j].td9!) === Math.sign(td9) && Math.abs(data[j].td9!) <= absTd9) {
@@ -360,7 +301,6 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
                     j--;
                 }
             }
-
             if (i === data.length - 1 && absTd9 >= 6) {
                 let j = i;
                 while (j >= 0 && data[j].td9 && Math.sign(data[j].td9!) === Math.sign(td9)) {
@@ -371,29 +311,24 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
             }
         }
 
-        // TD9 markers first (closest to bars)
         if (showTd9) {
             data.forEach((d, idx) => {
                 if (!validTd9Indices.has(idx)) return;
-                const td9Val = Math.abs(d.td9!);
                 markers.push({
                     time: d.time as any,
                     position: d.td9! > 0 ? 'aboveBar' : 'belowBar',
                     color: d.td9! > 0 ? appConfig.colors.bad : appConfig.colors.good,
                     shape: 'square',
-                    text: td9Val.toString(),
+                    text: Math.abs(d.td9!).toString(),
                     size: 0,
                 });
             });
         }
 
-        // ATR markers second (stacked further from bars, above TD9)
         data.forEach((d) => {
             const dist = d.dist_sma50_atr != null ? d.dist_sma50_atr : 0;
-            // Only show markers when rising (dist > 0)
             const showAtrRed = dist >= appConfig.thresholds.atr_multiple_red;
             const showAtrYellow = dist >= appConfig.thresholds.atr_multiple_yellow;
-
             if (showAtrRed || showAtrYellow) {
                 markers.push({
                     time: d.time as any,
@@ -405,100 +340,137 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
                 });
             }
         });
-
-        // Sort markers by time (required by lightweight-charts)
         markers.sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
-
         candleSeries.setMarkers(markers);
 
-        // Factory for moving averages
-        const addMaSeries = (
-            key: string,
-            dataField: keyof ChartDataPoint,
-            color: string,
-            visible: boolean,
+        // --- Indicators (SMAs/EMAs/BB) ---
+        const updateLineSeries = (
+            key: string, 
+            dataField: keyof ChartDataPoint, 
+            color: string, 
+            visible: boolean, 
             refsObj: React.MutableRefObject<Record<string, ISeriesApi<"Line"> | null>>
         ) => {
-            const seriesData = data.filter(d => d[dataField] != null).map(d => ({
-                time: d.time as any,
-                value: d[dataField] as number
-            }));
-            const series = chart.addLineSeries({
-                color,
-                lineWidth: 1,
-                title: key.toUpperCase(),
-                visible,
-                crosshairMarkerVisible: false,
-            });
-            series.setData(seriesData);
-            refsObj.current[key] = series;
-        };
-
-        // SMAs
-        addMaSeries('sma21', 'sma_21', '#2962FF', showSma21, smaSeriesRefs);
-        addMaSeries('sma50', 'sma_50', '#FF6D00', showSma50, smaSeriesRefs);
-        addMaSeries('sma63', 'sma_63', '#9c27b0', showSma63, smaSeriesRefs);
-        addMaSeries('sma150', 'sma_150', '#00bcd4', showSma150, smaSeriesRefs);
-        addMaSeries('sma200', 'sma_200', '#f44336', showSma200, smaSeriesRefs);
-
-        // EMAs
-        addMaSeries('ema5', 'ema_5', '#e91e63', showEma5, emaSeriesRefs);
-        addMaSeries('ema21', 'ema_21', '#3f51b5', showEma21, emaSeriesRefs);
-        addMaSeries('ema50', 'ema_50', '#ff9800', showEma50, emaSeriesRefs);
-        addMaSeries('ema63', 'ema_63', '#8bc34a', showEma63, emaSeriesRefs);
-        addMaSeries('ema200', 'ema_200', '#795548', showEma200, emaSeriesRefs);
-
-        // --- Bollinger Bands (21, 2) ---
-        const bbUpperSeries = chart.addLineSeries({
-            color: 'rgba(255, 255, 255, 0.25)',
-            lineWidth: 1,
-            lineStyle: 2, // Dashed
-            title: 'BB UPPER',
-            visible: showBB,
-            crosshairMarkerVisible: false,
-        });
-        bbUpperSeries.setData(data.filter(d => d.bb_upper != null).map(d => ({
-            time: d.time as any,
-            value: d.bb_upper as number
-        })));
-        bbSeriesRefs.current.upper = bbUpperSeries;
-
-        const bbLowerSeries = chart.addLineSeries({
-            color: 'rgba(255, 255, 255, 0.25)',
-            lineWidth: 1,
-            lineStyle: 2, // Dashed
-            title: 'BB LOWER',
-            visible: showBB,
-            crosshairMarkerVisible: false,
-        });
-        bbLowerSeries.setData(data.filter(d => d.bb_lower != null).map(d => ({
-            time: d.time as any,
-            value: d.bb_lower as number
-        })));
-        bbSeriesRefs.current.lower = bbLowerSeries;
-
-        chart.subscribeCrosshairMove((param) => {
-            if (param.time && param.seriesData.size > 0) {
-                const point = data.find(d => d.time === param.time);
-                if (point) {
-                    setHoverData(point);
-                    return;
-                }
+            let series = refsObj.current[key];
+            if (!series) {
+                series = chart.addLineSeries({ color, lineWidth: 1, title: key.toUpperCase(), crosshairMarkerVisible: false });
+                refsObj.current[key] = series;
             }
-            setHoverData(null);
-        });
-
-        chart.timeScale().fitContent();
-
-        return () => {
-            chart.remove();
+            series.applyOptions({ visible });
+            if (visible) {
+                series.setData(data.filter(d => d[dataField] != null).map(d => ({
+                    time: d.time as any,
+                    value: d[dataField] as number
+                })));
+            }
         };
+
+        updateLineSeries('sma21', 'sma_21', '#2962FF', showSma21, smaSeriesRefs);
+        updateLineSeries('sma50', 'sma_50', '#FF6D00', showSma50, smaSeriesRefs);
+        updateLineSeries('sma63', 'sma_63', '#9c27b0', showSma63, smaSeriesRefs);
+        updateLineSeries('sma150', 'sma_150', '#00bcd4', showSma150, smaSeriesRefs);
+        updateLineSeries('sma200', 'sma_200', '#f44336', showSma200, smaSeriesRefs);
+        updateLineSeries('ema5', 'ema_5', '#e91e63', showEma5, emaSeriesRefs);
+        updateLineSeries('ema21', 'ema_21', '#3f51b5', showEma21, emaSeriesRefs);
+        updateLineSeries('ema50', 'ema_50', '#ff9800', showEma50, emaSeriesRefs);
+        updateLineSeries('ema63', 'ema_63', '#8bc34a', showEma63, emaSeriesRefs);
+        updateLineSeries('ema200', 'ema_200', '#795548', showEma200, emaSeriesRefs);
+
+        // Bollinger Bands
+        if (!bbSeriesRefs.current.upper) {
+            bbSeriesRefs.current.upper = chart.addLineSeries({ color: 'rgba(255, 255, 255, 0.25)', lineWidth: 1, lineStyle: 2, title: 'BB UPPER', crosshairMarkerVisible: false });
+            bbSeriesRefs.current.lower = chart.addLineSeries({ color: 'rgba(255, 255, 255, 0.25)', lineWidth: 1, lineStyle: 2, title: 'BB LOWER', crosshairMarkerVisible: false });
+        }
+        bbSeriesRefs.current.upper!.applyOptions({ visible: showBB });
+        bbSeriesRefs.current.lower!.applyOptions({ visible: showBB });
+        if (showBB) {
+            bbSeriesRefs.current.upper!.setData(data.filter(d => d.bb_upper != null).map(d => ({ time: d.time as any, value: d.bb_upper as number })));
+            bbSeriesRefs.current.lower!.setData(data.filter(d => d.bb_lower != null).map(d => ({ time: d.time as any, value: d.bb_lower as number })));
+        }
+
+        // --- Volume Histogram ---
+        let volSeries = volSeriesRef.current;
+        if (!volSeries) {
+            volSeries = chart.addHistogramSeries({ color: 'rgba(99, 120, 180, 0.3)', priceFormat: { type: 'volume' }, priceScaleId: 'vol' });
+            chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
+            volSeriesRef.current = volSeries;
+        }
+        volSeries.applyOptions({ visible: showVolume });
+        if (showVolume) {
+            volSeries.setData(data.map(d => ({
+                time: d.time as any,
+                value: d.volume,
+                color: d.close >= d.open ? 'rgba(0, 255, 136, 0.25)' : 'rgba(255, 68, 68, 0.25)',
+            })));
+        }
+
+        // --- RS Leading Dots ---
+        let rsSeries = rsSeriesRef.current;
+        if (!rsSeries) {
+            rsSeries = chart.addLineSeries({ color: 'transparent', priceScaleId: 'signals', lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false });
+            chart.priceScale('signals').applyOptions({ scaleMargins: { top: 0.05, bottom: 0.93 }, visible: false });
+            rsSeriesRef.current = rsSeries;
+        }
+        rsSeries.applyOptions({ visible: showRsDots });
+        if (showRsDots) {
+            rsSeries.setData(data.map(d => ({ time: d.time as any, value: 100 })));
+            const dotMarkers: SeriesMarker<any>[] = [];
+            data.forEach(d => {
+                if (d.rs_blue_dot === 1) dotMarkers.push({ time: d.time as any, position: 'inBar', color: '#00d0ff', shape: 'circle', text: '◆', size: 0 });
+                if (d.rs_red_dot === 1) dotMarkers.push({ time: d.time as any, position: 'inBar', color: '#ff4444', shape: 'circle', text: '◆', size: 0 });
+            });
+            dotMarkers.sort((a,b) => (a.time < b.time ? -1 : 1));
+            rsSeries.setMarkers(dotMarkers);
+        }
+
+        // --- Comparison Series ---
+        let compSeries = compSeriesRef.current;
+        if (compareData.length > 0) {
+            if (!compSeries) {
+                compSeries = chart.addLineSeries({ color: '#E040FB', lineWidth: 2, title: `Vs ${compareTicker.toUpperCase()}`, priceScaleId: 'left', crosshairMarkerVisible: false });
+                chart.priceScale('left').applyOptions({ visible: true, borderColor: 'rgba(255, 255, 255, 0.1)' });
+                compSeriesRef.current = compSeries;
+            }
+            compSeries.applyOptions({ title: `Vs ${compareTicker.toUpperCase()}` });
+            compSeries.setData(compareData.map(d => ({ time: d.time as any, value: d.close })));
+        } else if (compSeries) {
+            chart.removeSeries(compSeries);
+            compSeriesRef.current = null;
+            chart.priceScale('left').applyOptions({ visible: false });
+        }
+
+        // Set default visible range to last 6 months
+        if (data.length > 0) {
+            const lastDate = new Date(data[data.length - 1].time);
+            const sixMonthsAgo = new Date(lastDate);
+            sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+            
+            const sixMonthsAgoStr = sixMonthsAgo.toISOString().split('T')[0];
+            
+            chart.timeScale().setVisibleRange({
+                from: sixMonthsAgoStr as any,
+                to: data[data.length - 1].time as any,
+            });
+        } else {
+            chart.timeScale().fitContent();
+        }
+
+        // Update hover handler to use current data
+        const handleMove = (param: any) => {
+            if (param.time) {
+                const point = data.find(d => d.time === param.time);
+                if (point) setHoverData(point);
+            } else {
+                setHoverData(null);
+            }
+        };
+        chart.subscribeCrosshairMove(handleMove);
+        return () => chart.unsubscribeCrosshairMove(handleMove);
 
     }, [
-        data, compareData, showVolume, showTd9,
+        data, compareData, showVolume, showTd9, showBB, showRsDots,
         showSma21, showSma50, showSma63, showSma150, showSma200,
-        showEma5, showEma21, showEma50, showEma63, showEma200,
-        showBB, showRsDots
+        showEma5, showEma21, showEma50, showEma63, showEma200
     ]);
 
     const latest = data.length > 0 ? data[data.length - 1] : null;
