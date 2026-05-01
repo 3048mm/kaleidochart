@@ -205,13 +205,21 @@ def parse_optimization_periods(config):
 # =============================================================
 
 def objective(trial: optuna.Trial, strategy_type: str, config, config_app, exit_rules: ExitRules, periods: list):
-    # Mapping for short codes used by Optuna study names
+    # Mapping for short codes (fallback to searching config if not in map)
     full_names = {
         'B': 'B_theme_momentum',
         'D': 'D_ema21_pullback',
         'F': 'F_elite_momentum97'
     }
-    actual_name = full_names.get(strategy_type, strategy_type)
+    
+    # Try to find the actual name from the mapping or searching the strategy list
+    if strategy_type in full_names:
+        actual_name = full_names[strategy_type]
+    else:
+        # Search for a strategy that matches exactly or starts with "STRATEGY_"
+        strategies = config.get('strategy', [])
+        found = next((s['name'] for s in strategies if s['name'] == strategy_type or s['name'].startswith(strategy_type + "_")), None)
+        actual_name = found if found else strategy_type
     
     # Extract the base strategy configuration from the list in config['strategy']
     strat_base = next((s for s in config.get('strategy', []) if s.get('name') == actual_name), None)
@@ -319,7 +327,7 @@ def objective(trial: optuna.Trial, strategy_type: str, config, config_app, exit_
 
 def main():
     parser = argparse.ArgumentParser(description="Optimize backtest parameters with Optuna")
-    parser.add_argument("--strategy", type=str, choices=["B", "D", "F"], required=True)
+    parser.add_argument("--strategy", type=str, required=True, help="Strategy name or short code (A, B, C...)")
     parser.add_argument("--trials", type=int, default=30)
     args = parser.parse_args()
     

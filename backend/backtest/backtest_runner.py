@@ -136,10 +136,11 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
     log("  Loading indicators...")
     t1 = time.time()
     query_ind = (
-        f"SELECT symbol_id, date, sma_50, ema_21, atr_14, "
+        f"SELECT symbol_id, date, sma_50, sma_150, sma_200, ema_21, atr_14, "
         f"adr_pct_21, dist_sma50_atr, vol_surge_21, rel_vol_vs_spy_21, "
         f"rs_ratio_21, rs_ratio_63, rs_momentum_21, "
-        f"rs_condition_21, trend_template_ok, td9 "
+        f"rs_condition_21, trend_template_ok, td9, "
+        f"vcr, rs_blue_dot, rs_red_dot, up_down_vol_ratio_50, pct_from_52w_high "
         f"FROM indicators WHERE date >= '{buf_start}' AND date <= '{buf_end}'"
     )
     chunks_ind = []
@@ -187,6 +188,16 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
         engine
     )
     log(f"  Theme Constituents: {len(df_theme_constituents)} rows loaded")
+
+    # Log memory usage
+    total_mem_mb = (
+        df_symbols.memory_usage(deep=True).sum() +
+        df_prices.memory_usage(deep=True).sum() +
+        df_indicators.memory_usage(deep=True).sum() +
+        df_ranks.memory_usage(deep=True).sum() +
+        df_theme_constituents.memory_usage(deep=True).sum()
+    ) / (1024 * 1024)
+    log(f"  Total Data Memory Usage: {total_mem_mb:.2f} MB")
 
     # Get unique sorted trading dates within the backtest range
     trading_dates = sorted(
