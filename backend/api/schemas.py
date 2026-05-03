@@ -43,6 +43,9 @@ class ChartDataPoint(BaseModel):
     atr_14: Optional[float] = None
     atr_pct_14: Optional[float] = None
     adr_pct_21: Optional[float] = None
+    change_1d_pct: Optional[float] = None
+    change_1w_pct: Optional[float] = None
+    change_1m_pct: Optional[float] = None
     dist_sma50_atr: Optional[float] = None
     
     relative_strength_spy: Optional[float] = None
@@ -340,3 +343,43 @@ class WatchlistItem(BaseModel):
 class WatchlistResponse(BaseModel):
     active: List[WatchlistItem]
     removed: List[WatchlistItem]
+
+
+# --- Portfolio ---
+
+class PortfolioCreateRequest(BaseModel):
+    name: str
+    currency: str = "JPY"
+    total_capital: float
+    risk_pct: float = 1.0
+    default_stop_loss_pct: float = 8.0
+    stop_loss_method: str = "fixed_pct"
+    atr_multiplier: float = 2.0
+    profit_take_method: Optional[str] = None
+    max_positions: int = 8
+
+class PortfolioUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    currency: Optional[str] = None
+    total_capital: Optional[float] = None
+    risk_pct: Optional[float] = None
+    default_stop_loss_pct: Optional[float] = None
+    stop_loss_method: Optional[str] = None
+    atr_multiplier: Optional[float] = None
+    profit_take_method: Optional[str] = None
+    max_positions: Optional[int] = None
+
+class PositionAddRequest(BaseModel):
+    ticker: str
+    entry_date: date
+    shares: int
+    memo: Optional[str] = None
+    stop_loss_pct: Optional[float] = None
+    custom_take_profit_pct: Optional[float] = None
+
+class PositionSellRequest(BaseModel):
+    exit_date: date
+    exit_price: float
+    exit_shares: int
+    exit_reason: str  # stop_loss / take_profit_trim / take_profit_full / trailing_stop / manual
+    memo: Optional[str] = None

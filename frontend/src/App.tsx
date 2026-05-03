@@ -8,6 +8,8 @@ import { ScreenerResultPage } from './pages/ScreenerResultPage'
 import { ThemePage } from './pages/ThemePage'
 import { WatchlistPage } from './pages/WatchlistPage'
 import { GroupPage } from './pages/GroupPage'
+import { PortfolioListPage } from './pages/PortfolioListPage'
+import { PortfolioDetailPage } from './pages/PortfolioDetailPage'
 
 
 const API = '/api'
@@ -106,6 +108,7 @@ export default function App() {
                     <Link to="/" style={{ color: location.pathname === '/' ? '#00ff88' : '#d1d4dc', textDecoration: 'none' }}>Dashboard</Link>
                     <Link to="/screener" style={{ color: location.pathname === '/screener' ? '#00ff88' : '#d1d4dc', textDecoration: 'none' }}>Screener</Link>
                     <Link to="/watchlist" style={{ color: location.pathname === '/watchlist' ? '#00ff88' : '#d1d4dc', textDecoration: 'none' }}>Watchlist</Link>
+                    <Link to="/portfolio" style={{ color: location.pathname.startsWith('/portfolio') ? '#00ff88' : '#d1d4dc', textDecoration: 'none' }}>Portfolio</Link>
 
                 </nav>
                 <div className="header-status">
@@ -158,6 +161,8 @@ export default function App() {
                     <Route path="/screener/result/:presetId" element={<ScreenerResultPage />} />
                     <Route path="/watchlist" element={<WatchlistPage />} />
                     <Route path="/group/:ticker" element={<GroupPage />} />
+                    <Route path="/portfolio" element={<PortfolioListPage />} />
+                    <Route path="/portfolio/:portfolioId" element={<PortfolioDetailPage />} />
 
                 </Routes>
             </main>

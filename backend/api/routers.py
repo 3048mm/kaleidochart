@@ -71,7 +71,8 @@ _VIRTUAL_COLUMNS = {
 _COLUMN_CATEGORIES = {
     "Price & Trend": ["sma_5", "sma_21", "sma_50", "sma_63", "sma_150", "sma_200",
                       "ema_5", "ema_21", "ema_50", "ema_63", "ema_150", "ema_200",
-                      "trend_template_ok", "1d_gain_pct", "dist_21ema_pct", "dist_sma50_pct",
+                      "trend_template_ok", "change_1d_pct", "change_1w_pct", "change_1m_pct",
+                      "1d_gain_pct", "dist_21ema_pct", "dist_sma50_pct",
                       "pct_from_63d_high", "pct_from_52w_high"],
     "Volume & Volatility": ["atr_14", "atr_pct_14", "adr_pct_21", "dist_sma50_atr",
                             "td9", "vol_surge_21", "rel_vol_vs_spy_21", "up_down_vol_ratio_50", "vcr"],
@@ -500,6 +501,12 @@ def _build_panel_item(db: Session, sym: Symbol, dp: DailyPrice, rank_val_21: flo
         Indicator.symbol_id == sym.id,
         Indicator.date == dp.date
     ).first()
+
+    if ind:
+        if ind.change_1d_pct is not None: change_1d_pct = ind.change_1d_pct
+        if ind.change_1w_pct is not None: change_1w_pct = ind.change_1w_pct
+        if ind.change_1m_pct is not None: change_1m_pct = ind.change_1m_pct
+
     dist_21ema_pct = 0.0
     if ind and ind.ema_21 and ind.ema_21 > 0:
         dist_21ema_pct = ((dp.close - ind.ema_21) / ind.ema_21) * 100
@@ -1008,7 +1015,7 @@ def get_screener_dashboard(
 
     # Base query wrapper function
     def q_base():
-        return db.query(Symbol.id, Symbol.ticker, Symbol.name, DailyPrice.open, DailyPrice.close).join(
+        return db.query(Symbol.id, Symbol.ticker, Symbol.name, DailyPrice.open, DailyPrice.close, Indicator.change_1d_pct).join(
             Indicator, Symbol.id == Indicator.symbol_id
         ).join(
             DailyPrice, (Symbol.id == DailyPrice.symbol_id) & (Indicator.date == DailyPrice.date)
@@ -1018,7 +1025,7 @@ def get_screener_dashboard(
         results = query.limit(8).all()
         items = []
         for r in results:
-            chg = ((r.close - r.open) / r.open * 100) if r.open else 0.0
+            chg = r.change_1d_pct if r.change_1d_pct is not None else 0.0
             items.append(schemas.ScreenerDashboardItem(id=r.id, ticker=r.ticker, name=r.name, change_pct=chg))
         return items
 
@@ -1076,8 +1083,8 @@ def get_screener_dashboard(
         for key, value in filters.items():
             q = _apply_filter(q, key, value, db, latest_date_result)
 
-        # Default sort: by 1D gain descending
-        q = q.order_by(desc((DailyPrice.close - DailyPrice.open) / DailyPrice.open))
+        # Default sort: by 1Day% (Prev Close base) descending
+        q = q.order_by(desc(Indicator.change_1d_pct))
         return q
 
     # Load presets from TOML
@@ -1285,9 +1292,9 @@ def get_screener(
         close_1w = hist_prices[-6] if len(hist_prices) >= 6 else hist_prices[0] if hist_prices else dp.close
         close_1m = hist_prices[-21] if len(hist_prices) >= 21 else hist_prices[0] if hist_prices else dp.close
         
-        c_1d = ((dp.close - dp.open) / dp.open * 100) if dp.open else 0.0
-        c_1w = ((dp.close - close_1w) / close_1w * 100) if close_1w else 0.0
-        c_1m = ((dp.close - close_1m) / close_1m * 100) if close_1m else 0.0
+        c_1d = ind.change_1d_pct if ind.change_1d_pct is not None else 0.0
+        c_1w = ind.change_1w_pct if ind.change_1w_pct is not None else 0.0
+        c_1m = ind.change_1m_pct if ind.change_1m_pct is not None else 0.0
         
         d_21ema = ((dp.close - ind.ema_21) / ind.ema_21 * 100) if ind.ema_21 else 0.0
         

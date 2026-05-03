@@ -20,6 +20,11 @@ export const WatchlistPage: React.FC = () => {
     const [sortKey, setSortKey] = useState<SortKey>('entry_date');
     const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
 
+    // Portfolio buy flow state
+    const [portfolioList, setPortfolioList] = useState<{id: number; name: string}[]>([]);
+    const [buyTarget, setBuyTarget] = useState<{ticker: string; entry_date: string} | null>(null);
+    const [buyForm, setBuyForm] = useState({ portfolio_id: 0, shares: 100 });
+
     const { refreshActiveTickers } = useWatchlist();
 
     const fetchWatchlist = async () => {
@@ -40,6 +45,13 @@ export const WatchlistPage: React.FC = () => {
 
     useEffect(() => {
         fetchWatchlist();
+        // Fetch portfolios for Buy flow
+        fetch('/api/portfolio').then(r => r.json()).then(data => {
+            if (Array.isArray(data)) {
+                setPortfolioList(data);
+                if (data.length > 0) setBuyForm(f => ({ ...f, portfolio_id: data[0].id }));
+            }
+        }).catch(() => {});
     }, []);
 
     const sortedActive = useMemo(() => {
@@ -187,6 +199,26 @@ export const WatchlistPage: React.FC = () => {
     const formatPct = (val: number) => `${val > 0 ? '+' : ''}${val.toFixed(2)}%`;
     const getPctColor = (val: number) => val > 0 ? appConfig.colors.good : val < 0 ? appConfig.colors.bad : '#ccc';
 
+    const handleBuy = async () => {
+        if (!buyTarget || !buyForm.portfolio_id) return;
+        try {
+            const res = await fetch(`/api/portfolio/${buyForm.portfolio_id}/positions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ticker: buyTarget.ticker, entry_date: buyTarget.entry_date, shares: buyForm.shares }),
+            });
+            if (res.ok) {
+                setBuyTarget(null);
+                alert(`${buyTarget.ticker} added to portfolio!`);
+            } else {
+                const err = await res.json();
+                alert(err.detail || 'Failed to add position');
+            }
+        } catch (err) {
+            console.error('Buy failed:', err);
+        }
+    };
+
     const headerStyle: React.CSSProperties = { padding: '12px 10px', cursor: 'pointer', userSelect: 'none' };
 
     return (
@@ -327,7 +359,22 @@ export const WatchlistPage: React.FC = () => {
                                                 <td style={{ padding: '12px 10px', textAlign: 'center' }}>
                                                     <Sparkline data={item.rs_sparkline} width={70} height={24} color={item.gain_pct >= 0 ? appConfig.colors.good : appConfig.colors.bad} />
                                                 </td>
-                                                <td style={{ padding: '12px 10px', textAlign: 'center' }}>
+                                                <td style={{ padding: '12px 10px', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                                                    <button 
+                                                        onClick={() => setBuyTarget({ ticker: item.ticker, entry_date: item.entry_date })}
+                                                        style={{ 
+                                                            background: 'rgba(59, 130, 246, 0.1)', 
+                                                            border: '1px solid rgba(59, 130, 246, 0.2)', 
+                                                            color: '#3b82f6',
+                                                            padding: '4px 10px',
+                                                            borderRadius: '4px',
+                                                            fontSize: '11px',
+                                                            cursor: 'pointer',
+                                                            marginRight: '4px'
+                                                        }}
+                                                    >
+                                                        Buy
+                                                    </button>
                                                     <button 
                                                         onClick={() => handleRemove(item.ticker)}
                                                         style={{ 
@@ -424,6 +471,36 @@ export const WatchlistPage: React.FC = () => {
                             )}
                         </div>
                     )}
+                </div>
+            )}
+
+            {/* Buy Modal */}
+            {buyTarget && (
+                <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+                     onClick={() => setBuyTarget(null)}>
+                    <div style={{ background: '#0f172a', border: '1px solid rgba(59,130,246,0.3)', borderRadius: '12px', padding: '28px', width: '380px', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}
+                         onClick={e => e.stopPropagation()}>
+                        <h3 style={{ margin: '0 0 20px', fontSize: '16px' }}>Add <span style={{ color: '#3b82f6' }}>{buyTarget.ticker}</span> to Portfolio</h3>
+                        <div style={{ marginBottom: '14px' }}>
+                            <label style={{ fontSize: '11px', fontWeight: 600, color: '#8b9cc8', textTransform: 'uppercase' as const, letterSpacing: '0.06em', display: 'block', marginBottom: '4px' }}>Portfolio</label>
+                            <select
+                                value={buyForm.portfolio_id}
+                                onChange={e => setBuyForm({ ...buyForm, portfolio_id: Number(e.target.value) })}
+                                style={{ background: 'rgba(30,40,70,0.5)', border: '1px solid rgba(99,120,180,0.25)', borderRadius: '6px', padding: '8px 12px', color: '#e8edf7', fontSize: '13px', width: '100%' }}>
+                                {portfolioList.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                            </select>
+                        </div>
+                        <div style={{ marginBottom: '14px' }}>
+                            <label style={{ fontSize: '11px', fontWeight: 600, color: '#8b9cc8', textTransform: 'uppercase' as const, letterSpacing: '0.06em', display: 'block', marginBottom: '4px' }}>Shares</label>
+                            <input type="number" value={buyForm.shares} onChange={e => setBuyForm({ ...buyForm, shares: Number(e.target.value) })}
+                                style={{ background: 'rgba(30,40,70,0.5)', border: '1px solid rgba(99,120,180,0.25)', borderRadius: '6px', padding: '8px 12px', color: '#e8edf7', fontSize: '13px', width: '100%' }} />
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                            <button onClick={() => setBuyTarget(null)} style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.2)', color: '#888', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px' }}>Cancel</button>
+                            <button onClick={handleBuy} disabled={portfolioList.length === 0}
+                                style={{ background: 'linear-gradient(135deg, #3b82f6, #2563eb)', border: 'none', color: '#fff', padding: '8px 24px', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}>Confirm Buy</button>
+                        </div>
+                    </div>
                 </div>
             )}
         </div>

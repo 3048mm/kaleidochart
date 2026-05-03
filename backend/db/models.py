@@ -106,6 +106,9 @@ class Indicator(Base):
     atr_14           = Column(Float)     # ATR raw value
     atr_pct_14       = Column(Float)     # ATR% = ATR/Close*100
     adr_pct_21       = Column(Float)     # NEW: Average Daily Range %
+    change_1d_pct    = Column(Float)     # NEW: Daily Change % (Close-to-Close)
+    change_1w_pct    = Column(Float)     # NEW: Weekly Change % (5-day)
+    change_1m_pct    = Column(Float)     # NEW: Monthly Change % (20-day)
     dist_sma50_atr   = Column(Float)     # NEW: (Close - SMA50) / ATR14
     
     # --- Fundamentals & Size ---
@@ -212,4 +215,73 @@ class Watchlist(Base):
     __table_args__ = (
         UniqueConstraint('symbol_id', name='uq_watchlist_symbol'),
     )
+
+
+class Portfolio(Base):
+    """User portfolio: manages a set of positions with risk parameters."""
+    __tablename__ = 'portfolios'
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)               # ポートフォリオ名
+    currency = Column(String, nullable=False, default='JPY')  # JPY / USD
+    total_capital = Column(Float, nullable=False)        # 総投資資金
+    risk_pct = Column(Float, nullable=False, default=1.0)  # リスク許容% (例: 1.0)
+    default_stop_loss_pct = Column(Float, nullable=False, default=8.0)  # デフォルト損切%
+    stop_loss_method = Column(String, nullable=False, default='fixed_pct')  # fixed_pct / atr_multiple
+    atr_multiplier = Column(Float, nullable=True, default=2.0)  # ATR倍率 (method=atr時)
+    profit_take_method = Column(String, nullable=True)   # ema21 / sma50_atr / fixed_pct
+    max_positions = Column(Integer, nullable=False, default=8)  # 最大同時保有数
+    source = Column(String, nullable=False, default='manual')  # manual / moomoo_api
+    status = Column(String, nullable=False, default='active')  # active / archived
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    positions = relationship("PortfolioPosition", back_populates="portfolio", cascade="all, delete-orphan")
+    history = relationship("PositionHistory", back_populates="portfolio", cascade="all, delete-orphan")
+
+
+class PortfolioPosition(Base):
+    """Active position within a portfolio."""
+    __tablename__ = 'portfolio_positions'
+
+    id = Column(Integer, primary_key=True)
+    portfolio_id = Column(Integer, ForeignKey('portfolios.id'), nullable=False, index=True)
+    symbol_id = Column(Integer, ForeignKey('symbols.id'), nullable=False, index=True)
+    entry_date = Column(Date, nullable=False)            # 購入日
+    entry_price = Column(Float, nullable=False)          # 購入価格
+    shares = Column(Integer, nullable=False)             # 現在の株数 (部分売却で減少)
+    original_shares = Column(Integer, nullable=False)    # 購入時の株数
+    stop_loss_pct = Column(Float, nullable=True)         # 個別損切% (NULL=ポートフォリオデフォルト)
+    custom_take_profit_pct = Column(Float, nullable=True)  # 個別利確% (NULL=デフォルト)
+    status = Column(String, nullable=False, default='open')  # open / partially_closed
+    memo = Column(String, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    # Relationships
+    portfolio = relationship("Portfolio", back_populates="positions")
+
+
+class PositionHistory(Base):
+    """Closed position history (sold or trimmed)."""
+    __tablename__ = 'position_history'
+
+    id = Column(Integer, primary_key=True)
+    portfolio_id = Column(Integer, ForeignKey('portfolios.id'), nullable=False, index=True)
+    symbol_id = Column(Integer, ForeignKey('symbols.id'), nullable=False, index=True)
+    entry_date = Column(Date, nullable=False)            # 購入日
+    entry_price = Column(Float, nullable=False)          # 購入価格
+    entry_shares = Column(Integer, nullable=False)       # この売却分の元株数
+    exit_date = Column(Date, nullable=False)             # 売却日
+    exit_price = Column(Float, nullable=False)           # 売却価格
+    exit_shares = Column(Integer, nullable=False)        # 売却株数
+    exit_reason = Column(String, nullable=False)         # stop_loss / take_profit_trim / take_profit_full / trailing_stop / manual
+    pnl_pct = Column(Float)                              # 損益%
+    pnl_amount = Column(Float)                           # 損益額 (通貨単位)
+    holding_days = Column(Integer)                       # 保有日数
+    memo = Column(String, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    # Relationships
+    portfolio = relationship("Portfolio", back_populates="history")
 

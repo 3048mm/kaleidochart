@@ -40,11 +40,27 @@ def init_db(db_path: str):
     # Creates engine. connect_args check_same_thread is for SQLite
     engine = create_engine(database_url, connect_args={"check_same_thread": False, "timeout": 3600})
     
+    # Enable WAL mode for SQLite
+    from sqlalchemy import event
+    @event.listens_for(engine, "connect")
+    def set_sqlite_pragma(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.close()
+    
     # Create session factory
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     
     # Create all tables according to the models
-    Base.metadata.create_all(bind=engine)
+    # Wrapped in try/except to handle race conditions when parallel workers
+    # all call init_db() simultaneously (SQLite table-already-exists errors).
+    try:
+        Base.metadata.create_all(bind=engine)
+    except Exception as e:
+        if "already exists" in str(e):
+            pass  # Safe to ignore: table was created by another worker
+        else:
+            raise
 
 @contextmanager
 def get_db():

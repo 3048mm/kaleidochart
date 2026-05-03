@@ -23,6 +23,11 @@ def calculate_indicators(df_daily: pd.DataFrame, df_spy: pd.DataFrame = None) ->
     df = df_daily.copy()
     df = df.sort_values('date').reset_index(drop=True)
     
+    # Returns (Prev Close Base)
+    df['change_1d_pct'] = df['close'].pct_change() * 100
+    df['change_1w_pct'] = df['close'].pct_change(5) * 100
+    df['change_1m_pct'] = df['close'].pct_change(20) * 100
+    
     if df.empty:
         return df
 

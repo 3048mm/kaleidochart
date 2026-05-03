@@ -74,6 +74,9 @@ T2の価格データを元に算出される各種テクニカル・モメンタ
 | `atr_14` | FLOAT | ボラティリティ指標（Average True Range）。 | 14日間の True Range の平均 |
 | `atr_pct_14` | FLOAT | Closeに対するATRの割合(%)。 | `(atr_14 / close) * 100` |
 | `adr_pct_21` | FLOAT | 21日間の平均日次レンジ(%)。ボラティリティの強さ判定に使用。 | `mean( (high - low) / low * 100 )` |
+| `change_1d_pct` | FLOAT | 1日騰落率(%)。前日終値を基準とした1日の変化率。 | `(close - prev_close) / prev_close * 100` |
+| `change_1w_pct` | FLOAT | 1週騰落率(%)。5営業日前（1週間）の終値を基準とした変化率。 | `(close - close_5d_ago) / close_5d_ago * 100` |
+| `change_1m_pct` | FLOAT | 1月騰落率(%)。20営業日前（1か月）の終値を基準とした変化率。 | `(close - close_20d_ago) / close_20d_ago * 100` |
 | `dist_sma50_atr` | FLOAT | SMA50からの距離をATRで正規化した値。 | `((close / sma_50 * 100) - 100) / atr_pct_14` |
 | `td9` | INT | Tom DeMark Sequential。過熱感の判定に使用。 | 4日前の終値との比較による 1〜9 のカウントアップ/ダウン |
 | `relative_strength_spy` | FLOAT | SPYに対する単純相対強度。 | `close / spy_close` |
@@ -172,6 +175,67 @@ S&P500（SPY）の動向や市場全体の統計から算出される、市場�
         *   レコードなし → 新規 INSERT（`added_at = utcnow()`）。
     *   **`added_at` 不変ルール**: `added_at` を更新するのは新規INSERT時のみ。再登録（removed → active）時は元の値を維持する。これにより「再登録→即解除→物理DELETE」のループを防止する。
 
+### 3.9 ポートフォリオ管理テーブル
+
+ユーザーが実際に保有する銘柄のリスク管理・損益追跡を行うための3テーブル構成。ウォッチリストとは完全に独立。
+
+#### `portfolios` — ポートフォリオ設定
+*   **特徴**: 複数ポートフォリオを用途別（長期/スイング等）に管理。
+*   **カラム**:
+    *   `id` (PK, INTEGER): 主キー
+    *   `name` (STRING): ポートフォリオ名（例: 「スイング」「長期投資」）
+    *   `currency` (STRING): 通貨 (`JPY` / `USD`)
+    *   `total_capital` (FLOAT): 総投資資金
+    *   `risk_pct` (FLOAT): リスク許容%（デフォルト 1.0）
+    *   `default_stop_loss_pct` (FLOAT): デフォルト損切%（例: 8.0）
+    *   `stop_loss_method` (STRING): `'fixed_pct'` | `'atr_multiple'`
+    *   `atr_multiplier` (FLOAT, NULL): ATR倍率（method=atr_multiple 時）
+    *   `profit_take_method` (STRING, NULL): 利確方式
+    *   `max_positions` (INT): 最大同時保有数（デフォルト 8）
+    *   `source` (STRING): `'manual'` | `'moomoo_api'`
+    *   `status` (STRING): `'active'` | `'archived'`
+    *   `created_at`, `updated_at` (DATETIME)
+
+#### `portfolio_positions` — 保有銘柄
+*   **特徴**: 各ポートフォリオの保有中ポジション。部分売却(Trim)で `shares` が減少する。
+*   **カラム**:
+    *   `id` (PK, INTEGER): 主キー
+    *   `portfolio_id` (FK → portfolios.id): ポートフォリオID
+    *   `symbol_id` (FK → symbols.id): 銘柄ID
+    *   `entry_date` (DATE): 購入日
+    *   `entry_price` (FLOAT): 購入価格（指定日の終値）
+    *   `shares` (INT): 現在の保有株数（Trimで減少）
+    *   `original_shares` (INT): 購入時の株数
+    *   `stop_loss_pct` (FLOAT, NULL): 個別損切%（NULLはポートフォリオデフォルト継承）
+    *   `custom_take_profit_pct` (FLOAT, NULL): 個別利確%
+    *   `status` (STRING): `'open'` | `'partially_closed'`
+    *   `memo` (TEXT, NULL): メモ
+    *   `created_at` (DATETIME)
+
+#### `position_history` — 売却履歴
+*   **特徴**: 売却（全売却/Trim）ごとに1レコード生成。累積P&L算出の基盤。
+*   **カラム**:
+    *   `id` (PK, INTEGER): 主キー
+    *   `portfolio_id` (FK → portfolios.id): ポートフォリオID
+    *   `symbol_id` (FK → symbols.id): 銘柄ID
+    *   `entry_date` (DATE), `entry_price` (FLOAT): 購入情報
+    *   `entry_shares` (INT): この売却分の元株数
+    *   `exit_date` (DATE), `exit_price` (FLOAT): 売却情報
+    *   `exit_shares` (INT): 売却株数
+    *   `exit_reason` (STRING): `'stop_loss'` | `'take_profit_trim'` | `'take_profit_full'` | `'trailing_stop'` | `'manual'`
+    *   `pnl_pct` (FLOAT): 損益率
+    *   `pnl_amount` (FLOAT): 損益額
+    *   `holding_days` (INT): 保有日数
+    *   `memo` (TEXT, NULL)
+    *   `created_at` (DATETIME)
+
+### 3.10 SQLite 運用設定 (Performance & Concurrency)
+本プロジェクトの SQLite は、多数の API リクエストと大量のバッチ処理を並行させるため、以下の設定を適用している。
+
+*   **Journal Mode: `WAL` (Write-Ahead Logging)**: 読み取りと書き込みの競合を大幅に軽減。
+*   **Busy Timeout: `3600000` (1時間)**: `OperationalError: database is locked` を回避し、ロックが解放されるまで待機するように設定。
+*   **Synchronous: `NORMAL` (or `OFF` during bulk)**: ディスク I/O 負荷を軽減し、特に HDD 環境での書き込み速度を確保。
+
 ## 4. バッチ処理フロー (Pipeline Logic)
 日々のデータ更新は `update_pipeline.py` によって管理され、各階層 (T1〜T6) は「ソース」と「ターゲット」の最大日付を比較して不足分を補完する **独立したキャッチアップ・ロジック** を持ちます。
 
@@ -241,6 +305,22 @@ S&P500（SPY）の動向や市場全体の統計から算出される、市場�
 *   `latest_adr_pct`: T3 最新日の adr_pct_21
 *   `latest_dist_sma50_atr`: T3 最新日の dist_sma50_atr
 *   `rs_sparkline`: T4 の rs_ratio_21 ランク直近30日分
+
+### 5.3 ポートフォリオ API
+
+| Method | Path | 説明 |
+| :--- | :--- | :--- |
+| `GET` | `/api/portfolio` | アクティブなポートフォリオ一覧取得 |
+| `POST` | `/api/portfolio` | ポートフォリオ新規作成 |
+| `GET` | `/api/portfolio/{id}` | ポートフォリオ設定取得 |
+| `PUT` | `/api/portfolio/{id}` | ポートフォリオ設定更新 |
+| `DELETE` | `/api/portfolio/{id}` | ポートフォリオのアーカイブ（論理削除） |
+| `GET` | `/api/portfolio/{id}/positions` | 保有ポジション一覧取得（現在価格・損益・アラート状態等のメトリクス付） |
+| `POST` | `/api/portfolio/{id}/positions` | 新規ポジション追加 |
+| `POST` | `/api/portfolio/{id}/positions/{pid}/sell` | ポジションの売却・Trim（一部売却）。履歴への移動と株数減算処理を含む |
+| `GET` | `/api/portfolio/{id}/history` | 売却履歴一覧取得（累積P&L付） |
+| `GET` | `/api/portfolio/{id}/summary` | ポートフォリオのサマリー取得（投資額、リスク額等のダッシュボード用） |
+| `GET` | `/api/portfolio/{id}/analytics` | パフォーマンス分析用データ取得（セクター分散、勝率、月次リターン、エクイティカーブ） |
 
 ## 6. バックテストエンジン
 

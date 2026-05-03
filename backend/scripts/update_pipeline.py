@@ -18,6 +18,8 @@ from db.database import get_active_db_path
 import logging
 from logging.handlers import RotatingFileHandler
 
+import multiprocessing
+
 def setup_pipeline_logging():
     log_dir = os.path.join(project_root, "logs")
     if not os.path.exists(log_dir):
@@ -31,9 +33,13 @@ def setup_pipeline_logging():
     console_h = logging.StreamHandler(sys.stdout)
     console_h.setFormatter(log_format)
     root_logger.addHandler(console_h)
-    file_h = RotatingFileHandler(log_file, maxBytes=10*1024*1024, backupCount=5, encoding='utf-8')
-    file_h.setFormatter(log_format)
-    root_logger.addHandler(file_h)
+    
+    # Only use RotatingFileHandler in the MainProcess to avoid PermissionError on Windows
+    if multiprocessing.current_process().name == 'MainProcess':
+        file_h = RotatingFileHandler(log_file, maxBytes=10*1024*1024, backupCount=5, encoding='utf-8')
+        file_h.setFormatter(log_format)
+        root_logger.addHandler(file_h)
+    
     return logging.getLogger(__name__)
 
 logger = setup_pipeline_logging()

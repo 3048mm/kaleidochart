@@ -118,9 +118,9 @@ export const ThemePage: React.FC = () => {
                     {/* Gain row */}
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
                         {[
-                            { label: '1D Gain', val: data.change_1d_pct },
-                            { label: '1W Gain', val: data.change_1w_pct },
-                            { label: '1M Gain', val: data.change_1m_pct },
+                            { label: '1D%', val: data.change_1d_pct },
+                            { label: '1W%', val: data.change_1w_pct },
+                            { label: '1M%', val: data.change_1m_pct },
                         ].map(m => (
                             <div key={m.label} style={{ background: 'rgba(255,255,255,0.05)', padding: '10px', borderRadius: '6px', textAlign: 'center' }}>
                                 <div style={{ fontSize: '10px', color: '#aaa', marginBottom: '4px' }}>{m.label}</div>
@@ -220,9 +220,9 @@ export const ThemePage: React.FC = () => {
                         <div style={{ width: '28px' }}>RRG</div>
                         <div style={{ flex: 1, minWidth: '100px' }}>銘柄</div>
                         <div style={{ width: '70px', textAlign: 'right' }}>Close</div>
-                        <div style={{ width: '56px', textAlign: 'center' }}>%1D</div>
-                        <div style={{ width: '56px', textAlign: 'center' }}>%1W</div>
-                        <div style={{ width: '56px', textAlign: 'center' }}>%1M</div>
+                        <div style={{ width: '56px', textAlign: 'center' }}>1D%</div>
+                        <div style={{ width: '56px', textAlign: 'center' }}>1W%</div>
+                        <div style={{ width: '56px', textAlign: 'center' }}>1M%</div>
                         <div style={{ width: '56px', textAlign: 'center' }}>RS14</div>
                         <div style={{ width: '56px', textAlign: 'center' }}>RS21</div>
                         <div style={{ width: '56px', textAlign: 'center' }}>RS63</div>

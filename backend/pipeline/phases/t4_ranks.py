@@ -33,7 +33,6 @@ def sync_phase_t4_ranks(db, spy_latest_date: Optional[date], logger: logging.Log
     # Optimize for massive DML on SATA HDD:
     db.execute(text("PRAGMA cache_size = -4000000;"))
     db.execute(text("PRAGMA synchronous = OFF;"))
-    db.execute(text("PRAGMA journal_mode = MEMORY;"))
     db.execute(text("PRAGMA temp_store = MEMORY;"))
     
     for i, d in enumerate(gap_dates):

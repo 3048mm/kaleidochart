@@ -291,9 +291,9 @@ export const ScreenerResultPage: React.FC = () => {
                     <div
                         style={{ width: '50px', textAlign: 'center', cursor: 'pointer', color: sortKey === 'change_pct' ? '#fff' : '#aaa' }}
                         onClick={() => handleSort('change_pct')}
-                        title="Sort by %1D"
+                        title="Sort by 1D%"
                     >
-                        %1D {sortKey === 'change_pct' ? (sortDesc ? '▼' : '▲') : ''}
+                        1D% {sortKey === 'change_pct' ? (sortDesc ? '▼' : '▲') : ''}
                     </div>
                     <div style={{ width: '50px', textAlign: 'right', paddingRight: '5px' }}>21E%</div>
                     <div

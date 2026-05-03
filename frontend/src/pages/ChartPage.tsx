@@ -625,7 +625,7 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
                                 <th style={{ padding: '2px 10px', textAlign: 'left' }}></th>
                                 <th style={{ padding: '2px 10px', textAlign: 'left' }}>Date</th>
                                 <th style={{ padding: '2px 10px', textAlign: 'right' }}>Close</th>
-                                <th style={{ padding: '2px 10px', textAlign: 'right' }}>Chg%</th>
+                                <th style={{ padding: '2px 10px', textAlign: 'right' }}>1D%</th>
                                 <th style={{ padding: '2px 10px', textAlign: 'right' }}>SMA21</th>
                                 <th style={{ padding: '2px 10px', textAlign: 'right' }}>SMA50</th>
                                 <th style={{ padding: '2px 10px', textAlign: 'right' }}>SMA200</th>

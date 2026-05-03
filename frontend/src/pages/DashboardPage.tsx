@@ -93,9 +93,9 @@ export const DashboardPage: React.FC = () => {
                 }}>
                     <div style={{ flex: '1', minWidth: '80px' }}>Indicator</div>
                     <div style={{ width: '60px', textAlign: 'right', paddingRight: '10px' }}>Close</div>
-                    <div style={{ width: '56px', textAlign: 'center' }}>% 1D</div>
-                    <div style={{ width: '56px', textAlign: 'center', marginLeft: '5px' }}>% 1W</div>
-                    <div style={{ width: '56px', textAlign: 'center', marginLeft: '5px' }}>% 1M</div>
+                    <div style={{ width: '56px', textAlign: 'center' }}>1D%</div>
+                    <div style={{ width: '56px', textAlign: 'center', marginLeft: '5px' }}>1W%</div>
+                    <div style={{ width: '56px', textAlign: 'center', marginLeft: '5px' }}>1M%</div>
                     <div style={{ width: '60px', textAlign: 'right', paddingRight: '10px' }}>21EMA乖離</div>
                     <div style={{ width: '80px', textAlign: 'center' }}>1M Trend</div>
                 </div>

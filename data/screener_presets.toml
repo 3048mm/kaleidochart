@@ -11,8 +11,11 @@
 #   min_<col>_rank     : T4 RelativeRank percent_rank >= value
 #   max_<col>_rank     : T4 RelativeRank percent_rank <= value
 #
-# 【計算列 (Virtual Columns)】
-#   1d_gain_pct        : (close - open) / open * 100
+# 【計算列 (Virtual Columns / Indicators)】
+#   change_1d_pct      : (close - prev_close) / prev_close * 100
+#   change_1w_pct      : (close - close_5d_ago) / close_5d_ago * 100
+#   change_1m_pct      : (close - close_20d_ago) / close_20d_ago * 100
+#   1d_gain_pct        : (close - open) / open * 100 (Intraday)
 #   dist_21ema_pct     : (close - ema_21) / ema_21 * 100
 #   dist_sma50_pct     : (close - sma_50) / sma_50 * 100
 #
@@ -33,7 +36,7 @@ name = "Thema Momentum"
 group = "Check"
 special = "theme_rs21_gt_63"
 [rise.filters]
-min_1d_gain_pct = 1.0
+min_change_1d_pct = 1.0
 min_vol_surge_21 = 2.9
 min_adr_pct_21 = 5.0
 max_dist_sma50_atr = 5.0
@@ -45,7 +48,7 @@ id = "check_1d_gain"
 name = "1D% Gain"
 group = "Check"
 [rise.filters]
-min_1d_gain_pct = 4.0
+min_change_1d_pct = 4.0
 min_rel_vol_vs_spy_21 = 1.0
 max_dist_sma50_atr = 6.0
 min_adr_pct_21 = 4.0
@@ -58,7 +61,7 @@ group = "Check"
 [rise.filters]
 min_vol_surge_21 = 1.5
 min_rel_vol_vs_spy_21 = 1.2
-min_1d_gain_pct = 0.0
+min_change_1d_pct = 0.0
 min_adr_pct_21 = 4.0
 min_market_cap = 1e9
 max_dist_sma50_atr = 6.0
@@ -141,7 +144,7 @@ name = "RRG Lagging In"
 group = "Warning"
 special = "rrg_lagging_in"
 [fall.filters]
-max_1d_gain_pct = -2.0
+max_change_1d_pct = -2.0
 min_vol_surge_21 = 1.0
 
 [[fall]]
@@ -156,7 +159,7 @@ name = "High Volume Distribution"
 group = "Warning"
 [fall.filters]
 min_vol_surge_21 = 1.5
-max_1d_gain_pct = -2.0
+max_change_1d_pct = -2.0
 
 # ───────────────────────────────────────────────────
 # Fall (警戒・売り目線) - Rebound sign
