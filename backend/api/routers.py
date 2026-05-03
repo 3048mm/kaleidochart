@@ -62,7 +62,7 @@ _INDICATOR_COLUMN_TYPES["market_cap"] = "float"
 
 # --- Virtual (computed) columns ---
 _VIRTUAL_COLUMNS = {
-    "1d_gain_pct": lambda: (DailyPrice.close - DailyPrice.open) / DailyPrice.open * 100,
+    "change_intraday_pct": lambda: (DailyPrice.close - DailyPrice.open) / DailyPrice.open * 100,
     "dist_21ema_pct": lambda: (DailyPrice.close - Indicator.ema_21) / Indicator.ema_21 * 100,
     "dist_sma50_pct": lambda: (DailyPrice.close - Indicator.sma_50) / Indicator.sma_50 * 100,
 }
@@ -72,7 +72,7 @@ _COLUMN_CATEGORIES = {
     "Price & Trend": ["sma_5", "sma_21", "sma_50", "sma_63", "sma_150", "sma_200",
                       "ema_5", "ema_21", "ema_50", "ema_63", "ema_150", "ema_200",
                       "trend_template_ok", "change_1d_pct", "change_1w_pct", "change_1m_pct",
-                      "1d_gain_pct", "dist_21ema_pct", "dist_sma50_pct",
+                      "change_intraday_pct", "dist_21ema_pct", "dist_sma50_pct",
                       "pct_from_63d_high", "pct_from_52w_high"],
     "Volume & Volatility": ["atr_14", "atr_pct_14", "adr_pct_21", "dist_sma50_atr",
                             "td9", "vol_surge_21", "rel_vol_vs_spy_21", "up_down_vol_ratio_50", "vcr"],

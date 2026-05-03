@@ -74,8 +74,7 @@ def scan_signals_for_date(
     # Reset index after initial filtering to avoid alignment issues
     merged = merged.reset_index(drop=True)
 
-    # Calculate 1D gain % from open
-    merged['gain_1d_pct'] = np.where(
+    merged['change_intraday_pct'] = np.where(
         merged['open'] > 0,
         (merged['close'] - merged['open']) / merged['open'] * 100,
         0.0
@@ -129,8 +128,8 @@ def scan_signals_for_date(
             merged = merged.merge(ind_prev, on='symbol_id', how='left').reset_index(drop=True)
 
     # --- Derived columns for filtering ---
-    if 'gain_1d_pct' not in merged.columns and 'close' in merged.columns and 'open' in merged.columns:
-        merged['gain_1d_pct'] = (merged['close'] - merged['open']) / merged['open'] * 100.0
+    if 'change_intraday_pct' not in merged.columns and 'close' in merged.columns and 'open' in merged.columns:
+        merged['change_intraday_pct'] = (merged['close'] - merged['open']) / merged['open'] * 100.0
     
     if 'dist_21ema_pct' not in merged.columns and 'close' in merged.columns and 'ema_21' in merged.columns:
         merged['dist_21ema_pct'] = (merged['close'] - merged['ema_21']) / merged['ema_21'] * 100.0
@@ -140,7 +139,7 @@ def scan_signals_for_date(
 
     # Alias map for handling legacy TOML names vs actual DataFrame column names
     alias_map = {
-        '1d_gain_pct': 'gain_1d_pct',
+        'change_intraday_pct': 'change_intraday_pct',
         'rs_ratio_21_rank': 'rs21_rank',
         'rs_ratio_63_rank': 'rs63_rank',
         'trend_template_ok': 'trend_template_ok'

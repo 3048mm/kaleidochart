@@ -57,7 +57,7 @@ yfinance等から取得した生の日足データ、または合成された仮
 | `id` | INTEGER | 主キー。 |
 | `symbol_id` | INTEGER | `symbols.id` への外部キー。 |
 | `date` | DATE | 取引日。 |
-| `open` | FLOAT | 始値。当日騰落率（`gain_1d_pct`）の計算に使用。 |
+| `open` | FLOAT | 始値。当日中の騰落率（`change_intraday_pct`）の計算に使用。 |
 | `high` | FLOAT | 高値。タイムストップやチャネルブレイク、ATRの計算に使用。 |
 | `low` | FLOAT | 安値。損切り判定やATRの計算に使用。 |
 | `close` | FLOAT | 終値。すべてのテクニカル指標計算のベース。 |
@@ -457,7 +457,7 @@ min_market_cap       = { type = "categorical", choices = [1e8, 3e8, 5e8, 1e9] }
 trend_template_ok    = { type = "categorical", choices = [1] }
 
 [optimization.B]
-min_1d_gain_pct      = { type = "float", min = 1.0, max = 5.0, step = 0.5 }
+min_change_1d_pct   = { type = "float", min = 1.0, max = 5.0, step = 0.5 }
 min_vol_surge_21     = { type = "float", min = 0.5, max = 2.0, step = 0.1 }
 min_adr_pct_21       = { type = "float", min = 2.0, max = 6.0, step = 0.5 }
 max_dist_sma50_atr   = { type = "float", min = 3.0, max = 8.0, step = 0.5 }

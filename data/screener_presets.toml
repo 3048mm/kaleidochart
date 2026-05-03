@@ -15,7 +15,7 @@
 #   change_1d_pct      : (close - prev_close) / prev_close * 100
 #   change_1w_pct      : (close - close_5d_ago) / close_5d_ago * 100
 #   change_1m_pct      : (close - close_20d_ago) / close_20d_ago * 100
-#   1d_gain_pct        : (close - open) / open * 100 (Intraday)
+#   change_intraday_pct : (close - open) / open * 100 (Intraday)
 #   dist_21ema_pct     : (close - ema_21) / ema_21 * 100
 #   dist_sma50_pct     : (close - sma_50) / sma_50 * 100
 #

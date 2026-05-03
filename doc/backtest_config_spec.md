@@ -24,8 +24,9 @@
 ### 1.1 価格・トレンド関連
 | 変数名 | DB 参照元 (Table.Column) | 計算論理・説明 |
 | :--- | :--- | :--- |
-| `min_1d_gain_pct` | `daily_prices.open`<br>`daily_prices.close` | **1日騰落率（下限）**: `(close - open) / open * 100`。始値に対する終値の上昇率(%)。 |
-| `max_1d_gain_pct` | 同上 | **1日騰落率（上限）**。急騰しすぎた銘柄を除外する場合などに使用。 |
+| `min_change_1d_pct` | `indicators.change_1d_pct` | **1日騰落率（下限）**: 前日終値に対する当日終値の上昇率(%)。 |
+| `max_change_1d_pct` | 同上 | **1日騰落率（上限）**。急騰しすぎた銘柄を除外する場合などに使用。 |
+| `min_change_intraday_pct` | `daily_prices.open/close` | **当日中騰落率（下限）**: 当日始値に対する終値の上昇率(%)。旧 `1d_gain_pct`。 |
 | `min_dist_21ema_pct` | `indicators.ema_21`<br>`daily_prices.close` | **EMA21乖離率（下限）**: `(close - ema_21) / ema_21 * 100`。 |
 | `max_dist_21ema_pct` | 同上 | **EMA21乖離率（上限）**。 |
 | `close_gt_sma50` | `indicators.sma_50`<br>`daily_prices.close` | **SMA50上抜け**: `close > sma_50` の場合に真。 |
