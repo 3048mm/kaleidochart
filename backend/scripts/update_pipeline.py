@@ -3,6 +3,7 @@ import sys
 import tomllib
 import argparse
 import traceback
+import msvcrt
 
 # Add backend directory to sys.path
 backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -49,24 +50,50 @@ def load_config():
     with open(config_path, "rb") as f:
         return tomllib.load(f)
 
+LOCK_FILE = os.path.join(project_root, "update_pipeline.lock")
+lock_fd = None
+
+def acquire_lock():
+    global lock_fd
+    try:
+        lock_fd = os.open(LOCK_FILE, os.O_CREAT | os.O_RDWR)
+        msvcrt.locking(lock_fd, msvcrt.LK_NBLCK, 1)
+        return True
+    except (IOError, OSError):
+        return False
+
+def release_lock():
+    global lock_fd
+    if lock_fd:
+        try:
+            msvcrt.locking(lock_fd, msvcrt.LK_UNLCK, 1)
+            os.close(lock_fd)
+        except:
+            pass
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run the Step 3 Data Pipeline.")
-    parser.add_argument("--rebuild-from", type=str, help="Rebuild from a specific table (T2, T3, T4, T5).")
-    parser.add_argument("--re-calculate", action="store_true", help="Redownload all data and recalculate all indicators.")
-    parser.add_argument("--category", type=str, help="Comma-separated categories to process.")
-    parser.add_argument("--skip-fetch", action="store_true", help="Skip yfinance price fetching.")
-    parser.add_argument("--skip-sync", action="store_true", help="Skip Google Spreadsheet sync.")
-    parser.add_argument("--skip-t3", action="store_true", help="Skip T3 indicator calculation.")
-    args = parser.parse_args()
-    selected_categories = [c.strip() for c in args.category.split(",")] if args.category else None
-
-    # Load configuration
-    config = load_config()
-    db_path = get_active_db_path() or config["system"]["db_path"]
-
-    from pipeline.orchestrator import run_pipeline
+    # Check for concurrent execution
+    if not acquire_lock():
+        print("Another instance of the update script is already running. Exiting.")
+        sys.exit(0)
 
     try:
+        parser = argparse.ArgumentParser(description="Run the Step 3 Data Pipeline.")
+        parser.add_argument("--rebuild-from", type=str, help="Rebuild from a specific table (T2, T3, T4, T5).")
+        parser.add_argument("--re-calculate", action="store_true", help="Redownload all data and recalculate all indicators.")
+        parser.add_argument("--category", type=str, help="Comma-separated categories to process.")
+        parser.add_argument("--skip-fetch", action="store_true", help="Skip yfinance price fetching.")
+        parser.add_argument("--skip-sync", action="store_true", help="Skip Google Spreadsheet sync.")
+        parser.add_argument("--skip-t3", action="store_true", help="Skip T3 indicator calculation.")
+        args = parser.parse_args()
+        selected_categories = [c.strip() for c in args.category.split(",")] if args.category else None
+
+        # Load configuration
+        config = load_config()
+        db_path = get_active_db_path() or config["system"]["db_path"]
+
+        from pipeline.orchestrator import run_pipeline
+
         run_pipeline(
             config=config,
             db_path=db_path,
@@ -80,4 +107,7 @@ if __name__ == "__main__":
         )
     except Exception as e:
         logger.error(f"Failed to execute pipeline: {e}")
-        logger.error(traceback.format_exc()); raise e
+        logger.error(traceback.format_exc())
+        sys.exit(1)
+    finally:
+        release_lock()

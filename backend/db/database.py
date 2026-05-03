@@ -27,6 +27,7 @@ def init_db(db_path: str):
         print(f"!!! Target DB: {db_path} ")
         print("!" * 60 + "\n")
     
+    db_path = os.path.abspath(db_path)
     _active_db_path = db_path
     
     # Ensure directory exists
@@ -38,45 +39,44 @@ def init_db(db_path: str):
     database_url = f"sqlite:///{db_path}"
     
     # Creates engine. connect_args check_same_thread is for SQLite
+    # journal_mode defaults to DELETE unless WAL is explicitly enabled (which we won't do)
     engine = create_engine(database_url, connect_args={"check_same_thread": False, "timeout": 3600})
-    
-    # Enable WAL mode for SQLite
-    from sqlalchemy import event
-    @event.listens_for(engine, "connect")
-    def set_sqlite_pragma(dbapi_connection, connection_record):
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.close()
     
     # Create session factory
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     
     # Create all tables according to the models
-    # Wrapped in try/except to handle race conditions when parallel workers
-    # all call init_db() simultaneously (SQLite table-already-exists errors).
     try:
         Base.metadata.create_all(bind=engine)
     except Exception as e:
-        if "already exists" in str(e):
-            pass  # Safe to ignore: table was created by another worker
-        else:
-            raise
+        print(f"Database initialization error: {e}")
 
 @contextmanager
-def get_db():
+def get_db_session():
     """
-    Dependency generator for DB sessions, to be used with context managers wrapper.
-    Ensures safe commit/rollback and closing of sessions.
+    Context manager to handle database sessions.
+    Usage:
+        with get_db_session() as db:
+            # your database operations
     """
+    global SessionLocal
     if SessionLocal is None:
-        raise RuntimeError("Database not initialized. Call init_db() first.")
-        
+        raise Exception("Database not initialized. Call init_db() first.")
+    
     db = SessionLocal()
     try:
         yield db
-        db.commit()
     except Exception as e:
         db.rollback()
         raise e
     finally:
         db.close()
+
+@contextmanager
+def get_db():
+    """
+    Provides a database session as a context manager.
+    Can be used with 'with get_db() as db:'
+    """
+    with get_db_session() as db:
+        yield db
