@@ -26,6 +26,7 @@
   - [ ] **T6 (fundamental_data) テーブルの新設検討**: 現在 `market_cap` は T2 に保存されているが、将来的に財務指標（PER, PBR等）が増える場合は、独立した T6 テーブル（fundamental_data）を新設し、T1 (メタ) や T2 (株価) と分離したパイプラインで管理することを検討する。
   - [ ] **大量データバックフィルの高速化**: RRGロジックの刷新（EMA導入）を全銘柄・全期間に適用するためのフル・リフレッシュパイプラインの実行。
   - [ ] **大量データバックフィルのアーキテクチャ見直し**: 1日ずつのループではなく SQL の集合演算や Window Function を用いて高速化する検討（デイリー最適化との両立）。
+  - [ ] **SQLite 変数上限（999個）回避のための保存バッチ化**: `indicators` テーブルなどのカラム数が多いテーブルの保存時に `sqlite3.OperationalError: too many SQL variables` が発生する可能性がある。`bulk_save_objects` をバッチ分割（例: 20件ずつ）する実装を検討。※最新のDB環境で実際に再現するか再確認が必要。
 - [ ] **ポートフォリオ機能（将来フェーズ）**
   - [ ] **moomoo 証券 API 連携**: `portfolios.source = 'moomoo_api'` のポートフォリオで保有銘柄を OpenD (Python SDK / WebSocket) 経由で自動同期。API Doc: https://openapi.moomoo.com/moomoo-api-doc/
   - [ ] **チャート画面へのポジション情報統合**: 個別チャート画面 (`ChartPage`) に購入価格（青）、損切ライン（赤）、利確ライン（緑）の水平ラインを描画し、テクニカル分析と保有管理を一体化。
