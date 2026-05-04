@@ -1,7 +1,6 @@
 import React, { useEffect, useRef } from 'react';
-import { createChart, IChartApi, ISeriesApi, CrosshairMode } from 'lightweight-charts';
+import { createChart, IChartApi, CrosshairMode } from 'lightweight-charts';
 import { ChartDataPoint } from '../types';
-import { appConfig } from '../config';
 
 interface RsLineChartProps {
     data: ChartDataPoint[];
@@ -51,6 +50,11 @@ export const RsLineChart: React.FC<RsLineChartProps> = ({ data }) => {
             color: '#ffffff',
             lineWidth: 2,
             title: 'RS vs SPY',
+            priceFormat: {
+                type: 'price',
+                precision: 4,
+                minMove: 0.0001,
+            },
         });
 
         const rsData = filteredData.map(d => ({
@@ -59,36 +63,49 @@ export const RsLineChart: React.FC<RsLineChartProps> = ({ data }) => {
         }));
         rsSeries.setData(rsData);
 
-        // EMA 14
+        // EMA lines
         const ema14Series = chart.addLineSeries({
             color: '#2962FF',
             lineWidth: 1,
+            lineStyle: 2,
             title: 'EMA 14',
-            visible: true,
+            priceFormat: {
+                type: 'price',
+                precision: 4,
+                minMove: 0.0001,
+            },
         });
         ema14Series.setData(data.filter(d => d.rs_ema_14 != null).map(d => ({
             time: d.time as any,
             value: d.rs_ema_14 as number,
         })));
 
-        // EMA 21
         const ema21Series = chart.addLineSeries({
-            color: '#FF6D00',
+            color: '#FF9800',
             lineWidth: 1,
+            lineStyle: 2,
             title: 'EMA 21',
-            visible: true,
+            priceFormat: {
+                type: 'price',
+                precision: 4,
+                minMove: 0.0001,
+            },
         });
         ema21Series.setData(data.filter(d => d.rs_ema_21 != null).map(d => ({
             time: d.time as any,
             value: d.rs_ema_21 as number,
         })));
 
-        // EMA 63
         const ema63Series = chart.addLineSeries({
-            color: '#9c27b0',
+            color: '#E040FB',
             lineWidth: 1,
+            lineStyle: 2,
             title: 'EMA 63',
-            visible: true,
+            priceFormat: {
+                type: 'price',
+                precision: 4,
+                minMove: 0.0001,
+            },
         });
         ema63Series.setData(data.filter(d => d.rs_ema_63 != null).map(d => ({
             time: d.time as any,

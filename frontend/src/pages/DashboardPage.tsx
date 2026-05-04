@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { DashboardResponse, DashboardPanelItem, LeadingIndicatorItem } from '../types';
+import { DashboardResponse, LeadingIndicatorItem } from '../types';
 import { Sparkline } from '../components/Sparkline';
 import { MarketPhaseMeter } from '../components/MarketPhaseMeter';
-import { MiniChart } from '../components/MiniChart';
 import { TrendScoreChart } from '../components/TrendScoreChart';
 import { RrgChart, RrgSeries } from '../components/RrgChart';
 import { appConfig, getIntensityColor } from '../config';

@@ -172,6 +172,15 @@ export interface EtfFeatureItem {
     dist_sma21_pct: number;
     dist_sma63_pct: number;
     sma21_sma63_pct: number;
+    rs_ratio_14?: number | null;
+    rs_ratio_21?: number | null;
+    rs_ratio_63?: number | null;
+    rs14_sparkline?: number[];
+    rs21_sparkline?: number[];
+    rs63_sparkline?: number[];
+    rank_rs_ratio_14?: number | null;
+    rank_rs_ratio_21?: number | null;
+    rank_rs_ratio_63?: number | null;
     chart_data: ChartDataPoint[];
     group_type?: 'sector' | 'theme';
 }
@@ -246,6 +255,16 @@ export interface ThemeDetailResponse {
     rs14_sparkline: number[];
     rs21_sparkline: number[];
     rs63_sparkline: number[];
+    // Ranks for the theme ETF itself
+    rank_rs_ratio_14?: number | null;
+    rank_rs_ratio_21?: number | null;
+    rank_rs_ratio_63?: number | null;
+    rank_rs_momentum_14?: number | null;
+    rank_rs_momentum_21?: number | null;
+    rank_rs_momentum_63?: number | null;
+    rank_rs_condition_14?: number | null;
+    rank_rs_condition_21?: number | null;
+    rank_rs_condition_63?: number | null;
     chart_data: ChartDataPoint[];
     constituents: ThemeConstituentItem[];
 }

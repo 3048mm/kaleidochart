@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from 'react'
 import { Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom'
-import { Symbol } from './types'
+import { Symbol, SystemInfo } from './types'
 import { DashboardPage } from './pages/DashboardPage'
 import { ChartPage } from './pages/ChartPage'
 import { ScreenerPage } from './pages/ScreenerPage'

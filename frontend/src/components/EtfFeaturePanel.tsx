@@ -2,6 +2,7 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { EtfFeatureItem } from '../types';
 import { MiniChart } from './MiniChart';
+import { Sparkline } from './Sparkline';
 import { appConfig } from '../config';
 
 interface EtfFeaturePanelProps {
@@ -45,7 +46,7 @@ export const EtfFeaturePanel: React.FC<EtfFeaturePanelProps> = ({
                     ))}
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: '15px' }}>
                     {[
                         { label: 'dist SMA5', val: feature.dist_sma5_pct },
                         { label: 'dist SMA21', val: feature.dist_sma21_pct },
@@ -56,6 +57,36 @@ export const EtfFeaturePanel: React.FC<EtfFeaturePanelProps> = ({
                             <div style={{ fontSize: '10px', color: '#aaa', marginBottom: '4px' }}>{metric.label}</div>
                             <div style={{ fontSize: '14px', fontWeight: 'bold', color: (metric.val || 0) > 0 ? appConfig.colors.good : (metric.val || 0) < 0 ? appConfig.colors.bad : '#fff' }}>
                                 {(metric.val || 0) > 0 ? '+' : ''}{(metric.val || 0).toFixed(2)}%
+                            </div>
+                        </div>
+                    ))}
+                </div>
+
+                {/* RS Ranks & Sparklines */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
+                    {[
+                        { label: 'RS Ratio 14', spark: feature.rs14_sparkline, rank: feature.rank_rs_ratio_14 },
+                        { label: 'RS Ratio 21', spark: feature.rs21_sparkline, rank: feature.rank_rs_ratio_21 },
+                        { label: 'RS Ratio 63', spark: feature.rs63_sparkline, rank: feature.rank_rs_ratio_63 },
+                    ].map(s => (
+                        <div key={s.label} style={{ background: 'rgba(255,255,255,0.03)', padding: '10px', borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <div style={{ fontSize: '10px', color: '#aaa' }}>{s.label}</div>
+                            {s.spark && (
+                                <div style={{ height: '24px' }}>
+                                    <Sparkline 
+                                        data={s.spark} 
+                                        width={100} 
+                                        height={24} 
+                                        color={s.spark[s.spark.length - 1] > (s.spark[0] || 0) ? appConfig.colors.good : appConfig.colors.bad}
+                                        fixedRange={false}
+                                    />
+                                </div>
+                            )}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '2px' }}>
+                                <span style={{ fontSize: '9px', color: '#666' }}>Rank</span>
+                                <span style={{ fontSize: '12px', fontWeight: 'bold', color: (s.rank || 0) > 0.8 ? appConfig.colors.good : (s.rank || 0) < 0.2 ? appConfig.colors.bad : '#fff' }}>
+                                    {s.rank != null ? `${(s.rank * 100).toFixed(0)}%` : '-'}
+                                </span>
                             </div>
                         </div>
                     ))}

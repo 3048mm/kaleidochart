@@ -24,17 +24,6 @@ interface MetaResponse {
     virtual_columns: ColumnMeta[];
 }
 
-// --- Types for Presets API ---
-interface PresetItem {
-    id: string;
-    name: string;
-    subtitle?: string;
-    group: string;
-    filters: Record<string, number | string>;
-    expression?: string;
-    special?: string;
-}
-
 // Hard-wired boolean filters that cannot be expressed as simple min/max
 const BOOLEAN_FILTERS = [
     { id: 'rs_rank_21_gt_63', label: 'RS21rank > RS63rank', param: 'rs_rank_21_gt_63' },
@@ -53,7 +42,6 @@ const DynFilterRow: React.FC<{
     const minKey = `min_${col.name}`;
     const maxKey = `max_${col.name}`;
     // Check for rank variant
-    const isRankable = col.name.startsWith('rs_') || col.name === 'relative_strength_spy';
     const minRankKey = `min_${col.name}_rank`;
     const maxRankKey = `max_${col.name}_rank`;
 
