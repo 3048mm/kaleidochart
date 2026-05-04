@@ -322,17 +322,19 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db)):
         RelativeRank.symbol_id == symbol_id,
         RelativeRank.date >= start_date,
         RelativeRank.date <= end_date,
-        RelativeRank.group_name == '個別',
         RelativeRank.indicator_name.in_(rank_indicators)
     ).all()
     
-    # Organize ranks by date and indicator
+    # Organize ranks by date and indicator. 
+    # If multiple groups exist for a symbol, prioritize '個別' or just take the latest found.
     rank_map_nested = {}
     for r in ranks:
         ds = r.date.strftime('%Y-%m-%d')
         if ds not in rank_map_nested:
             rank_map_nested[ds] = {}
-        rank_map_nested[ds][r.indicator_name] = r.percent_rank
+        # Prioritize '個別' group ranks if multiple groups exist for the same symbol
+        if r.group_name == '個別' or r.indicator_name not in rank_map_nested[ds]:
+            rank_map_nested[ds][r.indicator_name] = r.percent_rank
 
     # Themes
     theme_meta = []
@@ -349,7 +351,8 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db)):
 
     # Optimized mapping to dict (bypasses Pydantic validation for speed)
     chart_data = []
-    for p, d_str in zip(prices, date_strs):
+    for p in prices:
+        d_str = str(p.date)
         ind = ind_map.get(d_str)
         point = {
             "time": d_str, "open": p.open, "high": p.high, "low": p.low, "close": p.close, "volume": p.volume,
@@ -836,28 +839,37 @@ def get_theme_detail(
         ).order_by(desc(Indicator.date)).limit(30).all()
         vals = [getattr(r, col_name) for r in reversed(rows) if getattr(r, col_name) is not None]
         return vals
-
     rs14_spark = get_rs_sparkline(symbol_id, 14)
     rs21_spark = get_rs_sparkline(symbol_id, 21)
     rs63_spark = get_rs_sparkline(symbol_id, 63)
 
     # 6-Month chart data (approx 126 trading days)
     six_m_hist = list(reversed(history[:126]))
+    start_date = six_m_hist[0].date
+    end_date = six_m_hist[-1].date
+    
     theme_inds = db.query(Indicator).filter(
         Indicator.symbol_id == symbol_id,
-        Indicator.date.in_([h.date for h in six_m_hist])
+        Indicator.date >= start_date,
+        Indicator.date <= end_date
     ).all()
-    theme_ind_dict = {str(r.date): r for r in theme_inds}
+    theme_ind_dict = {i.date.strftime('%Y-%m-%d'): i for i in theme_inds}
+    
     chart_data = []
     for h in six_m_hist:
-        i = theme_ind_dict.get(str(h.date))
+        ds = h.date.strftime('%Y-%m-%d')
+        i = theme_ind_dict.get(ds)
         chart_data.append(schemas.ChartDataPoint(
-            time=str(h.date),
+            time=ds,
             open=h.open or 0.0,
             high=h.high or 0.0,
             low=h.low or 0.0,
             close=h.close,
             volume=h.volume or 0,
+            relative_strength_spy=i.relative_strength_spy if i else None,
+            rs_ema_14=i.rs_ema_14 if i else None,
+            rs_ema_21=i.rs_ema_21 if i else None,
+            rs_ema_63=i.rs_ema_63 if i else None,
             rs_ratio_14=i.rs_ratio_14 if i else None,
             rs_ratio_21=i.rs_ratio_21 if i else None,
             rs_ratio_63=i.rs_ratio_63 if i else None,
@@ -923,10 +935,16 @@ def get_theme_detail(
         c_ind_dict = {str(r.date): r for r in c_inds}
         c_chart_data = []
         for h in reversed(c_full_hist):
-            i = c_ind_dict.get(str(h.date))
+            ds = str(h.date)
+            i = c_ind_dict.get(ds)
             c_chart_data.append(schemas.ChartDataPoint(
-                time=str(h.date), open=h.open or 0.0, high=h.high or 0.0, low=h.low or 0.0, close=h.close,
-                volume=h.volume or 0, rs_ratio_14=i.rs_ratio_14 if i else None, rs_ratio_21=i.rs_ratio_21 if i else None,
+                time=ds, open=h.open or 0.0, high=h.high or 0.0, low=h.low or 0.0, close=h.close,
+                volume=h.volume or 0, 
+                relative_strength_spy=i.relative_strength_spy if i else None,
+                rs_ema_14=i.rs_ema_14 if i else None,
+                rs_ema_21=i.rs_ema_21 if i else None,
+                rs_ema_63=i.rs_ema_63 if i else None,
+                rs_ratio_14=i.rs_ratio_14 if i else None, rs_ratio_21=i.rs_ratio_21 if i else None,
                 rs_ratio_63=i.rs_ratio_63 if i else None, rs_momentum_14=i.rs_momentum_14 if i else None,
                 rs_momentum_21=i.rs_momentum_21 if i else None, rs_momentum_63=i.rs_momentum_63 if i else None,
             ))
