@@ -516,7 +516,8 @@ def _get_sparkline_data(db: Session, sym_id: int, target_date: str):
         return [0.5] * 5
     return vals
 
-def _build_panel_item(db: Session, sym: Symbol, dp: DailyPrice, rank_val_21: float, rank_val_63: float, target_date: str):
+def _build_panel_item(db: Session, sym: Symbol, dp: DailyPrice, rank_val_21: float, rank_val_63: float, target_date: str, 
+                     rank_val_14: float = 0.0, rank_val_mom: float = 0.0, rank_val_mom63: float = 0.0):
     sparkline = _get_sparkline_data(db, sym.id, target_date)
     
     history = db.query(DailyPrice.close).filter(
@@ -569,6 +570,9 @@ def _build_panel_item(db: Session, sym: Symbol, dp: DailyPrice, rank_val_21: flo
         intensity_score=float(rank_val_21 or 0.0),
         rs_ratio_21_rank=float(rank_val_21 or 0.0),
         rs_ratio_63_rank=float(rank_val_63 or 0.0),
+        rs_ratio_14_rank=float(rank_val_14 or 0.0),
+        rs_momentum_21_rank=float(rank_val_mom or 0.0),
+        rs_momentum_63_rank=float(rank_val_mom63 or 0.0),
         rs_ratio_21=ind.rs_ratio_21 if ind else None,
         rs_ratio_63=ind.rs_ratio_63 if ind else None,
         rs_momentum_21=ind.rs_momentum_21 if ind else None
@@ -657,13 +661,65 @@ def _build_etf_feature(db: Session, sym: Symbol, dp: DailyPrice, target_date: st
         if ind.sma_21 and ind.sma_63 and ind.sma_63 > 0:
             sma21_sma63_pct = ((ind.sma_21 - ind.sma_63) / ind.sma_63) * 100
             
+    # RS Sparklines (last 30 trading days)
+    def get_rs_sparkline(sym_id, period, t_date):
+        col_name = f'rs_ratio_{period}'
+        rows = db.query(Indicator).filter(
+            Indicator.symbol_id == sym_id,
+            Indicator.date <= t_date
+        ).order_by(desc(Indicator.date)).limit(30).all()
+        return [getattr(r, col_name) for r in reversed(rows) if getattr(r, col_name) is not None]
+
+    rs14_spark = get_rs_sparkline(sym.id, 14, target_date)
+    rs21_spark = get_rs_sparkline(sym.id, 21, target_date)
+    rs63_spark = get_rs_sparkline(sym.id, 63, target_date)
+
+    # Latest Ranks
+    def get_rank(sym_id, ind_name, t_date):
+        r = db.query(RelativeRank).filter(
+            RelativeRank.symbol_id == sym_id,
+            RelativeRank.date == t_date,
+            RelativeRank.indicator_name == ind_name
+        ).first()
+        return r.percent_rank if r else None
+
     # Mini chart (6 months = 126 days)
-    six_m_hist = history[:126]
-    chart_data = [
-        schemas.ChartDataPoint(
-            time=str(h.date), open=h.open, high=h.high, low=h.low, close=h.close, volume=h.volume
-        ) for h in reversed(six_m_hist)
-    ]
+    six_m_hist = list(reversed(history[:126]))
+    start_date = six_m_hist[0].date
+    end_date = six_m_hist[-1].date
+    
+    theme_inds = db.query(Indicator).filter(
+        Indicator.symbol_id == sym.id,
+        Indicator.date >= start_date,
+        Indicator.date <= end_date
+    ).all()
+    theme_ind_dict = {i.date.strftime('%Y-%m-%d'): i for i in theme_inds}
+    
+    chart_data = []
+    for h in six_m_hist:
+        ds = h.date.strftime('%Y-%m-%d')
+        i = theme_ind_dict.get(ds)
+        chart_data.append(schemas.ChartDataPoint(
+            time=ds,
+            open=h.open or 0.0,
+            high=h.high or 0.0,
+            low=h.low or 0.0,
+            close=h.close,
+            volume=h.volume or 0,
+            relative_strength_spy=i.relative_strength_spy if i else None,
+            rs_ema_14=i.rs_ema_14 if i else None,
+            rs_ema_21=i.rs_ema_21 if i else None,
+            rs_ema_63=i.rs_ema_63 if i else None,
+            rs_ratio_14=i.rs_ratio_14 if i else None,
+            rs_ratio_21=i.rs_ratio_21 if i else None,
+            rs_ratio_63=i.rs_ratio_63 if i else None,
+            rs_momentum_14=i.rs_momentum_14 if i else None,
+            rs_momentum_21=i.rs_momentum_21 if i else None,
+            rs_momentum_63=i.rs_momentum_63 if i else None,
+            rs_condition_14=i.rs_condition_14 if i else None,
+            rs_condition_21=i.rs_condition_21 if i else None,
+            rs_condition_63=i.rs_condition_63 if i else None,
+        ))
     
     return schemas.EtfFeatureItem(
         id=sym.id, ticker=sym.ticker, name=sym.name, close=float(dp.close or 0.0),
@@ -671,6 +727,15 @@ def _build_etf_feature(db: Session, sym: Symbol, dp: DailyPrice, target_date: st
         change_1m_pct=float(change_1m_pct or 0.0), change_1y_pct=float(change_1y_pct or 0.0),
         dist_sma5_pct=float(dist_sma5_pct or 0.0), dist_sma21_pct=float(dist_sma21_pct or 0.0),
         dist_sma63_pct=float(dist_sma63_pct or 0.0), sma21_sma63_pct=float(sma21_sma63_pct or 0.0),
+        rs_ratio_14=ind.rs_ratio_14 if ind else None,
+        rs_ratio_21=ind.rs_ratio_21 if ind else None,
+        rs_ratio_63=ind.rs_ratio_63 if ind else None,
+        rs14_sparkline=rs14_spark,
+        rs21_sparkline=rs21_spark,
+        rs63_sparkline=rs63_spark,
+        rank_rs_ratio_14=get_rank(sym.id, 'rs_ratio_14', target_date),
+        rank_rs_ratio_21=get_rank(sym.id, 'rs_ratio_21', target_date),
+        rank_rs_ratio_63=get_rank(sym.id, 'rs_ratio_63', target_date),
         chart_data=chart_data
     )
 
@@ -915,8 +980,6 @@ def get_theme_detail(
             Indicator.symbol_id == c_id,
             Indicator.date == c_dp.date
         ).first()
-
-        # metrics
         c_rs14 = c_ind.rs_ratio_14 if c_ind else None
         c_rs21 = c_ind.rs_ratio_21 if c_ind else None
         c_rs63 = c_ind.rs_ratio_63 if c_ind else None
@@ -949,11 +1012,30 @@ def get_theme_detail(
                 rs_momentum_21=i.rs_momentum_21 if i else None, rs_momentum_63=i.rs_momentum_63 if i else None,
             ))
 
+        # Fetch ranks for constituent
+        rank_14 = db.query(RelativeRank.percent_rank).filter(RelativeRank.symbol_id == c_id, RelativeRank.date == c_dp.date, RelativeRank.indicator_name == "rs_ratio_14").scalar() or 0.0
+        rank_21 = db.query(RelativeRank.percent_rank).filter(RelativeRank.symbol_id == c_id, RelativeRank.date == c_dp.date, RelativeRank.indicator_name == "rs_ratio_21").scalar() or 0.0
+        rank_63 = db.query(RelativeRank.percent_rank).filter(RelativeRank.symbol_id == c_id, RelativeRank.date == c_dp.date, RelativeRank.indicator_name == "rs_ratio_63").scalar() or 0.0
+        rank_mom21 = db.query(RelativeRank.percent_rank).filter(RelativeRank.symbol_id == c_id, RelativeRank.date == c_dp.date, RelativeRank.indicator_name == "rs_momentum_21").scalar() or 0.0
+        rank_mom63 = db.query(RelativeRank.percent_rank).filter(RelativeRank.symbol_id == c_id, RelativeRank.date == c_dp.date, RelativeRank.indicator_name == "rs_momentum_63").scalar() or 0.0
+
         constituents.append(schemas.ThemeConstituentItem(
-            id=c_sym.id, ticker=c_sym.ticker, name=c_sym.name, close=c_dp.close,
-            change_1d_pct=c_1d, change_1w_pct=c_1w, change_1m_pct=c_1m,
-            rs_ratio_14=c_rs14, rs_ratio_21=c_rs21, rs_ratio_63=c_rs63, rs_momentum_21=c_rsmom21,
-            rs_sparkline=c_rs_spark, chart_data=c_chart_data,
+            id=c_id, ticker=c_sym.ticker, name=c_sym.name,
+            close=c_dp.close,
+            change_1d_pct=c_1d,
+            change_1w_pct=c_1w,
+            change_1m_pct=c_1m,
+            rs_ratio_14=c_rs14,
+            rs_ratio_21=c_rs21,
+            rs_ratio_63=c_rs63,
+            rs_momentum_21=c_rsmom21,
+            rank_rs_ratio_14=rank_14,
+            rank_rs_ratio_21=rank_21,
+            rank_rs_ratio_63=rank_63,
+            rank_rs_momentum_21=rank_mom21,
+            rank_rs_momentum_63=rank_mom63,
+            rs_sparkline=c_rs_spark,
+            chart_data=c_chart_data
         ))
 
     return schemas.ThemeDetailResponse(
@@ -967,6 +1049,15 @@ def get_theme_detail(
         rs_condition_21=ind.rs_condition_21 if ind else None, rs_condition_63=ind.rs_condition_63 if ind else None,
         adr_pct_21=ind.adr_pct_21 if ind else None, dist_sma50_atr=ind.dist_sma50_atr if ind else None,
         rs14_sparkline=rs14_spark, rs21_sparkline=rs21_spark, rs63_sparkline=rs63_spark,
+        rank_rs_ratio_14=db.query(RelativeRank.percent_rank).filter(RelativeRank.symbol_id==symbol_id, RelativeRank.date==target_date, RelativeRank.indicator_name=='rs_ratio_14').first()[0] if db.query(RelativeRank).filter(RelativeRank.symbol_id==symbol_id, RelativeRank.date==target_date, RelativeRank.indicator_name=='rs_ratio_14').first() else None,
+        rank_rs_ratio_21=db.query(RelativeRank.percent_rank).filter(RelativeRank.symbol_id==symbol_id, RelativeRank.date==target_date, RelativeRank.indicator_name=='rs_ratio_21').first()[0] if db.query(RelativeRank).filter(RelativeRank.symbol_id==symbol_id, RelativeRank.date==target_date, RelativeRank.indicator_name=='rs_ratio_21').first() else None,
+        rank_rs_ratio_63=db.query(RelativeRank.percent_rank).filter(RelativeRank.symbol_id==symbol_id, RelativeRank.date==target_date, RelativeRank.indicator_name=='rs_ratio_63').first()[0] if db.query(RelativeRank).filter(RelativeRank.symbol_id==symbol_id, RelativeRank.date==target_date, RelativeRank.indicator_name=='rs_ratio_63').first() else None,
+        rank_rs_momentum_14=db.query(RelativeRank.percent_rank).filter(RelativeRank.symbol_id==symbol_id, RelativeRank.date==target_date, RelativeRank.indicator_name=='rs_momentum_14').first()[0] if db.query(RelativeRank).filter(RelativeRank.symbol_id==symbol_id, RelativeRank.date==target_date, RelativeRank.indicator_name=='rs_momentum_14').first() else None,
+        rank_rs_momentum_21=db.query(RelativeRank.percent_rank).filter(RelativeRank.symbol_id==symbol_id, RelativeRank.date==target_date, RelativeRank.indicator_name=='rs_momentum_21').first()[0] if db.query(RelativeRank).filter(RelativeRank.symbol_id==symbol_id, RelativeRank.date==target_date, RelativeRank.indicator_name=='rs_momentum_21').first() else None,
+        rank_rs_momentum_63=db.query(RelativeRank.percent_rank).filter(RelativeRank.symbol_id==symbol_id, RelativeRank.date==target_date, RelativeRank.indicator_name=='rs_momentum_63').first()[0] if db.query(RelativeRank).filter(RelativeRank.symbol_id==symbol_id, RelativeRank.date==target_date, RelativeRank.indicator_name=='rs_momentum_63').first() else None,
+        rank_rs_condition_14=db.query(RelativeRank.percent_rank).filter(RelativeRank.symbol_id==symbol_id, RelativeRank.date==target_date, RelativeRank.indicator_name=='rs_condition_14').first()[0] if db.query(RelativeRank).filter(RelativeRank.symbol_id==symbol_id, RelativeRank.date==target_date, RelativeRank.indicator_name=='rs_condition_14').first() else None,
+        rank_rs_condition_21=db.query(RelativeRank.percent_rank).filter(RelativeRank.symbol_id==symbol_id, RelativeRank.date==target_date, RelativeRank.indicator_name=='rs_condition_21').first()[0] if db.query(RelativeRank).filter(RelativeRank.symbol_id==symbol_id, RelativeRank.date==target_date, RelativeRank.indicator_name=='rs_condition_21').first() else None,
+        rank_rs_condition_63=db.query(RelativeRank.percent_rank).filter(RelativeRank.symbol_id==symbol_id, RelativeRank.date==target_date, RelativeRank.indicator_name=='rs_condition_63').first()[0] if db.query(RelativeRank).filter(RelativeRank.symbol_id==symbol_id, RelativeRank.date==target_date, RelativeRank.indicator_name=='rs_condition_63').first() else None,
         chart_data=chart_data, constituents=constituents,
     )
 
@@ -1032,7 +1123,16 @@ def get_group_data(
         
         c_ranks_63 = db.query(RelativeRank).filter(RelativeRank.date == target_date, RelativeRank.indicator_name == "rs_ratio_63", RelativeRank.symbol_id.in_(child_ids)).all()
         c_rank_63_dict = {r.symbol_id: r.percent_rank for r in c_ranks_63}
+
+        c_ranks_14 = db.query(RelativeRank).filter(RelativeRank.date == target_date, RelativeRank.indicator_name == "rs_ratio_14", RelativeRank.symbol_id.in_(child_ids)).all()
+        c_rank_14_dict = {r.symbol_id: r.percent_rank for r in c_ranks_14}
         
+        c_ranks_mom = db.query(RelativeRank).filter(RelativeRank.date == target_date, RelativeRank.indicator_name == "rs_momentum_21", RelativeRank.symbol_id.in_(child_ids)).all()
+        c_rank_mom_dict = {r.symbol_id: r.percent_rank for r in c_ranks_mom}
+        
+        c_ranks_mom63 = db.query(RelativeRank).filter(RelativeRank.date == target_date, RelativeRank.indicator_name == "rs_momentum_63", RelativeRank.symbol_id.in_(child_ids)).all()
+        c_rank_mom63_dict = {r.symbol_id: r.percent_rank for r in c_ranks_mom63}
+
         c_symbols = db.query(Symbol).filter(Symbol.id.in_(child_ids)).all()
         for cs in c_symbols:
             if cs.id in c_price_dict:
@@ -1040,7 +1140,10 @@ def get_group_data(
                     db, cs, c_price_dict[cs.id], 
                     c_rank_21_dict.get(cs.id, 0.0), 
                     c_rank_63_dict.get(cs.id, 0.0), 
-                    target_date
+                    target_date,
+                    rank_val_14=c_rank_14_dict.get(cs.id, 0.0),
+                    rank_val_mom=c_rank_mom_dict.get(cs.id, 0.0),
+                    rank_val_mom63=c_rank_mom63_dict.get(cs.id, 0.0)
                 ))
 
     # Sort constituents by intensity score (default)

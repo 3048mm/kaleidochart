@@ -27,7 +27,7 @@ const PALETTE = [
 ];
 
 export const RrgChart: React.FC<RrgChartProps> = ({ data, ticker, series: propSeries }) => {
-    const [rrgTimeframe, setRrgTimeframe] = useState<14 | 21 | 63>(14);
+    const [rrgTimeframe, setRrgTimeframe] = useState<14 | 21 | 63>(21);
     const [trailLength, setTrailLength] = useState<number>(20);
     const [hoveredPoint, setHoveredPoint] = useState<{ ticker: string; time: string; x: number; y: number; cond?: number; close: number } | null>(null);
 

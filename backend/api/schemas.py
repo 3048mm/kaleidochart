@@ -125,6 +125,9 @@ class DashboardPanelItem(BaseModel):
     intensity_score: float = 0.0 # 0 to 1 scaling factor 
     rs_ratio_21_rank: float = 0.0
     rs_ratio_63_rank: float = 0.0
+    rs_ratio_14_rank: float = 0.0
+    rs_momentum_21_rank: float = 0.0
+    rs_momentum_63_rank: float = 0.0
     rs_ratio_21: Optional[float] = None
     rs_ratio_63: Optional[float] = None
     rs_momentum_21: Optional[float] = None
@@ -182,6 +185,15 @@ class EtfFeatureItem(BaseModel):
     dist_sma21_pct: float
     dist_sma63_pct: float
     sma21_sma63_pct: float
+    rs_ratio_14: Optional[float] = None
+    rs_ratio_21: Optional[float] = None
+    rs_ratio_63: Optional[float] = None
+    rs14_sparkline: List[float] = []
+    rs21_sparkline: List[float] = []
+    rs63_sparkline: List[float] = []
+    rank_rs_ratio_14: Optional[float] = None
+    rank_rs_ratio_21: Optional[float] = None
+    rank_rs_ratio_63: Optional[float] = None
     chart_data: List[ChartDataPoint] = []
 
 class RankingResponse(BaseModel):
@@ -217,6 +229,11 @@ class ThemeConstituentItem(BaseModel):
     rs_ratio_21: Optional[float] = None
     rs_ratio_63: Optional[float] = None
     rs_momentum_21: Optional[float] = None
+    rank_rs_ratio_14: Optional[float] = None
+    rank_rs_ratio_21: Optional[float] = None
+    rank_rs_ratio_63: Optional[float] = None
+    rank_rs_momentum_21: Optional[float] = None
+    rank_rs_momentum_63: Optional[float] = None
     rs_sparkline: List[float] = []  # rs_ratio_21 history for minimap
     chart_data: List[ChartDataPoint] = []  # For RRG usage
 
@@ -252,6 +269,16 @@ class ThemeDetailResponse(BaseModel):
     rs14_sparkline: List[float] = []
     rs21_sparkline: List[float] = []
     rs63_sparkline: List[float] = []
+    # Ranks for the theme ETF itself
+    rank_rs_ratio_14: Optional[float] = None
+    rank_rs_ratio_21: Optional[float] = None
+    rank_rs_ratio_63: Optional[float] = None
+    rank_rs_momentum_14: Optional[float] = None
+    rank_rs_momentum_21: Optional[float] = None
+    rank_rs_momentum_63: Optional[float] = None
+    rank_rs_condition_14: Optional[float] = None
+    rank_rs_condition_21: Optional[float] = None
+    rank_rs_condition_63: Optional[float] = None
     chart_data: List[ChartDataPoint] = []  # 6-month OHLCV for MiniChart
     constituents: List[ThemeConstituentItem] = []
 

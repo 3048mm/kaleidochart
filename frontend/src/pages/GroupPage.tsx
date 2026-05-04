@@ -125,10 +125,10 @@ export const GroupPage: React.FC = () => {
                                 <th style={{ padding: '8px', textAlign: 'center' }}>1D%</th>
                                 <th style={{ padding: '8px', textAlign: 'center' }}>1W%</th>
                                 <th style={{ padding: '8px', textAlign: 'center' }}>1M%</th>
-                                <th style={{ padding: '8px', textAlign: 'center' }}>RS14</th>
-                                <th style={{ padding: '8px', textAlign: 'center' }}>RS21</th>
-                                <th style={{ padding: '8px', textAlign: 'center' }}>RS63</th>
-                                <th style={{ padding: '8px', textAlign: 'center' }}>RS Mom</th>
+                                <th style={{ padding: '8px', textAlign: 'center' }}>RSRatio21</th>
+                                <th style={{ padding: '8px', textAlign: 'center' }}>RSRatio63</th>
+                                <th style={{ padding: '8px', textAlign: 'center' }}>RSMom21</th>
+                                <th style={{ padding: '8px', textAlign: 'center' }}>RSMom63</th>
                                 <th style={{ padding: '8px', textAlign: 'center', width: '80px' }}>Trend</th>
                             </tr>
                         </thead>
@@ -136,6 +136,23 @@ export const GroupPage: React.FC = () => {
                             {(data.constituents || []).map((c: any) => {
                                 const isSelected = selectedTickers.has(c.ticker);
                                 const dotColor = colorMap[c.ticker];
+                                
+                                // Helper to get rank from either ThemeConstituentItem or DashboardPanelItem
+                                const getRank = (type: '21' | '63' | 'mom21' | 'mom63') => {
+                                    if (type === '21') return c.rank_rs_ratio_21 ?? c.rs_ratio_21_rank;
+                                    if (type === '63') return c.rank_rs_ratio_63 ?? c.rs_ratio_63_rank;
+                                    if (type === 'mom21') return c.rank_rs_momentum_21 ?? c.rs_momentum_21_rank;
+                                    if (type === 'mom63') return c.rank_rs_momentum_63 ?? c.rs_momentum_63_rank;
+                                    return 0;
+                                };
+
+                                const ranks = [getRank('21'), getRank('63'), getRank('mom21'), getRank('mom63')];
+                                const formatRank = (r: number | undefined) => r != null ? `${(r * 100).toFixed(0)}%` : '-';
+                                const colorRank = (r: number | undefined) => {
+                                    if (r == null) return '#fff';
+                                    return r > 0.8 ? appConfig.colors.good : r < 0.2 ? appConfig.colors.bad : '#fff';
+                                };
+
                                 return (
                                     <tr key={c.id} style={{ borderBottom: `1px solid ${appConfig.colors.glassBorder}`, background: isSelected ? 'rgba(255,255,255,0.03)' : 'transparent' }}>
                                         <td style={{ padding: '8px', textAlign: 'center' }}>
@@ -154,14 +171,11 @@ export const GroupPage: React.FC = () => {
                                                 {v > 0 ? '+' : ''}{v?.toFixed(2)}%
                                             </td>
                                         ))}
-                                        {[c.rs_ratio_14, c.rs_ratio_21, c.rs_ratio_63].map((v, i) => (
-                                            <td key={i} style={{ padding: '8px', textAlign: 'center', color: v > 100 ? appConfig.colors.good : v < 100 ? appConfig.colors.bad : '#fff' }}>
-                                                {v?.toFixed(2)}
+                                        {ranks.map((r, i) => (
+                                            <td key={i} style={{ padding: '8px', textAlign: 'center', fontWeight: 'bold', color: colorRank(r) }}>
+                                                {formatRank(r)}
                                             </td>
                                         ))}
-                                        <td style={{ padding: '8px', textAlign: 'center', color: (c.rs_momentum_21 || 0) > 0 ? appConfig.colors.good : appConfig.colors.bad }}>
-                                            {(c.rs_momentum_21 || 0).toFixed(2)}
-                                        </td>
                                         <td style={{ padding: '8px' }}>
                                             <Sparkline data={c.rs_sparkline || []} width={80} height={20} color={(c.rs_sparkline?.[c.rs_sparkline.length-1] || 0) > 0 ? appConfig.colors.good : appConfig.colors.bad} />
                                         </td>

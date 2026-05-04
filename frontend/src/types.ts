@@ -109,6 +109,9 @@ export interface DashboardPanelItem {
     intensity_score: number;
     rs_ratio_21_rank: number;
     rs_ratio_63_rank: number;
+    rs_ratio_14_rank?: number;
+    rs_momentum_21_rank?: number;
+    rs_momentum_63_rank?: number;
     rs_ratio_21?: number;
     rs_ratio_63?: number;
     rs_momentum_21?: number;
@@ -222,6 +225,11 @@ export interface ThemeConstituentItem {
     rs_ratio_21?: number | null;
     rs_ratio_63?: number | null;
     rs_momentum_21?: number | null;
+    rank_rs_ratio_14?: number | null;
+    rank_rs_ratio_21?: number | null;
+    rank_rs_ratio_63?: number | null;
+    rank_rs_momentum_21?: number | null;
+    rank_rs_momentum_63?: number | null;
     rs_sparkline: number[];
     chart_data: ChartDataPoint[];
 }

@@ -5,7 +5,6 @@ import { DashboardPage } from './pages/DashboardPage'
 import { ChartPage } from './pages/ChartPage'
 import { ScreenerPage } from './pages/ScreenerPage'
 import { ScreenerResultPage } from './pages/ScreenerResultPage'
-import { ThemePage } from './pages/ThemePage'
 import { WatchlistPage } from './pages/WatchlistPage'
 import { GroupPage } from './pages/GroupPage'
 import { PortfolioListPage } from './pages/PortfolioListPage'
@@ -66,8 +65,12 @@ export default function App() {
 
     // Navigation handler for sidebar items
     const handleSymbolClick = (s: Symbol) => {
-        const symIdentifier = s.exchange ? `${s.exchange}:${s.ticker}` : s.ticker;
-        navigate(`/chart/${symIdentifier}`);
+        if (s.category === 'テーマ' || s.category === 'セクタ') {
+            navigate(`/group/${s.ticker}`);
+        } else {
+            const symIdentifier = s.exchange ? `${s.exchange}:${s.ticker}` : s.ticker;
+            navigate(`/chart/${symIdentifier}`);
+        }
     }
 
     return (
@@ -156,7 +159,6 @@ export default function App() {
                 <Routes>
                     <Route path="/" element={<DashboardPage />} />
                     <Route path="/chart/:ticker" element={<ChartPage symbols={symbols} />} />
-                    <Route path="/theme/:symbolId" element={<ThemePage />} />
                     <Route path="/screener" element={<ScreenerPage />} />
                     <Route path="/screener/result/:presetId" element={<ScreenerResultPage />} />
                     <Route path="/watchlist" element={<WatchlistPage />} />
