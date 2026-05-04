@@ -1061,12 +1061,21 @@ def get_screener_dashboard(
         special = preset_def.get("special")
         if special:
             if special in ("rrg_leading_in", "rrg_lagging_in", "rrg_improving_in") and previous_date_result:
+                intensity_threshold = preset_def.get("rrg_intensity_threshold", 0.0)
+                intensity_sq = intensity_threshold * intensity_threshold
+                
                 IndPrev = aliased(Indicator)
                 q = q.join(IndPrev, (Symbol.id == IndPrev.symbol_id) & (IndPrev.date == previous_date_result))
+                
                 if special == "rrg_leading_in":
                     q = q.filter(
                         Indicator.rs_ratio_21 > 0, Indicator.rs_momentum_21 > 0,
-                        or_(IndPrev.rs_ratio_21 <= 0, IndPrev.rs_momentum_21 <= 0)
+                        Indicator.rs_momentum_21 > IndPrev.rs_momentum_21,
+                        (Indicator.rs_ratio_21 * Indicator.rs_ratio_21 + Indicator.rs_momentum_21 * Indicator.rs_momentum_21) >= intensity_sq,
+                        or_(
+                            or_(IndPrev.rs_ratio_21 <= 0, IndPrev.rs_momentum_21 <= 0),
+                            (IndPrev.rs_ratio_21 * IndPrev.rs_ratio_21 + IndPrev.rs_momentum_21 * IndPrev.rs_momentum_21) < intensity_sq
+                        )
                     )
                 elif special == "rrg_lagging_in":
                     q = q.filter(
@@ -1076,7 +1085,12 @@ def get_screener_dashboard(
                 elif special == "rrg_improving_in":
                     q = q.filter(
                         Indicator.rs_ratio_21 < 0, Indicator.rs_momentum_21 > 0,
-                        IndPrev.rs_ratio_21 < 0, IndPrev.rs_momentum_21 <= 0
+                        Indicator.rs_momentum_21 > IndPrev.rs_momentum_21,
+                        (Indicator.rs_ratio_21 * Indicator.rs_ratio_21 + Indicator.rs_momentum_21 * Indicator.rs_momentum_21) >= intensity_sq,
+                        or_(
+                            and_(IndPrev.rs_ratio_21 < 0, IndPrev.rs_momentum_21 <= 0),
+                            and_(IndPrev.rs_ratio_21 < 0, (IndPrev.rs_ratio_21 * IndPrev.rs_ratio_21 + IndPrev.rs_momentum_21 * IndPrev.rs_momentum_21) < intensity_sq)
+                        )
                     )
             elif special == "theme_rs21_gt_63":
                 theme_momentum_subq = db.query(Indicator.symbol_id).filter(
@@ -1147,6 +1161,7 @@ def get_screener(
     rrg_leading_in: bool = Query(False),
     rrg_lagging_in: bool = Query(False),
     rrg_improving_in: bool = Query(False),
+    rrg_intensity_threshold: float = Query(0.0),
     rs_rank_21_gt_63: bool = Query(False),
     theme_rs21_gt_63: bool = Query(False),
     require_positive_eps: bool = Query(False),
@@ -1178,6 +1193,7 @@ def get_screener(
     # ---- Dynamic filters from query params ----
     # Collect all query params except reserved ones
     _RESERVED_PARAMS = {"target_date", "rrg_leading_in", "rrg_lagging_in", "rrg_improving_in",
+                        "rrg_intensity_threshold",
                         "rs_rank_21_gt_63", "theme_rs21_gt_63", "require_positive_eps",
                         "preset", "expression"}
     for key, value in request.query_params.items():
@@ -1248,12 +1264,18 @@ def get_screener(
         IndPrev = aliased(Indicator)
         query = query.join(IndPrev, (Symbol.id == IndPrev.symbol_id) & (IndPrev.date == previous_date_result))
         
+        intensity_sq = rrg_intensity_threshold * rrg_intensity_threshold
         rrg_conds = []
         if rrg_leading_in:
             rrg_conds.append(
                 and_(
                     Indicator.rs_ratio_21 > 0, Indicator.rs_momentum_21 > 0,
-                    or_(IndPrev.rs_ratio_21 <= 0, IndPrev.rs_momentum_21 <= 0)
+                    Indicator.rs_momentum_21 > IndPrev.rs_momentum_21,
+                    (Indicator.rs_ratio_21 * Indicator.rs_ratio_21 + Indicator.rs_momentum_21 * Indicator.rs_momentum_21) >= intensity_sq,
+                    or_(
+                        or_(IndPrev.rs_ratio_21 <= 0, IndPrev.rs_momentum_21 <= 0),
+                        (IndPrev.rs_ratio_21 * IndPrev.rs_ratio_21 + IndPrev.rs_momentum_21 * IndPrev.rs_momentum_21) < intensity_sq
+                    )
                 )
             )
         if rrg_lagging_in:
@@ -1267,7 +1289,12 @@ def get_screener(
             rrg_conds.append(
                 and_(
                     Indicator.rs_ratio_21 < 0, Indicator.rs_momentum_21 > 0,
-                    IndPrev.rs_ratio_21 < 0, IndPrev.rs_momentum_21 <= 0
+                    Indicator.rs_momentum_21 > IndPrev.rs_momentum_21,
+                    (Indicator.rs_ratio_21 * Indicator.rs_ratio_21 + Indicator.rs_momentum_21 * Indicator.rs_momentum_21) >= intensity_sq,
+                    or_(
+                        and_(IndPrev.rs_ratio_21 < 0, IndPrev.rs_momentum_21 <= 0),
+                        and_(IndPrev.rs_ratio_21 < 0, (IndPrev.rs_ratio_21 * IndPrev.rs_ratio_21 + IndPrev.rs_momentum_21 * IndPrev.rs_momentum_21) < intensity_sq)
+                    )
                 )
             )
             

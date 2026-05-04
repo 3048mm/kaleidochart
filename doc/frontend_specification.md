@@ -82,7 +82,7 @@
     *   **Volume & Volatility**: ADR%, 出来高急増倍率等。
     *   **Fundamentals**: **時価総額（Market Cap）** の範囲指定。
     *   **Momentum & RS**: RS Rank値の範囲指定。
-    *   **Special Conditions (特殊条件)**: RRG象限への突入検知（`RRG Leading In`, `RRG Lagging In`, `RRG Improving In`）、RS21とRS63のクロスオーバーフラグ（等、単純な数値比較では表現できない特殊な真偽値フィルタ）。
+    *   **Special Conditions (特殊条件)**: RRG象限への突入検知（`RRG Leading In`, `RRG Lagging In`, `RRG Improving In`）。※これらは単なる象限判定だけでなく、中心からの距離（強度）やモメンタムの加速方向を考慮したノイズ除去フィルタが適用されています。
 *   **銘柄テーブル（右側メイン表示）**:
     *   条件に合致した全ての銘柄がリアルタイムに表示される。
     *   表の各カラム（1D%, Vol SG, RS21, etc...）をクリックすることでソートが可能。

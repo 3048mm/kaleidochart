@@ -201,22 +201,43 @@ def scan_signals_for_date(
         mask &= theme_mask
 
     # RRG Transition Logic
+    intensity_threshold = strategy.get('rrg_intensity_threshold', 0.0)
+
     if strategy.get('rrg_leading_in') and 'prev_rs_ratio_21' in merged.columns:
+        # Intensity: sqrt(ratio^2 + mom^2)
+        merged['intensity'] = np.sqrt(merged['rs_ratio_21']**2 + merged['rs_momentum_21']**2)
+        merged['prev_intensity'] = np.sqrt(merged['prev_rs_ratio_21']**2 + merged['prev_rs_momentum_21']**2)
+        
         mask &= (
-            (merged['rs_ratio_21'] > 0) & (merged['rs_momentum_21'] > 0) &
-            ((merged['prev_rs_ratio_21'] <= 0) | (merged['prev_rs_momentum_21'] <= 0))
+            (merged['rs_ratio_21'] > 0) & (merged['rs_momentum_21'] > 0) & # Quadrant
+            (merged['rs_momentum_21'] > merged['prev_rs_momentum_21']) &  # Acceleration
+            (merged['intensity'] >= intensity_threshold) &                # Intensity (Today)
+            (
+                ((merged['prev_rs_ratio_21'] <= 0) | (merged['prev_rs_momentum_21'] <= 0)) | # Prev not leading
+                (merged['prev_intensity'] < intensity_threshold)                             # Prev low intensity
+            )
         )
 
     if strategy.get('rrg_lagging_in') and 'prev_rs_ratio_21' in merged.columns:
+        # Lagging doesn't usually need acceleration check in the same way, but keeping consistency with quadrant crossing
         mask &= (
             (merged['rs_ratio_21'] < 0) & (merged['rs_momentum_21'] < 0) &
             ((merged['prev_rs_ratio_21'] >= 0) | (merged['prev_rs_momentum_21'] >= 0))
         )
 
     if strategy.get('rrg_improving_in') and 'prev_rs_ratio_21' in merged.columns:
+        if 'intensity' not in merged.columns:
+            merged['intensity'] = np.sqrt(merged['rs_ratio_21']**2 + merged['rs_momentum_21']**2)
+            merged['prev_intensity'] = np.sqrt(merged['prev_rs_ratio_21']**2 + merged['prev_rs_momentum_21']**2)
+            
         mask &= (
-            (merged['rs_ratio_21'] < 0) & (merged['rs_momentum_21'] > 0) &
-            (merged['prev_rs_ratio_21'] < 0) & (merged['prev_rs_momentum_21'] <= 0)
+            (merged['rs_ratio_21'] < 0) & (merged['rs_momentum_21'] > 0) & # Quadrant
+            (merged['rs_momentum_21'] > merged['prev_rs_momentum_21']) &  # Acceleration
+            (merged['intensity'] >= intensity_threshold) &                # Intensity (Today)
+            (
+                ((merged['prev_rs_ratio_21'] < 0) & (merged['prev_rs_momentum_21'] <= 0)) | # Prev was Lagging
+                ((merged['prev_intensity'] < intensity_threshold) & (merged['prev_rs_ratio_21'] < 0)) # Prev was low intensity but left side
+            )
         )
 
     # Apply final mask

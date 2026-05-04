@@ -53,8 +53,10 @@
 ### 1.4 RRG (Relative Rotation Graph) 関連
 | 変数名 | DB 参照元 (Table.Column) | 計算論理・説明 |
 | :--- | :--- | :--- |
-| `rrg_leading_in` | `indicators.rs_ratio_21`<br>`indicators.rs_momentum_21` | **Leading入り**: 前日に Leading 象限 (Ratio>0, Mom>0) 以外にいた銘柄が、当日に Leading 象限に入った瞬間。モメンタムは Ratio の 14日 ROC をベースとしており、トレンド転換を先行して示唆する。 |
-| `rrg_lagging_in` | 同上 | **Lagging入り**: 前日に Lagging 象限 (Ratio<0, Mom<0) 以外から Lagging に入った瞬間。 |
+| `rrg_leading_in` | `indicators.rs_ratio_21`<br>`indicators.rs_momentum_21` | **Leading入り**: 強度（中心からの距離）が `rrg_intensity_threshold` 以上、かつモメンタムが加速している状態で Leading 象限に入った瞬間。 |
+| `rrg_improving_in`| 同上 | **Improving入り**: 強度が閾値以上、かつモメンタムが加速している状態で、Lagging から Improving 象限に入った瞬間。 |
+| `rrg_lagging_in` | 同上 | **Lagging入り**: Lagging 象限以外から Lagging に入った瞬間。 |
+| `rrg_intensity_threshold` | - | **RRG強度閾値**: 中心 (0,0) からの最小距離 `sqrt(ratio^2 + mom^2)`。デフォルト 0.0。ノイズ除去には 0.5 前後を推奨。 |
 
 ### 1.5 Accumulation・先行指標・ベース形成関連
 | 変数名 | DB 参照元 (Table.Column) | 計算論理・説明 |
