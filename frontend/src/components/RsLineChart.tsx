@@ -113,21 +113,20 @@ export const RsLineChart: React.FC<RsLineChartProps> = ({ data }) => {
             value: d.rs_ema_63 as number,
         })));
 
-        // Set default visible range to last 6 months (replicated from ChartPage logic)
-        // Use setTimeout to ensure it applies after initial resize/layout
-        setTimeout(() => {
-            if (chartRef.current && rsData.length > 0) {
-                const lastDate = new Date(rsData[rsData.length - 1].time);
-                const sixMonthsAgo = new Date(lastDate);
-                sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-                const sixMonthsAgoStr = sixMonthsAgo.toISOString().split('T')[0];
-                
-                chartRef.current.timeScale().setVisibleRange({
-                    from: sixMonthsAgoStr as any,
-                    to: rsData[rsData.length - 1].time as any,
-                });
-            }
-        }, 50);
+        // Set default visible range to last 6 months (exact replica from ChartPage logic)
+        if (data.length > 0) {
+            const lastDate = new Date(data[data.length - 1].time);
+            const sixMonthsAgo = new Date(lastDate);
+            sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+            const sixMonthsAgoStr = sixMonthsAgo.toISOString().split('T')[0];
+            
+            chart.timeScale().setVisibleRange({
+                from: sixMonthsAgoStr as any,
+                to: data[data.length - 1].time as any,
+            });
+        } else {
+            chart.timeScale().fitContent();
+        }
 
         const handleResize = () => {
             if (containerRef.current && chartRef.current) {

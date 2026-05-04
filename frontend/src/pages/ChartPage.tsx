@@ -646,9 +646,11 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
             )}
 
             <div className="main-content" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-                <main className="chart-area glass-panel" style={{ flex: 1, display: viewMode === 'rs' && data.length > 0 ? 'flex' : 'none', flexDirection: 'column', margin: '0 20px 20px 20px' }}>
-                    <RrgChart data={data} ticker={selected.ticker} />
-                </main>
+                {viewMode === 'rs' && data.length > 0 && (
+                    <main className="chart-area glass-panel" style={{ flex: 1, display: 'flex', flexDirection: 'column', margin: '0 20px 20px 20px' }}>
+                        <RrgChart data={data} ticker={selected.ticker} />
+                    </main>
+                )}
                 {viewMode === 'table' && <SymbolDataTable data={data} />}
                 <main className="chart-area glass-panel" style={{ flex: 1, display: viewMode === 'chart' ? 'flex' : 'none', flexDirection: 'column', margin: '0 20px 20px 20px' }}>
                     {loading && <div className="loading">Loading chart data...</div>}
