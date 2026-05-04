@@ -312,15 +312,27 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db)):
     ).all()
     ind_map = {i.date.strftime('%Y-%m-%d'): i for i in indicators}
     
-    # RS Ranks (Optimized range query)
+    # RS Ranks (Optimized range query for all timeframes and types)
+    rank_indicators = [
+        'rs_ratio_14', 'rs_ratio_21', 'rs_ratio_63',
+        'rs_momentum_14', 'rs_momentum_21', 'rs_momentum_63',
+        'rs_condition_14', 'rs_condition_21', 'rs_condition_63'
+    ]
     ranks = db.query(RelativeRank).filter(
         RelativeRank.symbol_id == symbol_id,
         RelativeRank.date >= start_date,
         RelativeRank.date <= end_date,
         RelativeRank.group_name == '個別',
-        RelativeRank.indicator_name == 'rs_ratio_21'
+        RelativeRank.indicator_name.in_(rank_indicators)
     ).all()
-    rank_map = {r.date.strftime('%Y-%m-%d'): r.percent_rank for r in ranks}
+    
+    # Organize ranks by date and indicator
+    rank_map_nested = {}
+    for r in ranks:
+        ds = r.date.strftime('%Y-%m-%d')
+        if ds not in rank_map_nested:
+            rank_map_nested[ds] = {}
+        rank_map_nested[ds][r.indicator_name] = r.percent_rank
 
     # Themes
     theme_meta = []
@@ -381,8 +393,13 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db)):
                 "bb_upper": (ind.sma_21 + 2*ind.atr_14) if ind.sma_21 and ind.atr_14 else None,
                 "bb_lower": (ind.sma_21 - 2*ind.atr_14) if ind.sma_21 and ind.atr_14 else None,
             })
-            # Include rank if available (for RS line)
-            point["rs_ratio"] = rank_map.get(d_str)
+            # Include all ranks for RRG minimaps
+            r_data = rank_map_nested.get(d_str, {})
+            for r_name in rank_indicators:
+                point[f"rank_{r_name}"] = r_data.get(r_name)
+            
+            # Include legacy key for RsLineChart
+            point["rs_ratio"] = r_data.get("rs_ratio_21")
         
         chart_data.append(point)
 
