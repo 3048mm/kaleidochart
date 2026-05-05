@@ -323,6 +323,22 @@ def objective(trial: optuna.Trial, strategy_type: str, config, config_app, exit_
     trial.set_user_attr("spy_cagr", round(spy_bh_cagr, 2))
     trial.set_user_attr("port_vs_spy", round(portfolio_vs_spy, 2))
 
+    # Generate TOML format string for parameters (for easy copy-paste)
+    toml_params = []
+    for key, value in trial.params.items():
+        if isinstance(value, bool):
+            toml_val = "true" if value else "false"
+        elif isinstance(value, str):
+            toml_val = f'"{value}"'
+        else:
+            toml_val = value
+        toml_params.append(f"{key} = {toml_val}")
+    
+    params_toml_str = "\n".join(toml_params)
+    trial.set_user_attr("params_toml", params_toml_str)
+    # Also set as system attribute 'note' for Optuna Dashboard
+    trial.set_system_attr("note", params_toml_str)
+
     return avg_score
 
 def main():
@@ -375,8 +391,8 @@ def main():
     print("Best trial:")
     trial = study.best_trial
     print(f"  Value (Score): {trial.value:.2f}")
-    print("\n  [TOML Params for copy-paste]")
-    print("  " + "-"*30)
+    print("\n[TOML Params for copy-paste]")
+    print("-" * 30)
     for key, value in trial.params.items():
         if isinstance(value, bool):
             toml_val = "true" if value else "false"
@@ -384,8 +400,8 @@ def main():
             toml_val = f'"{value}"'
         else:
             toml_val = value
-        print(f"  {key} = {toml_val}")
-    print("  " + "-"*30 + "\n")
+        print(f"{key} = {toml_val}")
+    print("-" * 30 + "\n")
         
     if "expectancy" in trial.user_attrs:
         print(f"  Expectancy:     {trial.user_attrs['expectancy']:.3f}%")
