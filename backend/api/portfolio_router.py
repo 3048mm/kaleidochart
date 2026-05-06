@@ -93,6 +93,27 @@ def create_portfolio(req: PortfolioCreateRequest, user_db: Session = Depends(get
     )
     return {"id": pf.id, "name": pf.name, "status": pf.status}
 
+@router.get("/ticker-price")
+def get_ticker_price(ticker: str, date: dt_date, db: Session = Depends(get_api_db)):
+    from db.models import Symbol, DailyPrice
+    sym = db.query(Symbol).filter_by(ticker=ticker).first()
+    if not sym:
+        raise HTTPException(status_code=404, detail="Symbol not found")
+    
+    dp = db.query(DailyPrice).filter_by(symbol_id=sym.id, date=date).first()
+    if dp:
+        return {"price": dp.close}
+    
+    # fallback to latest available price before the date
+    from sqlalchemy import desc
+    dp = db.query(DailyPrice).filter(
+        DailyPrice.symbol_id == sym.id,
+        DailyPrice.date <= date
+    ).order_by(desc(DailyPrice.date)).first()
+    if dp:
+        return {"price": dp.close}
+    raise HTTPException(status_code=404, detail="Price data not available")
+
 @router.get("/{portfolio_id}")
 def get_portfolio(portfolio_id: int, user_db: Session = Depends(get_api_user_db)):
     pf = portfolio_service.get_portfolio(user_db, portfolio_id)
@@ -127,26 +148,7 @@ def archive_portfolio(portfolio_id: int, user_db: Session = Depends(get_api_user
         raise HTTPException(status_code=404, detail="Portfolio not found")
     return {"id": pf.id, "status": "archived"}
 
-@router.get("/ticker-price")
-def get_ticker_price(ticker: str, date: dt_date, db: Session = Depends(get_api_db)):
-    from db.models import Symbol, DailyPrice
-    sym = db.query(Symbol).filter_by(ticker=ticker).first()
-    if not sym:
-        raise HTTPException(status_code=404, detail="Symbol not found")
-    
-    dp = db.query(DailyPrice).filter_by(symbol_id=sym.id, date=date).first()
-    if dp:
-        return {"price": dp.close}
-    
-    # fallback to latest available price before the date
-    from sqlalchemy import desc
-    dp = db.query(DailyPrice).filter(
-        DailyPrice.symbol_id == sym.id,
-        DailyPrice.date <= date
-    ).order_by(desc(DailyPrice.date)).first()
-    if dp:
-        return {"price": dp.close}
-    raise HTTPException(status_code=404, detail="Price data not available")
+
 
 @router.get("/{portfolio_id}/positions")
 def list_positions(portfolio_id: int, db: Session = Depends(get_api_db), user_db: Session = Depends(get_api_user_db)):
@@ -198,6 +200,19 @@ def sell_position(portfolio_id: int, position_id: int,
 @router.get("/{portfolio_id}/history")
 def get_history(portfolio_id: int, db: Session = Depends(get_api_db), user_db: Session = Depends(get_api_user_db)):
     return portfolio_service.get_history(db, user_db, portfolio_id)
+
+from api.schemas import PositionHistoryUpdateRequest
+@router.put("/{portfolio_id}/history/{history_id}")
+def edit_history(portfolio_id: int, history_id: int, req: PositionHistoryUpdateRequest, user_db: Session = Depends(get_api_user_db)):
+    hist = portfolio_service.edit_history(
+        user_db, history_id=history_id,
+        entry_date=req.entry_date, entry_price=req.entry_price,
+        exit_date=req.exit_date, exit_price=req.exit_price,
+        exit_shares=req.exit_shares, memo=req.memo
+    )
+    if hist is None:
+        raise HTTPException(status_code=404, detail="History record not found")
+    return {"id": hist.id, "status": "updated"}
 
 @router.get("/{portfolio_id}/summary")
 def get_summary(portfolio_id: int, db: Session = Depends(get_api_db), user_db: Session = Depends(get_api_user_db)):

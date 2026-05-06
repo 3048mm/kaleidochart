@@ -249,6 +249,41 @@ def sell_position(
     user_db.refresh(hist)
     return hist
 
+def edit_history(
+    user_db: Session, history_id: int,
+    entry_date: date = None, entry_price: float = None,
+    exit_date: date = None, exit_price: float = None, exit_shares: int = None,
+    memo: str = None
+) -> PositionHistory | None:
+    hist = user_db.query(PositionHistory).filter_by(id=history_id).first()
+    if not hist:
+        return None
+    
+    if entry_date is not None: hist.entry_date = entry_date
+    if entry_price is not None: hist.entry_price = entry_price
+    if exit_date is not None: hist.exit_date = exit_date
+    if exit_price is not None: hist.exit_price = exit_price
+    if exit_shares is not None:
+        hist.entry_shares = exit_shares
+        hist.exit_shares = exit_shares
+    if memo is not None: hist.memo = memo
+    
+    # Recalculate P&L
+    pnl = calc_pnl(
+        entry_price=hist.entry_price,
+        exit_price=hist.exit_price,
+        shares=hist.exit_shares,
+        entry_date=hist.entry_date,
+        exit_date=hist.exit_date,
+    )
+    hist.pnl_pct = pnl["pnl_pct"]
+    hist.pnl_amount = pnl["pnl_amount"]
+    hist.holding_days = pnl["holding_days"]
+    
+    user_db.commit()
+    user_db.refresh(hist)
+    return hist
+
 # ============================================================
 # 2-4: History
 # ============================================================

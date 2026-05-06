@@ -77,6 +77,9 @@ export const PortfolioDetailPage: React.FC = () => {
     // Edit form
     const [showEditForm, setShowEditForm] = useState<number | null>(null);
     const [editForm, setEditForm] = useState({ entry_date: '', entry_price: 0, shares: 0 });
+    // History Edit form
+    const [showEditHistForm, setShowEditHistForm] = useState<number | null>(null);
+    const [editHistForm, setEditHistForm] = useState({ entry_date: '', entry_price: 0, exit_date: '', exit_price: 0, exit_shares: 0 });
     // Settings form
     const [settingsForm, setSettingsForm] = useState<Partial<PortfolioDetail>>({});
 
@@ -111,8 +114,13 @@ export const PortfolioDetailPage: React.FC = () => {
                     if (res.ok) {
                         const data = await res.json();
                         setAddForm(prev => ({ ...prev, entry_price: data.price }));
+                    } else {
+                        // Reset if ticker not found or no data
+                        setAddForm(prev => ({ ...prev, entry_price: 0 }));
                     }
-                } catch (err) {}
+                } catch (err) {
+                    setAddForm(prev => ({ ...prev, entry_price: 0 }));
+                }
             }
         };
         const timer = setTimeout(fetchPrice, 500);
@@ -146,6 +154,16 @@ export const PortfolioDetailPage: React.FC = () => {
             body: JSON.stringify(editForm),
         });
         if (res.ok) { setShowEditForm(null); await fetchAll(); }
+        else { const err = await res.json(); alert(err.detail || 'Failed'); }
+    };
+
+    const handleEditHistory = async (histId: number, e: React.FormEvent) => {
+        e.preventDefault();
+        const res = await fetch(`/api/portfolio/${pfId}/history/${histId}`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(editHistForm),
+        });
+        if (res.ok) { setShowEditHistForm(null); await fetchAll(); }
         else { const err = await res.json(); alert(err.detail || 'Failed'); }
     };
 
@@ -243,17 +261,17 @@ export const PortfolioDetailPage: React.FC = () => {
                         return (
                         <form onSubmit={handleAddPosition} style={{ background: 'rgba(15,23,42,0.6)', border: '1px solid rgba(59,130,246,0.3)', borderRadius: '10px', padding: '20px', marginBottom: '16px' }}>
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr auto', gap: '12px', alignItems: 'end' }}>
-                                <div><label style={labelStyle}>Ticker</label><input style={inputStyle} value={addForm.ticker} onChange={e => setAddForm({ ...addForm, ticker: e.target.value.toUpperCase() })} required /></div>
-                                <div><label style={labelStyle}>Entry Date</label><input style={inputStyle} type="date" value={addForm.entry_date} onChange={e => setAddForm({ ...addForm, entry_date: e.target.value })} required /></div>
-                                <div><label style={labelStyle}>Price</label><input style={inputStyle} type="number" step="0.01" value={addForm.entry_price} onChange={e => setAddForm({ ...addForm, entry_price: Number(e.target.value) })} required /></div>
+                                <div><label style={labelStyle}>Ticker (ティッカー)</label><input style={inputStyle} value={addForm.ticker} onChange={e => setAddForm({ ...addForm, ticker: e.target.value.toUpperCase() })} required /></div>
+                                <div><label style={labelStyle}>Entry Date (購入日)</label><input style={inputStyle} type="date" value={addForm.entry_date} onChange={e => setAddForm({ ...addForm, entry_date: e.target.value })} required /></div>
+                                <div><label style={labelStyle}>Price (単価)</label><input style={inputStyle} type="number" step="0.01" value={addForm.entry_price} onChange={e => setAddForm({ ...addForm, entry_price: Number(e.target.value) })} required /></div>
                                 <div>
-                                    <label style={labelStyle}>Shares <span style={{color: '#8b9cc8', fontWeight: 'normal'}}>(Target: {targetShares})</span></label>
+                                    <label style={labelStyle}>Shares (株数) <span style={{color: '#8b9cc8', fontWeight: 'normal'}}>(Target: {targetShares})</span></label>
                                     <input style={inputStyle} type="number" value={addForm.shares} onChange={e => setAddForm({ ...addForm, shares: Number(e.target.value) })} required />
                                 </div>
                                 <button type="submit" style={{ background: '#22d3a0', border: 'none', color: '#fff', padding: '8px 20px', borderRadius: '6px', fontWeight: 600, cursor: 'pointer', height: '38px' }}>Buy</button>
                             </div>
                             <div style={{ marginTop: '12px', fontSize: '13px', color: totalCost > maxInvestment ? '#ef4444' : '#22d3a0', display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-                                Cost: {fmtCur(totalCost)} <span style={{color: '#666'}}>|</span> Max/Pos: {fmtCur(maxInvestment)}
+                                Entry Cost: {fmtCur(totalCost)} <span style={{color: '#666'}}>|</span> Max/Pos: {fmtCur(maxInvestment)}
                             </div>
                         </form>
                         );
@@ -316,16 +334,16 @@ export const PortfolioDetailPage: React.FC = () => {
                                             {showSellForm === p.id && (
                                                 <tr><td colSpan={10} style={{ padding: '12px 10px', background: 'rgba(15,23,42,0.4)' }}>
                                                     <form onSubmit={(e) => handleSell(p.id, e)} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr auto', gap: '10px', alignItems: 'end' }}>
-                                                        <div><label style={labelStyle}>Exit Date</label><input style={inputStyle} type="date" value={sellForm.exit_date} onChange={e => setSellForm({ ...sellForm, exit_date: e.target.value })} required /></div>
-                                                        <div><label style={labelStyle}>Exit Price</label><input style={inputStyle} type="number" step="0.01" value={sellForm.exit_price} onChange={e => setSellForm({ ...sellForm, exit_price: Number(e.target.value) })} required /></div>
-                                                        <div><label style={labelStyle}>Shares (max {p.shares})</label><input style={inputStyle} type="number" max={p.shares} value={sellForm.exit_shares} onChange={e => setSellForm({ ...sellForm, exit_shares: Number(e.target.value) })} required /></div>
-                                                        <div><label style={labelStyle}>Reason</label>
+                                                        <div><label style={labelStyle}>Exit Date (売却日)</label><input style={inputStyle} type="date" value={sellForm.exit_date} onChange={e => setSellForm({ ...sellForm, exit_date: e.target.value })} required /></div>
+                                                        <div><label style={labelStyle}>Exit Price (売却単価)</label><input style={inputStyle} type="number" step="0.01" value={sellForm.exit_price} onChange={e => setSellForm({ ...sellForm, exit_price: Number(e.target.value) })} required /></div>
+                                                        <div><label style={labelStyle}>Shares (株数) (max {p.shares})</label><input style={inputStyle} type="number" max={p.shares} value={sellForm.exit_shares} onChange={e => setSellForm({ ...sellForm, exit_shares: Number(e.target.value) })} required /></div>
+                                                        <div><label style={labelStyle}>Reason (理由)</label>
                                                             <select style={inputStyle} value={sellForm.exit_reason} onChange={e => setSellForm({ ...sellForm, exit_reason: e.target.value })}>
-                                                                <option value="manual">Manual</option>
-                                                                <option value="stop_loss">Stop Loss</option>
-                                                                <option value="take_profit_trim">Take Profit (Trim)</option>
-                                                                <option value="take_profit_full">Take Profit (Full)</option>
-                                                                <option value="trailing_stop">Trailing Stop</option>
+                                                                <option value="manual">Manual (手動)</option>
+                                                                <option value="stop_loss">Stop Loss (損切り)</option>
+                                                                <option value="take_profit_trim">Take Profit (Trim) (利確分割)</option>
+                                                                <option value="take_profit_full">Take Profit (Full) (利確全売)</option>
+                                                                <option value="trailing_stop">Trailing Stop (トレイリング)</option>
                                                             </select>
                                                         </div>
                                                         <button type="submit" style={{ background: '#f43f5e', border: 'none', color: '#fff', padding: '8px 16px', borderRadius: '6px', fontWeight: 600, cursor: 'pointer', height: '38px' }}>Confirm Sell</button>
@@ -335,11 +353,14 @@ export const PortfolioDetailPage: React.FC = () => {
                                             {showEditForm === p.id && (
                                                 <tr><td colSpan={10} style={{ padding: '12px 10px', background: 'rgba(15,23,42,0.4)' }}>
                                                     <form onSubmit={(e) => handleEdit(p.id, e)} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: '10px', alignItems: 'end' }}>
-                                                        <div><label style={labelStyle}>Entry Date</label><input style={inputStyle} type="date" value={editForm.entry_date} onChange={e => setEditForm({ ...editForm, entry_date: e.target.value })} required /></div>
-                                                        <div><label style={labelStyle}>Entry Price</label><input style={inputStyle} type="number" step="0.01" value={editForm.entry_price} onChange={e => setEditForm({ ...editForm, entry_price: Number(e.target.value) })} required /></div>
-                                                        <div><label style={labelStyle}>Shares</label><input style={inputStyle} type="number" value={editForm.shares} onChange={e => setEditForm({ ...editForm, shares: Number(e.target.value) })} required /></div>
+                                                        <div><label style={labelStyle}>Entry Date (購入日)</label><input style={inputStyle} type="date" value={editForm.entry_date} onChange={e => setEditForm({ ...editForm, entry_date: e.target.value })} required /></div>
+                                                        <div><label style={labelStyle}>Entry Price (購入単価)</label><input style={inputStyle} type="number" step="0.01" value={editForm.entry_price} onChange={e => setEditForm({ ...editForm, entry_price: Number(e.target.value) })} required /></div>
+                                                        <div><label style={labelStyle}>Shares (株数)</label><input style={inputStyle} type="number" value={editForm.shares} onChange={e => setEditForm({ ...editForm, shares: Number(e.target.value) })} required /></div>
                                                         <button type="submit" style={{ background: '#3b82f6', border: 'none', color: '#fff', padding: '8px 16px', borderRadius: '6px', fontWeight: 600, cursor: 'pointer', height: '38px' }}>Save Changes</button>
                                                     </form>
+                                                    <div style={{ marginTop: '8px', fontSize: '12px', color: '#22d3a0', textAlign: 'right' }}>
+                                                        Entry Cost: {fmtCur(editForm.entry_price * editForm.shares)}
+                                                    </div>
                                                 </td></tr>
                                             )}
                                         </React.Fragment>
@@ -369,23 +390,48 @@ export const PortfolioDetailPage: React.FC = () => {
                                     <th style={{ ...thStyle, textAlign: 'right' }}>Days</th>
                                     <th style={thStyle}>Reason</th>
                                     <th style={{ ...thStyle, textAlign: 'right' }}>Cumulative</th>
+                                    <th style={{ ...thStyle, textAlign: 'center' }}>Actions</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {history.map(h => (
-                                    <tr key={h.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                                        <td style={tdStyle}><Link to={`/chart/${h.ticker}`} style={{ color: '#fff', textDecoration: 'none', fontWeight: 600 }}>{h.ticker}</Link></td>
-                                        <td style={tdStyle}>{h.entry_date}</td>
-                                        <td style={tdStyle}>{h.exit_date}</td>
-                                        <td style={tdRight}>{h.entry_price.toFixed(2)}</td>
-                                        <td style={tdRight}>{h.exit_price.toFixed(2)}</td>
-                                        <td style={tdRight}>{h.exit_shares}</td>
-                                        <td style={{ ...tdRight, fontWeight: 700, color: pctColor(h.pnl_pct) }}>{formatPct(h.pnl_pct)}</td>
-                                        <td style={{ ...tdRight, color: pctColor(h.pnl_amount) }}>{fmtCur(h.pnl_amount)}</td>
-                                        <td style={tdRight}>{h.holding_days}d</td>
-                                        <td style={{ ...tdStyle, fontSize: '11px', color: '#8b9cc8' }}>{h.exit_reason.replace(/_/g, ' ')}</td>
-                                        <td style={{ ...tdRight, fontWeight: 600, color: pctColor(h.cumulative_pnl) }}>{fmtCur(h.cumulative_pnl)}</td>
-                                    </tr>
+                                    <React.Fragment key={h.id}>
+                                        <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                                            <td style={tdStyle}><Link to={`/chart/${h.ticker}`} style={{ color: '#fff', textDecoration: 'none', fontWeight: 600 }}>{h.ticker}</Link></td>
+                                            <td style={tdStyle}>{h.entry_date}</td>
+                                            <td style={tdStyle}>{h.exit_date}</td>
+                                            <td style={tdRight}>{h.entry_price.toFixed(2)}</td>
+                                            <td style={tdRight}>{h.exit_price.toFixed(2)}</td>
+                                            <td style={tdRight}>{h.exit_shares}</td>
+                                            <td style={{ ...tdRight, fontWeight: 700, color: pctColor(h.pnl_pct) }}>{formatPct(h.pnl_pct)}</td>
+                                            <td style={{ ...tdRight, color: pctColor(h.pnl_amount) }}>{fmtCur(h.pnl_amount)}</td>
+                                            <td style={tdRight}>{h.holding_days}d</td>
+                                            <td style={{ ...tdStyle, fontSize: '11px', color: '#8b9cc8' }}>{h.exit_reason.replace(/_/g, ' ')}</td>
+                                            <td style={{ ...tdRight, fontWeight: 600, color: pctColor(h.cumulative_pnl) }}>{fmtCur(h.cumulative_pnl)}</td>
+                                            <td style={{ ...tdStyle, textAlign: 'center' }}>
+                                                <button onClick={() => { setShowEditHistForm(showEditHistForm === h.id ? null : h.id); setEditHistForm({ entry_date: h.entry_date, entry_price: h.entry_price, exit_date: h.exit_date, exit_price: h.exit_price, exit_shares: h.exit_shares }); }}
+                                                    style={{ background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.2)', color: '#3b82f6', padding: '4px 12px', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' }}>
+                                                    Edit
+                                                </button>
+                                            </td>
+                                        </tr>
+                                        {showEditHistForm === h.id && (
+                                            <tr><td colSpan={12} style={{ padding: '12px 10px', background: 'rgba(15,23,42,0.4)' }}>
+                                                <form onSubmit={(e) => handleEditHistory(h.id, e)} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr auto', gap: '10px', alignItems: 'end' }}>
+                                                    <div><label style={labelStyle}>Entry Date (購入日)</label><input style={inputStyle} type="date" value={editHistForm.entry_date} onChange={e => setEditHistForm({ ...editHistForm, entry_date: e.target.value })} required /></div>
+                                                    <div><label style={labelStyle}>Entry Price (購入単価)</label><input style={inputStyle} type="number" step="0.01" value={editHistForm.entry_price} onChange={e => setEditHistForm({ ...editHistForm, entry_price: Number(e.target.value) })} required /></div>
+                                                    <div><label style={labelStyle}>Exit Date (売却日)</label><input style={inputStyle} type="date" value={editHistForm.exit_date} onChange={e => setEditHistForm({ ...editHistForm, exit_date: e.target.value })} required /></div>
+                                                    <div><label style={labelStyle}>Exit Price (売却単価)</label><input style={inputStyle} type="number" step="0.01" value={editHistForm.exit_price} onChange={e => setEditHistForm({ ...editHistForm, exit_price: Number(e.target.value) })} required /></div>
+                                                    <div><label style={labelStyle}>Shares (株数)</label><input style={inputStyle} type="number" value={editHistForm.exit_shares} onChange={e => setEditHistForm({ ...editHistForm, exit_shares: Number(e.target.value) })} required /></div>
+                                                    <button type="submit" style={{ background: '#3b82f6', border: 'none', color: '#fff', padding: '8px 16px', borderRadius: '6px', fontWeight: 600, cursor: 'pointer', height: '38px' }}>Save Changes</button>
+                                                </form>
+                                                <div style={{ marginTop: '8px', fontSize: '12px', display: 'flex', justifyContent: 'flex-end', gap: '16px' }}>
+                                                    <span style={{ color: '#22d3a0' }}>Entry Cost: {fmtCur(editHistForm.entry_price * editHistForm.exit_shares)}</span>
+                                                    <span style={{ color: '#f43f5e' }}>Exit Value: {fmtCur(editHistForm.exit_price * editHistForm.exit_shares)}</span>
+                                                </div>
+                                            </td></tr>
+                                        )}
+                                    </React.Fragment>
                                 ))}
                             </tbody>
                         </table>
@@ -399,12 +445,12 @@ export const PortfolioDetailPage: React.FC = () => {
                     {/* Performance Stats */}
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px', marginBottom: '24px' }}>
                         {[
-                            { label: 'Total Trades', value: String(analytics.total_trades) },
-                            { label: 'Win Rate', value: `${analytics.win_rate}%`, color: analytics.win_rate >= 50 ? appConfig.colors.good : appConfig.colors.bad },
-                            { label: 'Wins / Losses', value: `${analytics.win_count} / ${analytics.loss_count}` },
-                            { label: 'Avg Win', value: `+${analytics.avg_win_pct.toFixed(2)}%`, color: appConfig.colors.good },
-                            { label: 'Avg Loss', value: `${analytics.avg_loss_pct.toFixed(2)}%`, color: appConfig.colors.bad },
-                            { label: 'Expectancy', value: `${analytics.expectancy_pct >= 0 ? '+' : ''}${analytics.expectancy_pct.toFixed(2)}%`, color: pctColor(analytics.expectancy_pct) },
+                            { label: 'Total Trades (総トレード数)', value: String(analytics.total_trades) },
+                            { label: 'Win Rate (勝率)', value: `${analytics.win_rate}%`, color: analytics.win_rate >= 50 ? appConfig.colors.good : appConfig.colors.bad },
+                            { label: 'Wins / Losses (勝敗数)', value: `${analytics.win_count} / ${analytics.loss_count}` },
+                            { label: 'Avg Win (平均利益%)', value: `+${analytics.avg_win_pct.toFixed(2)}%`, color: appConfig.colors.good },
+                            { label: 'Avg Loss (平均損失%)', value: `${analytics.avg_loss_pct.toFixed(2)}%`, color: appConfig.colors.bad },
+                            { label: 'Expectancy (期待値%)', value: `${analytics.expectancy_pct >= 0 ? '+' : ''}${analytics.expectancy_pct.toFixed(2)}%`, color: pctColor(analytics.expectancy_pct) },
                         ].map((c, i) => (
                             <div key={i} style={{ background: 'rgba(15,23,42,0.6)', border: '1px solid rgba(99,120,180,0.18)', borderRadius: '10px', padding: '14px 16px' }}>
                                 <div style={{ fontSize: '10px', color: '#475685', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{c.label}</div>
@@ -416,7 +462,7 @@ export const PortfolioDetailPage: React.FC = () => {
                     {/* Sector Breakdown */}
                     {analytics.sector_breakdown.length > 0 && (
                         <div style={{ background: 'rgba(15,23,42,0.6)', border: '1px solid rgba(99,120,180,0.18)', borderRadius: '10px', padding: '20px', marginBottom: '24px' }}>
-                            <h3 style={{ margin: '0 0 16px', fontSize: '14px', color: '#8b9cc8' }}>Sector Distribution</h3>
+                            <h3 style={{ margin: '0 0 16px', fontSize: '14px', color: '#8b9cc8' }}>Sector Distribution (セクタ分布)</h3>
                             {(() => { const total = analytics.sector_breakdown.reduce((s, c) => s + c.invested, 0); return analytics.sector_breakdown.map((s, i) => {
                                 const pct = total > 0 ? (s.invested / total * 100) : 0;
                                 const colors = ['#3b82f6', '#22d3a0', '#f59e0b', '#a855f7', '#f43f5e', '#06b6d4'];
@@ -438,7 +484,7 @@ export const PortfolioDetailPage: React.FC = () => {
                     {/* Equity Curve */}
                     {analytics.equity_curve.length > 0 && (
                         <div style={{ background: 'rgba(15,23,42,0.6)', border: '1px solid rgba(99,120,180,0.18)', borderRadius: '10px', padding: '20px', marginBottom: '24px' }}>
-                            <h3 style={{ margin: '0 0 16px', fontSize: '14px', color: '#8b9cc8' }}>Equity Curve</h3>
+                            <h3 style={{ margin: '0 0 16px', fontSize: '14px', color: '#8b9cc8' }}>Equity Curve (資産曲線)</h3>
                             {(() => {
                                 const data = analytics.equity_curve;
                                 const vals = data.map(d => d.cumulative_pnl);
@@ -474,7 +520,7 @@ export const PortfolioDetailPage: React.FC = () => {
                     {/* Monthly Returns */}
                     {analytics.monthly_returns.length > 0 && (
                         <div style={{ background: 'rgba(15,23,42,0.6)', border: '1px solid rgba(99,120,180,0.18)', borderRadius: '10px', padding: '20px' }}>
-                            <h3 style={{ margin: '0 0 16px', fontSize: '14px', color: '#8b9cc8' }}>Monthly Returns</h3>
+                            <h3 style={{ margin: '0 0 16px', fontSize: '14px', color: '#8b9cc8' }}>Monthly Returns (月次損益)</h3>
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))', gap: '8px' }}>
                                 {analytics.monthly_returns.map((m, i) => (
                                     <div key={i} style={{
@@ -499,18 +545,18 @@ export const PortfolioDetailPage: React.FC = () => {
             {/* ─── Settings Tab ─── */}
             {tab === 'settings' && (
                 <form onSubmit={handleSaveSettings} style={{ background: 'rgba(15,23,42,0.6)', border: '1px solid rgba(99,120,180,0.18)', borderRadius: '10px', padding: '24px', maxWidth: '600px' }}>
-                    <h3 style={{ margin: '0 0 20px', fontSize: '16px' }}>Portfolio Settings</h3>
+                    <h3 style={{ margin: '0 0 20px', fontSize: '16px' }}>Portfolio Settings (ポートフォリオ設定)</h3>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                        <div><label style={labelStyle}>Name</label><input style={inputStyle} value={settingsForm.name || ''} onChange={e => setSettingsForm({ ...settingsForm, name: e.target.value })} /></div>
-                        <div><label style={labelStyle}>Currency</label>
+                        <div><label style={labelStyle}>Name (名前)</label><input style={inputStyle} value={settingsForm.name || ''} onChange={e => setSettingsForm({ ...settingsForm, name: e.target.value })} /></div>
+                        <div><label style={labelStyle}>Currency (通貨)</label>
                             <select style={inputStyle} value={settingsForm.currency || 'JPY'} onChange={e => setSettingsForm({ ...settingsForm, currency: e.target.value })}>
                                 <option value="JPY">JPY</option><option value="USD">USD</option>
                             </select>
                         </div>
-                        <div><label style={labelStyle}>Total Capital</label><input style={inputStyle} type="number" value={settingsForm.total_capital || 0} onChange={e => setSettingsForm({ ...settingsForm, total_capital: Number(e.target.value) })} /></div>
-                        <div><label style={labelStyle}>Risk %</label><input style={inputStyle} type="number" step="0.1" value={settingsForm.risk_pct || 1} onChange={e => setSettingsForm({ ...settingsForm, risk_pct: Number(e.target.value) })} /></div>
-                        <div><label style={labelStyle}>Stop Loss %</label><input style={inputStyle} type="number" step="0.5" value={settingsForm.default_stop_loss_pct || 8} onChange={e => setSettingsForm({ ...settingsForm, default_stop_loss_pct: Number(e.target.value) })} /></div>
-                        <div><label style={labelStyle}>Max Positions</label><input style={inputStyle} type="number" value={settingsForm.max_positions || 8} onChange={e => setSettingsForm({ ...settingsForm, max_positions: Number(e.target.value) })} /></div>
+                        <div><label style={labelStyle}>Total Capital (運用資金)</label><input style={inputStyle} type="number" value={settingsForm.total_capital || 0} onChange={e => setSettingsForm({ ...settingsForm, total_capital: Number(e.target.value) })} /></div>
+                        <div><label style={labelStyle}>Risk % (リスク許容度%)</label><input style={inputStyle} type="number" step="0.1" value={settingsForm.risk_pct || 1} onChange={e => setSettingsForm({ ...settingsForm, risk_pct: Number(e.target.value) })} /></div>
+                        <div><label style={labelStyle}>Stop Loss % (損切り目安%)</label><input style={inputStyle} type="number" step="0.5" value={settingsForm.default_stop_loss_pct || 8} onChange={e => setSettingsForm({ ...settingsForm, default_stop_loss_pct: Number(e.target.value) })} /></div>
+                        <div><label style={labelStyle}>Max Positions (最大銘柄数)</label><input style={inputStyle} type="number" value={settingsForm.max_positions || 8} onChange={e => setSettingsForm({ ...settingsForm, max_positions: Number(e.target.value) })} /></div>
                     </div>
                     <div style={{ marginTop: '20px' }}>
                         <button type="submit" style={{ background: 'linear-gradient(135deg, #3b82f6, #2563eb)', border: 'none', color: '#fff', padding: '10px 32px', borderRadius: '8px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>Save Changes</button>

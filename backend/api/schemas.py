@@ -417,6 +417,14 @@ class PositionSellRequest(BaseModel):
     exit_reason: str  # stop_loss / take_profit_trim / take_profit_full / trailing_stop / manual
     memo: Optional[str] = None
 
+class PositionHistoryUpdateRequest(BaseModel):
+    entry_date: Optional[date] = None
+    entry_price: Optional[float] = None
+    exit_date: Optional[date] = None
+    exit_price: Optional[float] = None
+    exit_shares: Optional[int] = None
+    memo: Optional[str] = None
+
 class TransactionRequest(BaseModel):
     transaction_type: str
     amount: float
