@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { appConfig, getIntensityColor } from '../config';
+import { useWatchlist } from '../hooks/useWatchlist';
+import { WatchlistButton } from '../components/WatchlistButton';
 
 // Types for preset API response
 interface PresetItem {
@@ -51,6 +53,8 @@ export const ScreenerPage: React.FC = () => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [activeTab, setActiveTab] = useState<'Rise' | 'Fall'>('Rise');
+    
+    const { isTickerActive, toggleWatchlist } = useWatchlist();
 
     // Load available dates
     useEffect(() => {
@@ -177,9 +181,19 @@ export const ScreenerPage: React.FC = () => {
 
                             return (
                                 <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px' }}>
-                                    <Link to={`/chart/${encodeURIComponent(item.ticker)}`} target="_blank" style={{ color: appConfig.colors.chartText, textDecoration: 'none', fontWeight: '500' }}>
-                                        {item.ticker}
-                                    </Link>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+                                        <WatchlistButton 
+                                            isActive={isTickerActive(item.ticker)} 
+                                            onClick={(e) => {
+                                                e.preventDefault();
+                                                toggleWatchlist(item.ticker, selectedDate);
+                                            }}
+                                            size={16}
+                                        />
+                                        <Link to={`/chart/${encodeURIComponent(item.ticker)}`} target="_blank" style={{ color: appConfig.colors.chartText, textDecoration: 'none', fontWeight: '500' }}>
+                                            {item.ticker}
+                                        </Link>
+                                    </div>
                                     <div style={{
                                         padding: '2px 6px',
                                         borderRadius: '3px',
