@@ -32,7 +32,8 @@
 
 [[rise]]
 id = "thema_momentum"
-name = "強いテーマに属する銘柄のモメンタム"
+name = "Theme Momentum"
+subname = "強いテーマに属する銘柄のモメンタム"
 group = "Check"
 special = "theme_rs21_gt_63"
 [rise.filters]
@@ -50,7 +51,8 @@ min_market_cap =  1e7
 
 [[rise]]
 id = "momentum_breakout"
-name = "出来高を伴った急騰銘柄"
+name = "Momentum Breakout"
+subname = "出来高を伴った急騰銘柄"
 group = "Check"
 special = "rs_rank_21_gt_63"
 [rise.filters]
@@ -71,6 +73,7 @@ min_market_cap = 1e8
 [[rise]]
 id = "check_1d_gain"
 name = "1D% Gain"
+subname = "1日の上昇率上位"
 group = "Check"
 [rise.filters]
 min_change_1d_pct = 4.0
@@ -84,6 +87,7 @@ min_market_cap = 1e9
 [[rise]]
 id = "check_volume_surge"
 name = "Volume Surge"
+subname = "出来高急増"
 group = "Check"
 [rise.filters]
 min_vol_surge_21 = 1.5
@@ -141,7 +145,8 @@ min_market_cap = 1e9
 
 [[rise]]
 id = "climax_top"
-name = "Climax Top / Overextended"
+name = "Climax Top"
+subname = "クライマックストップ・過熱警戒"
 group = "Overhead sign"
 expression = "dist_sma50_atr > 3 or td9 == -9"
 

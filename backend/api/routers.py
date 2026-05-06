@@ -245,6 +245,7 @@ def get_screener_presets():
             items.append(schemas.ScreenerPresetItem(
                 id=p.get("id", ""),
                 name=p.get("name", ""),
+                subname=p.get("subname"),
                 subtitle=p.get("subtitle"),
                 group=p.get("group", ""),
                 filters=p.get("filters", {}),
@@ -1278,7 +1279,8 @@ def get_screener_dashboard(
         try:
             q = _build_preset_query(p)
             rise_categories.append(schemas.ScreenerDashboardCategory(
-                id=p["id"], name=p["name"], subtitle=p.get("subtitle"),
+                id=p["id"], name=p["name"], subname=p.get("subname"),
+                subtitle=p.get("subtitle"),
                 group=p.get("group", "Check"), items=fetch_top_8(q)
             ))
         except Exception as e:
@@ -1288,7 +1290,8 @@ def get_screener_dashboard(
         try:
             q = _build_preset_query(p)
             fall_categories.append(schemas.ScreenerDashboardCategory(
-                id=p["id"], name=p["name"], subtitle=p.get("subtitle"),
+                id=p["id"], name=p["name"], subname=p.get("subname"),
+                subtitle=p.get("subtitle"),
                 group=p.get("group", "Warning"), items=fetch_top_8(q)
             ))
         except Exception as e:

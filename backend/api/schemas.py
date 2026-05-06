@@ -152,6 +152,7 @@ class ScreenerDashboardItem(BaseModel):
 class ScreenerDashboardCategory(BaseModel):
     id: str
     name: str
+    subname: Optional[str] = None
     subtitle: Optional[str] = None
     group: str
     items: List[ScreenerDashboardItem]
@@ -304,6 +305,7 @@ class EarningResponse(BaseModel):
 class ScreenerPresetItem(BaseModel):
     id: str
     name: str
+    subname: Optional[str] = None
     subtitle: Optional[str] = None
     group: str
     filters: dict = {}

@@ -30,6 +30,7 @@ interface ScreenerDashboardItem {
 interface ScreenerDashboardCategory {
     id: string;
     name: string;
+    subname?: string;
     subtitle?: string;
     group: string;
     items: ScreenerDashboardItem[];
@@ -157,13 +158,20 @@ export const ScreenerPage: React.FC = () => {
 
         return (
             <div key={category.id} className="glass-panel" style={{ padding: '15px', display: 'flex', flexDirection: 'column', minWidth: '300px', flex: '1 1 300px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', borderBottom: `1px solid ${appConfig.colors.glassBorder}`, paddingBottom: '10px' }}>
-                    <Link to={linkTarget} style={{ textDecoration: 'none', color: '#fff', fontSize: '16px', fontWeight: 'bold' }}>
-                        {category.name}
-                        {category.subtitle && <span style={{ fontSize: '11px', color: '#aaa', marginLeft: '6px', fontWeight: 'normal' }}>{category.subtitle}</span>}
-                        <span style={{ fontSize: '12px', color: '#aaa', marginLeft: '4px', fontWeight: 'normal' }}>›</span>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '15px', borderBottom: `1px solid ${appConfig.colors.glassBorder}`, paddingBottom: '10px' }}>
+                    <Link to={linkTarget} style={{ textDecoration: 'none', display: 'flex', flexDirection: 'column' }}>
+                        <div style={{ display: 'flex', alignItems: 'baseline', gap: '5px' }}>
+                            <span style={{ fontSize: '16px', fontWeight: 'bold', color: '#fff' }}>{category.name}</span>
+                            {category.subtitle && <span style={{ fontSize: '11px', color: '#aaa', fontWeight: 'normal' }}>{category.subtitle}</span>}
+                            <span style={{ fontSize: '12px', color: '#aaa', fontWeight: 'normal' }}>›</span>
+                        </div>
+                        {category.subname && (
+                            <div style={{ fontSize: '11px', color: '#888', marginTop: '2px', fontWeight: 'normal' }}>
+                                {category.subname}
+                            </div>
+                        )}
                     </Link>
-                    <span style={{ fontSize: '12px', color: '#aaa' }}>Top 8</span>
+                    <span style={{ fontSize: '12px', color: '#aaa', marginTop: '4px' }}>Top 8</span>
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -211,6 +219,117 @@ export const ScreenerPage: React.FC = () => {
                     {category.items.length >= 8 && (
                         <div style={{ textAlign: 'center', fontSize: '16px', color: '#666', marginTop: '4px' }}>...</div>
                     )}
+                </div>
+            </div>
+        );
+    };
+
+    const renderHotPicks = () => {
+        if (!data) return null;
+        const categories = activeTab === 'Rise' ? data.rise : data.fall;
+        const tickerMap: Record<string, { item: ScreenerDashboardItem; categories: string[]; count: number }> = {};
+        
+        // Define exact allowed groups for confluence
+        const allowedGroups = activeTab === 'Rise' ? ['Check'] : ['Warning'];
+
+        categories.forEach(cat => {
+            // Trim and check group name strictly
+            const currentGroup = (cat.group || '').trim();
+            if (!allowedGroups.includes(currentGroup)) return;
+
+            cat.items.forEach(item => {
+                if (!tickerMap[item.ticker]) {
+                    tickerMap[item.ticker] = { item, categories: [], count: 0 };
+                }
+                tickerMap[item.ticker].count++;
+                tickerMap[item.ticker].categories.push(cat.name);
+            });
+        });
+
+        const hotPicks = Object.values(tickerMap)
+            .filter(p => p.count > 1)
+            .sort((a, b) => b.count - a.count || Math.abs(b.item.change_pct) - Math.abs(a.item.change_pct))
+            .slice(0, 3);
+
+        if (hotPicks.length === 0) return null;
+
+        return (
+            <div className="glass-panel" style={{ 
+                padding: '20px', 
+                marginBottom: '10px', 
+                background: 'linear-gradient(135deg, rgba(34, 211, 160, 0.1) 0%, rgba(59, 130, 246, 0.05) 100%)',
+                border: '1px solid rgba(34, 211, 160, 0.3)',
+                boxShadow: '0 8px 32px rgba(0,0,0,0.3)'
+            }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '15px' }}>
+                    <span style={{ fontSize: '20px' }}>🔥</span>
+                    <h2 style={{ margin: 0, fontSize: '18px', color: '#22d3a0', letterSpacing: '0.05em' }}>HOT PICKS <span style={{fontSize: '12px', color: '#888', fontWeight: 'normal', marginLeft: '8px'}}>— Multiple Signal Confluence</span></h2>
+                </div>
+                <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+                    {hotPicks.map((pick, idx) => (
+                        <div key={pick.item.ticker} style={{ 
+                            flex: '1', 
+                            minWidth: '280px', 
+                            background: 'rgba(255,255,255,0.03)', 
+                            borderRadius: '12px', 
+                            padding: '15px',
+                            border: '1px solid rgba(255,255,255,0.05)',
+                            position: 'relative',
+                            overflow: 'hidden'
+                        }}>
+                            <div style={{ position: 'absolute', top: '-10px', right: '-10px', fontSize: '40px', opacity: 0.05, fontWeight: 'bold' }}>#{idx + 1}</div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <WatchlistButton 
+                                        isActive={isTickerActive(pick.item.ticker)} 
+                                        onClick={(e) => {
+                                            e.preventDefault();
+                                            toggleWatchlist(pick.item.ticker, selectedDate);
+                                        }}
+                                        size={18}
+                                    />
+                                    <Link to={`/chart/${encodeURIComponent(pick.item.ticker)}`} target="_blank" style={{ fontSize: '20px', fontWeight: 'bold', color: '#fff', textDecoration: 'none' }}>
+                                        {pick.item.ticker}
+                                    </Link>
+                                    <span style={{ fontSize: '12px', color: '#aaa', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pick.item.name}</span>
+                                </div>
+                                <div style={{ 
+                                    padding: '4px 8px', 
+                                    borderRadius: '6px', 
+                                    backgroundColor: getIntensityColor(pick.item.change_pct, 5, pick.item.change_pct >= 0 ? '#22d3a0' : '#f43f5e'), 
+                                    color: '#000', 
+                                    fontWeight: 'bold',
+                                    fontSize: '13px'
+                                }}>
+                                    {pick.item.change_pct > 0 ? '+' : ''}{pick.item.change_pct.toFixed(2)}%
+                                </div>
+                            </div>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                                {pick.categories.map(cat => (
+                                    <span key={cat} style={{ 
+                                        fontSize: '10px', 
+                                        padding: '2px 8px', 
+                                        background: 'rgba(59, 130, 246, 0.2)', 
+                                        color: '#60a5fa', 
+                                        borderRadius: '100px',
+                                        border: '1px solid rgba(59, 130, 246, 0.3)'
+                                    }}>
+                                        {cat}
+                                    </span>
+                                ))}
+                                <span style={{ 
+                                    fontSize: '10px', 
+                                    padding: '2px 8px', 
+                                    background: 'rgba(34, 211, 160, 0.2)', 
+                                    color: '#22d3a0', 
+                                    borderRadius: '100px',
+                                    fontWeight: 'bold'
+                                }}>
+                                    {pick.count} Signals
+                                </span>
+                            </div>
+                        </div>
+                    ))}
                 </div>
             </div>
         );
@@ -305,6 +424,8 @@ export const ScreenerPage: React.FC = () => {
                             <span style={{ fontSize: '18px', marginRight: '8px' }}>📉</span> Fall (警戒・売り目線)
                         </button>
                     </div>
+
+                    {renderHotPicks()}
 
                     {/* Dashboard Content */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '30px' }}>
