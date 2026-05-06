@@ -225,6 +225,12 @@ def get_api_db():
     with get_db() as db:
         yield db
 
+# Dependency for user data DB
+def get_api_user_db():
+    from db.database_user import get_user_db
+    with get_user_db() as user_db:
+        yield user_db
+
 # ============================================================
 # Screener Preset / Meta Endpoints
 # ============================================================
@@ -1543,19 +1549,20 @@ from api.watchlist_service import (
 
 
 @router.get("/watchlist", response_model=schemas.WatchlistResponse)
-def api_get_watchlist(db: Session = Depends(get_api_db)):
+def api_get_watchlist(db: Session = Depends(get_api_db), user_db: Session = Depends(get_api_user_db)):
     """Get all watchlist items (active + removed) with computed metrics."""
-    data = get_watchlist(db)
+    data = get_watchlist(db, user_db)
     return schemas.WatchlistResponse(**data)
 
 
 @router.post("/watchlist", response_model=Optional[schemas.WatchlistItem])
 def api_add_to_watchlist(
     req: schemas.WatchlistAddRequest,
-    db: Session = Depends(get_api_db)
+    db: Session = Depends(get_api_db),
+    user_db: Session = Depends(get_api_user_db)
 ):
     """Add a symbol to watchlist with 1-hour reactivation rule."""
-    wl = add_to_watchlist(db, ticker=req.ticker, entry_date=req.entry_date)
+    wl = add_to_watchlist(db, user_db, ticker=req.ticker, entry_date=req.entry_date)
     if wl is None:
         raise HTTPException(status_code=404, detail="Symbol not found or no price data for the specified date")
 
@@ -1585,38 +1592,39 @@ def api_add_to_watchlist(
 
 # IMPORTANT: Fixed-path routes MUST come before /{ticker} to avoid path collision
 @router.delete("/watchlist/removed/clear")
-def api_clear_removed(db: Session = Depends(get_api_db)):
+def api_clear_removed(user_db: Session = Depends(get_api_user_db)):
     """Physically delete all 'removed' watchlist records."""
-    count = clear_removed(db)
+    count = clear_removed(user_db)
     return {"deleted": count}
 
 
 @router.post("/watchlist/delete-bulk")
 def api_remove_bulk(
     req: schemas.WatchlistBulkDeleteRequest,
-    db: Session = Depends(get_api_db)
+    db: Session = Depends(get_api_db),
+    user_db: Session = Depends(get_api_user_db)
 ):
     """Remove multiple symbols from watchlist (Logical delete ONLY)."""
-    count = remove_bulk_from_watchlist(db, tickers=req.tickers)
+    count = remove_bulk_from_watchlist(db, user_db, tickers=req.tickers)
     return {"count": count}
 
 
 @router.get("/watchlist/tickers")
-def api_get_watchlist_tickers(db: Session = Depends(get_api_db)):
+def api_get_watchlist_tickers(db: Session = Depends(get_api_db), user_db: Session = Depends(get_api_user_db)):
     """Get list of active watchlist tickers (lightweight, for star button state)."""
-    tickers = get_watchlist_tickers(db)
+    tickers = get_watchlist_tickers(db, user_db)
     return {"tickers": tickers}
 
 
 @router.delete("/watchlist/{ticker}")
-def api_remove_from_watchlist(ticker: str, db: Session = Depends(get_api_db)):
+def api_remove_from_watchlist(ticker: str, db: Session = Depends(get_api_db), user_db: Session = Depends(get_api_user_db)):
     """Remove a symbol from watchlist (physical delete within 1hr, otherwise logical)."""
-    from db.models import Watchlist as WatchlistModel
+    from db.models_user import Watchlist as WatchlistModel
     symbol_id_check = db.query(Symbol).filter_by(ticker=ticker).first()
     if not symbol_id_check:
         raise HTTPException(status_code=404, detail="Symbol not found")
 
-    wl = remove_from_watchlist(db, ticker=ticker)
+    wl = remove_from_watchlist(db, user_db, ticker=ticker)
     if wl is None:
         # Physical deletion occurred (or not found in active)
         return {"status": "deleted"}
@@ -1627,10 +1635,11 @@ def api_remove_from_watchlist(ticker: str, db: Session = Depends(get_api_db)):
 def api_update_watchlist_entry(
     ticker: str,
     req: schemas.WatchlistUpdateRequest,
-    db: Session = Depends(get_api_db)
+    db: Session = Depends(get_api_db),
+    user_db: Session = Depends(get_api_user_db)
 ):
     """Update entry_date (and corresponding entry_price) for an active watchlist item."""
-    wl = update_watchlist_entry_date(db, ticker=ticker, new_entry_date=req.entry_date)
+    wl = update_watchlist_entry_date(db, user_db, ticker=ticker, new_entry_date=req.entry_date)
     if wl is None:
         raise HTTPException(status_code=404, detail="Active watchlist item not found or no price data for specified date")
     return {

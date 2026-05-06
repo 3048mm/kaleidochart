@@ -6,23 +6,18 @@ from datetime import date
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
-from db.models import (
-    Symbol, DailyPrice, Indicator, RelativeRank,
-    Portfolio, PortfolioPosition, PositionHistory,
-)
-from api.portfolio_logic import calc_max_investment, calc_stop_loss_price, calc_pnl, check_alert_status
+from db.models import Symbol, DailyPrice, Indicator, MarketSignal
+from db.models_user import Portfolio, PortfolioPosition, PositionHistory, TotalPortfolio, Transaction
+from api.portfolio_logic import calc_max_investment, calc_stop_loss_price, calc_pnl, check_alert_status, calculate_recommended_cash
 
 
 # --- Helpers ---
-
 def _resolve_symbol(db: Session, ticker: str) -> Symbol | None:
     return db.query(Symbol).filter_by(ticker=ticker).first()
-
 
 def _get_close_price(db: Session, symbol_id: int, target_date: date) -> float | None:
     dp = db.query(DailyPrice).filter_by(symbol_id=symbol_id, date=target_date).first()
     return dp.close if dp else None
-
 
 def _get_latest_price(db: Session, symbol_id: int) -> DailyPrice | None:
     return db.query(DailyPrice).filter_by(
@@ -33,70 +28,77 @@ def _get_latest_price(db: Session, symbol_id: int) -> DailyPrice | None:
 # ============================================================
 # 2-1: Portfolio CRUD
 # ============================================================
+def _get_or_create_default_total_portfolio(user_db: Session) -> TotalPortfolio:
+    tp = user_db.query(TotalPortfolio).first()
+    if not tp:
+        tp = TotalPortfolio(name="Main Account", currency="USD")
+        user_db.add(tp)
+        user_db.commit()
+        user_db.refresh(tp)
+    return tp
 
 def create_portfolio(
-    db: Session, *, name: str, currency: str, total_capital: float,
+    user_db: Session, *, name: str, currency: str, total_capital: float,
     risk_pct: float, default_stop_loss_pct: float, stop_loss_method: str,
     max_positions: int, atr_multiplier: float = 2.0,
     profit_take_method: str = None, source: str = "manual",
 ) -> Portfolio:
+    tp = _get_or_create_default_total_portfolio(user_db)
     pf = Portfolio(
+        total_portfolio_id=tp.id,
         name=name, currency=currency, total_capital=total_capital,
         risk_pct=risk_pct, default_stop_loss_pct=default_stop_loss_pct,
         stop_loss_method=stop_loss_method, atr_multiplier=atr_multiplier,
         profit_take_method=profit_take_method, max_positions=max_positions,
         source=source, status="active",
     )
-    db.add(pf)
-    db.commit()
-    db.refresh(pf)
+    user_db.add(pf)
+    user_db.commit()
+    user_db.refresh(pf)
     return pf
 
+def get_portfolios(user_db: Session) -> list[Portfolio]:
+    return user_db.query(Portfolio).filter_by(status="active").all()
 
-def get_portfolios(db: Session) -> list[Portfolio]:
-    return db.query(Portfolio).filter_by(status="active").all()
+def get_portfolio(user_db: Session, portfolio_id: int) -> Portfolio | None:
+    return user_db.query(Portfolio).filter_by(id=portfolio_id).first()
 
-
-def get_portfolio(db: Session, portfolio_id: int) -> Portfolio | None:
-    return db.query(Portfolio).filter_by(id=portfolio_id).first()
-
-
-def update_portfolio(db: Session, portfolio_id: int, **kwargs) -> Portfolio | None:
-    pf = db.query(Portfolio).filter_by(id=portfolio_id).first()
+def update_portfolio(user_db: Session, portfolio_id: int, **kwargs) -> Portfolio | None:
+    pf = user_db.query(Portfolio).filter_by(id=portfolio_id).first()
     if pf is None:
         return None
     for key, value in kwargs.items():
         if hasattr(pf, key) and value is not None:
             setattr(pf, key, value)
-    db.commit()
-    db.refresh(pf)
+    user_db.commit()
+    user_db.refresh(pf)
     return pf
 
-
-def archive_portfolio(db: Session, portfolio_id: int) -> Portfolio | None:
-    pf = db.query(Portfolio).filter_by(id=portfolio_id).first()
+def archive_portfolio(user_db: Session, portfolio_id: int) -> Portfolio | None:
+    pf = user_db.query(Portfolio).filter_by(id=portfolio_id).first()
     if pf is None:
         return None
     pf.status = "archived"
-    db.commit()
-    db.refresh(pf)
+    user_db.commit()
+    user_db.refresh(pf)
     return pf
 
 
 # ============================================================
 # 2-2: Position Management
 # ============================================================
-
 def add_position(
-    db: Session, *, portfolio_id: int, ticker: str,
+    db: Session, user_db: Session, *, portfolio_id: int, ticker: str,
     entry_date: date, shares: int, memo: str = None,
     stop_loss_pct: float = None, custom_take_profit_pct: float = None,
+    entry_price: float = None,
 ) -> PortfolioPosition | None:
     sym = _resolve_symbol(db, ticker)
     if sym is None:
         return None
 
-    entry_price = _get_close_price(db, sym.id, entry_date)
+    if entry_price is None:
+        entry_price = _get_close_price(db, sym.id, entry_date)
     if entry_price is None:
         return None
 
@@ -108,18 +110,40 @@ def add_position(
         custom_take_profit_pct=custom_take_profit_pct,
         status="open", memo=memo,
     )
-    db.add(pos)
-    db.commit()
-    db.refresh(pos)
+    user_db.add(pos)
+    user_db.commit()
+    user_db.refresh(pos)
     return pos
 
+def edit_position(
+    user_db: Session, position_id: int,
+    entry_date: date = None, entry_price: float = None, shares: int = None
+) -> PortfolioPosition | None:
+    pos = user_db.query(PortfolioPosition).filter_by(id=position_id).first()
+    if not pos:
+        return None
+    
+    if entry_date is not None:
+        pos.entry_date = entry_date
+    if entry_price is not None:
+        pos.entry_price = entry_price
+    if shares is not None:
+        # Also adjust original_shares relatively if we changed shares
+        # Assuming we just update both if it's a correction of the initial amount
+        if pos.shares == pos.original_shares:
+            pos.original_shares = shares
+        pos.shares = shares
+        
+    user_db.commit()
+    user_db.refresh(pos)
+    return pos
 
-def get_positions_with_metrics(db: Session, portfolio_id: int) -> list[dict]:
-    pf = db.query(Portfolio).filter_by(id=portfolio_id).first()
+def get_positions_with_metrics(db: Session, user_db: Session, portfolio_id: int) -> list[dict]:
+    pf = user_db.query(Portfolio).filter_by(id=portfolio_id).first()
     if pf is None:
         return []
 
-    positions = db.query(PortfolioPosition).filter_by(
+    positions = user_db.query(PortfolioPosition).filter_by(
         portfolio_id=portfolio_id
     ).all()
 
@@ -129,10 +153,8 @@ def get_positions_with_metrics(db: Session, portfolio_id: int) -> list[dict]:
         latest_dp = _get_latest_price(db, pos.symbol_id)
         current_price = latest_dp.close if latest_dp else pos.entry_price
 
-        # Effective stop loss
         eff_stop_pct = pos.stop_loss_pct if pos.stop_loss_pct is not None else pf.default_stop_loss_pct
 
-        # Get latest indicator for ATR-based stop loss
         latest_ind = db.query(Indicator).filter_by(
             symbol_id=pos.symbol_id
         ).order_by(desc(Indicator.date)).first()
@@ -154,7 +176,6 @@ def get_positions_with_metrics(db: Session, portfolio_id: int) -> list[dict]:
         total_gain_pct = (current_price - pos.entry_price) / pos.entry_price * 100
         total_gain_amount = (current_price - pos.entry_price) * pos.shares
 
-        # Alert check
         alert = check_alert_status(
             current_price=current_price,
             entry_price=pos.entry_price,
@@ -184,24 +205,21 @@ def get_positions_with_metrics(db: Session, portfolio_id: int) -> list[dict]:
 
     return result
 
-
 # ============================================================
 # 2-3: Sell / Trim Flow
 # ============================================================
-
 def sell_position(
-    db: Session, *, position_id: int,
+    user_db: Session, *, position_id: int,
     exit_date: date, exit_price: float, exit_shares: int,
     exit_reason: str, memo: str = None,
 ) -> PositionHistory | None:
-    pos = db.query(PortfolioPosition).filter_by(id=position_id).first()
+    pos = user_db.query(PortfolioPosition).filter_by(id=position_id).first()
     if pos is None:
         return None
 
     if exit_shares > pos.shares:
-        return None  # Cannot sell more than held
+        return None
 
-    # Compute PnL
     pnl = calc_pnl(
         entry_price=pos.entry_price,
         exit_price=exit_price,
@@ -219,26 +237,23 @@ def sell_position(
         pnl_pct=pnl["pnl_pct"], pnl_amount=pnl["pnl_amount"],
         holding_days=pnl["holding_days"], memo=memo,
     )
-    db.add(hist)
+    user_db.add(hist)
 
-    # Update or delete position
     pos.shares -= exit_shares
     if pos.shares <= 0:
-        db.delete(pos)
+        user_db.delete(pos)
     else:
         pos.status = "partially_closed"
 
-    db.commit()
-    db.refresh(hist)
+    user_db.commit()
+    user_db.refresh(hist)
     return hist
-
 
 # ============================================================
 # 2-4: History
 # ============================================================
-
-def get_history(db: Session, portfolio_id: int) -> list[dict]:
-    records = db.query(PositionHistory).filter_by(
+def get_history(db: Session, user_db: Session, portfolio_id: int) -> list[dict]:
+    records = user_db.query(PositionHistory).filter_by(
         portfolio_id=portfolio_id
     ).order_by(PositionHistory.exit_date.asc(), PositionHistory.id.asc()).all()
 
@@ -267,17 +282,15 @@ def get_history(db: Session, portfolio_id: int) -> list[dict]:
 
     return result
 
-
 # ============================================================
 # 2-5: Portfolio Summary (Risk Dashboard Data)
 # ============================================================
-
-def get_portfolio_summary(db: Session, portfolio_id: int) -> dict | None:
-    pf = db.query(Portfolio).filter_by(id=portfolio_id).first()
+def get_portfolio_summary(db: Session, user_db: Session, portfolio_id: int) -> dict | None:
+    pf = user_db.query(Portfolio).filter_by(id=portfolio_id).first()
     if pf is None:
         return None
 
-    positions = db.query(PortfolioPosition).filter_by(
+    positions = user_db.query(PortfolioPosition).filter_by(
         portfolio_id=portfolio_id
     ).all()
 
@@ -285,7 +298,7 @@ def get_portfolio_summary(db: Session, portfolio_id: int) -> dict | None:
         total_capital=pf.total_capital,
         risk_pct=pf.risk_pct,
         stop_loss_pct=pf.default_stop_loss_pct,
-        stop_loss_method="fixed_pct",  # Summary uses fixed_pct for display
+        stop_loss_method="fixed_pct",
     )
 
     invested_total = 0.0
@@ -316,19 +329,15 @@ def get_portfolio_summary(db: Session, portfolio_id: int) -> dict | None:
         "unrealized_pnl": round(unrealized_pnl, 2),
     }
 
-
 # ============================================================
 # 2-6: Analytics (Sector distribution, performance stats)
 # ============================================================
-
-def get_analytics(db: Session, portfolio_id: int) -> dict | None:
-    """Return analytics data: sector breakdown, win rate, monthly returns, equity curve."""
-    pf = db.query(Portfolio).filter_by(id=portfolio_id).first()
+def get_analytics(db: Session, user_db: Session, portfolio_id: int) -> dict | None:
+    pf = user_db.query(Portfolio).filter_by(id=portfolio_id).first()
     if pf is None:
         return None
 
-    # --- Sector/category distribution (from open positions) ---
-    positions = db.query(PortfolioPosition).filter_by(portfolio_id=portfolio_id).all()
+    positions = user_db.query(PortfolioPosition).filter_by(portfolio_id=portfolio_id).all()
     sector_map: dict[str, float] = {}
     for pos in positions:
         sym = db.query(Symbol).filter_by(id=pos.symbol_id).first()
@@ -340,8 +349,7 @@ def get_analytics(db: Session, portfolio_id: int) -> dict | None:
         for k, v in sorted(sector_map.items(), key=lambda x: -x[1])
     ]
 
-    # --- Trade stats from history ---
-    history = db.query(PositionHistory).filter_by(portfolio_id=portfolio_id)\
+    history = user_db.query(PositionHistory).filter_by(portfolio_id=portfolio_id)\
         .order_by(PositionHistory.exit_date.asc(), PositionHistory.id.asc()).all()
 
     total_trades = len(history)
@@ -353,18 +361,17 @@ def get_analytics(db: Session, portfolio_id: int) -> dict | None:
     avg_loss = sum(h.pnl_pct or 0 for h in losses) / len(losses) if losses else 0.0
     expectancy = (win_rate / 100 * avg_win + (1 - win_rate / 100) * avg_loss) if total_trades > 0 else 0.0
 
-    # --- Equity curve (cumulative PnL over time) ---
     equity_curve = []
     cumulative = 0.0
     for h in history:
         cumulative += (h.pnl_amount or 0)
+        sym = db.query(Symbol).filter_by(id=h.symbol_id).first()
         equity_curve.append({
             "date": h.exit_date.isoformat(),
             "cumulative_pnl": round(cumulative, 2),
-            "ticker": db.query(Symbol).filter_by(id=h.symbol_id).first().ticker if db.query(Symbol).filter_by(id=h.symbol_id).first() else "???",
+            "ticker": sym.ticker if sym else "???",
         })
 
-    # --- Monthly returns ---
     monthly_map: dict[str, float] = {}
     for h in history:
         key = h.exit_date.strftime("%Y-%m")
@@ -388,3 +395,212 @@ def get_analytics(db: Session, portfolio_id: int) -> dict | None:
         "monthly_returns": monthly_returns,
     }
 
+# ============================================================
+# 2-7: Total Portfolio (Master Account)
+# ============================================================
+def get_total_portfolio_summary(db: Session, user_db: Session) -> dict:
+    tp = _get_or_create_default_total_portfolio(user_db)
+
+    transactions = user_db.query(Transaction).filter_by(total_portfolio_id=tp.id).all()
+    total_deposits_usd = sum(t.amount for t in transactions if t.transaction_type == 'DEPOSIT')
+    total_withdrawals_usd = sum(t.amount for t in transactions if t.transaction_type == 'WITHDRAWAL')
+    net_injected_capital = total_deposits_usd - total_withdrawals_usd
+
+    total_deposits_jpy = sum(t.local_amount or 0.0 for t in transactions if t.transaction_type == 'DEPOSIT')
+    total_withdrawals_jpy = sum(t.local_amount or 0.0 for t in transactions if t.transaction_type == 'WITHDRAWAL')
+    net_injected_jpy = total_deposits_jpy - total_withdrawals_jpy
+
+    portfolios = user_db.query(Portfolio).filter_by(total_portfolio_id=tp.id, status="active").all()
+    total_allocated_capital = sum(pf.total_capital for pf in portfolios)
+    unallocated_cash = net_injected_capital - total_allocated_capital
+
+    total_equities_value = 0.0
+    allocated_cash = 0.0
+
+    theme_map = {}
+    ticker_map = {}
+    
+    sub_portfolios_info = []
+
+    for pf in portfolios:
+        pf_invested = 0.0
+        pf_market_value = 0.0
+        
+        positions = user_db.query(PortfolioPosition).filter_by(portfolio_id=pf.id, status="open").all()
+        for pos in positions:
+            sym = db.query(Symbol).filter_by(id=pos.symbol_id).first()
+            latest_dp = _get_latest_price(db, pos.symbol_id)
+            current_price = latest_dp.close if latest_dp else pos.entry_price
+            
+            value = current_price * pos.shares
+            pf_invested += pos.entry_price * pos.shares
+            pf_market_value += value
+            total_equities_value += value
+            
+            if sym and sym.category in ("テーマ", "セクタ"):
+                theme_list = [sym.ticker]
+            else:
+                tags_str = sym.tags if sym and sym.tags else "Uncategorized"
+                theme_list = [t.strip() for t in tags_str.split(",") if t.strip()]
+                if not theme_list:
+                    theme_list = ["Uncategorized"]
+            
+            val_per_theme = value / len(theme_list)
+            for t in theme_list:
+                theme_map[t] = theme_map.get(t, 0.0) + val_per_theme
+            
+            ticker = sym.ticker if sym else "???"
+            ticker_map[ticker] = ticker_map.get(ticker, 0.0) + value
+            
+        pf_cash = pf.total_capital - pf_invested
+        allocated_cash += pf_cash
+        
+        sub_portfolios_info.append({
+            "id": pf.id,
+            "name": pf.name,
+            "total_capital": pf.total_capital,
+            "invested": pf_invested,
+            "cash": pf_cash,
+            "market_value": pf_market_value,
+            "unrealized_pnl": pf_market_value - pf_invested,
+        })
+
+    total_system_cash = unallocated_cash + allocated_cash
+    total_equity_value = total_system_cash + total_equities_value
+    total_unrealized_pnl = total_equity_value - net_injected_capital
+    total_unrealized_pnl_pct = (total_unrealized_pnl / net_injected_capital * 100) if net_injected_capital > 0 else 0.0
+
+    theme_breakdown = [{"name": k, "value": round(v, 2)} for k, v in sorted(theme_map.items(), key=lambda x: -x[1])]
+    ticker_breakdown = [{"name": k, "value": round(v, 2)} for k, v in sorted(ticker_map.items(), key=lambda x: -x[1])]
+    asset_allocation = [
+        {"name": "Cash", "value": round(total_system_cash, 2)},
+        {"name": "Equities", "value": round(total_equities_value, 2)}
+    ]
+
+    latest_signal = db.query(MarketSignal).order_by(desc(MarketSignal.date)).first()
+    if latest_signal:
+        phase = latest_signal.market_phase
+        score = latest_signal.market_trend_score
+    else:
+        phase = "UNKNOWN"
+        score = 50.0
+
+    recommended_cash = calculate_recommended_cash(phase, score)
+
+    # Fetch latest JPY=X
+    jpy_sym = db.query(Symbol).filter_by(ticker="JPY=X").first()
+    current_exchange_rate = 150.0
+    if jpy_sym:
+        latest_jpy_dp = _get_latest_price(db, jpy_sym.id)
+        if latest_jpy_dp:
+            current_exchange_rate = latest_jpy_dp.close
+
+    total_equity_jpy = total_equity_value * current_exchange_rate
+    total_unrealized_pnl_jpy = total_equity_jpy - net_injected_jpy
+    total_unrealized_pnl_pct_jpy = (total_unrealized_pnl_jpy / net_injected_jpy * 100) if net_injected_jpy > 0 else 0.0
+
+    return {
+        "total_portfolio_id": tp.id,
+        "name": tp.name,
+        "currency": tp.currency,
+        "net_injected_capital": round(net_injected_capital, 2),
+        "net_injected_jpy": round(net_injected_jpy, 0),
+        "total_allocated_capital": round(total_allocated_capital, 2),
+        "unallocated_cash": round(unallocated_cash, 2),
+        "allocated_cash": round(allocated_cash, 2),
+        "total_system_cash": round(total_system_cash, 2),
+        "total_equities_value": round(total_equities_value, 2),
+        "total_equity_value": round(total_equity_value, 2),
+        "total_equity_jpy": round(total_equity_jpy, 0),
+        "total_unrealized_pnl": round(total_unrealized_pnl, 2),
+        "total_unrealized_pnl_pct": round(total_unrealized_pnl_pct, 2),
+        "total_unrealized_pnl_jpy": round(total_unrealized_pnl_jpy, 0),
+        "total_unrealized_pnl_pct_jpy": round(total_unrealized_pnl_pct_jpy, 2),
+        "current_exchange_rate": round(current_exchange_rate, 2),
+        "asset_allocation": asset_allocation,
+        "theme_breakdown": theme_breakdown,
+        "ticker_breakdown": ticker_breakdown,
+        "recommended_cash": recommended_cash,
+        "sub_portfolios": sub_portfolios_info,
+    }
+    
+def get_historical_fx_rate(db: Session, target_date: date) -> float:
+    jpy_sym = db.query(Symbol).filter_by(ticker="JPY=X").first()
+    if not jpy_sym:
+        return 150.0
+    
+    dp = db.query(DailyPrice).filter(
+        DailyPrice.symbol_id == jpy_sym.id,
+        DailyPrice.date <= target_date
+    ).order_by(desc(DailyPrice.date)).first()
+    
+    if dp:
+        return dp.close
+    
+    # Fallback to earliest available
+    dp_fallback = db.query(DailyPrice).filter(
+        DailyPrice.symbol_id == jpy_sym.id
+    ).order_by(DailyPrice.date).first()
+    return dp_fallback.close if dp_fallback else 150.0
+
+
+def execute_transaction(
+    user_db: Session, 
+    transaction_type: str, 
+    amount: float, 
+    date: date, 
+    portfolio_id: int = None, 
+    memo: str = None,
+    local_amount: float = None,
+    exchange_rate: float = None,
+    local_currency: str = None
+) -> Transaction:
+    tp = _get_or_create_default_total_portfolio(user_db)
+    
+    t = Transaction(
+        total_portfolio_id=tp.id,
+        portfolio_id=portfolio_id,
+        transaction_type=transaction_type,
+        amount=amount,
+        local_amount=local_amount,
+        exchange_rate=exchange_rate,
+        local_currency=local_currency,
+        date=date,
+        memo=memo
+    )
+    user_db.add(t)
+    
+    if portfolio_id:
+        pf = user_db.query(Portfolio).filter_by(id=portfolio_id).first()
+        if pf:
+            if transaction_type == "FUNDING":
+                pf.total_capital += amount
+            elif transaction_type == "REFUND":
+                pf.total_capital -= amount
+                
+    user_db.commit()
+    user_db.refresh(t)
+    return t
+
+def get_transactions(user_db: Session) -> list[dict]:
+    tp = _get_or_create_default_total_portfolio(user_db)
+    transactions = user_db.query(Transaction).filter_by(total_portfolio_id=tp.id).order_by(desc(Transaction.date), desc(Transaction.id)).all()
+    
+    result = []
+    for t in transactions:
+        pf_name = None
+        if t.portfolio_id:
+            pf = user_db.query(Portfolio).filter_by(id=t.portfolio_id).first()
+            if pf:
+                pf_name = pf.name
+        
+        result.append({
+            "id": t.id,
+            "transaction_type": t.transaction_type,
+            "amount": t.amount,
+            "date": t.date.isoformat(),
+            "memo": t.memo,
+            "portfolio_id": t.portfolio_id,
+            "portfolio_name": pf_name,
+        })
+    return result

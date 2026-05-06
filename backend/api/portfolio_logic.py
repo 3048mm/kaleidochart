@@ -167,3 +167,37 @@ def check_alert_status(
         "take_profit_alert": take_profit_alert,
         "distance_to_stop_pct": distance_to_stop_pct,
     }
+
+
+def calculate_recommended_cash(market_phase: str, trend_score: float) -> dict:
+    """
+    Calculate the recommended cash holding ratio based on market phase and trend score.
+    Returns a dictionary with min_pct, max_pct, and a descriptive message.
+    """
+    phase_upper = market_phase.upper() if market_phase else "UNKNOWN"
+    
+    # Baseline depending on market phase
+    if phase_upper == "BULL":
+        min_pct = 0
+        max_pct = 20
+    elif phase_upper == "CORRECTION":
+        min_pct = 30
+        max_pct = 50
+    elif phase_upper == "RALLY_ATTEMPT":
+        min_pct = 20
+        max_pct = 40
+    elif phase_upper == "BEAR":
+        min_pct = 80
+        max_pct = 100
+    else:
+        # Default or unknown phase
+        min_pct = 50
+        max_pct = 100
+        
+    return {
+        "phase": phase_upper,
+        "trend_score": trend_score,
+        "recommended_min_pct": min_pct,
+        "recommended_max_pct": max_pct,
+        "message": f"Based on {phase_upper} phase, recommended cash is {min_pct}%-{max_pct}%."
+    }

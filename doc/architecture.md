@@ -23,12 +23,13 @@
 4. **バックテストエンジン (CLIバッチ)**
    * 役割: スクリーナー条件セットの有効性を過去データで検証し、Expectancy・Profit Factor 等の指標で比較・評価する。パラメータの反復的な調整・再実行ワークフローを想定した設計。
 5. **データベース管理層 (SQLite)**
-   * 役割: 全ての生データおよび計算済みインジケータの永続化。
+   * 役割: 全ての生データおよび計算済みインジケータの永続化 (`stocktool.db`)。およびユーザー固有の永続データ管理 (`user_data.db`)。
+   * **サンドボックス運用**: 各DBに対して、テストおよび検証用のサンドボックスDB (`stocktool_sandbox.db`, `user_data_sandbox.db`) を併用する。
 6. **ウォッチリスト管理**
-   * 役割: ユーザーが注目する銘柄を登録し、登録時点からのパフォーマンス（%Gain, Max/Min Gain 等）を追跡・比較する。フロントエンドの個別チャート画面・スクリーナー画面から1クリックで登録/解除を行い、専用画面で一覧管理する。
-7. **ポートフォリオ管理**
-   * 役割: 実際に保有している銘柄を管理し、リスク管理（ポジションサイジング計算、損切/利確ライン）・損益追跡・部分売却（Trim）・売却後の振り返りを行う。複数ポートフォリオ対応（長期/スイング等の用途別管理）。
-   * テーブル: `portfolios`（設定）、`portfolio_positions`（保有銘柄）、`position_history`（売却履歴）
+   * 役割: ユーザーが注目する銘柄を登録し、パフォーマンス（%Gain 等）を追跡する。ユーザー固有データとして `user_data.db` で管理。
+7. **ポートフォリオ管理 (全体＆サブ)**
+   * 役割: 総資金の管理と入出金追跡（Total Portfolio）と、サブポートフォリオにおける実際の保有銘柄・リスク管理・損益追跡。ユーザー固有データとして `user_data.db` で管理。
+   * テーブル: `total_portfolios`, `transactions`, `portfolios`, `portfolio_positions`, `position_history`
    * API: `/api/portfolio/...` 配下のRESTfulエンドポイント群
    * ロジック: `backend/api/portfolio_logic.py`（純粋関数）、`backend/api/portfolio_service.py`（サービス層）
 
@@ -49,9 +50,9 @@
     *   **`tests/`**: 自動テストコード。
 *   **`frontend/`**: フロントエンド（React + Vite）のソースコード全体。
     *   **`src/pages/WatchlistPage.tsx`**: ウォッチリスト専用画面（登録中・解除済みタブ）。
-    *   **`src/pages/PortfolioListPage.tsx`**: ポートフォリオ一覧画面（カード表示・新規作成）。
+    *   **`src/pages/TotalPortfolioPage.tsx`**: 全体ポートフォリオダッシュボード画面（総資金、入出金、円グラフ、サブポートフォリオ一覧）。
     *   **`src/pages/PortfolioDetailPage.tsx`**: ポートフォリオ詳細画面（Positions/History/Analytics/Settings タブ）。
-*   **`data/`**: 本番用データベース（`stocktool.db`）および生のデータファイル。
+*   **`data/`**: 本番用データベース（`stocktool.db`, `user_data.db`）および生のデータファイル。
 *   **`doc/`**: アーキテクチャ設計および各機能仕様書。
 *   **`run/`**: 手動で実行する起動用バッチファイル（`.bat`）やシェルスクリプト（`.sh`）を格納。
 *   **`tools/`**: DBメンテナンスや補助的なユーティリティスクリプト。

@@ -32,7 +32,7 @@
 
 [[rise]]
 id = "thema_momentum"
-name = "Thema Momentum"
+name = "強いテーマに属する銘柄のモメンタム"
 group = "Check"
 special = "theme_rs21_gt_63"
 [rise.filters]
@@ -41,7 +41,31 @@ min_vol_surge_21 = 2.8000000000000003
 min_adr_pct_21 = 6.0
 max_dist_sma50_atr = 5.0
 min_market_cap =  1e7
+# [backtest results]
+# port_cagr 1428.83
+# port_vs_spy 1421.45
+# spy_cagr 7.37
+# total_trades 2271
+# win_rate 33.86173491853809
 
+[[rise]]
+id = "momentum_breakout"
+name = "出来高を伴った急騰銘柄"
+group = "Check"
+special = "rs_rank_21_gt_63"
+[rise.filters]
+min_change_1d_pct = 8.0 
+min_change_intraday_pct = -8.0 
+min_vol_surge_21 = 2.8 
+min_adr_pct_21 = 6.0 
+max_dist_sma50_atr = 7.0 
+min_market_cap = 1e8 
+# [backtest results]
+# port_cagr 804.23
+# port_vs_spy 796.86
+# spy_cagr 7.37
+# total_trades 1749
+# win_rate 35.906232132647226
 
 
 [[rise]]
@@ -54,6 +78,8 @@ min_rel_vol_vs_spy_21 = 1.0
 max_dist_sma50_atr = 6.0
 min_adr_pct_21 = 4.0
 min_market_cap = 1e9
+
+
 
 [[rise]]
 id = "check_volume_surge"

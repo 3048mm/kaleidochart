@@ -15,6 +15,7 @@ project_root = os.path.dirname(backend_dir)
 from api import routers
 from api import portfolio_router
 from db.database import init_db
+from db.database_user import init_user_db
 
 app = FastAPI(title="Stock Analyzer API", version="0.1.0")
 
@@ -27,6 +28,10 @@ def load_config():
 # Initialize Database connection pool
 config = load_config()
 init_db(config["system"]["db_path"])
+
+# Initialize User Database
+user_db_path = config["system"].get("user_db_path", os.path.join(os.path.dirname(config["system"]["db_path"]), "user_data.db"))
+init_user_db(user_db_path)
 
 # Configure CORS for frontend access (Vite default dev server is 5173)
 app.add_middleware(

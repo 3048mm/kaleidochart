@@ -71,9 +71,12 @@ export const PortfolioDetailPage: React.FC = () => {
     const [showSellForm, setShowSellForm] = useState<number | null>(null);
 
     // Add position form
-    const [addForm, setAddForm] = useState({ ticker: '', entry_date: '', shares: 100 });
+    const [addForm, setAddForm] = useState({ ticker: '', entry_date: '', shares: 100, entry_price: 0 });
     // Sell form
     const [sellForm, setSellForm] = useState({ exit_date: '', exit_price: 0, exit_shares: 0, exit_reason: 'manual' });
+    // Edit form
+    const [showEditForm, setShowEditForm] = useState<number | null>(null);
+    const [editForm, setEditForm] = useState({ entry_date: '', entry_price: 0, shares: 0 });
     // Settings form
     const [settingsForm, setSettingsForm] = useState<Partial<PortfolioDetail>>({});
 
@@ -100,13 +103,29 @@ export const PortfolioDetailPage: React.FC = () => {
 
     useEffect(() => { if (pfId) fetchAll(); }, [pfId]);
 
+    useEffect(() => {
+        const fetchPrice = async () => {
+            if (addForm.ticker && addForm.entry_date) {
+                try {
+                    const res = await fetch(`/api/portfolio/ticker-price?ticker=${addForm.ticker}&date=${addForm.entry_date}`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        setAddForm(prev => ({ ...prev, entry_price: data.price }));
+                    }
+                } catch (err) {}
+            }
+        };
+        const timer = setTimeout(fetchPrice, 500);
+        return () => clearTimeout(timer);
+    }, [addForm.ticker, addForm.entry_date]);
+
     const handleAddPosition = async (e: React.FormEvent) => {
         e.preventDefault();
         const res = await fetch(`/api/portfolio/${pfId}/positions`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(addForm),
         });
-        if (res.ok) { setShowAddForm(false); setAddForm({ ticker: '', entry_date: '', shares: 100 }); await fetchAll(); }
+        if (res.ok) { setShowAddForm(false); setAddForm({ ticker: '', entry_date: '', shares: 100, entry_price: 0 }); await fetchAll(); }
         else { const err = await res.json(); alert(err.detail || 'Failed'); }
     };
 
@@ -117,6 +136,16 @@ export const PortfolioDetailPage: React.FC = () => {
             body: JSON.stringify(sellForm),
         });
         if (res.ok) { setShowSellForm(null); await fetchAll(); }
+        else { const err = await res.json(); alert(err.detail || 'Failed'); }
+    };
+
+    const handleEdit = async (posId: number, e: React.FormEvent) => {
+        e.preventDefault();
+        const res = await fetch(`/api/portfolio/${pfId}/positions/${posId}`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(editForm),
+        });
+        if (res.ok) { setShowEditForm(null); await fetchAll(); }
         else { const err = await res.json(); alert(err.detail || 'Failed'); }
     };
 
@@ -150,13 +179,13 @@ export const PortfolioDetailPage: React.FC = () => {
     const summaryCards = summary ? (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '12px', marginBottom: '24px' }}>
             {[
-                { label: 'Capital', value: fmtCur(summary.total_capital) },
-                { label: 'Risk Amount', value: fmtCur(summary.risk_amount), sub: `${summary.risk_pct}%` },
-                { label: 'Max/Position', value: fmtCur(summary.max_investment) },
-                { label: 'Positions', value: `${summary.open_positions} / ${summary.max_positions}` },
-                { label: 'Invested', value: fmtCur(summary.invested_total) },
-                { label: 'Market Value', value: fmtCur(summary.market_value_total) },
-                { label: 'Unrealized P&L', value: fmtCur(summary.unrealized_pnl), color: pctColor(summary.unrealized_pnl) },
+                { label: 'Capital (総資金)', value: fmtCur(summary.total_capital) },
+                { label: 'Risk Amount (リスク額)', value: fmtCur(summary.risk_amount), sub: `${summary.risk_pct}%` },
+                { label: 'Max/Position (最大投資額)', value: fmtCur(summary.max_investment) },
+                { label: 'Positions (保有数)', value: `${summary.open_positions} / ${summary.max_positions}` },
+                { label: 'Invested (投資済額)', value: fmtCur(summary.invested_total) },
+                { label: 'Market Value (評価額)', value: fmtCur(summary.market_value_total) },
+                { label: 'Unrealized P&L (含み損益)', value: fmtCur(summary.unrealized_pnl), color: pctColor(summary.unrealized_pnl) },
             ].map((c, i) => (
                 <div key={i} style={{ background: 'rgba(15,23,42,0.6)', border: '1px solid rgba(99,120,180,0.18)', borderRadius: '10px', padding: '14px 16px' }}>
                     <div style={{ fontSize: '10px', color: '#475685', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{c.label}</div>
@@ -190,10 +219,10 @@ export const PortfolioDetailPage: React.FC = () => {
             )}
 
             <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
-                {tabBtn('positions', `Positions (${positions.length})`)}
-                {tabBtn('history', `History (${history.length})`)}
-                {tabBtn('analytics', 'Analytics')}
-                {tabBtn('settings', 'Settings')}
+                {tabBtn('positions', `Positions (保有銘柄: ${positions.length})`)}
+                {tabBtn('history', `History (取引履歴: ${history.length})`)}
+                {tabBtn('analytics', 'Analytics (分析)')}
+                {tabBtn('settings', 'Settings (設定)')}
             </div>
 
             {/* ─── Positions Tab ─── */}
@@ -207,16 +236,28 @@ export const PortfolioDetailPage: React.FC = () => {
                         }}>{showAddForm ? 'Cancel' : '＋ Add Position'}</button>
                     </div>
 
-                    {showAddForm && (
+                    {showAddForm && (() => {
+                        const maxInvestment = summary ? summary.max_investment : 0;
+                        const totalCost = addForm.entry_price * addForm.shares;
+                        const targetShares = addForm.entry_price > 0 ? Math.floor(maxInvestment / addForm.entry_price) : 0;
+                        return (
                         <form onSubmit={handleAddPosition} style={{ background: 'rgba(15,23,42,0.6)', border: '1px solid rgba(59,130,246,0.3)', borderRadius: '10px', padding: '20px', marginBottom: '16px' }}>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: '12px', alignItems: 'end' }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr auto', gap: '12px', alignItems: 'end' }}>
                                 <div><label style={labelStyle}>Ticker</label><input style={inputStyle} value={addForm.ticker} onChange={e => setAddForm({ ...addForm, ticker: e.target.value.toUpperCase() })} required /></div>
                                 <div><label style={labelStyle}>Entry Date</label><input style={inputStyle} type="date" value={addForm.entry_date} onChange={e => setAddForm({ ...addForm, entry_date: e.target.value })} required /></div>
-                                <div><label style={labelStyle}>Shares</label><input style={inputStyle} type="number" value={addForm.shares} onChange={e => setAddForm({ ...addForm, shares: Number(e.target.value) })} required /></div>
+                                <div><label style={labelStyle}>Price</label><input style={inputStyle} type="number" step="0.01" value={addForm.entry_price} onChange={e => setAddForm({ ...addForm, entry_price: Number(e.target.value) })} required /></div>
+                                <div>
+                                    <label style={labelStyle}>Shares <span style={{color: '#8b9cc8', fontWeight: 'normal'}}>(Target: {targetShares})</span></label>
+                                    <input style={inputStyle} type="number" value={addForm.shares} onChange={e => setAddForm({ ...addForm, shares: Number(e.target.value) })} required />
+                                </div>
                                 <button type="submit" style={{ background: '#22d3a0', border: 'none', color: '#fff', padding: '8px 20px', borderRadius: '6px', fontWeight: 600, cursor: 'pointer', height: '38px' }}>Buy</button>
                             </div>
+                            <div style={{ marginTop: '12px', fontSize: '13px', color: totalCost > maxInvestment ? '#ef4444' : '#22d3a0', display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
+                                Cost: {fmtCur(totalCost)} <span style={{color: '#666'}}>|</span> Max/Pos: {fmtCur(maxInvestment)}
+                            </div>
                         </form>
-                    )}
+                        );
+                    })()}
 
                     {positions.length === 0 ? (
                         <div style={{ textAlign: 'center', padding: '60px', color: '#475685' }}>No open positions</div>
@@ -262,9 +303,13 @@ export const PortfolioDetailPage: React.FC = () => {
                                                     {p.distance_to_stop_pct.toFixed(1)}%
                                                 </td>
                                                 <td style={{ ...tdStyle, textAlign: 'center' }}>
-                                                    <button onClick={() => { setShowSellForm(showSellForm === p.id ? null : p.id); setSellForm({ exit_date: new Date().toISOString().split('T')[0], exit_price: p.current_price, exit_shares: p.shares, exit_reason: 'manual' }); }}
-                                                        style={{ background: 'rgba(244,63,94,0.1)', border: '1px solid rgba(244,63,94,0.2)', color: '#f43f5e', padding: '4px 12px', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' }}>
+                                                    <button onClick={() => { setShowSellForm(showSellForm === p.id ? null : p.id); setShowEditForm(null); setSellForm({ exit_date: new Date().toISOString().split('T')[0], exit_price: p.current_price, exit_shares: p.shares, exit_reason: 'manual' }); }}
+                                                        style={{ background: 'rgba(244,63,94,0.1)', border: '1px solid rgba(244,63,94,0.2)', color: '#f43f5e', padding: '4px 12px', borderRadius: '4px', fontSize: '11px', cursor: 'pointer', marginRight: '4px' }}>
                                                         Sell
+                                                    </button>
+                                                    <button onClick={() => { setShowEditForm(showEditForm === p.id ? null : p.id); setShowSellForm(null); setEditForm({ entry_date: p.entry_date, entry_price: p.entry_price, shares: p.shares }); }}
+                                                        style={{ background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.2)', color: '#3b82f6', padding: '4px 12px', borderRadius: '4px', fontSize: '11px', cursor: 'pointer' }}>
+                                                        Edit
                                                     </button>
                                                 </td>
                                             </tr>
@@ -284,6 +329,16 @@ export const PortfolioDetailPage: React.FC = () => {
                                                             </select>
                                                         </div>
                                                         <button type="submit" style={{ background: '#f43f5e', border: 'none', color: '#fff', padding: '8px 16px', borderRadius: '6px', fontWeight: 600, cursor: 'pointer', height: '38px' }}>Confirm Sell</button>
+                                                    </form>
+                                                </td></tr>
+                                            )}
+                                            {showEditForm === p.id && (
+                                                <tr><td colSpan={10} style={{ padding: '12px 10px', background: 'rgba(15,23,42,0.4)' }}>
+                                                    <form onSubmit={(e) => handleEdit(p.id, e)} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: '10px', alignItems: 'end' }}>
+                                                        <div><label style={labelStyle}>Entry Date</label><input style={inputStyle} type="date" value={editForm.entry_date} onChange={e => setEditForm({ ...editForm, entry_date: e.target.value })} required /></div>
+                                                        <div><label style={labelStyle}>Entry Price</label><input style={inputStyle} type="number" step="0.01" value={editForm.entry_price} onChange={e => setEditForm({ ...editForm, entry_price: Number(e.target.value) })} required /></div>
+                                                        <div><label style={labelStyle}>Shares</label><input style={inputStyle} type="number" value={editForm.shares} onChange={e => setEditForm({ ...editForm, shares: Number(e.target.value) })} required /></div>
+                                                        <button type="submit" style={{ background: '#3b82f6', border: 'none', color: '#fff', padding: '8px 16px', borderRadius: '6px', fontWeight: 600, cursor: 'pointer', height: '38px' }}>Save Changes</button>
                                                     </form>
                                                 </td></tr>
                                             )}

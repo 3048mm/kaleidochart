@@ -7,7 +7,7 @@ import { ScreenerPage } from './pages/ScreenerPage'
 import { ScreenerResultPage } from './pages/ScreenerResultPage'
 import { WatchlistPage } from './pages/WatchlistPage'
 import { GroupPage } from './pages/GroupPage'
-import { PortfolioListPage } from './pages/PortfolioListPage'
+import { TotalPortfolioPage } from './pages/TotalPortfolioPage'
 import { PortfolioDetailPage } from './pages/PortfolioDetailPage'
 
 
@@ -163,7 +163,7 @@ export default function App() {
                     <Route path="/screener/result/:presetId" element={<ScreenerResultPage />} />
                     <Route path="/watchlist" element={<WatchlistPage />} />
                     <Route path="/group/:ticker" element={<GroupPage />} />
-                    <Route path="/portfolio" element={<PortfolioListPage />} />
+                    <Route path="/portfolio" element={<TotalPortfolioPage />} />
                     <Route path="/portfolio/:portfolioId" element={<PortfolioDetailPage />} />
 
                 </Routes>

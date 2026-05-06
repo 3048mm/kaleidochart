@@ -1,11 +1,12 @@
 # System Configuration
 [system]
 db_path = "d:/My Documents/Programing/stocktool/data/stocktool.db"
+user_db_path = "d:/My Documents/Programing/stocktool/data/user_data_sandbox.db"
 log_level = "INFO"
 
 [data_collection]
 # Step 1 Target Symbols
-symbols = ["SPY", "QQQ", "AAPL", "^VIX", "DX-Y.NYB", "GLD", "SLV", "GBTC", "IBIT", "ETHA"]
+symbols = ["SPY", "QQQ", "AAPL", "^VIX", "DX-Y.NYB", "GLD", "SLV", "GBTC", "IBIT", "ETHA", "JPY=X"]
 # Number of days to fetch initially
 initial_fetch_days = 1826
 # Sleep between ticker requests to avoid rate limits (seconds)

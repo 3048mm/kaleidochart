@@ -5,7 +5,8 @@ Handles add/remove/update/clear with 3-day reactivation and same-day cancel rule
 from datetime import date, datetime, timedelta
 from sqlalchemy.orm import Session
 
-from db.models import Watchlist, Symbol, DailyPrice, Indicator, RelativeRank
+from db.models import Symbol, DailyPrice, Indicator, RelativeRank
+from db.models_user import Watchlist
 
 
 def _get_close_price(db: Session, symbol_id: int, target_date: date) -> float | None:
@@ -29,21 +30,15 @@ def _resolve_symbol_id(db: Session, ticker: str) -> int | None:
     return sym.id if sym else None
 
 
-def add_to_watchlist(db: Session, ticker: str, entry_date: date) -> Watchlist | None:
+def add_to_watchlist(db: Session, user_db: Session, ticker: str, entry_date: date) -> Watchlist | None:
     """
     Add a symbol to watchlist with 3-day reactivation logic.
-    
-    Rules:
-    - If already active: return existing (no-op).
-    - If removed within 3 calendar days: reactivate with original entry_date/price.
-    - If removed >3 days ago: overwrite with new entry_date/price.
-    - If no record: create new.
     """
     symbol_id = _resolve_symbol_id(db, ticker)
     if symbol_id is None:
         return None
 
-    existing = db.query(Watchlist).filter_by(symbol_id=symbol_id).first()
+    existing = user_db.query(Watchlist).filter_by(symbol_id=symbol_id).first()
 
     if existing:
         if existing.status == "active":
@@ -55,7 +50,7 @@ def add_to_watchlist(db: Session, ticker: str, entry_date: date) -> Watchlist | 
             existing.status = "active"
             existing.removed_at = None
             existing.removed_price = None
-            db.commit()
+            user_db.commit()
             return existing
         else:
             # Overwrite with new entry (added_at preserved)
@@ -65,10 +60,9 @@ def add_to_watchlist(db: Session, ticker: str, entry_date: date) -> Watchlist | 
             existing.entry_date = entry_date
             existing.entry_price = entry_price
             existing.status = "active"
-            # added_at is NOT updated — prevents re-register → immediate remove → physical DELETE loop
             existing.removed_at = None
             existing.removed_price = None
-            db.commit()
+            user_db.commit()
             return existing
     else:
         # New record
@@ -82,32 +76,28 @@ def add_to_watchlist(db: Session, ticker: str, entry_date: date) -> Watchlist | 
             status="active",
             added_at=datetime.utcnow(),
         )
-        db.add(wl)
-        db.commit()
-        db.refresh(wl)
+        user_db.add(wl)
+        user_db.commit()
+        user_db.refresh(wl)
         return wl
 
 
-def remove_from_watchlist(db: Session, ticker: str) -> Watchlist | None:
+def remove_from_watchlist(db: Session, user_db: Session, ticker: str) -> Watchlist | None:
     """
     Remove a symbol from watchlist.
-    
-    Rules:
-    - If added_at date == today: physically DELETE the record (accidental add).
-    - Otherwise: logical delete (status='removed', snapshot removed_price).
     """
     symbol_id = _resolve_symbol_id(db, ticker)
     if symbol_id is None:
         return None
 
-    wl = db.query(Watchlist).filter_by(symbol_id=symbol_id, status="active").first()
+    wl = user_db.query(Watchlist).filter_by(symbol_id=symbol_id, status="active").first()
     if wl is None:
         return None
 
     # Within 1 hour of registration: physically delete (accidental add)
     if (datetime.utcnow() - wl.added_at).total_seconds() < 3600:
-        db.delete(wl)
-        db.commit()
+        user_db.delete(wl)
+        user_db.commit()
         return None  # Signals physical deletion
 
     # Logical delete
@@ -115,17 +105,17 @@ def remove_from_watchlist(db: Session, ticker: str) -> Watchlist | None:
     wl.status = "removed"
     wl.removed_at = datetime.utcnow()
     wl.removed_price = latest.close if latest else None
-    db.commit()
+    user_db.commit()
     return wl
 
 
-def update_watchlist_entry_date(db: Session, ticker: str, new_entry_date: date) -> Watchlist | None:
+def update_watchlist_entry_date(db: Session, user_db: Session, ticker: str, new_entry_date: date) -> Watchlist | None:
     """Update entry_date and entry_price for an active watchlist item."""
     symbol_id = _resolve_symbol_id(db, ticker)
     if symbol_id is None:
         return None
 
-    wl = db.query(Watchlist).filter_by(symbol_id=symbol_id, status="active").first()
+    wl = user_db.query(Watchlist).filter_by(symbol_id=symbol_id, status="active").first()
     if wl is None:
         return None
 
@@ -135,15 +125,13 @@ def update_watchlist_entry_date(db: Session, ticker: str, new_entry_date: date) 
 
     wl.entry_date = new_entry_date
     wl.entry_price = new_price
-    db.commit()
+    user_db.commit()
     return wl
 
 
-def remove_bulk_from_watchlist(db: Session, tickers: list[str]) -> int:
+def remove_bulk_from_watchlist(db: Session, user_db: Session, tickers: list[str]) -> int:
     """
     Perform logical removal for multiple tickers at once.
-    Bypasses the 1-hour physical deletion rule as bulk removal is a deliberate action.
-    Returns the number of records actually moved to 'removed' status.
     """
     if not tickers:
         return 0
@@ -156,7 +144,7 @@ def remove_bulk_from_watchlist(db: Session, tickers: list[str]) -> int:
         return 0
 
     # Find active watchlist records
-    active_items = db.query(Watchlist).filter(
+    active_items = user_db.query(Watchlist).filter(
         Watchlist.symbol_id.in_(s_ids),
         Watchlist.status == "active"
     ).all()
@@ -172,28 +160,35 @@ def remove_bulk_from_watchlist(db: Session, tickers: list[str]) -> int:
         wl.removed_price = latest.close if latest else None
         count += 1
 
-    db.commit()
+    user_db.commit()
     return count
 
 
-def clear_removed(db: Session) -> int:
-    """Physically delete all 'removed' watchlist records. Returns count deleted."""
-    count = db.query(Watchlist).filter_by(status="removed").delete()
-    db.commit()
+def clear_removed(user_db: Session) -> int:
+    """Physically delete all 'removed' watchlist records."""
+    count = user_db.query(Watchlist).filter_by(status="removed").delete()
+    user_db.commit()
     return count
 
 
-def get_watchlist(db: Session) -> dict:
+def get_watchlist(db: Session, user_db: Session) -> dict:
     """
     Get all watchlist items with computed metrics.
-    Returns dict with 'active' and 'removed' lists.
     """
-    items = db.query(Watchlist).all()
+    items = user_db.query(Watchlist).all()
     active_list = []
     removed_list = []
 
+    # Map symbol_id to symbol
+    s_ids = [wl.symbol_id for wl in items]
+    if not s_ids:
+        return {"active": [], "removed": []}
+        
+    symbols = db.query(Symbol).filter(Symbol.id.in_(s_ids)).all()
+    sym_map = {s.id: s for s in symbols}
+
     for wl in items:
-        sym = db.query(Symbol).filter_by(id=wl.symbol_id).first()
+        sym = sym_map.get(wl.symbol_id)
         if sym is None:
             continue
 
@@ -263,9 +258,12 @@ def get_watchlist(db: Session) -> dict:
     return {"active": active_list, "removed": removed_list}
 
 
-def get_watchlist_tickers(db: Session) -> list[str]:
-    """Get list of active watchlist tickers (lightweight, for star button state)."""
-    rows = db.query(Symbol.ticker).join(
-        Watchlist, Watchlist.symbol_id == Symbol.id
-    ).filter(Watchlist.status == "active").all()
+def get_watchlist_tickers(db: Session, user_db: Session) -> list[str]:
+    """Get list of active watchlist tickers."""
+    active_items = user_db.query(Watchlist).filter_by(status="active").all()
+    s_ids = [wl.symbol_id for wl in active_items]
+    if not s_ids:
+        return []
+    
+    rows = db.query(Symbol.ticker).filter(Symbol.id.in_(s_ids)).all()
     return [r[0] for r in rows]

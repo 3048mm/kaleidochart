@@ -400,13 +400,29 @@ class PositionAddRequest(BaseModel):
     ticker: str
     entry_date: date
     shares: int
+    entry_price: Optional[float] = None
     memo: Optional[str] = None
     stop_loss_pct: Optional[float] = None
     custom_take_profit_pct: Optional[float] = None
+
+class PositionUpdateRequest(BaseModel):
+    entry_date: Optional[date] = None
+    entry_price: Optional[float] = None
+    shares: Optional[int] = None
 
 class PositionSellRequest(BaseModel):
     exit_date: date
     exit_price: float
     exit_shares: int
     exit_reason: str  # stop_loss / take_profit_trim / take_profit_full / trailing_stop / manual
+    memo: Optional[str] = None
+
+class TransactionRequest(BaseModel):
+    transaction_type: str
+    amount: float
+    local_amount: Optional[float] = None
+    exchange_rate: Optional[float] = None
+    local_currency: Optional[str] = None
+    date: date
+    portfolio_id: Optional[int] = None
     memo: Optional[str] = None

@@ -12,8 +12,23 @@ from .phases.t3_indicators import sync_phase_t3_indicators
 from .phases.t4_ranks import sync_phase_t4_ranks
 from .phases.t5_signals import sync_phase_t5_signals
 
-def sync_symbols_to_db(db, credentials_path, spreadsheet_url):
+def sync_symbols_to_db(db, credentials_path, spreadsheet_url, extra_symbols=None):
     sheet_data = fetch_symbols_from_sheet(credentials_path, spreadsheet_url)
+    
+    if extra_symbols:
+        existing_tickers = {item['ticker'] for item in sheet_data}
+        for ticker in extra_symbols:
+            if ticker not in existing_tickers:
+                sheet_data.append({
+                    "ticker": ticker,
+                    "exchange": "US",
+                    "name": ticker,
+                    "category": "市場",
+                    "asset_class": "System",
+                    "tags": None,
+                    "theme_type": "etf"
+                })
+    
     db.query(Symbol).update({"active": 0})
     symbol_ids = {}
     for item in sheet_data:
@@ -86,7 +101,13 @@ def run_pipeline(config, db_path, logger: logging.Logger, rebuild_from: Optional
     try:
         with get_db() as db:
             if not skip_sync:
-                sheet_data, symbol_id_map = sync_symbols_to_db(db, config["system"].get("credentials_path", "credentials.json"), config["system"].get("spreadsheet_url", "https://docs.google.com/spreadsheets/d/1pkwMVl6FaurinU2Z1Mm_fW_zepMe6YLXE0e-v-vcp1k/edit#gid=0"))
+                extra_symbols = config.get("data_collection", {}).get("symbols", [])
+                sheet_data, symbol_id_map = sync_symbols_to_db(
+                    db, 
+                    config["system"].get("credentials_path", "credentials.json"), 
+                    config["system"].get("spreadsheet_url", "https://docs.google.com/spreadsheets/d/1pkwMVl6FaurinU2Z1Mm_fW_zepMe6YLXE0e-v-vcp1k/edit#gid=0"),
+                    extra_symbols=extra_symbols
+                )
             else:
                 symbols = db.query(Symbol).filter(Symbol.active == True).all()
                 sheet_data = [{'ticker': s.ticker, 'exchange': s.exchange, 'category': s.category, 'theme_type': s.theme_type} for s in symbols]

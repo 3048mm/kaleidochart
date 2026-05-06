@@ -118,3 +118,15 @@ periods = [
 
 この基準を厳しくすることで、より「堅実で実運用に適した究極のパラメータ」をAIに探させることが可能になります。
 
+### 3.4 最適化結果の適用 (Copy-Paste)
+
+最適化が完了した、あるいは途中の優秀な Trial（試行）の結果を実用のスクリーナー条件に反映させるには以下の手順が最も効率的です。
+
+1.  **Dashboard からコピー**:
+    - Optuna Dashboard の各 Trial 詳細画面の上部にある **"Note"** 欄に、そのまま `.toml` に貼り付け可能な `key = value` 形式のパラメータセットが表示されます。
+    - また、User Attributes セクションの `params_toml` からも同様のテキストを確認できます。
+2.  **コンソールからコピー**:
+    - `optimization_runner.py` の実行終了時に表示される `[TOML Params for copy-paste]` セクションのテキストをコピーします。
+3.  **反映**:
+    - コピーした内容を `backend/backtest/backtest_config.toml` の該当する `[[strategy]]` セクション、または `screener_presets.toml` に貼り付けることで、最適化されたパラメータを即座に利用できます。
+
