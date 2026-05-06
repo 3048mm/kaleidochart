@@ -207,8 +207,12 @@ def parse_optimization_periods(config):
 def objective(trial: optuna.Trial, strategy_type: str, config, config_app, exit_rules: ExitRules, periods: list):
     # Mapping for short codes (fallback to searching config if not in map)
     full_names = {
+        'A': 'A_momentum_breakout',
         'B': 'B_theme_momentum',
+        'C1': 'C1_rrg_leading_in',
+        'C2': 'C2_rrg_improving_in',
         'D': 'D_ema21_pullback',
+        'E': 'E_vcp',
         'F': 'F_elite_momentum97'
     }
     

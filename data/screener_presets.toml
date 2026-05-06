@@ -100,7 +100,7 @@ max_dist_sma50_atr = 6.0
 [[rise]]
 id = "check_21ema"
 name = "21EMA Pullback"
-subtitle = "(-2%~+2%)"
+subtitle = "21EMA 押し目買い"
 group = "Check"
 [rise.filters]
 min_dist_21ema_pct = -2.0
@@ -112,6 +112,7 @@ min_market_cap = 1e9
 [[rise]]
 id = "check_momentum97"
 name = "Momentum 97"
+subtitle = "RS Rank Top3% & 上昇トレンド"
 group = "Check"
 [rise.filters]
 min_rs_ratio_21_rank = 0.97
@@ -120,6 +121,7 @@ trend_template_ok = 1
 [[rise]]
 id = "check_vcp"
 name = "VCP"
+subtitle = "ボラリティ収縮パターン"
 group = "Check"
 [rise.filters]
 max_adr_pct_21 = 3.0
@@ -134,10 +136,17 @@ group = "Check"
 # RRGは前日比較ロジックが必要な特殊プリセット（バックエンド実装）
 special = "rrg_leading_in"
 [rise.filters]
-min_vol_surge_21 = 1.0
-min_adr_pct_21 = 4.0
+min_vol_surge_21 = 1.5
+min_adr_pct_21 = 4.5
 max_dist_sma50_atr = 6.0
-min_market_cap = 1e9
+min_market_cap = 1e8
+# [backtest results]
+# port_cagr 91.58
+# port_vs_spy 84.21
+# spy_cagr 7.37
+# total_trades 1728
+# win_rate 32.754629629629626
+
 
 # ───────────────────────────────────────────────────
 # Rise (買い目線) - Overhead sign

@@ -353,10 +353,27 @@ def run_backtest(config: dict, strategy_filter: str = None, refresh_cache: bool 
 
     strategies = config.get('strategy', [])
     if strategy_filter:
-        strategies = [s for s in strategies if s['name'] == strategy_filter]
-        if not strategies:
+        # Support short codes (A, B, C1, C2...) and prefixes
+        filtered = [s for s in strategies if s['name'] == strategy_filter or s['name'].startswith(strategy_filter + "_")]
+        if not filtered:
+            # Fallback mapping (same as optimization_runner)
+            full_names = {
+                'A': 'A_momentum_breakout',
+                'B': 'B_theme_momentum',
+                'C1': 'C1_rrg_leading_in',
+                'C2': 'C2_rrg_improving_in',
+                'D': 'D_ema21_pullback',
+                'E': 'E_vcp',
+                'F': 'F_elite_momentum97'
+            }
+            if strategy_filter in full_names:
+                target_name = full_names[strategy_filter]
+                filtered = [s for s in strategies if s['name'] == target_name]
+            
+        if not filtered:
             print(f"Strategy '{strategy_filter}' not found in config.")
             return
+        strategies = filtered
 
     if db_path_override:
         db_path = db_path_override
