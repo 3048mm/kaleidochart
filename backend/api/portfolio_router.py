@@ -179,6 +179,13 @@ def edit_position(portfolio_id: int, position_id: int, req: PositionUpdateReques
         raise HTTPException(status_code=404, detail="Position not found")
     return {"id": pos.id, "status": "updated"}
 
+@router.delete("/{portfolio_id}/positions/{position_id}")
+def delete_position(portfolio_id: int, position_id: int, user_db: Session = Depends(get_api_user_db)):
+    success = portfolio_service.delete_position(user_db, position_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Position not found")
+    return {"status": "deleted"}
+
 @router.post("/{portfolio_id}/positions/{position_id}/sell")
 def sell_position(portfolio_id: int, position_id: int,
                   req: PositionSellRequest, user_db: Session = Depends(get_api_user_db)):

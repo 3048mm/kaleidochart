@@ -91,8 +91,8 @@ class PortfolioPosition(BaseUser):
     symbol_id = Column(Integer, nullable=False, index=True) # Cross-DB
     entry_date = Column(Date, nullable=False)
     entry_price = Column(Float, nullable=False)
-    shares = Column(Integer, nullable=False)
-    original_shares = Column(Integer, nullable=False)
+    shares = Column(Float, nullable=False)
+    original_shares = Column(Float, nullable=False)
     stop_loss_pct = Column(Float, nullable=True)
     custom_take_profit_pct = Column(Float, nullable=True)
     status = Column(String, nullable=False, default='open')
@@ -111,10 +111,10 @@ class PositionHistory(BaseUser):
     symbol_id = Column(Integer, nullable=False, index=True) # Cross-DB
     entry_date = Column(Date, nullable=False)
     entry_price = Column(Float, nullable=False)
-    entry_shares = Column(Integer, nullable=False)
+    entry_shares = Column(Float, nullable=False)
     exit_date = Column(Date, nullable=False)
     exit_price = Column(Float, nullable=False)
-    exit_shares = Column(Integer, nullable=False)
+    exit_shares = Column(Float, nullable=False)
     exit_reason = Column(String, nullable=False)
     pnl_pct = Column(Float)
     pnl_amount = Column(Float)

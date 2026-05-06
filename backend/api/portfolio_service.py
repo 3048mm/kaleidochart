@@ -89,7 +89,7 @@ def archive_portfolio(user_db: Session, portfolio_id: int) -> Portfolio | None:
 # ============================================================
 def add_position(
     db: Session, user_db: Session, *, portfolio_id: int, ticker: str,
-    entry_date: date, shares: int, memo: str = None,
+    entry_date: date, shares: float, memo: str = None,
     stop_loss_pct: float = None, custom_take_profit_pct: float = None,
     entry_price: float = None,
 ) -> PortfolioPosition | None:
@@ -117,7 +117,7 @@ def add_position(
 
 def edit_position(
     user_db: Session, position_id: int,
-    entry_date: date = None, entry_price: float = None, shares: int = None
+    entry_date: date = None, entry_price: float = None, shares: float = None
 ) -> PortfolioPosition | None:
     pos = user_db.query(PortfolioPosition).filter_by(id=position_id).first()
     if not pos:
@@ -208,9 +208,17 @@ def get_positions_with_metrics(db: Session, user_db: Session, portfolio_id: int)
 # ============================================================
 # 2-3: Sell / Trim Flow
 # ============================================================
+def delete_position(db: Session, position_id: int) -> bool:
+    pos = db.query(PortfolioPosition).filter(PortfolioPosition.id == position_id).first()
+    if not pos:
+        return False
+    db.delete(pos)
+    db.commit()
+    return True
+
 def sell_position(
     user_db: Session, *, position_id: int,
-    exit_date: date, exit_price: float, exit_shares: int,
+    exit_date: date, exit_price: float, exit_shares: float,
     exit_reason: str, memo: str = None,
 ) -> PositionHistory | None:
     pos = user_db.query(PortfolioPosition).filter_by(id=position_id).first()
@@ -252,7 +260,7 @@ def sell_position(
 def edit_history(
     user_db: Session, history_id: int,
     entry_date: date = None, entry_price: float = None,
-    exit_date: date = None, exit_price: float = None, exit_shares: int = None,
+    exit_date: date = None, exit_price: float = None, exit_shares: float = None,
     memo: str = None
 ) -> PositionHistory | None:
     hist = user_db.query(PositionHistory).filter_by(id=history_id).first()

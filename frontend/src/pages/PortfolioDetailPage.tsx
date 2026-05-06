@@ -157,6 +157,13 @@ export const PortfolioDetailPage: React.FC = () => {
         else { const err = await res.json(); alert(err.detail || 'Failed'); }
     };
 
+    const handleDeletePosition = async (posId: number) => {
+        if (!window.confirm('Are you sure you want to delete this position record? (This will remove the data permanently)')) return;
+        const res = await fetch(`/api/portfolio/${pfId}/positions/${posId}`, { method: 'DELETE' });
+        if (res.ok) { await fetchAll(); }
+        else { const err = await res.json(); alert(err.detail || 'Failed'); }
+    };
+
     const handleEditHistory = async (histId: number, e: React.FormEvent) => {
         e.preventDefault();
         const res = await fetch(`/api/portfolio/${pfId}/history/${histId}`, {
@@ -266,7 +273,7 @@ export const PortfolioDetailPage: React.FC = () => {
                                 <div><label style={labelStyle}>Price (単価)</label><input style={inputStyle} type="number" step="0.01" value={addForm.entry_price} onChange={e => setAddForm({ ...addForm, entry_price: Number(e.target.value) })} required /></div>
                                 <div>
                                     <label style={labelStyle}>Shares (株数) <span style={{color: '#8b9cc8', fontWeight: 'normal'}}>(Target: {targetShares})</span></label>
-                                    <input style={inputStyle} type="number" value={addForm.shares} onChange={e => setAddForm({ ...addForm, shares: Number(e.target.value) })} required />
+                                    <input style={inputStyle} type="number" step="0.01" value={addForm.shares} onChange={e => setAddForm({ ...addForm, shares: Number(e.target.value) })} required />
                                 </div>
                                 <button type="submit" style={{ background: '#22d3a0', border: 'none', color: '#fff', padding: '8px 20px', borderRadius: '6px', fontWeight: 600, cursor: 'pointer', height: '38px' }}>Buy</button>
                             </div>
@@ -336,7 +343,7 @@ export const PortfolioDetailPage: React.FC = () => {
                                                     <form onSubmit={(e) => handleSell(p.id, e)} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr auto', gap: '10px', alignItems: 'end' }}>
                                                         <div><label style={labelStyle}>Exit Date (売却日)</label><input style={inputStyle} type="date" value={sellForm.exit_date} onChange={e => setSellForm({ ...sellForm, exit_date: e.target.value })} required /></div>
                                                         <div><label style={labelStyle}>Exit Price (売却単価)</label><input style={inputStyle} type="number" step="0.01" value={sellForm.exit_price} onChange={e => setSellForm({ ...sellForm, exit_price: Number(e.target.value) })} required /></div>
-                                                        <div><label style={labelStyle}>Shares (株数) (max {p.shares})</label><input style={inputStyle} type="number" max={p.shares} value={sellForm.exit_shares} onChange={e => setSellForm({ ...sellForm, exit_shares: Number(e.target.value) })} required /></div>
+                                                        <div><label style={labelStyle}>Shares (株数) (max {p.shares})</label><input style={inputStyle} type="number" step="0.01" max={p.shares} value={sellForm.exit_shares} onChange={e => setSellForm({ ...sellForm, exit_shares: Number(e.target.value) })} required /></div>
                                                         <div><label style={labelStyle}>Reason (理由)</label>
                                                             <select style={inputStyle} value={sellForm.exit_reason} onChange={e => setSellForm({ ...sellForm, exit_reason: e.target.value })}>
                                                                 <option value="manual">Manual (手動)</option>
@@ -355,8 +362,11 @@ export const PortfolioDetailPage: React.FC = () => {
                                                     <form onSubmit={(e) => handleEdit(p.id, e)} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: '10px', alignItems: 'end' }}>
                                                         <div><label style={labelStyle}>Entry Date (購入日)</label><input style={inputStyle} type="date" value={editForm.entry_date} onChange={e => setEditForm({ ...editForm, entry_date: e.target.value })} required /></div>
                                                         <div><label style={labelStyle}>Entry Price (購入単価)</label><input style={inputStyle} type="number" step="0.01" value={editForm.entry_price} onChange={e => setEditForm({ ...editForm, entry_price: Number(e.target.value) })} required /></div>
-                                                        <div><label style={labelStyle}>Shares (株数)</label><input style={inputStyle} type="number" value={editForm.shares} onChange={e => setEditForm({ ...editForm, shares: Number(e.target.value) })} required /></div>
-                                                        <button type="submit" style={{ background: '#3b82f6', border: 'none', color: '#fff', padding: '8px 16px', borderRadius: '6px', fontWeight: 600, cursor: 'pointer', height: '38px' }}>Save Changes</button>
+                                                        <div><label style={labelStyle}>Shares (株数)</label><input style={inputStyle} type="number" step="0.01" value={editForm.shares} onChange={e => setEditForm({ ...editForm, shares: Number(e.target.value) })} required /></div>
+                                                        <div style={{ display: 'flex', gap: '8px' }}>
+                                                            <button type="submit" style={{ background: '#3b82f6', border: 'none', color: '#fff', padding: '8px 16px', borderRadius: '6px', fontWeight: 600, cursor: 'pointer', height: '38px' }}>Save Changes</button>
+                                                            <button type="button" onClick={() => handleDeletePosition(p.id)} style={{ background: 'rgba(244,63,94,0.1)', border: '1px solid rgba(244,63,94,0.2)', color: '#f43f5e', padding: '8px 16px', borderRadius: '6px', fontWeight: 600, cursor: 'pointer', height: '38px' }}>Delete</button>
+                                                        </div>
                                                     </form>
                                                     <div style={{ marginTop: '8px', fontSize: '12px', color: '#22d3a0', textAlign: 'right' }}>
                                                         Entry Cost: {fmtCur(editForm.entry_price * editForm.shares)}
@@ -422,7 +432,7 @@ export const PortfolioDetailPage: React.FC = () => {
                                                     <div><label style={labelStyle}>Entry Price (購入単価)</label><input style={inputStyle} type="number" step="0.01" value={editHistForm.entry_price} onChange={e => setEditHistForm({ ...editHistForm, entry_price: Number(e.target.value) })} required /></div>
                                                     <div><label style={labelStyle}>Exit Date (売却日)</label><input style={inputStyle} type="date" value={editHistForm.exit_date} onChange={e => setEditHistForm({ ...editHistForm, exit_date: e.target.value })} required /></div>
                                                     <div><label style={labelStyle}>Exit Price (売却単価)</label><input style={inputStyle} type="number" step="0.01" value={editHistForm.exit_price} onChange={e => setEditHistForm({ ...editHistForm, exit_price: Number(e.target.value) })} required /></div>
-                                                    <div><label style={labelStyle}>Shares (株数)</label><input style={inputStyle} type="number" value={editHistForm.exit_shares} onChange={e => setEditHistForm({ ...editHistForm, exit_shares: Number(e.target.value) })} required /></div>
+                                                    <div><label style={labelStyle}>Shares (株数)</label><input style={inputStyle} type="number" step="0.01" value={editHistForm.exit_shares} onChange={e => setEditHistForm({ ...editHistForm, exit_shares: Number(e.target.value) })} required /></div>
                                                     <button type="submit" style={{ background: '#3b82f6', border: 'none', color: '#fff', padding: '8px 16px', borderRadius: '6px', fontWeight: 600, cursor: 'pointer', height: '38px' }}>Save Changes</button>
                                                 </form>
                                                 <div style={{ marginTop: '8px', fontSize: '12px', display: 'flex', justifyContent: 'flex-end', gap: '16px' }}>
