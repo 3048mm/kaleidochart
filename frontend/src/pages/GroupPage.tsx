@@ -190,7 +190,7 @@ export const GroupPage: React.FC = () => {
             <div className="glass-panel" style={{ padding: '20px' }}>
                 <h3 style={{ marginTop: 0, marginBottom: '15px', borderBottom: `1px solid ${appConfig.colors.glassBorder}`, paddingBottom: '10px' }}>📡 RRG Chart</h3>
                 {rrgSeries.length > 0 ? (
-                    <div style={{ height: '500px' }}>
+                    <div style={{ height: '750px' }}>
                         <RrgChart series={rrgSeries} />
                     </div>
                 ) : (

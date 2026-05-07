@@ -129,23 +129,25 @@ min_dist_sma50_pct = 0.0
 min_rs_condition_21 = 1.0
 min_market_cap = 1e9
 
+
 [[rise]]
-id = "rrg_leading_in"
-name = "RRG Leading In"
+id = "rrg_improving_in"
+name = "RRG Improving In"
 group = "Check"
 # RRGは前日比較ロジックが必要な特殊プリセット（バックエンド実装）
-special = "rrg_leading_in"
+special = "rrg_improving_in"
 [rise.filters]
-min_vol_surge_21 = 1.5
-min_adr_pct_21 = 4.5
-max_dist_sma50_atr = 6.0
+min_vol_surge_21 = 1.6 
+min_adr_pct_21 = 3.5 
+max_dist_sma50_atr = 5.0 
 min_market_cap = 1e8
 # [backtest results]
-# port_cagr 91.58
-# port_vs_spy 84.21
+# port_cagr 221.56
+# port_vs_spy 214.19
 # spy_cagr 7.37
-# total_trades 1728
-# win_rate 32.754629629629626
+# total_trades 1390
+# win_rate 40.35971223021583
+
 
 
 # ───────────────────────────────────────────────────

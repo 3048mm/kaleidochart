@@ -73,7 +73,7 @@ export const RrgChart: React.FC<RrgChartProps> = ({ data, ticker, series: propSe
 
     // SVG dimensions (Internal coordinate space)
     const width = 800;
-    const height = 600;
+    const height = 800;
     const padding = 50;
     const innerWidth = width - padding * 2;
     const innerHeight = height - padding * 2;
@@ -155,7 +155,7 @@ export const RrgChart: React.FC<RrgChartProps> = ({ data, ticker, series: propSe
                     </div>
                 )}
 
-                <div style={{ flex: 1, display: 'flex', minHeight: '600px' }}>
+                <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
                     {/* Left Panel: RS Minimaps (Individual Mode Only) */}
                     {isIndividualMode && minimaps && (
                         <div style={{ 

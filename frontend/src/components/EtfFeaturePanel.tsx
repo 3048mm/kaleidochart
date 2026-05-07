@@ -78,7 +78,7 @@ export const EtfFeaturePanel: React.FC<EtfFeaturePanelProps> = ({
                                         width={100} 
                                         height={24} 
                                         color={s.spark[s.spark.length - 1] > (s.spark[0] || 0) ? appConfig.colors.good : appConfig.colors.bad}
-                                        fixedRange={false}
+                                        fixedRange={true}
                                     />
                                 </div>
                             )}
