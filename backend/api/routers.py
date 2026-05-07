@@ -847,6 +847,8 @@ def get_dashboard(
     
     resp.themes_top = themes_sorted[:30]
     resp.themes_bottom = themes_sorted[-30:] if themes_sorted else []
+    # Sort themes_bottom as weakest first
+    resp.themes_bottom.reverse()
 
     return resp
 

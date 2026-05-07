@@ -408,6 +408,7 @@ export const DashboardPage: React.FC = () => {
                                             maxPct={appConfig.thresholds.sparkline_max_pct_theme} 
                                             linkTo={(item) => `/group/${encodeURIComponent(item.ticker)}${selectedDate ? `?date=${selectedDate}` : ''}`}
                                             defaultSortKey="rs_ratio_21_rank"
+                                            defaultSortDirection="desc"
                                         />
                                     </div>
                                 </div>
