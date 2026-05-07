@@ -97,7 +97,7 @@ export const SummaryTable: React.FC<SummaryTableProps> = ({
                 <HeaderItem label="1W%" column="change_1w_pct" style={{ width: '50px', textAlign: 'center' }} />
                 <HeaderItem label="1M%" column="change_1m_pct" style={{ width: '50px', textAlign: 'center' }} />
                 <HeaderItem label="21E%" column="dist_21ema_pct" style={{ width: '50px', textAlign: 'right', paddingRight: '5px' }} />
-                <div style={{ width: '60px', textAlign: 'center' }}>Trend</div>
+                <div style={{ width: '60px', textAlign: 'center' }}>RS21 (30D)</div>
                 <HeaderItem label="RS21" column="rs_ratio_21_rank" style={{ width: '32px', textAlign: 'right' }} />
                 <HeaderItem label="RS63" column="rs_ratio_63_rank" style={{ width: '32px', textAlign: 'right' }} />
             </div>
@@ -166,7 +166,7 @@ export const SummaryTable: React.FC<SummaryTableProps> = ({
                             <Sparkline
                                 data={item.sparkline}
                                 width={60}
-                                height={22}
+                                height={28}
                                 color={item.change_pct >= 0 ? appConfig.colors.good : appConfig.colors.bad}
                                 fixedRange={true}
                             />

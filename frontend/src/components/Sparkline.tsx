@@ -45,7 +45,7 @@ export const Sparkline: React.FC<SparklineProps> = ({
                 y1={height / 2} 
                 x2={width} 
                 y2={height / 2} 
-                stroke="rgba(255, 255, 255, 0.6)" 
+                stroke="rgba(255, 255, 255, 0.4)" 
                 strokeWidth={1} 
                 strokeDasharray="3,3"
             />
@@ -57,6 +57,26 @@ export const Sparkline: React.FC<SparklineProps> = ({
                 strokeLinecap="round"
                 strokeLinejoin="round"
             />
+            {/* End point dot */}
+            {data.length > 0 && (() => {
+                const lastVal = data[data.length - 1];
+                const clamped = fixedRange ? Math.max(0, Math.min(1, lastVal)) : lastVal;
+                const minVal = fixedRange ? 0 : Math.min(...data);
+                const maxVal = fixedRange ? 1 : Math.max(...data);
+                const range = maxVal - minVal;
+                const normalizedY = range === 0 ? 0.5 : (clamped - minVal) / range;
+                const y = height - (normalizedY * height);
+                return (
+                    <circle 
+                        cx={width} 
+                        cy={y} 
+                        r={2.5} 
+                        fill={color} 
+                        stroke="rgba(255,255,255,0.5)"
+                        strokeWidth={0.5}
+                    />
+                );
+            })()}
         </svg>
     );
 };

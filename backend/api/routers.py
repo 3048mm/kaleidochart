@@ -511,10 +511,10 @@ def get_rankings(db: Session = Depends(get_api_db), limit: int = 20, asc: bool =
 
 # --- Helper functions for dashboard & group pages ---
 
-def _get_sparkline_data(db: Session, sym_id: int, target_date: str):
+def _get_sparkline_data(db: Session, sym_id: int, target_date: str, period: int = 21):
     ranks = db.query(RelativeRank.percent_rank).filter(
         RelativeRank.symbol_id == sym_id,
-        RelativeRank.indicator_name == "rs_ratio_21",
+        RelativeRank.indicator_name == f"rs_ratio_{period}",
         RelativeRank.date <= target_date
     ).order_by(desc(RelativeRank.date)).limit(30).all()
     
@@ -668,18 +668,9 @@ def _build_etf_feature(db: Session, sym: Symbol, dp: DailyPrice, target_date: st
         if ind.sma_21 and ind.sma_63 and ind.sma_63 > 0:
             sma21_sma63_pct = ((ind.sma_21 - ind.sma_63) / ind.sma_63) * 100
             
-    # RS Sparklines (last 30 trading days)
-    def get_rs_sparkline(sym_id, period, t_date):
-        col_name = f'rs_ratio_{period}'
-        rows = db.query(Indicator).filter(
-            Indicator.symbol_id == sym_id,
-            Indicator.date <= t_date
-        ).order_by(desc(Indicator.date)).limit(30).all()
-        return [getattr(r, col_name) for r in reversed(rows) if getattr(r, col_name) is not None]
-
-    rs14_spark = get_rs_sparkline(sym.id, 14, target_date)
-    rs21_spark = get_rs_sparkline(sym.id, 21, target_date)
-    rs63_spark = get_rs_sparkline(sym.id, 63, target_date)
+    rs14_spark = _get_sparkline_data(db, sym.id, target_date, 14)
+    rs21_spark = _get_sparkline_data(db, sym.id, target_date, 21)
+    rs63_spark = _get_sparkline_data(db, sym.id, target_date, 63)
 
     # Latest Ranks
     def get_rank(sym_id, ind_name, t_date):
@@ -991,7 +982,7 @@ def get_theme_detail(
         c_rs21 = c_ind.rs_ratio_21 if c_ind else None
         c_rs63 = c_ind.rs_ratio_63 if c_ind else None
         c_rsmom21 = c_ind.rs_momentum_21 if c_ind else None
-        c_rs_spark = get_rs_sparkline(c_id, 21)
+        c_rs_spark = _get_sparkline_data(db, c_id, str(c_dp.date), 21)
 
         # short history for RRG
         c_full_hist = db.query(DailyPrice).filter(

@@ -300,7 +300,7 @@ export const WatchlistPage: React.FC = () => {
                                             <th style={{ ...headerStyle, textAlign: 'right' }} onClick={() => handleSort('min_gain_pct')}>Min Gain {renderSortIcon('min_gain_pct')}</th>
                                             <th style={{ padding: '12px 10px', textAlign: 'right' }}>ADR%(21)</th>
                                             <th style={{ ...headerStyle, textAlign: 'right' }} onClick={() => handleSort('latest_dist_sma50_atr')}>50dATR {renderSortIcon('latest_dist_sma50_atr')}</th>
-                                            <th style={{ padding: '12px 10px', textAlign: 'center', width: '80px' }}>Trend(30d)</th>
+                                            <th style={{ padding: '12px 10px', textAlign: 'center', width: '80px' }}>RS21 (30D)</th>
                                             <th style={{ padding: '12px 10px', textAlign: 'center' }}>Actions</th>
                                         </tr>
                                     </thead>
@@ -357,7 +357,7 @@ export const WatchlistPage: React.FC = () => {
                                                     {item.latest_dist_sma50_atr.toFixed(1)}
                                                 </td>
                                                 <td style={{ padding: '12px 10px', textAlign: 'center' }}>
-                                                    <Sparkline data={item.rs_sparkline} width={70} height={24} color={item.gain_pct >= 0 ? appConfig.colors.good : appConfig.colors.bad} />
+                                                    <Sparkline data={item.rs_sparkline} width={70} height={28} color={item.gain_pct >= 0 ? appConfig.colors.good : appConfig.colors.bad} fixedRange={true} />
                                                 </td>
                                                 <td style={{ padding: '12px 10px', textAlign: 'center', whiteSpace: 'nowrap' }}>
                                                     <button 

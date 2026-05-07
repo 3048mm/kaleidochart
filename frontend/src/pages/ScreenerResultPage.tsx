@@ -308,7 +308,7 @@ export const ScreenerResultPage: React.FC = () => {
                     </div>
                     <div style={{ width: '24px', textAlign: 'center' }} title="RS Leading Dots">RS.</div>
                     <div style={{ width: '40px', textAlign: 'right' }}>50dATR</div>
-                    <div style={{ width: '60px', textAlign: 'center' }}>Trend</div>
+                    <div style={{ width: '60px', textAlign: 'center' }}>Price Trend</div>
                     <div
                         style={{ width: '32px', textAlign: 'right', cursor: 'pointer', color: sortKey === 'rs_ratio_21_rank' ? '#fff' : '#aaa' }}
                         onClick={() => handleSort('rs_ratio_21_rank')}

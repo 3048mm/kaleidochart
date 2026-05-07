@@ -96,7 +96,7 @@ export const DashboardPage: React.FC = () => {
                     <div style={{ width: '56px', textAlign: 'center', marginLeft: '5px' }}>1W%</div>
                     <div style={{ width: '56px', textAlign: 'center', marginLeft: '5px' }}>1M%</div>
                     <div style={{ width: '60px', textAlign: 'right', paddingRight: '10px' }}>21EMA乖離</div>
-                    <div style={{ width: '80px', textAlign: 'center' }}>1M Trend</div>
+                    <div style={{ width: '80px', textAlign: 'center' }}>1M Price</div>
                 </div>
 
                 {items.map(item => {
@@ -147,7 +147,7 @@ export const DashboardPage: React.FC = () => {
                                 <Sparkline
                                     data={item.sparkline}
                                     width={80}
-                                    height={22}
+                                    height={28}
                                     color={item.change_1m_pct >= 0 ? appConfig.colors.good : appConfig.colors.bad}
                                     fixedRange={false}
                                 />
