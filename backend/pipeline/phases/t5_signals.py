@@ -12,6 +12,7 @@ def sync_phase_t5_signals(db, logger: logging.Logger):
     logger.info("--- Phase 5: Market Signal calculation START ---")
     spy_sym_id = db.query(Symbol.id).filter(Symbol.ticker == "SPY").scalar()
     vix_sym_id = db.query(Symbol.id).filter(Symbol.ticker == "^VIX").scalar()
+    vxv_sym_id = db.query(Symbol.id).filter(Symbol.ticker == "^VIX3M").scalar()
     
     t3_dates = {r[0] for r in db.query(Indicator.date).distinct().filter(Indicator.symbol_id == spy_sym_id).all()}
     t5_completed_dates = {r[0] for r in db.query(MarketSignal.date).filter(MarketSignal.market_trend_score.is_not(None)).all()}
@@ -32,6 +33,12 @@ def sync_phase_t5_signals(db, logger: logging.Logger):
         vix_df = pd.DataFrame([{"date": r.date, "close": r.close} for r in db.query(DailyPrice).filter(DailyPrice.symbol_id == vix_sym_id).order_by(DailyPrice.date).all()])
         if not vix_df.empty:
             vix_df['date'] = pd.to_datetime(vix_df['date'])
+
+    vxv_df = pd.DataFrame()
+    if vxv_sym_id:
+        vxv_df = pd.DataFrame([{"date": r.date, "close": r.close} for r in db.query(DailyPrice).filter(DailyPrice.symbol_id == vxv_sym_id).order_by(DailyPrice.date).all()])
+        if not vxv_df.empty:
+            vxv_df['date'] = pd.to_datetime(vxv_df['date'])
     
     active_stock_ids = [r[0] for r in db.query(Symbol.id).filter(Symbol.active == 1, Symbol.category == '個別').all()]
     
@@ -66,7 +73,7 @@ def sync_phase_t5_signals(db, logger: logging.Logger):
         else:
             metrics_df = pd.DataFrame(columns=['date', 'breadth_sma50', 'momentum_ratio'])
 
-    ms_df = calculate_market_signals(spy_df, vix_df, metrics_df)
+    ms_df = calculate_market_signals(spy_df, vix_df, vxv_df, metrics_df)
     
     gap_dt = [pd.to_datetime(d) for d in gap_dates]
     ms_df = ms_df[ms_df['date'].isin(gap_dt)]
@@ -84,7 +91,8 @@ def sync_phase_t5_signals(db, logger: logging.Logger):
             distribution_days=int(row['distribution_days']),
             follow_through_day=int(row['follow_through_day']),
             market_phase=row['market_phase'],
-            market_trend_score=float(row['market_trend_score']) if sanitize_numeric(row, 'market_trend_score') is not None else None
+            market_trend_score=float(row['market_trend_score']) if sanitize_numeric(row, 'market_trend_score') is not None else None,
+            vxv_vix_ratio=float(row['vxv_vix_ratio']) if sanitize_numeric(row, 'vxv_vix_ratio') is not None else None
         ))
     
     db.query(MarketSignal).filter(MarketSignal.date.in_([r.date for r in t5_recs])).delete(synchronize_session=False)

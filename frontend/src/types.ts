@@ -189,8 +189,9 @@ export interface EtfFeatureItem {
 }
 
 export interface MarketTrendScoreHistoryItem {
-    date: string;
-    score: number;
+    date: string
+    score: number
+    vxv_vix_ratio?: number | null
 }
 
 export interface DashboardResponse {
@@ -198,6 +199,7 @@ export interface DashboardResponse {
     market_phase: string
     distribution_days: number
     market_trend_score: number
+    vxv_vix_ratio?: number | null
     trend_score_history: MarketTrendScoreHistoryItem[]
     spy_feature?: EtfFeatureItem
     leading: LeadingIndicatorItem[]

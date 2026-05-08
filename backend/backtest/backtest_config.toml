@@ -76,15 +76,19 @@ min_market_cap = 1e9
 [[strategy]]
 name = "D_ema21_pullback"
 description = "上昇トレンド中のEMA21押し目買い"
-max_hits_per_day = 10
+max_hits_per_day = 5
 sort_column = "rs21_rank"
 sort_ascending = false
+close_gt_sma50 = true
 min_dist_21ema_pct = -2.0
 max_dist_21ema_pct = 2.0
 max_dist_sma50_atr = 4.0
 min_rs_ratio_21_rank = 0.7
+min_up_down_vol_ratio_50 = 1.2
+max_vol_surge_21 = 0.8
 min_market_cap = 1e9
 trend_template_ok = 1
+
 
 [[strategy]]
 name = "E_vcp"
@@ -157,6 +161,8 @@ max_dist_sma50_atr   = { type = "float", min = 2.0,  max = 6.0,  step = 0.5 }
 min_rs_ratio_21_rank = { type = "float", min = 0.50, max = 0.90, step = 0.05 }
 min_market_cap       = { type = "categorical", choices = [1e8, 3e8, 5e8, 1e9] }
 trend_template_ok    = { type = "categorical", choices = [1] }
+max_vol_surge_21     = { type = "float", min = 0.6,  max = 1.2,  step = 0.1 }
+min_up_down_vol_ratio_50 = { type = "float", min = 1.0, max = 1.5, step = 0.1 }
 
 [optimization.E]
 trend_template_ok    = { type = "categorical", choices = [1] }  

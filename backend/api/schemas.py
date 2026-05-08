@@ -204,12 +204,14 @@ class RankingResponse(BaseModel):
 class MarketTrendScoreHistoryItem(BaseModel):
     date: str
     score: float
+    vxv_vix_ratio: Optional[float] = None
 
 class DashboardResponse(BaseModel):
     date: str
     market_phase: str
     distribution_days: int
     market_trend_score: float = 0.0
+    vxv_vix_ratio: Optional[float] = None
     trend_score_history: List[MarketTrendScoreHistoryItem] = []
     spy_feature: Optional[EtfFeatureItem] = None
     leading: List[LeadingIndicatorItem] = []

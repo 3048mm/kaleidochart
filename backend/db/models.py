@@ -197,6 +197,9 @@ class MarketSignal(Base):
     # 0-100 market trend score
     market_trend_score  = Column(Float)
     
+    # NEW: VXV/VIX ratio
+    vxv_vix_ratio       = Column(Float)
+    
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

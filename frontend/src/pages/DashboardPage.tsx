@@ -8,6 +8,7 @@ import { RrgChart, RrgSeries } from '../components/RrgChart';
 import { appConfig, getIntensityColor } from '../config';
 import { SummaryTable } from '../components/SummaryTable';
 import { EtfFeaturePanel } from '../components/EtfFeaturePanel';
+import { VxvVixRatioChart } from '../components/VxvVixRatioChart';
 
 export const DashboardPage: React.FC = () => {
     const [availableDates, setAvailableDates] = useState<string[]>([]);
@@ -100,10 +101,23 @@ export const DashboardPage: React.FC = () => {
                 </div>
 
                 {items.map(item => {
-                    const getBgColor = (pct: number) => getIntensityColor(pct, appConfig.thresholds.sparkline_max_pct_index, pct >= 0 ? appConfig.colors.good : appConfig.colors.bad);
+                    const getBgColor = (pct: number) => {
+                        let baseColor = pct >= 0 ? appConfig.colors.good : appConfig.colors.bad;
+                        // Invert color for VIX indicators (Rise is bad, Fall is good)
+                        if (item.ticker.startsWith('^VIX')) {
+                            baseColor = pct >= 0 ? appConfig.colors.bad : appConfig.colors.good;
+                        }
+                        return getIntensityColor(pct, appConfig.thresholds.sparkline_max_pct_index, baseColor);
+                    };
                     const getTextColor = (pct: number) => Math.abs(pct) > appConfig.thresholds.sparkline_max_pct_index * 0.5 ? '#000' : '#fff';
                     const formatPct = (pct: number) => `${pct > 0 ? '+' : ''}${pct.toFixed(1)}%`;
-                    const colorNeutral = (pct: number) => pct > 0 ? appConfig.colors.good : pct < 0 ? appConfig.colors.bad : '#fff';
+                    const colorNeutral = (pct: number) => {
+                        let color = pct > 0 ? appConfig.colors.good : pct < 0 ? appConfig.colors.bad : '#fff';
+                        if (item.ticker.startsWith('^VIX')) {
+                            color = pct > 0 ? appConfig.colors.bad : pct < 0 ? appConfig.colors.good : '#fff';
+                        }
+                        return color;
+                    };
 
                     return (
                         <div key={item.id} className="dashboard-item" style={{
@@ -288,12 +302,22 @@ export const DashboardPage: React.FC = () => {
 
                             {/* Market Trend Score History Graph */}
                             {data.trend_score_history && data.trend_score_history.length > 0 && (
-                                <div className="glass-panel" style={{ padding: '20px', marginBottom: '20px' }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', borderBottom: `1px solid ${appConfig.colors.glassBorder}`, paddingBottom: '10px' }}>
-                                        <h3 style={{ margin: 0 }}>📈 Market Trend Score History (0-100)</h3>
-                                        <div style={{ fontSize: '12px', color: '#aaa' }}>Last 100 Trading Days</div>
+                                <div style={{ display: 'flex', gap: '20px', marginBottom: '20px', flexWrap: 'wrap' }}>
+                                    <div className="glass-panel" style={{ flex: '1', padding: '20px', minWidth: '400px' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', borderBottom: `1px solid ${appConfig.colors.glassBorder}`, paddingBottom: '10px' }}>
+                                            <h3 style={{ margin: 0 }}>📈 Market Trend Score History</h3>
+                                            <div style={{ fontSize: '12px', color: '#aaa' }}>Last 100 Trading Days</div>
+                                        </div>
+                                        <TrendScoreChart data={data.trend_score_history} height={180} />
                                     </div>
-                                    <TrendScoreChart data={data.trend_score_history} height={180} />
+
+                                    <div className="glass-panel" style={{ flex: '1', padding: '20px', minWidth: '400px' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', borderBottom: `1px solid ${appConfig.colors.glassBorder}`, paddingBottom: '10px' }}>
+                                            <h3 style={{ margin: 0 }}>📊 VXV/VIX Ratio History</h3>
+                                            <div style={{ fontSize: '12px', color: '#aaa' }}>Ref: Bottom (1.0) / Top (1.2)</div>
+                                        </div>
+                                        <VxvVixRatioChart data={data.trend_score_history} height={180} />
+                                    </div>
                                 </div>
                             )}
 
@@ -308,7 +332,24 @@ export const DashboardPage: React.FC = () => {
                             {/* Leading Indicators row (full width) */}
                             {data.leading && data.leading.length > 0 && (
                                 <div className="glass-panel" style={{ padding: '20px', marginBottom: '20px' }}>
-                                    <h3 style={{ marginTop: 0, borderBottom: `1px solid ${appConfig.colors.glassBorder}`, paddingBottom: '10px' }}>🧭 Leading Indicators (先行指標)</h3>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: `1px solid ${appConfig.colors.glassBorder}`, paddingBottom: '10px', marginBottom: '15px' }}>
+                                        <h3 style={{ margin: 0 }}>🧭 Leading Indicators (先行指標)</h3>
+                                        {data.vxv_vix_ratio && (
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: 'rgba(255,255,255,0.05)', padding: '4px 12px', borderRadius: '20px', border: `1px solid ${appConfig.colors.glassBorder}` }}>
+                                                <span style={{ fontSize: '11px', color: '#aaa', textTransform: 'uppercase' }}>VXV/VIX Ratio:</span>
+                                                <span style={{ 
+                                                    fontSize: '14px', 
+                                                    fontWeight: 'bold', 
+                                                    color: data.vxv_vix_ratio <= 1.0 ? appConfig.colors.bad : data.vxv_vix_ratio >= 1.2 ? '#ffcc00' : appConfig.colors.good 
+                                                }}>
+                                                    {data.vxv_vix_ratio.toFixed(3)}
+                                                </span>
+                                                <span style={{ fontSize: '10px', color: data.vxv_vix_ratio <= 1.0 ? appConfig.colors.bad : '#888' }}>
+                                                    {data.vxv_vix_ratio <= 1.0 ? '(Bottom ⚠️)' : data.vxv_vix_ratio >= 1.2 ? '(Overheated)' : '(Normal)'}
+                                                </span>
+                                            </div>
+                                        )}
+                                    </div>
                                     {renderLeadingList(data.leading)}
                                 </div>
                             )}

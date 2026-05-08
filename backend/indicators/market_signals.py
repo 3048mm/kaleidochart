@@ -2,9 +2,9 @@ import pandas as pd
 import numpy as np
 from .moving_averages import calculate_ema_tv
 
-def calculate_market_signals(df_spy: pd.DataFrame, df_vix: pd.DataFrame = None, df_metrics: pd.DataFrame = None) -> pd.DataFrame:
+def calculate_market_signals(df_spy: pd.DataFrame, df_vix: pd.DataFrame = None, df_vxv: pd.DataFrame = None, df_metrics: pd.DataFrame = None) -> pd.DataFrame:
     """
-    SPYの日足データ、VIXデータ、および市場全体の統計（Breadth, Momentum Ratio）から
+    SPYの日足データ、VIXデータ、VXVデータ、および市場全体の統計（Breadth, Momentum Ratio）から
     市場フェーズシグナルと数値スコア (0-100) を計算して返す。
     """
     if df_spy is None or df_spy.empty:
@@ -68,6 +68,14 @@ def calculate_market_signals(df_spy: pd.DataFrame, df_vix: pd.DataFrame = None, 
     else:
         df['vix_close'] = 20.0 
         
+    # NEW: VXV/VIX Ratio
+    df['vxv_vix_ratio'] = None
+    if df_vxv is not None and not df_vxv.empty:
+        vxv_ref = df_vxv[['date', 'close']].rename(columns={'close': 'vxv_close'})
+        df = pd.merge(df, vxv_ref, on='date', how='left')
+        df['vxv_close'] = df['vxv_close'].ffill()
+        df['vxv_vix_ratio'] = df['vxv_close'] / df['vix_close']
+        
     if df_metrics is not None and not df_metrics.empty:
         df = pd.merge(df, df_metrics, on='date', how='left')
         df['breadth_sma50'] = df['breadth_sma50'].fillna(0.5)
@@ -86,4 +94,4 @@ def calculate_market_signals(df_spy: pd.DataFrame, df_vix: pd.DataFrame = None, 
     df['market_trend_score'] = spy_score + breadth_score + momentum_score + vix_score
 
     return df[['date', 'spy_above_sma200', 'spy_sma200_rising',
-                'distribution_days', 'follow_through_day', 'market_phase', 'market_trend_score']]
+                'distribution_days', 'follow_through_day', 'market_phase', 'market_trend_score', 'vxv_vix_ratio']]

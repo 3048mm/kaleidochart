@@ -780,7 +780,11 @@ def get_dashboard(
     ).order_by(desc(MarketSignal.date)).limit(100).all()
     
     trend_history = [
-        schemas.MarketTrendScoreHistoryItem(date=str(s.date), score=s.market_trend_score or 0.0)
+        schemas.MarketTrendScoreHistoryItem(
+            date=str(s.date), 
+            score=s.market_trend_score or 0.0,
+            vxv_vix_ratio=s.vxv_vix_ratio
+        )
         for s in reversed(history_signals)
     ]
 
@@ -789,6 +793,7 @@ def get_dashboard(
         market_phase=signal.market_phase,
         distribution_days=signal.distribution_days or 0,
         market_trend_score=signal.market_trend_score or 0.0,
+        vxv_vix_ratio=signal.vxv_vix_ratio,
         trend_score_history=trend_history,
         leading=[],
         indices=[],
@@ -845,6 +850,21 @@ def get_dashboard(
     resp.sectors.sort(key=lambda x: x.intensity_score, reverse=True)
     themes_sorted = sorted(resp.themes_top, key=lambda x: x.intensity_score, reverse=True)
     
+    # Calculate VXV/VIX ratio if available (fallback calculation if not in signal)
+    vix_item = next((item for item in resp.leading if item.ticker == "^VIX"), None)
+    vxv_item = next((item for item in resp.leading if item.ticker == "^VIX3M"), None)
+    if vix_item and vxv_item and vix_item.close > 0:
+        calculated_ratio = vxv_item.close / vix_item.close
+        if resp.vxv_vix_ratio is None:
+            resp.vxv_vix_ratio = calculated_ratio
+        
+    # Sort leading: Put ^VIX, ^VIX3M at top, then the rest by ticker
+    def leading_sort_key(item):
+        if item.ticker == "^VIX": return "0000"
+        if item.ticker == "^VIX3M": return "0001"
+        return item.ticker
+    resp.leading.sort(key=leading_sort_key)
+
     resp.themes_top = themes_sorted[:30]
     resp.themes_bottom = themes_sorted[-30:] if themes_sorted else []
     # Sort themes_bottom as weakest first
