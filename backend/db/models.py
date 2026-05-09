@@ -186,6 +186,7 @@ class MarketSignal(Base):
     
     # Distribution Days (O'Neil method, last 25 trading days)
     distribution_days  = Column(Integer)
+    is_distribution_day = Column(SmallInteger, default=0)  # 1 = Dist day occurred today
     
     # Follow Through Day signal
     follow_through_day = Column(SmallInteger, default=0)  # 1 = FTD occurred

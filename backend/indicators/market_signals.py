@@ -37,6 +37,7 @@ def calculate_market_signals(df_spy: pd.DataFrame, df_vix: pd.DataFrame = None, 
     daily_ret    = close.pct_change()
     vol_increase = volume > volume.shift(1)
     is_dist_day  = (daily_ret <= -0.002) & vol_increase
+    df['is_distribution_day'] = is_dist_day.astype(int)
     df['distribution_days'] = is_dist_day.rolling(window=25, min_periods=1).sum().astype(int)
 
     # 3. Follow Through Day (FTD)
@@ -94,4 +95,4 @@ def calculate_market_signals(df_spy: pd.DataFrame, df_vix: pd.DataFrame = None, 
     df['market_trend_score'] = spy_score + breadth_score + momentum_score + vix_score
 
     return df[['date', 'spy_above_sma200', 'spy_sma200_rising',
-                'distribution_days', 'follow_through_day', 'market_phase', 'market_trend_score', 'vxv_vix_ratio']]
+                'distribution_days', 'is_distribution_day', 'follow_through_day', 'market_phase', 'market_trend_score', 'vxv_vix_ratio']]

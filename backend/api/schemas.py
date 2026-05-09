@@ -205,6 +205,9 @@ class MarketTrendScoreHistoryItem(BaseModel):
     date: str
     score: float
     vxv_vix_ratio: Optional[float] = None
+    distribution_days: Optional[int] = None
+    is_distribution_day: Optional[int] = None
+    follow_through_day: Optional[int] = None
 
 class DashboardResponse(BaseModel):
     date: str

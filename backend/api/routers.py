@@ -783,7 +783,10 @@ def get_dashboard(
         schemas.MarketTrendScoreHistoryItem(
             date=str(s.date), 
             score=s.market_trend_score or 0.0,
-            vxv_vix_ratio=s.vxv_vix_ratio
+            vxv_vix_ratio=s.vxv_vix_ratio,
+            distribution_days=s.distribution_days,
+            is_distribution_day=s.is_distribution_day,
+            follow_through_day=s.follow_through_day
         )
         for s in reversed(history_signals)
     ]

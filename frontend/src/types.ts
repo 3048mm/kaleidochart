@@ -192,6 +192,9 @@ export interface MarketTrendScoreHistoryItem {
     date: string
     score: number
     vxv_vix_ratio?: number | null
+    distribution_days?: number | null
+    is_distribution_day?: number | null
+    follow_through_day?: number | null
 }
 
 export interface DashboardResponse {

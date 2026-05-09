@@ -89,6 +89,7 @@ def sync_phase_t5_signals(db, logger: logging.Logger):
             spy_above_sma200=int(row['spy_above_sma200']),
             spy_sma200_rising=int(row['spy_sma200_rising']) if sanitize_numeric(row, 'spy_sma200_rising') is not None else None,
             distribution_days=int(row['distribution_days']),
+            is_distribution_day=int(row['is_distribution_day']),
             follow_through_day=int(row['follow_through_day']),
             market_phase=row['market_phase'],
             market_trend_score=float(row['market_trend_score']) if sanitize_numeric(row, 'market_trend_score') is not None else None,
