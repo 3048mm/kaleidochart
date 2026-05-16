@@ -240,3 +240,66 @@ def simulate_trade(
         )
 
     return None
+
+class BacktestSimulator:
+    """
+    Stateful simulator that can track active positions and evaluate exits on a daily basis.
+    Required for Scenario Testing (daily step simulation).
+    """
+    def __init__(self, prices_df: pd.DataFrame, symbols_df: pd.DataFrame):
+        self.prices_df = prices_df
+        self.symbols_df = symbols_df
+        self.positions = []
+        self.trades = []
+        # Pre-group prices by date for O(1) lookup
+        self._price_by_date = {d: group for d, group in prices_df.groupby('date')}
+        
+    def evaluate_exit_for_day(self, target_date: pd.Timestamp, exit_rules: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Evaluates all current positions against exit rules for the given date.
+        Returns a list of exits triggered on this date.
+        """
+        exits_triggered = []
+        remaining_positions = []
+        
+        day_prices = self._price_by_date.get(target_date)
+        if day_prices is None:
+            return []
+            
+        for pos in self.positions:
+            symbol_id = pos['symbol_id']
+            symbol_data = day_prices[day_prices['symbol_id'] == symbol_id]
+            
+            if symbol_data.empty:
+                remaining_positions.append(pos)
+                continue
+                
+            close_price = symbol_data.iloc[0]['close']
+            entry_price = pos['entry_price']
+            gain_pct = (close_price - entry_price) / entry_price
+            
+            exit_reason = None
+            
+            # 1. Stop Loss
+            if 'stop_loss_pct' in exit_rules and gain_pct <= exit_rules['stop_loss_pct']:
+                exit_reason = 'stop_loss'
+                
+            # 2. Profit Target (simplified full exit for scenario testing base case)
+            elif 'profit_target_pct' in exit_rules and gain_pct >= exit_rules['profit_target_pct']:
+                exit_reason = 'profit_target'
+                
+            if exit_reason:
+                exit_record = {
+                    'symbol_id': symbol_id,
+                    'exit_date': target_date,
+                    'exit_price': close_price,
+                    'reason': exit_reason,
+                    'pnl_pct': gain_pct
+                }
+                exits_triggered.append(exit_record)
+                self.trades.append({**pos, **exit_record})
+            else:
+                remaining_positions.append(pos)
+                
+        self.positions = remaining_positions
+        return exits_triggered

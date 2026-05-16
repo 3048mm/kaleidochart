@@ -23,12 +23,12 @@ if backend_dir not in sys.path:
 
 project_root = os.path.dirname(backend_dir)
 
-from db.database import init_db
-from db import database
+from backend.db.database import init_db
+from backend.db import database
 
-from backtest_screener import scan_signals_for_date, SignalRecord
-from backtest_simulator import simulate_trade, ExitRules, TradeResult
-from backtest_report import calculate_metrics, print_comparison_table, save_results_json
+from backend.backtest.backtest_screener import scan_signals_for_date, SignalRecord
+from backend.backtest.backtest_simulator import simulate_trade, ExitRules, TradeResult
+from backend.backtest.backtest_report import calculate_metrics, print_comparison_table, save_results_json
 
 
 def load_config(config_path: str) -> dict:
@@ -206,7 +206,10 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
             (df_indicators['date'] >= sd) & (df_indicators['date'] <= ed)
         ]['date'].unique()
     )
-    log(f"  Trading Dates: {len(trading_dates)} days ({trading_dates[0]} ~ {trading_dates[-1]})")
+    if trading_dates:
+        log(f"  Trading Dates: {len(trading_dates)} days ({trading_dates[0]} ~ {trading_dates[-1]})")
+    else:
+        log(f"  Trading Dates: 0 days")
 
     elapsed = time.time() - t0
     log(f"  Data loading completed in {elapsed:.1f}s")

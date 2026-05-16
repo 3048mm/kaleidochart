@@ -112,7 +112,10 @@ sort_column = "rs21_rank"
 sort_ascending = false
 min_rs_ratio_21_rank = 0.97
 trend_template_ok = 1
+min_adr_pct_21 = 2.5
 min_market_cap = 3e8
+max_dist_sma50_atr = 6.0
+
 
 # =============================================================
 # Optimization Parameter Search Ranges (Optuna)
@@ -174,10 +177,11 @@ min_up_down_vol_ratio_50 = { type = "float", min = 1.0, max = 3.0, step = 0.5 }
 min_market_cap       = { type = "categorical", choices = [1e8, 3e8, 1e9] }  
 
 [optimization.F]
-min_rs_ratio_21_rank = { type = "float", min = 0.85, max = 0.99, step = 0.01 }
-min_market_cap       = { type = "categorical", choices = [1e7, 1e8, 3e8, 5e8, 1e9] }
-min_adr_pct_21       = { type = "float", min = 1.0, max = 4.0, step = 0.5 }
-trend_template_ok    = { type = "categorical", choices = [1, "none"] }
+min_rs_ratio_21_rank = { type = "float", min = 0.97, max = 0.99, step = 0.01 }
+min_market_cap       = { type = "categorical", choices = [3e8, 5e8, 1e9] }
+min_adr_pct_21       = { type = "float", min = 2.0, max = 3.5, step = 0.5 }
+trend_template_ok    = { type = "categorical", choices = [1] }
+max_dist_sma50_atr   = { type = "float", min = 4.0, max = 8.0, step = 1.0 }
 
 
 # =============================================================

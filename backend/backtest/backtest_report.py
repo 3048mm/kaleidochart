@@ -8,7 +8,7 @@ import json
 import os
 from typing import List, Dict, Any
 from datetime import date
-from backtest_simulator import TradeResult
+from backend.backtest.backtest_simulator import TradeResult
 
 
 def calculate_metrics(trades: List[TradeResult], spy_period_return: float = 0.0) -> Dict[str, Any]:
