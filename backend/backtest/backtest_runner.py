@@ -16,12 +16,12 @@ from datetime import date as dt_date, timedelta
 import tomli
 import pandas as pd
 
-# Add backend to path
+# Add project root and backend to path for flexible import resolution
 backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if backend_dir not in sys.path:
-    sys.path.insert(0, backend_dir)
-
 project_root = os.path.dirname(backend_dir)
+for p in (project_root, backend_dir):
+    if p not in sys.path:
+        sys.path.insert(0, p)
 
 from backend.db.database import init_db
 from backend.db import database
@@ -254,6 +254,17 @@ def run_single_strategy(strat_dict: dict, df_indicators, df_prices, df_ranks, df
     
     t0 = time.time()
     
+    # --- CRITICAL: Clear attrs to avoid deepcopy explosion during groupby/iteration ---
+    df_indicators.attrs = {}
+    df_prices.attrs = {}
+    df_ranks.attrs = {}
+
+    # --- Pre-build groupby caches (PP1) ---
+    ind_day_cache = {d: group for d, group in df_indicators.groupby('date')}
+    price_day_cache = {d: group for d, group in df_prices.groupby('date')}
+    ranks_day_cache = {d: group for d, group in df_ranks.groupby('date')}
+    ranks_dates_sorted = sorted(ranks_day_cache.keys())
+    
     # --- PHASE 1: Fast Pre-Scan ---
     signals_by_date = {}
     total_signals = 0
@@ -265,6 +276,8 @@ def run_single_strategy(strat_dict: dict, df_indicators, df_prices, df_ranks, df
             target_date=td, df_ind=df_indicators, df_price=df_prices, df_ranks=df_ranks,
             df_symbols=df_symbols, df_theme_constituents=df_theme_constituents,
             strategy=strat_dict, prev_date=prev_date,
+            ind_day_cache=ind_day_cache, price_day_cache=price_day_cache,
+            ranks_day_cache=ranks_day_cache, ranks_dates_sorted=ranks_dates_sorted,
         )
         if signals:
             signals_by_date[td] = signals
@@ -290,28 +303,43 @@ def run_single_strategy(strat_dict: dict, df_indicators, df_prices, df_ranks, df
                 print(f"  [Pruned] avg={avg_per_day:.2f}, hit_days={hit_rate_pct:.1f}%", flush=True)
             return {"fast_pruned": True, "avg_per_day": avg_per_day, "hit_rate_pct": hit_rate_pct}, None
 
+    # --- PP3: Pre-build per-symbol DataFrames for trade simulation ---
+    # CRITICAL: Clear attrs before grouping to avoid deepcopy explosion of large cached dicts
+    df_prices.attrs = {}
+    df_indicators.attrs = {}
+    df_ranks.attrs = {}
+
+    needed_ids = set(s.symbol_id for sigs in signals_by_date.values() for s in sigs)
+    if needed_ids:
+        # Use filtered view and then group to avoid unnecessary copies
+        df_prices_filtered = df_prices[df_prices['symbol_id'].isin(needed_ids)]
+        df_ind_filtered = df_indicators[df_indicators['symbol_id'].isin(needed_ids)]
+        
+        price_by_sym = {sid: group for sid, group in df_prices_filtered.groupby('symbol_id')}
+        ind_by_sym = {sid: group for sid, group in df_ind_filtered.groupby('symbol_id')}
+    else:
+        price_by_sym = {}
+        ind_by_sym = {}
+
     # --- PHASE 2: Trade Simulation ---
     trades = []
-    active_positions = set()
+    # BB1 fix: look-ahead simulation completes trades instantly, so we only need
+    # to prevent duplicate entries on the same day for the same symbol.
+    # No need for cross-day active_positions blocking.
 
     for i, td in enumerate(trading_dates):
         signals = signals_by_date.get(td, [])
+        daily_entered = set()  # Same-day duplicate prevention only
 
         for signal in signals:
-            if signal.symbol_id in active_positions:
+            if signal.symbol_id in daily_entered:
                 continue
-            df_price_sym = df_prices[df_prices['symbol_id'] == signal.symbol_id]
-            df_ind_sym = df_indicators[df_indicators['symbol_id'] == signal.symbol_id]
+            df_price_sym = price_by_sym.get(signal.symbol_id, pd.DataFrame())
+            df_ind_sym = ind_by_sym.get(signal.symbol_id, pd.DataFrame())
             result = simulate_trade(signal, df_price_sym, df_ind_sym, exit_rules)
             if result:
                 trades.append(result)
-                active_positions.add(signal.symbol_id)
-
-        exited_ids = set()
-        for t in trades:
-            if t.exit_date <= td and t.symbol_id in active_positions:
-                exited_ids.add(t.symbol_id)
-        active_positions -= exited_ids
+                daily_entered.add(signal.symbol_id)
 
         if show_progress and (i + 1) % 100 == 0:
             print(f"  Processed {i + 1}/{total_days} days, {len(trades)} trades so far...", flush=True)

@@ -48,16 +48,34 @@ def scan_signals_for_date(
     df_theme_constituents: pd.DataFrame,
     strategy: Dict[str, Any],
     prev_date=None,
+    ind_day_cache: dict = None,
+    price_day_cache: dict = None,
+    ranks_day_cache: dict = None,
+    ranks_dates_sorted: list = None,
 ) -> List[SignalRecord]:
     """
     Scan for signals on a specific date by merging data and applying filters.
-    """
-    # 1. Prepare merged daily data
-    ind_day = df_ind[df_ind['date'] == target_date].copy()
-    if ind_day.empty: return []
     
-    price_day = df_price[df_price['date'] == target_date].copy()
-    if price_day.empty: return []
+    Args:
+        ind_day_cache: Optional pre-grouped {date: DataFrame} for indicators. O(1) lookup.
+        price_day_cache: Optional pre-grouped {date: DataFrame} for prices. O(1) lookup.
+    """
+    # 1. Prepare merged daily data (use cache if available)
+    if ind_day_cache is not None:
+        ind_day = ind_day_cache.get(target_date)
+        if ind_day is None: return []
+        ind_day = ind_day.copy()
+    else:
+        ind_day = df_ind[df_ind['date'] == target_date].copy()
+        if ind_day.empty: return []
+    
+    if price_day_cache is not None:
+        price_day = price_day_cache.get(target_date)
+        if price_day is None: return []
+        price_day = price_day.copy()
+    else:
+        price_day = df_price[df_price['date'] == target_date].copy()
+        if price_day.empty: return []
     
     merged = ind_day.merge(
         price_day[['symbol_id', 'date', 'open', 'high', 'low', 'close', 'volume', 'market_cap']],
@@ -78,7 +96,10 @@ def scan_signals_for_date(
         df_symbols=df_symbols,
         df_theme_constituents=df_theme_constituents,
         strategy=strategy,
-        prev_date=prev_date
+        prev_date=prev_date,
+        ind_day_cache=ind_day_cache,
+        ranks_day_cache=ranks_day_cache,
+        ranks_dates_sorted=ranks_dates_sorted,
     )
     
     # 3. Convert to SignalRecords
@@ -102,6 +123,9 @@ def apply_filters_to_df(
     df_theme_constituents: pd.DataFrame,
     strategy: Dict[str, Any],
     prev_date=None,
+    ind_day_cache: dict = None,
+    ranks_day_cache: dict = None,
+    ranks_dates_sorted: list = None,
 ) -> pd.DataFrame:
     """
     Applies strategy filters to a pre-merged daily DataFrame.
@@ -136,41 +160,47 @@ def apply_filters_to_df(
     needs_rs63 = strategy.get('rs_rank_21_gt_63') or sort_col in ('rs63_rank', 'rs_ratio_63_rank')
 
     if needs_rs21 or needs_rs63:
-        # Optimization: Use binary search and groupby cache for O(1) rank lookup
-        if '_unique_dates_sorted' not in df_ranks.attrs:
-            df_ranks.attrs['_unique_dates_sorted'] = sorted(df_ranks['date'].unique())
-        if '_ranks_by_date' not in df_ranks.attrs:
-            # Building this dict might take a few seconds but only happens once
-            df_ranks.attrs['_ranks_by_date'] = {d: group for d, group in df_ranks.groupby('date')}
-        
-        unique_dates = df_ranks.attrs['_unique_dates_sorted']
-        idx = bisect.bisect_right(unique_dates, target_date)
-        if idx > 0:
-            rank_date = unique_dates[idx - 1]
-            ranks_day = df_ranks.attrs['_ranks_by_date'].get(rank_date)
-            
-            if ranks_day is not None:
-                if needs_rs21:
-                    r21 = ranks_day[ranks_day['indicator_name'] == 'rs_ratio_21'][['symbol_id', 'percent_rank']].rename(
-                        columns={'percent_rank': 'rs21_rank'}
-                    )
-                    merged = merged.merge(r21, on='symbol_id', how='left').reset_index(drop=True)
+        # Use bisect to find the nearest previous date (ranks may not exist for every trading day)
+        if ranks_dates_sorted is not None:
+            cache_dates = ranks_dates_sorted
+        elif ranks_day_cache is not None:
+            cache_dates = sorted(ranks_day_cache.keys())
+        else:
+            cache_dates = sorted(df_ranks['date'].unique())
 
-                if needs_rs63:
-                    r63 = ranks_day[ranks_day['indicator_name'] == 'rs_ratio_63'][['symbol_id', 'percent_rank']].rename(
-                        columns={'percent_rank': 'rs63_rank'}
-                    )
-                    merged = merged.merge(r63, on='symbol_id', how='left').reset_index(drop=True)
+        idx = bisect.bisect_right(cache_dates, target_date)
+        if idx > 0:
+            rank_date = cache_dates[idx - 1]
+            if ranks_day_cache is not None:
+                ranks_day = ranks_day_cache.get(rank_date)
+            else:
+                ranks_day = df_ranks[df_ranks['date'] == rank_date]
+        else:
+            ranks_day = None
+
+        if ranks_day is not None:
+            if needs_rs21:
+                r21 = ranks_day[ranks_day['indicator_name'] == 'rs_ratio_21'][['symbol_id', 'percent_rank']].rename(
+                    columns={'percent_rank': 'rs21_rank'}
+                )
+                merged = merged.merge(r21, on='symbol_id', how='left').reset_index(drop=True)
+
+            if needs_rs63:
+                r63 = ranks_day[ranks_day['indicator_name'] == 'rs_ratio_63'][['symbol_id', 'percent_rank']].rename(
+                    columns={'percent_rank': 'rs63_rank'}
+                )
+                merged = merged.merge(r63, on='symbol_id', how='left').reset_index(drop=True)
         else:
             if 'min_rs_ratio_21_rank' in strategy or strategy.get('rs_rank_21_gt_63'):
                 return pd.DataFrame(columns=merged.columns)
 
     # --- RRG merges ---
     if (strategy.get('rrg_leading_in') or strategy.get('rrg_lagging_in') or strategy.get('rrg_improving_in')) and prev_date is not None:
-        if '_ind_by_date' not in df_ind.attrs:
-            df_ind.attrs['_ind_by_date'] = {d: group for d, group in df_ind.groupby('date')}
-        
-        ind_prev_all = df_ind.attrs['_ind_by_date'].get(prev_date)
+        if ind_day_cache is not None:
+            ind_prev_all = ind_day_cache.get(prev_date)
+        else:
+            ind_prev_all = df_ind[df_ind['date'] == prev_date]
+            
         if ind_prev_all is not None:
             ind_prev = ind_prev_all[['symbol_id', 'rs_ratio_21', 'rs_momentum_21']].rename(
                 columns={'rs_ratio_21': 'prev_rs_ratio_21', 'rs_momentum_21': 'prev_rs_momentum_21'}
@@ -221,11 +251,13 @@ def apply_filters_to_df(
         mask &= filter_rs_rank_21_gt_63(merged)
 
     if strategy.get('theme_rs21_gt_63'):
-        if '_ind_by_date' not in df_ind.attrs:
-            df_ind.attrs['_ind_by_date'] = {d: group for d, group in df_ind.groupby('date')}
-        ind_day = df_ind.attrs['_ind_by_date'].get(target_date)
-        if ind_day is not None:
-            mask &= filter_theme_rs21_gt_63(merged, ind_day, df_symbols, df_theme_constituents)
+        if ind_day_cache is not None:
+            ind_day_for_theme = ind_day_cache.get(target_date)
+        else:
+            ind_day_for_theme = df_ind[df_ind['date'] == target_date]
+            
+        if ind_day_for_theme is not None:
+            mask &= filter_theme_rs21_gt_63(merged, ind_day_for_theme, df_symbols, df_theme_constituents)
 
     # RRG
     intensity_threshold = strategy.get('rrg_intensity_threshold', 0.0)
