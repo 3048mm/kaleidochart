@@ -115,7 +115,8 @@ def run_scenario_test(
     stop_loss_pct: float = -0.08,
     profit_target_pct: float = 0.20,
     output_dir: str = "output/scenario",
-    refresh_cache: bool = False
+    refresh_cache: bool = False,
+    config_path: str = "data/screener_presets.toml"
 ) -> Dict[str, Any]:
     """
     Executes the full portfolio-level scenario simulation.
@@ -125,10 +126,10 @@ def run_scenario_test(
     # 1. Load Data
     from backend.db import database
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    config_path = os.path.join(project_root, "config.toml")
+    app_config_path = os.path.join(project_root, "config.toml")
     try:
         import tomli
-        with open(config_path, "rb") as f:
+        with open(app_config_path, "rb") as f:
             app_config = tomli.load(f)
         db_path = app_config.get("system", {}).get("db_path", "data/stocktool.db")
         if not os.path.isabs(db_path):
@@ -162,7 +163,7 @@ def run_scenario_test(
         )
 
     # 2. Initialize Components
-    config_dict = load_scenario_config()
+    config_dict = load_scenario_config(config_path)
     strategies = config_dict.get('strategies', {})
     
     market_scorer = MarketTrendScorer(prices_df, symbols_df)
@@ -183,9 +184,25 @@ def run_scenario_test(
     print("  Optimizing data structures for simulation...", flush=True)
     ind_by_date = {d: group for d, group in indicators_df.groupby('date')}
     price_by_date = {d: group for d, group in prices_df.groupby('date')}
+    ranks_day_cache = {d: group for d, group in ranks_df.groupby('date')}
+    ranks_dates_sorted = sorted(ranks_day_cache.keys())
     
-    # Exit Rules for the simulator adapter (M1: no more magic numbers)
-    exit_rules = {'stop_loss_pct': stop_loss_pct, 'profit_target_pct': profit_target_pct}
+    # Exit Rules for the simulator adapter from backtest_config.toml
+    import tomli
+    bt_config_path = os.path.join(project_root, "backend/backtest/backtest_config.toml")
+    try:
+        with open(bt_config_path, "rb") as f:
+            bt_config = tomli.load(f)
+        exit_rules = ExitRules.from_config(bt_config)
+    except Exception as e:
+        print(f"Warning: Failed to load backtest_config.toml: {e}, using default exit rules.")
+        exit_rules = ExitRules()
+        
+    # Override if custom values are passed via run_scenario_test args (ScenarioRunner uses decimal like -0.08, convert to percent like -8.0)
+    if stop_loss_pct != -0.08:
+        exit_rules.stop_loss_pct = stop_loss_pct * 100.0
+    if profit_target_pct != 0.20:
+        exit_rules.partial_take_profit_pct = profit_target_pct * 100.0
 
     # 3. Daily Loop
     dates = trading_dates # Use the canonical trading dates from preload_data
@@ -269,7 +286,10 @@ def run_scenario_test(
                     df_symbols=symbols_df,
                     df_theme_constituents=theme_constituents,
                     strategy=strat_rules,
-                    prev_date=prev_date
+                    prev_date=prev_date,
+                    ind_day_cache=ind_by_date,
+                    ranks_day_cache=ranks_day_cache,
+                    ranks_dates_sorted=ranks_dates_sorted,
                 )
                 
                 if not filtered_df.empty:
@@ -397,6 +417,7 @@ if __name__ == '__main__':
     parser.add_argument('--profit-target', type=float, default=0.20, help='Profit target percentage (e.g., 0.20 for +20%%)')
     parser.add_argument('--output-dir', type=str, default='output/scenario')
     parser.add_argument('--refresh-cache', action='store_true', help='Force refresh of data from database instead of using parquet cache')
+    parser.add_argument('--config-path', type=str, default='data/screener_presets.toml', help='Path to the screener config TOML file')
     
     args = parser.parse_args()
     
@@ -411,6 +432,7 @@ if __name__ == '__main__':
         profit_target_pct=args.profit_target,
         output_dir=args.output_dir,
         refresh_cache=args.refresh_cache,
+        config_path=args.config_path
     )
     
     print("\nScenario Test Summary:")

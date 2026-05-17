@@ -343,6 +343,9 @@ def objective(trial: optuna.Trial, strategy_type: str, config, config_app, exit_
     # Also set as system attribute 'note' for Optuna Dashboard
     trial.set_system_attr("note", params_toml_str)
 
+    # --- Trial Summary Log ---
+    print(f"  [Trial {trial.number}] Score: {avg_score:.2f} | Port vs SPY: {portfolio_vs_spy:+.2f}% | Trades: {total_trades} | WinRate: {trial.user_attrs['win_rate']:.1f}%", flush=True)
+
     return avg_score
 
 def main():

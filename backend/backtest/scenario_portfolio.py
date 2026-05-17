@@ -141,7 +141,10 @@ class ScenarioPortfolio:
     def apply_exits(self, exits: List[Dict[str, Any]]):
         """
         Processes exits triggered by the simulator and updates capital and history.
+        Supports both partial exits (1/3 take profit) and full exits.
         """
+        partial_ratio = 0.333
+        
         for exit_data in exits:
             symbol_id = exit_data['symbol_id']
             # Find the position
@@ -149,23 +152,53 @@ class ScenarioPortfolio:
             if not pos:
                 continue
                 
-            exit_amount = pos['shares'] * exit_data['exit_price']
-            pnl_amount = exit_amount - pos['amount']
-            
-            # Update capital
-            self.capital += exit_amount
-            
-            # Record trade
-            trade_record = {
-                **pos,
-                'exit_date': exit_data['exit_date'],
-                'exit_price': exit_data['exit_price'],
-                'exit_reason': exit_data['reason'],
-                'pnl_pct': exit_data['pnl_pct'],
-                'pnl_amount': pnl_amount,
-                'capital_after': self.capital
-            }
-            self.trade_history.append(trade_record)
-            
-            # Remove from active
-            self.active_positions = [p for p in self.active_positions if p['symbol_id'] != symbol_id]
+            if exit_data.get('is_partial'):
+                # 1/3 Partial Take Profit
+                partial_shares = int(pos['shares'] * partial_ratio)
+                if partial_shares <= 0:
+                    partial_shares = 1 # Ensure at least 1 share
+                    
+                partial_amount = partial_shares * pos['entry_price']
+                exit_amount = partial_shares * exit_data['exit_price']
+                
+                # Update capital with cash from 1/3 sale
+                self.capital += exit_amount
+                
+                # Reduce the active position shares and initial cost amount
+                pos['shares'] -= partial_shares
+                pos['amount'] -= partial_amount
+                
+                # Mark as partial taken on the position so simulator knows
+                pos['partial_taken'] = True
+                pos['partial_exit_pnl_pct'] = exit_data['pnl_pct'] * 100.0
+                pos['stop_price'] = pos['entry_price'] # Move stop to breakeven
+            else:
+                # Full Exit
+                exit_amount = pos['shares'] * exit_data['exit_price']
+                
+                if pos.get('partial_taken'):
+                    # The raw pnl_pct returned by evaluate_exit_for_day is already the
+                    # weighted average (1/3 partial PnL + 2/3 remaining PnL).
+                    # So we calculate the real pnl_amount based on actual cash flows:
+                    original_cost = (pos['shares'] / (1 - partial_ratio)) * pos['entry_price'] if pos['shares'] > 0 else pos['amount']
+                    pnl_amount = original_cost * exit_data['pnl_pct']
+                else:
+                    pnl_amount = exit_amount - pos['amount']
+                
+                # Update capital with cash from full sale
+                self.capital += exit_amount
+                
+                # Record trade
+                trade_record = {
+                    **pos,
+                    'exit_date': exit_data['exit_date'],
+                    'exit_price': exit_data['exit_price'],
+                    'exit_reason': exit_data['reason'],
+                    'pnl_pct': exit_data['pnl_pct'],
+                    'pnl_amount': pnl_amount,
+                    'capital_after': self.capital
+                }
+                self.trade_history.append(trade_record)
+                
+                # Remove from active
+                self.active_positions = [p for p in self.active_positions if p['symbol_id'] != symbol_id]

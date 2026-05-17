@@ -1,5 +1,6 @@
 import logging
 import pandas as pd
+import time
 from typing import Optional, List
 from sqlalchemy import func
 
@@ -101,6 +102,8 @@ def run_pipeline(config, db_path, logger: logging.Logger, rebuild_from: Optional
     try:
         with get_db() as db:
             if not skip_sync:
+                logger.info("Starting T1: Symbol Sync...")
+                t_start = time.time()
                 extra_symbols = config.get("data_collection", {}).get("symbols", [])
                 sheet_data, symbol_id_map = sync_symbols_to_db(
                     db, 
@@ -108,6 +111,7 @@ def run_pipeline(config, db_path, logger: logging.Logger, rebuild_from: Optional
                     config["system"].get("spreadsheet_url", "https://docs.google.com/spreadsheets/d/1pkwMVl6FaurinU2Z1Mm_fW_zepMe6YLXE0e-v-vcp1k/edit#gid=0"),
                     extra_symbols=extra_symbols
                 )
+                logger.info(f"T1: Symbol Sync completed in {time.time() - t_start:.2f}s")
             else:
                 symbols = db.query(Symbol).filter(Symbol.active == True).all()
                 sheet_data = [{'ticker': s.ticker, 'exchange': s.exchange, 'category': s.category, 'theme_type': s.theme_type} for s in symbols]
@@ -135,23 +139,40 @@ def run_pipeline(config, db_path, logger: logging.Logger, rebuild_from: Optional
                         q.delete(synchronize_session=False)
                 db.commit()
 
+            logger.info("Starting T2: Prices...")
+            t_start = time.time()
             spy_latest_date = sync_phase_t2_prices(db, sheet_data, symbol_id_map, config["data_collection"]["initial_fetch_days"], skip_fetch, logger)
+            logger.info(f"T2: Prices completed in {time.time() - t_start:.2f}s")
             
             virtual_items = [d for d in sheet_data if d['theme_type'] == 'virtual']
-            for v_item in virtual_items:
-                v_id = symbol_id_map.get((v_item['ticker'], v_item['exchange']))
-                synth_df = build_virtual_index_prices(db, v_id)
-                if not synth_df.empty:
-                    db.query(DailyPrice).filter(DailyPrice.symbol_id == v_id).delete()
-                    db.query(Indicator).filter(Indicator.symbol_id == v_id).delete()
-                    db.bulk_save_objects([DailyPrice(symbol_id=v_id, date=row['date'], open=row['open'], high=row['high'], low=row['low'], close=row['close'], volume=0) for _, row in synth_df.iterrows()])
-                    db.commit()
+            if virtual_items:
+                logger.info(f"Starting Virtual Index Build for {len(virtual_items)} items...")
+                t_start = time.time()
+                for v_item in virtual_items:
+                    v_id = symbol_id_map.get((v_item['ticker'], v_item['exchange']))
+                    synth_df = build_virtual_index_prices(db, v_id)
+                    if not synth_df.empty:
+                        db.query(DailyPrice).filter(DailyPrice.symbol_id == v_id).delete()
+                        db.query(Indicator).filter(Indicator.symbol_id == v_id).delete()
+                        db.bulk_save_objects([DailyPrice(symbol_id=v_id, date=row['date'], open=row['open'], high=row['high'], low=row['low'], close=row['close'], volume=0) for _, row in synth_df.iterrows()])
+                        db.commit()
+                logger.info(f"Virtual Index Build completed in {time.time() - t_start:.2f}s")
 
             if not skip_t3:
+                logger.info("Starting T3: Indicators...")
+                t_start = time.time()
                 sync_phase_t3_indicators(db, sheet_data, symbol_id_map, spy_latest_date, skip_fetch, db_path, logger)
+                logger.info(f"T3: Indicators completed in {time.time() - t_start:.2f}s")
             
+            logger.info("Starting T4: Ranks...")
+            t_start = time.time()
             sync_phase_t4_ranks(db, spy_latest_date, logger)
+            logger.info(f"T4: Ranks completed in {time.time() - t_start:.2f}s")
+
+            logger.info("Starting T5: Signals...")
+            t_start = time.time()
             sync_phase_t5_signals(db, logger)
+            logger.info(f"T5: Signals completed in {time.time() - t_start:.2f}s")
 
             logger.info("--- Step 3 Pipeline COMPLETED SUCCESSFULLY ---")
     except Exception as e:
