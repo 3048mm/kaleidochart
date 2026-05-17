@@ -1,6 +1,9 @@
 import logging
 import pandas as pd
 import time
+import os
+import json
+import hashlib
 from typing import Optional, List
 from sqlalchemy import func
 
@@ -88,6 +91,189 @@ def build_virtual_index_prices(db, virtual_id: int):
     daily_avg_ret['volume'], daily_avg_ret['symbol_id'] = 0, virtual_id
     return daily_avg_ret
 
+def build_all_virtual_indexes_prices(db, virtual_items: list[dict], symbol_id_map: dict, hash_file_path: str = "data/virtual_theme_hashes.json"):
+    if not virtual_items:
+        return
+        
+    v_ids = []
+    v_id_to_item = {}
+    for item in virtual_items:
+        v_id = symbol_id_map.get((item['ticker'], item['exchange']))
+        if v_id:
+            v_ids.append(v_id)
+            v_id_to_item[v_id] = item
+
+    if not v_ids:
+        return
+
+    constituents = db.query(ThemeConstituent).filter(ThemeConstituent.theme_id.in_(v_ids)).all()
+    if not constituents:
+        return
+
+    theme_to_symbols = {}
+    all_constituent_symbol_ids = set()
+    for c in constituents:
+        theme_to_symbols.setdefault(c.theme_id, []).append(c.symbol_id)
+        all_constituent_symbol_ids.add(c.symbol_id)
+
+    saved_hashes = {}
+    if os.path.exists(hash_file_path):
+        try:
+            with open(hash_file_path, 'r', encoding='utf-8') as f:
+                saved_hashes = json.load(f)
+        except Exception:
+            saved_hashes = {}
+
+    new_hashes = {}
+    rebuild_ranks = False
+    theme_modes = {}
+    
+    for v_id in v_ids:
+        c_syms = sorted(theme_to_symbols.get(v_id, []))
+        if not c_syms:
+            continue
+        
+        hash_key = ",".join(map(str, c_syms))
+        current_hash = hashlib.sha256(hash_key.encode('utf-8')).hexdigest()
+        new_hashes[str(v_id)] = current_hash
+        
+        prev_hash = saved_hashes.get(str(v_id))
+        is_incremental = False
+        last_date = None
+        
+        if prev_hash == current_hash:
+            last_date = db.query(func.max(DailyPrice.date)).filter(DailyPrice.symbol_id == v_id).scalar()
+            if last_date:
+                prev_date_query = db.query(DailyPrice.date, DailyPrice.close)\
+                                    .filter(DailyPrice.symbol_id == v_id, DailyPrice.date < last_date)\
+                                    .order_by(DailyPrice.date.desc()).first()
+                if prev_date_query:
+                    is_incremental = True
+        
+        if is_incremental:
+            theme_modes[v_id] = ('incremental', current_hash, last_date)
+        else:
+            theme_modes[v_id] = ('rebuild', current_hash, None)
+            rebuild_ranks = True
+
+    c_ids_list = list(all_constituent_symbol_ids)
+    if not c_ids_list:
+        return
+        
+    c_ids_str = ",".join(map(str, c_ids_list))
+    query = f"SELECT symbol_id, date, close FROM daily_prices WHERE symbol_id IN ({c_ids_str}) AND close IS NOT NULL AND close > 0"
+    all_prices_df = pd.read_sql_query(query, db.bind)
+    if all_prices_df.empty:
+        return
+        
+    all_prices_df['date'] = pd.to_datetime(all_prices_df['date']).dt.date
+    all_prices_df = all_prices_df.sort_values(['symbol_id', 'date'])
+
+    to_delete_vids = []
+    to_delete_indicators = []
+    objects_to_insert = []
+    
+    for v_id, mode_info in theme_modes.items():
+        mode, current_hash, last_date = mode_info
+        c_syms = theme_to_symbols.get(v_id, [])
+        
+        theme_prices_df = all_prices_df[all_prices_df['symbol_id'].isin(c_syms)]
+        if theme_prices_df.empty:
+            continue
+            
+        if mode == 'rebuild':
+            to_delete_vids.append(v_id)
+            to_delete_indicators.append(v_id)
+            
+            df = theme_prices_df.copy()
+            df['ret'] = df.groupby('symbol_id')['close'].pct_change()
+            daily_avg_ret = df.dropna(subset=['ret']).groupby('date')['ret'].mean().reset_index().sort_values('date')
+            
+            if daily_avg_ret.empty:
+                continue
+                
+            current_val = 1000.0
+            for _, row in daily_avg_ret.iterrows():
+                current_val *= (1 + row['ret'])
+                objects_to_insert.append(DailyPrice(
+                    symbol_id=v_id,
+                    date=row['date'],
+                    open=current_val,
+                    high=current_val,
+                    low=current_val,
+                    close=current_val,
+                    volume=0
+                ))
+                
+        elif mode == 'incremental':
+            prev_row = db.query(DailyPrice)\
+                         .filter(DailyPrice.symbol_id == v_id, DailyPrice.date < last_date)\
+                         .order_by(DailyPrice.date.desc()).first()
+            if not prev_row:
+                to_delete_vids.append(v_id)
+                to_delete_indicators.append(v_id)
+                df = theme_prices_df.copy()
+                df['ret'] = df.groupby('symbol_id')['close'].pct_change()
+                daily_avg_ret = df.dropna(subset=['ret']).groupby('date')['ret'].mean().reset_index().sort_values('date')
+                if not daily_avg_ret.empty:
+                    current_val = 1000.0
+                    for _, row in daily_avg_ret.iterrows():
+                        current_val *= (1 + row['ret'])
+                        objects_to_insert.append(DailyPrice(
+                            symbol_id=v_id,
+                            date=row['date'],
+                            open=current_val,
+                            high=current_val,
+                            low=current_val,
+                            close=current_val,
+                            volume=0
+                        ))
+                continue
+                
+            seed_date = prev_row.date
+            seed_price = prev_row.close
+            
+            df = theme_prices_df[theme_prices_df['date'] >= seed_date].copy()
+            df['ret'] = df.groupby('symbol_id')['close'].pct_change()
+            daily_avg_ret = df.dropna(subset=['ret']).groupby('date')['ret'].mean().reset_index().sort_values('date')
+            
+            db.query(DailyPrice).filter(DailyPrice.symbol_id == v_id, DailyPrice.date >= last_date).delete()
+            
+            current_val = seed_price
+            for _, row in daily_avg_ret.iterrows():
+                current_val *= (1 + row['ret'])
+                if row['date'] >= last_date:
+                    objects_to_insert.append(DailyPrice(
+                        symbol_id=v_id,
+                        date=row['date'],
+                        open=current_val,
+                        high=current_val,
+                        low=current_val,
+                        close=current_val,
+                        volume=0
+                    ))
+
+    if to_delete_vids:
+        db.query(DailyPrice).filter(DailyPrice.symbol_id.in_(to_delete_vids)).delete(synchronize_session=False)
+    if to_delete_indicators:
+        db.query(Indicator).filter(Indicator.symbol_id.in_(to_delete_indicators)).delete(synchronize_session=False)
+        
+    if objects_to_insert:
+        db.bulk_save_objects(objects_to_insert)
+        
+    db.commit()
+
+    hash_dir = os.path.dirname(hash_file_path)
+    if hash_dir and not os.path.exists(hash_dir):
+        os.makedirs(hash_dir, exist_ok=True)
+
+    with open(hash_file_path, 'w', encoding='utf-8') as f:
+        json.dump(new_hashes, f, ensure_ascii=False, indent=2)
+
+    if rebuild_ranks:
+        db.query(RelativeRank).filter(RelativeRank.group_name == "テーマ").delete(synchronize_session=False)
+        db.commit()
+
 def run_pipeline(config, db_path, logger: logging.Logger, rebuild_from: Optional[str] = None, categories: Optional[List[str]] = None, skip_fetch: bool = False, skip_sync: bool = False, skip_t3: bool = False, recalculate_all: bool = False):
     """
     Main Orchestrator for Step 3 Pipeline.
@@ -148,14 +334,7 @@ def run_pipeline(config, db_path, logger: logging.Logger, rebuild_from: Optional
             if virtual_items:
                 logger.info(f"Starting Virtual Index Build for {len(virtual_items)} items...")
                 t_start = time.time()
-                for v_item in virtual_items:
-                    v_id = symbol_id_map.get((v_item['ticker'], v_item['exchange']))
-                    synth_df = build_virtual_index_prices(db, v_id)
-                    if not synth_df.empty:
-                        db.query(DailyPrice).filter(DailyPrice.symbol_id == v_id).delete()
-                        db.query(Indicator).filter(Indicator.symbol_id == v_id).delete()
-                        db.bulk_save_objects([DailyPrice(symbol_id=v_id, date=row['date'], open=row['open'], high=row['high'], low=row['low'], close=row['close'], volume=0) for _, row in synth_df.iterrows()])
-                        db.commit()
+                build_all_virtual_indexes_prices(db, virtual_items, symbol_id_map)
                 logger.info(f"Virtual Index Build completed in {time.time() - t_start:.2f}s")
 
             if not skip_t3:

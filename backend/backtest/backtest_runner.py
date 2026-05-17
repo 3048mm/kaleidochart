@@ -54,13 +54,56 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
 
     # Cache filenames based on the date range
     cache_suffix = f"{start_date.replace('-','')}_{end_date.replace('-','')}"
-    paths = {
+    
+    # Intelligently check if we have a larger golden cache (20210326 to 20260326)
+    # that fully contains the requested range.
+    golden_suffix = "20210326_20260326"
+    golden_paths = {
         'symbols': cache_dir / "symbols.parquet",
-        'prices': cache_dir / f"prices_{cache_suffix}.parquet",
-        'indicators': cache_dir / f"indicators_{cache_suffix}.parquet",
-        'ranks': cache_dir / f"ranks_{cache_suffix}.parquet",
+        'prices': cache_dir / f"prices_{golden_suffix}.parquet",
+        'indicators': cache_dir / f"indicators_{golden_suffix}.parquet",
+        'ranks': cache_dir / f"ranks_{golden_suffix}.parquet",
         'tc': cache_dir / "theme_constituents.parquet"
     }
+    
+    use_golden = False
+    if not refresh_cache:
+        # If specific cache exists, use it.
+        # Otherwise, if golden cache exists and requested range is within it, use golden!
+        specific_paths = {
+            'symbols': cache_dir / "symbols.parquet",
+            'prices': cache_dir / f"prices_{cache_suffix}.parquet",
+            'indicators': cache_dir / f"indicators_{cache_suffix}.parquet",
+            'ranks': cache_dir / f"ranks_{cache_suffix}.parquet",
+            'tc': cache_dir / "theme_constituents.parquet"
+        }
+        if all(p.exists() for p in specific_paths.values()):
+            paths = specific_paths
+        elif all(p.exists() for p in golden_paths.values()):
+            # Verify if requested dates are within 2021-03-26 and 2026-03-26
+            try:
+                sd_req = dt_date.fromisoformat(start_date)
+                ed_req = dt_date.fromisoformat(end_date)
+                sd_gold = dt_date.fromisoformat("2021-03-26")
+                ed_gold = dt_date.fromisoformat("2026-03-26")
+                if sd_gold <= sd_req <= ed_gold and sd_gold <= ed_req <= ed_gold:
+                    use_golden = True
+                    paths = golden_paths
+                    log(f"  -> Golden cache ({golden_suffix}) fully covers requested range ({start_date} to {end_date}). Reusing golden cache!")
+            except Exception:
+                pass
+            if not use_golden:
+                paths = specific_paths
+        else:
+            paths = specific_paths
+    else:
+        paths = {
+            'symbols': cache_dir / "symbols.parquet",
+            'prices': cache_dir / f"prices_{cache_suffix}.parquet",
+            'indicators': cache_dir / f"indicators_{cache_suffix}.parquet",
+            'ranks': cache_dir / f"ranks_{cache_suffix}.parquet",
+            'tc': cache_dir / "theme_constituents.parquet"
+        }
 
     if not refresh_cache and all(p.exists() for p in paths.values()):
         log("Loading data from Parquet cache...")
@@ -82,6 +125,15 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
             df_prices['date'] = pd.to_datetime(df_prices['date']).dt.date
             df_indicators['date'] = pd.to_datetime(df_indicators['date']).dt.date
             df_ranks['date'] = pd.to_datetime(df_ranks['date']).dt.date
+            
+            # Slice in-memory if we reused the golden cache
+            if use_golden:
+                sd = dt_date.fromisoformat(start_date)
+                ed = dt_date.fromisoformat(end_date)
+                log(f"  -> Slicing golden cache in-memory for requested range: {start_date} to {end_date}...")
+                df_prices = df_prices[(df_prices['date'] >= sd) & (df_prices['date'] <= ed)]
+                df_indicators = df_indicators[(df_indicators['date'] >= sd) & (df_indicators['date'] <= ed)]
+                df_ranks = df_ranks[(df_ranks['date'] >= sd) & (df_ranks['date'] <= ed)]
             
             log(f"  -> Date types after parse: prices={df_prices['date'].dtype}, ind={df_indicators['date'].dtype}, ranks={df_ranks['date'].dtype}")
             if not df_ranks.empty:
