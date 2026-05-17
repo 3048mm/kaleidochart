@@ -141,6 +141,32 @@ class ScenarioReporter:
             'yearly_performance': yearly_stats,
         }
         
+        # Extract top 5 most profitable trades by PnL amount
+        top_profitable = []
+        if trade_history:
+            df_trades = pd.DataFrame(trade_history)
+            if 'pnl_amount' in df_trades.columns:
+                df_sorted = df_trades.sort_values('pnl_amount', ascending=False).head(5)
+                for _, row in df_sorted.iterrows():
+                    # Safely handle Timestamp formatting
+                    e_date = row.get('entry_date')
+                    x_date = row.get('exit_date')
+                    e_str = e_date.strftime('%Y-%m-%d') if hasattr(e_date, 'strftime') else str(e_date)
+                    x_str = x_date.strftime('%Y-%m-%d') if hasattr(x_date, 'strftime') else str(x_date)
+                    
+                    top_profitable.append({
+                        'ticker': row.get('ticker'),
+                        'entry_date': e_str,
+                        'exit_date': x_str,
+                        'entry_price': round(float(row.get('entry_price')), 2) if 'entry_price' in row else 0.0,
+                        'exit_price': round(float(row.get('exit_price')), 2) if 'exit_price' in row else 0.0,
+                        'pnl_amount': round(float(row.get('pnl_amount')), 2),
+                        'pnl_pct': round(float(row.get('pnl_pct') * 100), 2) if 'pnl_pct' in df_trades.columns else 0.0,
+                        'shares': int(row.get('shares', 0)),
+                        'exit_reason': row.get('exit_reason')
+                    })
+        summary['top_profitable_trades'] = top_profitable
+        
         # S3: Include run parameters if provided
         if run_params:
             summary['run_params'] = run_params

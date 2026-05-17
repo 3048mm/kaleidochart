@@ -116,7 +116,9 @@ def run_scenario_test(
     profit_target_pct: float = 0.20,
     output_dir: str = "output/scenario",
     refresh_cache: bool = False,
-    config_path: str = "data/screener_presets.toml"
+    config_path: str = "data/screener_presets.toml",
+    market_weights: Dict[str, float] = None,
+    use_vxv_vix: bool = False
 ) -> Dict[str, Any]:
     """
     Executes the full portfolio-level scenario simulation.
@@ -162,11 +164,34 @@ def run_scenario_test(
             on=['date', 'symbol_id'], how='left'
         )
 
+    # 1.6 Pre-calculate Daily Market Breadth & Momentum statistics for the Scorer
+    print("  Pre-calculating daily market breadth & momentum...", flush=True)
+    active_stocks = df_symbols[(df_symbols['active'] == 1) & (df_symbols['category'] == '個別')]['id'].unique()
+    active_stocks_set = set(active_stocks)
+    
+    p_sub = df_prices[df_prices['symbol_id'].isin(active_stocks_set)][['date', 'symbol_id', 'close']].copy()
+    i_sub = df_indicators[df_indicators['symbol_id'].isin(active_stocks_set)][['date', 'symbol_id', 'sma_50']].copy()
+    
+    merged_metrics = pd.merge(p_sub, i_sub, on=['date', 'symbol_id'], how='inner')
+    merged_metrics['is_above_sma50'] = merged_metrics['close'] > merged_metrics['sma_50']
+    
+    # Advancing momentum ratio
+    merged_metrics = merged_metrics.sort_values(['symbol_id', 'date'])
+    merged_metrics['prev_close'] = merged_metrics.groupby('symbol_id')['close'].shift(1)
+    merged_metrics['is_up'] = merged_metrics['close'] > merged_metrics['prev_close']
+    
+    daily_metrics_df = merged_metrics.groupby('date').agg(
+        breadth_sma50=('is_above_sma50', lambda x: x.mean() if not x.isna().all() else 0.5),
+        momentum_ratio=('is_up', lambda x: x.mean() if not x.isna().all() else 0.5)
+    ).reset_index()
+    
+    daily_metrics = {row['date']: row.to_dict() for _, row in daily_metrics_df.iterrows()}
+
     # 2. Initialize Components
     config_dict = load_scenario_config(config_path)
     strategies = config_dict.get('strategies', {})
     
-    market_scorer = MarketTrendScorer(prices_df, symbols_df)
+    market_scorer = MarketTrendScorer(prices_df, symbols_df, daily_metrics=daily_metrics, weights=market_weights, use_vxv_vix=use_vxv_vix)
     scenario_scorer = ScenarioScorer(target_group_prefix='Rise - Check')
     
     port_config = PortfolioConfig(
@@ -418,6 +443,7 @@ if __name__ == '__main__':
     parser.add_argument('--output-dir', type=str, default='output/scenario')
     parser.add_argument('--refresh-cache', action='store_true', help='Force refresh of data from database instead of using parquet cache')
     parser.add_argument('--config-path', type=str, default='data/screener_presets.toml', help='Path to the screener config TOML file')
+    parser.add_argument('--use-vxv-vix', action='store_true', help='Use VXV/VIX ratio instead of VIX directly for market sentiment score')
     
     args = parser.parse_args()
     
@@ -432,7 +458,8 @@ if __name__ == '__main__':
         profit_target_pct=args.profit_target,
         output_dir=args.output_dir,
         refresh_cache=args.refresh_cache,
-        config_path=args.config_path
+        config_path=args.config_path,
+        use_vxv_vix=args.use_vxv_vix
     )
     
     print("\nScenario Test Summary:")
@@ -441,6 +468,13 @@ if __name__ == '__main__':
             print(f"  {k}:")
             for year, stats in v.items():
                 print(f"    {year}: {stats}")
+        elif k == 'top_profitable_trades':
+            print(f"  {k}:")
+            for idx, trade in enumerate(v, 1):
+                print(f"    Top {idx}: {trade['ticker']} ({trade['entry_date']} -> {trade['exit_date']}) | "
+                      f"Buy: ${trade['entry_price']:.2f} | Sell: ${trade['exit_price']:.2f} | "
+                      f"PnL Amount: ${trade['pnl_amount']:,} | PnL %: {trade['pnl_pct']:.2f}% | "
+                      f"Shares: {trade['shares']:,} | Exit Reason: {trade['exit_reason']}")
         else:
             print(f"  {k}: {v}")
     print(f"\nTrade logs saved to {args.output_dir}/scenario_trade_logs.csv")

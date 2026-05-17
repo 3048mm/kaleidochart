@@ -92,7 +92,12 @@ def calculate_market_signals(df_spy: pd.DataFrame, df_vix: pd.DataFrame = None, 
     vix_score = 25.0 * (35.0 - vix_val) / (35.0 - 12.0)
     vix_score = vix_score.clip(lower=0, upper=25.0)
     
-    df['market_trend_score'] = spy_score + breadth_score + momentum_score + vix_score
+    df['market_trend_score'] = (
+        spy_score * 0.201 +
+        breadth_score * 0.374 +
+        momentum_score * 0.266 +
+        vix_score * 0.159
+    ) * 4.0
 
     return df[['date', 'spy_above_sma200', 'spy_sma200_rising',
                 'distribution_days', 'is_distribution_day', 'follow_through_day', 'market_phase', 'market_trend_score', 'vxv_vix_ratio']]
