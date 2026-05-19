@@ -17,10 +17,10 @@ class MarketTrendScorer:
     """
     
     DEFAULT_WEIGHTS = {
-        'spy_trend': 0.201,
-        'breadth': 0.374,
-        'momentum': 0.266,
-        'vix': 0.159
+        'spy_trend': 0.222,
+        'breadth': 0.274,
+        'momentum': 0.273,
+        'vix': 0.231
     }
     
     # Thresholds for classification matching the dashboard
@@ -33,7 +33,8 @@ class MarketTrendScorer:
         symbols_df: pd.DataFrame, 
         daily_metrics: Optional[Dict[object, Dict[str, float]]] = None,
         weights: Optional[Dict[str, float]] = None,
-        use_vxv_vix: bool = False
+        use_vxv_vix: bool = False,
+        scaling_ratio: Optional[float] = 1.7
     ):
         """
         Initializes the scorer with price data, pre-calculated daily metrics, and weights.
@@ -44,10 +45,12 @@ class MarketTrendScorer:
             daily_metrics: Dict mapping date -> {'breadth_sma50': float, 'momentum_ratio': float}
             weights: Optional custom dictionary of component weights. Must sum to 1.0.
             use_vxv_vix: If True, uses the VXV/VIX ratio instead of VIX directly.
+            scaling_ratio: Optional scaling factor to stretch scores around median 50.0.
         """
         self.weights = weights if weights is not None else self.DEFAULT_WEIGHTS
         self.daily_metrics = daily_metrics if daily_metrics is not None else {}
         self.use_vxv_vix = use_vxv_vix
+        self.scaling_ratio = scaling_ratio
         
         # Verify weights sum to 1.0 (approximately)
         assert abs(sum(self.weights.values()) - 1.0) < 1e-6, "Weights must sum to 1.0"
@@ -160,6 +163,10 @@ class MarketTrendScorer:
             vix_score * self.weights['vix'] * 4.0
         )
         
+        # Apply Scaling Ratio around median 50.0
+        if self.scaling_ratio is not None:
+            final_score = (final_score - 50.0) * self.scaling_ratio + 50.0
+            
         final_score = float(np.clip(final_score, 0.0, 100.0))
 
         # Determine Market Phase based on exact dashboard boundaries (60/40)

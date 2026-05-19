@@ -42,6 +42,9 @@ def objective(trial):
         'vix': w_vix / total_w
     }
     
+    # Suggest scaling ratio (1.0 to 3.0)
+    scaling_ratio = trial.suggest_float('scaling_ratio', 1.0, 3.0, step=0.1)
+    
     # 3. Run scenario test with normalized weights
     try:
         result = run_scenario_test(
@@ -52,6 +55,7 @@ def objective(trial):
             min_score=1,
             config_path="data/screener_presets_B_only.toml",
             market_weights=weights,
+            scaling_ratio=scaling_ratio,
             output_dir="output/scenario_opt_temp"
         )
         
@@ -74,6 +78,7 @@ def objective(trial):
         # Real-time trial logging for user transparency
         print(f"Trial {trial.number:02d} | Score: {score:6.2f} (Ret: {total_return_pct:7.2f}%, MDD: {max_dd_pct:5.2f}%) | "
               f"Trades: {total_trades:3d} | "
+              f"Ratio: {scaling_ratio:.1f} | "
               f"Weights -> SPY: {weights['spy_trend']:.2f}, Breadth: {weights['breadth']:.2f}, "
               f"Momentum: {weights['momentum']:.2f}, VIX: {weights['vix']:.2f}", flush=True)
               
@@ -96,12 +101,13 @@ def main():
     
     study = optuna.create_study(direction='maximize')
     
-    # Enforce default baseline weights as trial 0 (25% each)
+    # Enforce default baseline weights as trial 0 (25% each, ratio=1.0)
     baseline_weights = {
         'spy_trend': 0.25,
         'breadth': 0.25,
         'momentum': 0.25,
-        'vix': 0.25
+        'vix': 0.25,
+        'scaling_ratio': 1.0
     }
     study.enqueue_trial(baseline_weights)
     
@@ -109,12 +115,17 @@ def main():
     
     # Normalize the best weights
     best_params = study.best_params
-    total_w = sum(best_params.values())
-    best_weights = {k: v / total_w for k, v in best_params.items()}
+    best_ratio = best_params.get('scaling_ratio', 1.0)
+    
+    # Extract only weight params
+    raw_weights = {k: v for k, v in best_params.items() if k != 'scaling_ratio'}
+    total_w = sum(raw_weights.values())
+    best_weights = {k: v / total_w for k, v in raw_weights.items()}
     
     print("\n" + "=" * 70)
     print("   Optimization Complete!")
     print(f"   Best Calmar Score: {study.best_value:.4f}")
+    print(f"   Best Scaling Ratio (ratio): {best_ratio:.2f}")
     print("   Best Market Weights Configuration (100% compatible with dashboard):")
     for k, v in best_weights.items():
         print(f"     -> {k:15s}: {v:.4f} ({v*100:.1f}%)")

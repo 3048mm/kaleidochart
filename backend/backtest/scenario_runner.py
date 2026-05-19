@@ -83,9 +83,18 @@ def load_scenario_config(config_path: str = "data/screener_presets.toml") -> Dic
     with open(abs_path, 'rb') as f:
         data = tomli.load(f)
         
+    active_rise_ids = data.get('active_rise_ids', [])
+    active_fall_ids = data.get('active_fall_ids', [])
+    
     strategies = {}
     for section in ['rise', 'fall']:
+        active_ids = active_rise_ids if section == 'rise' else active_fall_ids
         for item in data.get(section, []):
+            item_id = item.get('id')
+            # If active list is defined and not empty, skip strategies not included
+            if active_ids and item_id not in active_ids:
+                continue
+                
             group = item.get('group', 'Other')
             name = item.get('name', item.get('id', 'Unknown'))
             filters = item.get('filters', {}).copy()
@@ -118,7 +127,9 @@ def run_scenario_test(
     refresh_cache: bool = False,
     config_path: str = "data/screener_presets.toml",
     market_weights: Dict[str, float] = None,
-    use_vxv_vix: bool = False
+    use_vxv_vix: bool = False,
+    scaling_ratio: float = 1.7,
+    monte_carlo_mode: bool = False
 ) -> Dict[str, Any]:
     """
     Executes the full portfolio-level scenario simulation.
@@ -191,7 +202,7 @@ def run_scenario_test(
     config_dict = load_scenario_config(config_path)
     strategies = config_dict.get('strategies', {})
     
-    market_scorer = MarketTrendScorer(prices_df, symbols_df, daily_metrics=daily_metrics, weights=market_weights, use_vxv_vix=use_vxv_vix)
+    market_scorer = MarketTrendScorer(prices_df, symbols_df, daily_metrics=daily_metrics, weights=market_weights, use_vxv_vix=use_vxv_vix, scaling_ratio=scaling_ratio)
     scenario_scorer = ScenarioScorer(target_group_prefix='Rise - Check')
     
     port_config = PortfolioConfig(
@@ -276,6 +287,10 @@ def run_scenario_test(
         # Step B: Evaluate Market Phase
         score, phase = market_scorer.evaluate_market_phase(current_date)
         
+        # Update portfolio with daily score for dynamic hysteresis position allocation
+        if hasattr(portfolio, 'update_market_state'):
+            portfolio.update_market_state(score)
+        
         # Determine target cash/buying capacity. If we need more cash, we might stop buying.
         # Phase constraints are handled inside portfolio.process_buy_candidate.
         
@@ -343,6 +358,14 @@ def run_scenario_test(
                 # Filter by minimum score (e.g., at least 2 strategy hits)
                 if row['score'] < min_score:
                     continue
+                    
+                # --- MONTE CARLO STRESS TEST ---
+                if monte_carlo_mode:
+                    import random
+                    if random.random() < 0.5:
+                        # 50% probability to skip buy today (Chaos load)
+                        # Cash rolls over to next days, allowing other candidate catches
+                        continue
                     
                 # Extract candidate details from cached daily prices (P3 optimization)
                 if price_day is not None:

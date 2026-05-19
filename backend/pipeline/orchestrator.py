@@ -310,13 +310,13 @@ def run_pipeline(config, db_path, logger: logging.Logger, rebuild_from: Optional
 
             if active_lvl > 0:
                 logger.info(f"Cascaded Rebuild Triggered: Clearing downstream from level {active_lvl}")
-                if active_lvl <= 5: db.query(MarketSignal).delete()
+                if active_lvl <= 5: db.query(MarketSignal).delete(synchronize_session=False)
                 if active_lvl <= 4:
-                    if categories: db.query(RelativeRank).filter(RelativeRank.symbol_id.in_(target_ids)).delete()
-                    else: db.query(RelativeRank).delete()
+                    if categories: db.query(RelativeRank).filter(RelativeRank.symbol_id.in_(target_ids)).delete(synchronize_session=False)
+                    else: db.query(RelativeRank).delete(synchronize_session=False)
                 if active_lvl <= 3:
-                    if categories: db.query(Indicator).filter(Indicator.symbol_id.in_(target_ids)).delete()
-                    else: db.query(Indicator).delete()
+                    if categories: db.query(Indicator).filter(Indicator.symbol_id.in_(target_ids)).delete(synchronize_session=False)
+                    else: db.query(Indicator).delete(synchronize_session=False)
                 if active_lvl <= 2:
                     if categories:
                         spy_id = db.query(Symbol.id).filter(Symbol.ticker == 'SPY').scalar()

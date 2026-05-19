@@ -26,6 +26,52 @@ class ScenarioPortfolio:
         self.trade_history: List[Dict[str, Any]] = []
         self.equity_curve: List[Dict[str, Any]] = []
         
+        # New: Tracking market score and direction for hysteresis-based dynamic allocation
+        self.current_market_score = 50.0
+        self.prev_market_score = 50.0
+        self.dynamic_max_positions = config.max_positions
+        
+    def update_market_state(self, score: float):
+        """
+        Updates the daily market score and dynamically adjusts allocation limits
+        based on the user's dynamic upward/downward hysteresis rules.
+        """
+        self.prev_market_score = self.current_market_score
+        self.current_market_score = score
+        
+        # Determine the direction of the score change
+        is_upward = score >= self.prev_market_score
+        
+        # Implements the user's dynamic direction-based allocation rules:
+        # - 70% -> 80% (Upward >= 80%): 100% position (8 slots)
+        # - 90% -> 80% (Downward >= 80%): 80% position (6 slots)
+        # - Downward >= 40% but < 80%: 50% position (4 slots)
+        # - 30% -> 20% (Downward < 40%): 25% position (2 slots, testing the waters but defensive)
+        # - < 20% (Downward < 20%): 0% position (0 slots, full cash out!)
+        # - 0% -> 10% (Upward >= 10% from bottom): 25% position (2 slots, testing the waters)
+        
+        if is_upward:
+            if score >= 80.0:
+                self.dynamic_max_positions = self.config.max_positions # 100% (8 slots)
+            elif score >= 10.0:
+                # Upward recovery from bottom: 25% allocation (2 slots)
+                self.dynamic_max_positions = max(2, int(self.config.max_positions * 0.25))
+            else:
+                self.dynamic_max_positions = 0
+        else: # Downward
+            if score >= 80.0:
+                # Downward from peak but still very high: 80% allocation (6 slots)
+                self.dynamic_max_positions = max(1, int(self.config.max_positions * 0.8))
+            elif score >= 40.0:
+                # Downward neutral: 50% allocation (4 slots)
+                self.dynamic_max_positions = max(1, int(self.config.max_positions * 0.5))
+            elif score >= 20.0:
+                # Downward near bottom: 25% allocation (2 slots)
+                self.dynamic_max_positions = max(1, int(self.config.max_positions * 0.25))
+            else:
+                # Downward extreme bear: 0% allocation (full cash)
+                self.dynamic_max_positions = 0
+        
     def record_daily_equity(self, date: datetime.date, price_by_date: dict = None):
         """
         Records a daily snapshot of the portfolio's equity state.
@@ -100,7 +146,7 @@ class ScenarioPortfolio:
         Attempts to buy a candidate stock.
         Returns True if successful, False if rejected (e.g., lack of funds or phase restrictions).
         """
-        if len(self.active_positions) >= self.config.max_positions:
+        if len(self.active_positions) >= self.dynamic_max_positions:
             return False
             
         # Check if already hold
