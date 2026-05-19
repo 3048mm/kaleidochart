@@ -218,7 +218,7 @@ def apply_filters_to_df(
     }
 
     for key, value in strategy.items():
-        if key in ('name', 'description', 'max_hits_per_day', 'sort_column', 'sort_ascending', 'expression'):
+        if key in ('name', 'description', 'max_hits_per_day', 'sort_column', 'sort_ascending', 'expression', '_use_hysteresis'):
             continue
             
         col = key

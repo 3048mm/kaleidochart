@@ -108,6 +108,7 @@ def load_scenario_config(config_path: str = "data/screener_presets.toml") -> Dic
                 filters['expression'] = expression
 
             strat_name = f"{section.capitalize()} - {group} - {name}"
+            filters['_use_hysteresis'] = item.get('use_hysteresis', False)
             strategies[strat_name] = filters
         
     if not strategies:
@@ -211,6 +212,7 @@ def run_scenario_test(
         stop_loss_pct=stop_loss_pct,
     )
     portfolio = ScenarioPortfolio(port_config)
+    portfolio.use_hysteresis = any(strat_rules.get('_use_hysteresis', False) for strat_rules in strategies.values())
     
     simulator = BacktestSimulator(prices_df, symbols_df)
     reporter = ScenarioReporter()

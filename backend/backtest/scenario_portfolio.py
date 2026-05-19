@@ -39,6 +39,11 @@ class ScenarioPortfolio:
         self.prev_market_score = self.current_market_score
         self.current_market_score = score
         
+        # If hysteresis is disabled for the portfolio, maintain maximum allocation
+        if not getattr(self, 'use_hysteresis', True):
+            self.dynamic_max_positions = self.config.max_positions
+            return
+            
         # Determine the direction of the score change
         is_upward = score >= self.prev_market_score
         
