@@ -12,10 +12,13 @@ def sync_phase_t4_ranks(db, spy_latest_date: Optional[date], logger: logging.Log
     t3_max = db.query(func.max(Indicator.date)).scalar()
     t4_max = db.query(func.max(RelativeRank.date)).scalar()
     
-    if not t3_max or (t4_max and t4_max >= t3_max): 
+    if not t3_max: 
         return
         
-    gap_dates = [r[0] for r in db.query(Indicator.date).distinct().filter(Indicator.date > (t4_max if t4_max else date(2000,1,1))).order_by(Indicator.date).all()]
+    # t4_max が存在する場合でも、同日に後からデータが追加されたケースを考慮して
+    # 常に t4_max 以降 (>=) を計算対象とする。
+    start_date = t4_max if t4_max else date(2000, 1, 1)
+    gap_dates = [r[0] for r in db.query(Indicator.date).distinct().filter(Indicator.date >= start_date).order_by(Indicator.date).all()]
     if not gap_dates: 
         return
         

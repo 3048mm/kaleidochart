@@ -50,11 +50,8 @@ def sync_symbols_to_db(db, credentials_path, spreadsheet_url, extra_symbols=None
     themes_and_virtuals, constituents_to_add = [s for s in sheet_data if s['category'] == 'テーマ'], []
     for t_item in themes_and_virtuals:
         t_id = symbol_ids[(t_item['ticker'], t_item['exchange'])]
-        if t_item.get('theme_type') == 'virtual':
-            target_tag = t_item['name'].strip() or t_item['ticker'].strip('_')
-        else:
-            target_tag = t_item['ticker'].strip()
-            
+        target_tag = t_item['ticker'].strip()
+        
         if not target_tag:
             continue
             

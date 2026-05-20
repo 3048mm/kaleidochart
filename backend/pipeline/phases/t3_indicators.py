@@ -72,45 +72,45 @@ def sync_phase_t3_indicators(db, sheet_data: List[Dict], symbol_id_map: Dict, sp
     tasks = list(tasks_map.values())
     
     if not tasks:
+
         logger.info("Phase 3: No tickers need indicator update.")
         return
 
     num_workers = min(4, multiprocessing.cpu_count() // 2)
     logger.info(f"Phase 3: Spawning {num_workers} parallel workers for {len(tasks)} tickers.")
     
-    indicator_cols = [c.name for c in Indicator.__table__.columns if c.name not in ('id', 'symbol_id', 'date')]
-    
     update_count = 0
-    with ProcessPoolExecutor(max_workers=num_workers) as executor:
-        futures = {executor.submit(_calculate_t3_worker, sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_virt): ticker for sid, ticker, t3_max, is_virt in tasks}
-        
-        for future in as_completed(futures):
-            ticker = futures[future]
-            try:
-                res_ticker, sid, records = future.result()
-                if isinstance(records, Exception):
-                    logger.error(f"[{ticker}] Parallel worker failed: {records}")
-                    continue
+    # Run sequentially to avoid Windows multiprocessing hangs
+    completed = 0
+    indicator_cols = [c.name for c in Indicator.__table__.columns if c.name not in ('id', 'symbol_id', 'date')]
+    for sid, ticker, t3_max, is_virt in tasks:
+        try:
+            res_ticker, res_sid, records = _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_virt)
+            if isinstance(records, Exception):
+                logger.error(f"[{ticker}] Worker exception: {records}")
+                continue
                 
-                if records:
-                    t3_recs = []
-                    for row in records:
-                        kwargs = {'symbol_id': sid, 'date': row['date']}
-                        for col in indicator_cols:
-                            val = row.get(col)
-                            if col in ('td9', 'trend_template_ok', 'rs_blue_dot', 'rs_red_dot'):
-                                kwargs[col] = int(val) if val is not None else None
-                            else:
-                                kwargs[col] = val
-                        t3_recs.append(Indicator(**kwargs))
-                        
-                    db.bulk_save_objects(t3_recs)
-                    db.commit()
-                    update_count += 1
-                    logger.debug(f"[{ticker}] Calculated indicators: +{len(records)} rows.")
-                else:
-                    pass
-            except Exception as e:
-                logger.error(f"[{ticker}] Error processing result: {e}")
-                db.rollback()
+            if records:
+                t3_recs = []
+                for row in records:
+                    kwargs = {'symbol_id': sid, 'date': row['date']}
+                    for col in indicator_cols:
+                        val = row.get(col)
+                        if col in ('td9', 'trend_template_ok', 'rs_blue_dot', 'rs_red_dot'):
+                            kwargs[col] = int(val) if val is not None else None
+                        else:
+                            kwargs[col] = val
+                    t3_recs.append(Indicator(**kwargs))
+                    
+                db.bulk_save_objects(t3_recs)
+                db.commit()
+                update_count += 1
+            
+            completed += 1
+            if completed % 10 == 0:
+                logger.info(f"Phase 3 Progress: {completed}/{len(tasks)}")
+                
+        except Exception as e:
+            logger.error(f"[{ticker}] Worker exception: {str(e)}")
+            db.rollback()
     logger.info(f"Phase 3 COMPLETE: Updated {update_count} tickers.")
