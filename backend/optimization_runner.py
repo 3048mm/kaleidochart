@@ -200,6 +200,61 @@ def parse_optimization_periods(config):
     return [(p['start'], p['end']) for p in raw_periods]
 
 
+def enqueue_baseline_trial(study, config: dict, strategy_short: str) -> bool:
+    """
+    Extract baseline default parameters for a strategy from TOML config
+    and enqueue them as the first trial in the study.
+    
+    Args:
+        study: The Optuna Study object.
+        config: The parsed TOML config dict.
+        strategy_short: Short strategy name/code (e.g., 'B1', 'B2', 'B', 'D').
+        
+    Returns:
+        bool: True if trial was successfully enqueued, False otherwise.
+    """
+    full_names = {
+        'A': 'A_momentum_breakout',
+        'B': 'B_theme_momentum',
+        'C1': 'C1_rrg_leading_in',
+        'C2': 'C2_rrg_improving_in',
+        'D': 'D_ema21_pullback',
+        'E': 'E_vcp',
+        'F': 'F_elite_momentum97'
+    }
+    
+    # Try to find the actual name
+    if strategy_short in full_names:
+        actual_name = full_names[strategy_short]
+    else:
+        strategies = config.get('strategy', [])
+        found = next((s['name'] for s in strategies if s['name'] == strategy_short or s['name'].startswith(strategy_short + "_")), None)
+        actual_name = found if found else strategy_short
+        
+    # Extract the base strategy configuration
+    strat_base = next((s for s in config.get('strategy', []) if s.get('name') == actual_name), None)
+    if not strat_base:
+        raise ValueError(f"Strategy '{actual_name}' not found in backtest config.")
+        
+    # Parse optimization params from TOML
+    try:
+        param_defs = parse_optimization_params(config, strategy_short)
+    except ValueError:
+        return False
+        
+    # Extract baseline parameters from the default strategy config
+    default_params = {}
+    for p in param_defs:
+        name = p['name']
+        if name in strat_base:
+            default_params[name] = strat_base[name]
+            
+    if default_params:
+        study.enqueue_trial(default_params)
+        return True
+    return False
+
+
 # =============================================================
 # Optuna objective function (TOML-driven)
 # =============================================================
@@ -388,6 +443,13 @@ def main():
         direction="maximize"
     )
     
+    try:
+        enqueued = enqueue_baseline_trial(study, config, args.strategy)
+        if enqueued:
+            print("  Enqueued baseline trial from default config values.")
+    except Exception as e:
+        print(f"  Warning: Could not enqueue baseline trial: {e}")
+        
     study.optimize(
         lambda t: objective(t, args.strategy, config, config_app, exit_rules, periods),
         n_trials=args.trials

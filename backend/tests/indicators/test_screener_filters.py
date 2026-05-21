@@ -176,6 +176,61 @@ class TestThemeRs21Gt63:
 
 
 # ============================================================
+# Test: filter_theme_rs_rank_21_gt_63
+# ============================================================
+
+class TestThemeRsRank21Gt63:
+    """theme_rs_rank_21_gt_63: テーマの RS%rank 21 > RS%rank 63 に属する銘柄のみが残る"""
+
+    def test_stocks_in_leading_rank_themes_pass(self, base_symbols, dates):
+        """RS%rank 21 > RS%rank 63 のテーマに属する個別銘柄がシグナルに含まれる"""
+        td = dates["target"]
+
+        # THM1 (id=10): rs21_rank > rs63_rank -> leading theme
+        # THM2 (id=11): rs21_rank < rs63_rank -> lagging theme
+        df_ind = pd.DataFrame([
+            _make_ind_row(1,  td),  # Stock in THM1
+            _make_ind_row(2,  td),  # Stock in THM2
+            _make_ind_row(3,  td),  # Stock in no theme
+            _make_ind_row(10, td),  # THM1
+            _make_ind_row(11, td),  # THM2
+        ])
+        df_price = pd.DataFrame([
+            _make_price_row(1, td),
+            _make_price_row(2, td),
+            _make_price_row(3, td),
+            _make_price_row(10, td),
+            _make_price_row(11, td),
+        ])
+        # Rank data: THM1 (10) rs21(0.8) > rs63(0.3), THM2 (11) rs21(0.2) < rs63(0.7)
+        df_ranks = pd.DataFrame([
+            {"symbol_id": 10, "date": td, "indicator_name": "rs_ratio_21", "percent_rank": 0.8},
+            {"symbol_id": 10, "date": td, "indicator_name": "rs_ratio_63", "percent_rank": 0.3},
+            {"symbol_id": 11, "date": td, "indicator_name": "rs_ratio_21", "percent_rank": 0.2},
+            {"symbol_id": 11, "date": td, "indicator_name": "rs_ratio_63", "percent_rank": 0.7},
+        ])
+        # Theme constituents: Stock1 -> THM1, Stock2 -> THM2
+        df_theme_const = pd.DataFrame([
+            {"theme_id": 10, "symbol_id": 1},
+            {"theme_id": 11, "symbol_id": 2},
+        ])
+
+        strategy = {
+            "name": "test_theme_rs_rank",
+            "theme_rs_rank_21_gt_63": True,
+        }
+        signals = scan_signals_for_date(
+            td, df_ind, df_price, df_ranks, base_symbols,
+            df_theme_const, strategy
+        )
+        tickers = {s.ticker for s in signals}
+        assert "AAAA" in tickers, "Stock in leading rank theme (THM1) should pass"
+        assert "THM1" in tickers, "Leading rank theme itself should pass"
+        assert "BBBB" not in tickers, "Stock in lagging rank theme (THM2) should fail"
+        assert "CCCC" not in tickers, "Stock in no theme should fail"
+
+
+# ============================================================
 # Test: filter_rrg_leading_in
 # ============================================================
 

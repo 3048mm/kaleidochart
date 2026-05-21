@@ -16,6 +16,7 @@ try:
     from indicators.screener_filters import (
         filter_rs_rank_21_gt_63,
         filter_theme_rs21_gt_63,
+        filter_theme_rs_rank_21_gt_63,
         filter_rrg_leading_in,
         filter_rrg_improving_in,
         filter_rrg_lagging_in,
@@ -24,6 +25,7 @@ except ModuleNotFoundError:
     from backend.indicators.screener_filters import (
         filter_rs_rank_21_gt_63,
         filter_theme_rs21_gt_63,
+        filter_theme_rs_rank_21_gt_63,
         filter_rrg_leading_in,
         filter_rrg_improving_in,
         filter_rrg_lagging_in,
@@ -156,8 +158,8 @@ def apply_filters_to_df(
 
     # --- RS Rank merge ---
     sort_col = strategy.get('sort_column', 'rs21_rank')
-    needs_rs21 = 'min_rs_ratio_21_rank' in strategy or strategy.get('rs_rank_21_gt_63') or sort_col in ('rs21_rank', 'rs_ratio_21_rank')
-    needs_rs63 = strategy.get('rs_rank_21_gt_63') or sort_col in ('rs63_rank', 'rs_ratio_63_rank')
+    needs_rs21 = 'min_rs_ratio_21_rank' in strategy or strategy.get('rs_rank_21_gt_63') or strategy.get('theme_rs_rank_21_gt_63') or sort_col in ('rs21_rank', 'rs_ratio_21_rank')
+    needs_rs63 = strategy.get('rs_rank_21_gt_63') or strategy.get('theme_rs_rank_21_gt_63') or sort_col in ('rs63_rank', 'rs_ratio_63_rank')
 
     if needs_rs21 or needs_rs63:
         # Use bisect to find the nearest previous date (ranks may not exist for every trading day)
@@ -258,6 +260,9 @@ def apply_filters_to_df(
             
         if ind_day_for_theme is not None:
             mask &= filter_theme_rs21_gt_63(merged, ind_day_for_theme, df_symbols, df_theme_constituents)
+
+    if strategy.get('theme_rs_rank_21_gt_63'):
+        mask &= filter_theme_rs_rank_21_gt_63(merged, df_symbols, df_theme_constituents)
 
     # RRG
     intensity_threshold = strategy.get('rrg_intensity_threshold', 0.0)

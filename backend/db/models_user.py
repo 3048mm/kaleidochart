@@ -9,7 +9,9 @@ class Watchlist(BaseUser):
     __tablename__ = 'watchlist'
 
     id = Column(Integer, primary_key=True)
-    symbol_id = Column(Integer, nullable=False, index=True) # Cross-DB reference to symbols.id
+    symbol_id = Column(Integer, nullable=True, index=True) # Cross-DB reference to symbols.id (nullable for self-healing)
+    ticker = Column(String, nullable=False, index=True)    # For self-healing
+    exchange = Column(String, nullable=True)               # For self-healing
     entry_date = Column(Date, nullable=False)
     entry_price = Column(Float, nullable=False)
     status = Column(String, nullable=False, default='active')
@@ -18,7 +20,7 @@ class Watchlist(BaseUser):
     removed_price = Column(Float, nullable=True)
 
     __table_args__ = (
-        UniqueConstraint('symbol_id', name='uq_watchlist_symbol'),
+        UniqueConstraint('ticker', 'exchange', name='uq_watchlist_ticker_exchange'),
     )
 
 
@@ -88,7 +90,9 @@ class PortfolioPosition(BaseUser):
 
     id = Column(Integer, primary_key=True)
     portfolio_id = Column(Integer, ForeignKey('portfolios.id'), nullable=False, index=True)
-    symbol_id = Column(Integer, nullable=False, index=True) # Cross-DB
+    symbol_id = Column(Integer, nullable=True, index=True) # Cross-DB (nullable for self-healing)
+    ticker = Column(String, nullable=False, index=True)    # For self-healing
+    exchange = Column(String, nullable=True)               # For self-healing
     entry_date = Column(Date, nullable=False)
     entry_price = Column(Float, nullable=False)
     shares = Column(Float, nullable=False)
@@ -108,7 +112,9 @@ class PositionHistory(BaseUser):
 
     id = Column(Integer, primary_key=True)
     portfolio_id = Column(Integer, ForeignKey('portfolios.id'), nullable=False, index=True)
-    symbol_id = Column(Integer, nullable=False, index=True) # Cross-DB
+    symbol_id = Column(Integer, nullable=True, index=True) # Cross-DB (nullable for self-healing)
+    ticker = Column(String, nullable=False, index=True)    # For self-healing
+    exchange = Column(String, nullable=True)               # For self-healing
     entry_date = Column(Date, nullable=False)
     entry_price = Column(Float, nullable=False)
     entry_shares = Column(Float, nullable=False)

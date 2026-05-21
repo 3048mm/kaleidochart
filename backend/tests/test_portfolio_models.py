@@ -141,6 +141,7 @@ class TestPortfolioPositionModel:
         pf = self._create_portfolio(db)
         pos = PortfolioPosition(
             portfolio_id=pf.id, symbol_id=1,
+            ticker="AAPL", exchange="US",
             entry_date=date(2026, 5, 1), entry_price=183.0,
             shares=100, original_shares=100,
             status="open",
@@ -159,6 +160,7 @@ class TestPortfolioPositionModel:
         pf = self._create_portfolio(db)
         pos = PortfolioPosition(
             portfolio_id=pf.id, symbol_id=1,
+            ticker="AAPL", exchange="US",
             entry_date=date(2026, 5, 1), entry_price=183.0,
             shares=100, original_shares=100,
             status="open",
@@ -181,9 +183,11 @@ class TestPortfolioPositionModel:
         db = seed_data
         pf = self._create_portfolio(db)
         pos1 = PortfolioPosition(portfolio_id=pf.id, symbol_id=1,
+                                 ticker="AAPL", exchange="US",
                                  entry_date=date(2026, 5, 1), entry_price=183.0,
                                  shares=100, original_shares=100, status="open")
         pos2 = PortfolioPosition(portfolio_id=pf.id, symbol_id=2,
+                                 ticker="MSFT", exchange="US",
                                  entry_date=date(2026, 5, 1), entry_price=420.0,
                                  shares=50, original_shares=50, status="open")
         db.add_all([pos1, pos2])
@@ -198,12 +202,14 @@ class TestPortfolioPositionModel:
         pf = self._create_portfolio(db)
         pos_default = PortfolioPosition(
             portfolio_id=pf.id, symbol_id=1,
+            ticker="AAPL", exchange="US",
             entry_date=date(2026, 5, 1), entry_price=183.0,
             shares=100, original_shares=100, status="open",
             stop_loss_pct=None,  # Inherit from portfolio
         )
         pos_custom = PortfolioPosition(
             portfolio_id=pf.id, symbol_id=2,
+            ticker="MSFT", exchange="US",
             entry_date=date(2026, 5, 1), entry_price=420.0,
             shares=50, original_shares=50, status="open",
             stop_loss_pct=5.0,  # Custom override
@@ -232,6 +238,7 @@ class TestPositionHistoryModel:
 
         hist = PositionHistory(
             portfolio_id=pf.id, symbol_id=1,
+            ticker="AAPL", exchange="US",
             entry_date=date(2026, 4, 1), entry_price=170.0,
             entry_shares=100,
             exit_date=date(2026, 5, 1), exit_price=183.0,
@@ -261,6 +268,7 @@ class TestPositionHistoryModel:
 
         hist = PositionHistory(
             portfolio_id=pf.id, symbol_id=1,
+            ticker="AAPL", exchange="US",
             entry_date=date(2026, 4, 1), entry_price=170.0,
             entry_shares=100,
             exit_date=date(2026, 4, 15), exit_price=185.0,
@@ -289,6 +297,7 @@ class TestPositionHistoryModel:
 
         # First trim
         h1 = PositionHistory(portfolio_id=pf.id, symbol_id=1,
+                             ticker="AAPL", exchange="US",
                              entry_date=date(2026, 4, 1), entry_price=170.0,
                              entry_shares=100,
                              exit_date=date(2026, 4, 15), exit_price=185.0,
@@ -296,6 +305,7 @@ class TestPositionHistoryModel:
                              pnl_pct=8.824, pnl_amount=495.0, holding_days=14)
         # Final sell
         h2 = PositionHistory(portfolio_id=pf.id, symbol_id=1,
+                             ticker="AAPL", exchange="US",
                              entry_date=date(2026, 4, 1), entry_price=170.0,
                              entry_shares=67,
                              exit_date=date(2026, 5, 1), exit_price=190.0,

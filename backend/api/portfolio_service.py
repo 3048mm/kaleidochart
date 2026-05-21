@@ -25,6 +25,81 @@ def _get_latest_price(db: Session, symbol_id: int) -> DailyPrice | None:
     ).order_by(desc(DailyPrice.date)).first()
 
 
+def heal_portfolio_ids(db: Session, user_db: Session) -> None:
+    """
+    Heal symbol_ids in portfolio_positions and position_history tables by matching
+    ticker and exchange with stocktool.db symbols.
+    """
+    positions = user_db.query(PortfolioPosition).all()
+    history = user_db.query(PositionHistory).all()
+    
+    if not positions and not history:
+        return
+
+    # Fetch all active symbols to optimize matching
+    symbols = db.query(Symbol).all()
+    sym_map = {}
+    for s in symbols:
+        sym_map[(s.ticker, s.exchange)] = s
+        if s.ticker not in sym_map:
+            sym_map[s.ticker] = s
+
+    modified = False
+
+    # 1. Heal portfolio_positions
+    for pos in positions:
+        current_sym = None
+        if pos.symbol_id is not None:
+            current_sym = db.query(Symbol).filter_by(id=pos.symbol_id).first()
+        
+        is_valid = (
+            current_sym is not None 
+            and current_sym.ticker == pos.ticker 
+            and current_sym.exchange == pos.exchange
+        )
+        
+        if not is_valid:
+            target_sym = sym_map.get((pos.ticker, pos.exchange))
+            if not target_sym:
+                target_sym = sym_map.get(pos.ticker)
+                
+            if target_sym:
+                pos.symbol_id = target_sym.id
+                modified = True
+            else:
+                if pos.symbol_id is not None:
+                    pos.symbol_id = None
+                    modified = True
+
+    # 2. Heal position_history
+    for hist in history:
+        current_sym = None
+        if hist.symbol_id is not None:
+            current_sym = db.query(Symbol).filter_by(id=hist.symbol_id).first()
+            
+        is_valid = (
+            current_sym is not None 
+            and current_sym.ticker == hist.ticker 
+            and current_sym.exchange == hist.exchange
+        )
+        
+        if not is_valid:
+            target_sym = sym_map.get((hist.ticker, hist.exchange))
+            if not target_sym:
+                target_sym = sym_map.get(hist.ticker)
+                
+            if target_sym:
+                hist.symbol_id = target_sym.id
+                modified = True
+            else:
+                if hist.symbol_id is not None:
+                    hist.symbol_id = None
+                    modified = True
+
+    if modified:
+        user_db.commit()
+
+
 # ============================================================
 # 2-1: Portfolio CRUD
 # ============================================================
@@ -104,6 +179,7 @@ def add_position(
 
     pos = PortfolioPosition(
         portfolio_id=portfolio_id, symbol_id=sym.id,
+        ticker=sym.ticker, exchange=sym.exchange,
         entry_date=entry_date, entry_price=entry_price,
         shares=shares, original_shares=shares,
         stop_loss_pct=stop_loss_pct,
@@ -139,6 +215,7 @@ def edit_position(
     return pos
 
 def get_positions_with_metrics(db: Session, user_db: Session, portfolio_id: int) -> list[dict]:
+    heal_portfolio_ids(db, user_db)
     pf = user_db.query(Portfolio).filter_by(id=portfolio_id).first()
     if pf is None:
         return []
@@ -149,15 +226,15 @@ def get_positions_with_metrics(db: Session, user_db: Session, portfolio_id: int)
 
     result = []
     for pos in positions:
-        sym = db.query(Symbol).filter_by(id=pos.symbol_id).first()
-        latest_dp = _get_latest_price(db, pos.symbol_id)
+        sym = db.query(Symbol).filter_by(id=pos.symbol_id).first() if pos.symbol_id else None
+        latest_dp = _get_latest_price(db, pos.symbol_id) if pos.symbol_id else None
         current_price = latest_dp.close if latest_dp else pos.entry_price
 
         eff_stop_pct = pos.stop_loss_pct if pos.stop_loss_pct is not None else pf.default_stop_loss_pct
 
         latest_ind = db.query(Indicator).filter_by(
             symbol_id=pos.symbol_id
-        ).order_by(desc(Indicator.date)).first()
+        ).order_by(desc(Indicator.date)).first() if pos.symbol_id else None
 
         if pf.stop_loss_method == "atr_multiple" and latest_ind and latest_ind.atr_14:
             stop_price = calc_stop_loss_price(
@@ -173,7 +250,7 @@ def get_positions_with_metrics(db: Session, user_db: Session, portfolio_id: int)
                 stop_loss_method="fixed_pct",
             )
 
-        total_gain_pct = (current_price - pos.entry_price) / pos.entry_price * 100
+        total_gain_pct = (current_price - pos.entry_price) / pos.entry_price * 100 if pos.entry_price else 0.0
         total_gain_amount = (current_price - pos.entry_price) * pos.shares
 
         alert = check_alert_status(
@@ -185,8 +262,8 @@ def get_positions_with_metrics(db: Session, user_db: Session, portfolio_id: int)
         result.append({
             "id": pos.id,
             "symbol_id": pos.symbol_id,
-            "ticker": sym.ticker if sym else "???",
-            "name": sym.name if sym else "",
+            "ticker": pos.ticker,
+            "name": sym.name if sym else pos.ticker,
             "entry_date": pos.entry_date.isoformat(),
             "entry_price": pos.entry_price,
             "shares": pos.shares,
@@ -238,6 +315,7 @@ def sell_position(
 
     hist = PositionHistory(
         portfolio_id=pos.portfolio_id, symbol_id=pos.symbol_id,
+        ticker=pos.ticker, exchange=pos.exchange,
         entry_date=pos.entry_date, entry_price=pos.entry_price,
         entry_shares=exit_shares,
         exit_date=exit_date, exit_price=exit_price,
@@ -296,6 +374,7 @@ def edit_history(
 # 2-4: History
 # ============================================================
 def get_history(db: Session, user_db: Session, portfolio_id: int) -> list[dict]:
+    heal_portfolio_ids(db, user_db)
     records = user_db.query(PositionHistory).filter_by(
         portfolio_id=portfolio_id
     ).order_by(PositionHistory.exit_date.asc(), PositionHistory.id.asc()).all()
@@ -304,12 +383,12 @@ def get_history(db: Session, user_db: Session, portfolio_id: int) -> list[dict]:
     cumulative_pnl = 0.0
 
     for h in records:
-        sym = db.query(Symbol).filter_by(id=h.symbol_id).first()
+        sym = db.query(Symbol).filter_by(id=h.symbol_id).first() if h.symbol_id else None
         cumulative_pnl += (h.pnl_amount or 0.0)
         result.append({
             "id": h.id,
-            "ticker": sym.ticker if sym else "???",
-            "name": sym.name if sym else "",
+            "ticker": h.ticker,
+            "name": sym.name if sym else h.ticker,
             "entry_date": h.entry_date.isoformat(),
             "entry_price": h.entry_price,
             "exit_date": h.exit_date.isoformat(),
@@ -329,6 +408,7 @@ def get_history(db: Session, user_db: Session, portfolio_id: int) -> list[dict]:
 # 2-5: Portfolio Summary (Risk Dashboard Data)
 # ============================================================
 def get_portfolio_summary(db: Session, user_db: Session, portfolio_id: int) -> dict | None:
+    heal_portfolio_ids(db, user_db)
     pf = user_db.query(Portfolio).filter_by(id=portfolio_id).first()
     if pf is None:
         return None
@@ -349,7 +429,7 @@ def get_portfolio_summary(db: Session, user_db: Session, portfolio_id: int) -> d
 
     for pos in positions:
         invested_total += pos.entry_price * pos.shares
-        latest_dp = _get_latest_price(db, pos.symbol_id)
+        latest_dp = _get_latest_price(db, pos.symbol_id) if pos.symbol_id else None
         current_price = latest_dp.close if latest_dp else pos.entry_price
         market_value_total += current_price * pos.shares
 
@@ -376,6 +456,7 @@ def get_portfolio_summary(db: Session, user_db: Session, portfolio_id: int) -> d
 # 2-6: Analytics (Sector distribution, performance stats)
 # ============================================================
 def get_analytics(db: Session, user_db: Session, portfolio_id: int) -> dict | None:
+    heal_portfolio_ids(db, user_db)
     pf = user_db.query(Portfolio).filter_by(id=portfolio_id).first()
     if pf is None:
         return None
@@ -383,7 +464,7 @@ def get_analytics(db: Session, user_db: Session, portfolio_id: int) -> dict | No
     positions = user_db.query(PortfolioPosition).filter_by(portfolio_id=portfolio_id).all()
     sector_map: dict[str, float] = {}
     for pos in positions:
-        sym = db.query(Symbol).filter_by(id=pos.symbol_id).first()
+        sym = db.query(Symbol).filter_by(id=pos.symbol_id).first() if pos.symbol_id else None
         cat = sym.category if sym else "Unknown"
         sector_map[cat] = sector_map.get(cat, 0) + (pos.entry_price * pos.shares)
 
@@ -408,11 +489,11 @@ def get_analytics(db: Session, user_db: Session, portfolio_id: int) -> dict | No
     cumulative = 0.0
     for h in history:
         cumulative += (h.pnl_amount or 0)
-        sym = db.query(Symbol).filter_by(id=h.symbol_id).first()
+        sym = db.query(Symbol).filter_by(id=h.symbol_id).first() if h.symbol_id else None
         equity_curve.append({
             "date": h.exit_date.isoformat(),
             "cumulative_pnl": round(cumulative, 2),
-            "ticker": sym.ticker if sym else "???",
+            "ticker": h.ticker,
         })
 
     monthly_map: dict[str, float] = {}
@@ -442,6 +523,7 @@ def get_analytics(db: Session, user_db: Session, portfolio_id: int) -> dict | No
 # 2-7: Total Portfolio (Master Account)
 # ============================================================
 def get_total_portfolio_summary(db: Session, user_db: Session) -> dict:
+    heal_portfolio_ids(db, user_db)
     tp = _get_or_create_default_total_portfolio(user_db)
 
     transactions = user_db.query(Transaction).filter_by(total_portfolio_id=tp.id).all()
@@ -471,8 +553,8 @@ def get_total_portfolio_summary(db: Session, user_db: Session) -> dict:
         
         positions = user_db.query(PortfolioPosition).filter_by(portfolio_id=pf.id, status="open").all()
         for pos in positions:
-            sym = db.query(Symbol).filter_by(id=pos.symbol_id).first()
-            latest_dp = _get_latest_price(db, pos.symbol_id)
+            sym = db.query(Symbol).filter_by(id=pos.symbol_id).first() if pos.symbol_id else None
+            latest_dp = _get_latest_price(db, pos.symbol_id) if pos.symbol_id else None
             current_price = latest_dp.close if latest_dp else pos.entry_price
             
             value = current_price * pos.shares
@@ -492,7 +574,7 @@ def get_total_portfolio_summary(db: Session, user_db: Session) -> dict:
             for t in theme_list:
                 theme_map[t] = theme_map.get(t, 0.0) + val_per_theme
             
-            ticker = sym.ticker if sym else "???"
+            ticker = pos.ticker
             ticker_map[ticker] = ticker_map.get(ticker, 0.0) + value
             
         pf_cash = pf.total_capital - pf_invested

@@ -57,6 +57,24 @@ min_market_cap =  1e7
 # spy_cagr 7.37
 # total_trades 2271
 # win_rate 33.86173491853809
+#min_change_1d_pct = 6.0
+#min_vol_surge_21 = 2.8000000000000003
+#min_adr_pct_21 = 6.0
+#max_dist_sma50_atr = 7.0
+#min_market_cap = 5e6
+#theme_rs21_gt_63 = true
+# [backtest results]
+#  Expectancy:     3.159%
+#  Avg Gain/Trade: 3.159%
+#  Avg SPY Gain:   0.001%
+#  Alpha:          3.158%
+#  Max Drawdown:   -60.3%
+#  Win Rate:       34.6%
+#  Total Trades:   2332
+#  Port CAGR:      1108.01%
+#  SPY B&H CAGR:   7.37%
+#  Port vs SPY:    1100.64%
+
 
 [[rise]]
 id = "momentum_breakout"

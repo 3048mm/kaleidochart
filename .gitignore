@@ -29,6 +29,7 @@ data/*.sqlite3
 *.db
 *.sqlite
 *.sqlite3
+output/*
 
 # Node & Frontend
 frontend/node_modules/

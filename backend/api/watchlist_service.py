@@ -24,23 +24,73 @@ def _get_latest_price_row(db: Session, symbol_id: int) -> DailyPrice | None:
     ).order_by(DailyPrice.date.desc()).first()
 
 
-def _resolve_symbol_id(db: Session, ticker: str) -> int | None:
-    """Resolve ticker to symbol_id."""
-    sym = db.query(Symbol).filter_by(ticker=ticker).first()
-    return sym.id if sym else None
+def _resolve_symbol(db: Session, ticker: str) -> Symbol | None:
+    """Resolve ticker to Symbol object."""
+    return db.query(Symbol).filter_by(ticker=ticker).first()
+
+
+def heal_watchlist_ids(db: Session, user_db: Session) -> None:
+    """
+    Heal symbol_ids in watchlist table by matching ticker and exchange with stocktool.db symbols.
+    """
+    items = user_db.query(Watchlist).all()
+    if not items:
+        return
+
+    # Fetch all active symbols to optimize
+    symbols = db.query(Symbol).all()
+    sym_map = {}
+    for s in symbols:
+        sym_map[(s.ticker, s.exchange)] = s
+        if s.ticker not in sym_map:
+            sym_map[s.ticker] = s
+
+    modified = False
+    for wl in items:
+        current_sym = None
+        if wl.symbol_id is not None:
+            current_sym = db.query(Symbol).filter_by(id=wl.symbol_id).first()
+        
+        is_valid = (
+            current_sym is not None 
+            and current_sym.ticker == wl.ticker 
+            and current_sym.exchange == wl.exchange
+        )
+        
+        if not is_valid:
+            target_sym = sym_map.get((wl.ticker, wl.exchange))
+            if not target_sym:
+                target_sym = sym_map.get(wl.ticker)
+                
+            if target_sym:
+                wl.symbol_id = target_sym.id
+                modified = True
+            else:
+                if wl.symbol_id is not None:
+                    wl.symbol_id = None
+                    modified = True
+
+    if modified:
+        user_db.commit()
 
 
 def add_to_watchlist(db: Session, user_db: Session, ticker: str, entry_date: date) -> Watchlist | None:
     """
     Add a symbol to watchlist with 3-day reactivation logic.
     """
-    symbol_id = _resolve_symbol_id(db, ticker)
-    if symbol_id is None:
+    sym = _resolve_symbol(db, ticker)
+    if sym is None:
         return None
 
-    existing = user_db.query(Watchlist).filter_by(symbol_id=symbol_id).first()
+    # Find by ticker/exchange to ensure we get it even if ID changed
+    existing = user_db.query(Watchlist).filter_by(ticker=sym.ticker, exchange=sym.exchange).first()
 
     if existing:
+        # Sync symbol_id just in case it was off
+        if existing.symbol_id != sym.id:
+            existing.symbol_id = sym.id
+            user_db.commit()
+
         if existing.status == "active":
             return existing  # Already active, no-op
 
@@ -54,7 +104,7 @@ def add_to_watchlist(db: Session, user_db: Session, ticker: str, entry_date: dat
             return existing
         else:
             # Overwrite with new entry (added_at preserved)
-            entry_price = _get_close_price(db, symbol_id, entry_date)
+            entry_price = _get_close_price(db, sym.id, entry_date)
             if entry_price is None:
                 return None
             existing.entry_date = entry_date
@@ -66,11 +116,13 @@ def add_to_watchlist(db: Session, user_db: Session, ticker: str, entry_date: dat
             return existing
     else:
         # New record
-        entry_price = _get_close_price(db, symbol_id, entry_date)
+        entry_price = _get_close_price(db, sym.id, entry_date)
         if entry_price is None:
             return None
         wl = Watchlist(
-            symbol_id=symbol_id,
+            symbol_id=sym.id,
+            ticker=sym.ticker,
+            exchange=sym.exchange,
             entry_date=entry_date,
             entry_price=entry_price,
             status="active",
@@ -86,11 +138,12 @@ def remove_from_watchlist(db: Session, user_db: Session, ticker: str) -> Watchli
     """
     Remove a symbol from watchlist.
     """
-    symbol_id = _resolve_symbol_id(db, ticker)
-    if symbol_id is None:
-        return None
+    sym = _resolve_symbol(db, ticker)
+    if sym is None:
+        wl = user_db.query(Watchlist).filter_by(ticker=ticker, status="active").first()
+    else:
+        wl = user_db.query(Watchlist).filter_by(ticker=sym.ticker, exchange=sym.exchange, status="active").first()
 
-    wl = user_db.query(Watchlist).filter_by(symbol_id=symbol_id, status="active").first()
     if wl is None:
         return None
 
@@ -101,25 +154,33 @@ def remove_from_watchlist(db: Session, user_db: Session, ticker: str) -> Watchli
         return None  # Signals physical deletion
 
     # Logical delete
-    latest = _get_latest_price_row(db, symbol_id)
+    latest = _get_latest_price_row(db, wl.symbol_id) if wl.symbol_id else None
     wl.status = "removed"
     wl.removed_at = datetime.utcnow()
-    wl.removed_price = latest.close if latest else None
+    wl.removed_price = latest.close if latest else wl.entry_price
     user_db.commit()
     return wl
 
 
 def update_watchlist_entry_date(db: Session, user_db: Session, ticker: str, new_entry_date: date) -> Watchlist | None:
     """Update entry_date and entry_price for an active watchlist item."""
-    symbol_id = _resolve_symbol_id(db, ticker)
-    if symbol_id is None:
-        return None
+    sym = _resolve_symbol(db, ticker)
+    if sym is None:
+        wl = user_db.query(Watchlist).filter_by(ticker=ticker, status="active").first()
+    else:
+        wl = user_db.query(Watchlist).filter_by(ticker=sym.ticker, exchange=sym.exchange, status="active").first()
 
-    wl = user_db.query(Watchlist).filter_by(symbol_id=symbol_id, status="active").first()
     if wl is None:
         return None
 
-    new_price = _get_close_price(db, symbol_id, new_entry_date)
+    # If symbol_id is resolved now, sync it
+    if sym and wl.symbol_id != sym.id:
+        wl.symbol_id = sym.id
+
+    if wl.symbol_id is None:
+        return None
+
+    new_price = _get_close_price(db, wl.symbol_id, new_entry_date)
     if new_price is None:
         return None
 
@@ -136,28 +197,19 @@ def remove_bulk_from_watchlist(db: Session, user_db: Session, tickers: list[str]
     if not tickers:
         return 0
 
-    # Get symbol IDs
-    symbol_ids = db.query(Symbol.id).filter(Symbol.ticker.in_(tickers)).all()
-    s_ids = [r[0] for r in symbol_ids]
-
-    if not s_ids:
-        return 0
-
-    # Find active watchlist records
     active_items = user_db.query(Watchlist).filter(
-        Watchlist.symbol_id.in_(s_ids),
+        Watchlist.ticker.in_(tickers),
         Watchlist.status == "active"
     ).all()
 
     count = 0
     now = datetime.utcnow()
     for wl in active_items:
-        # Snapshot latest price for metrics
-        latest = _get_latest_price_row(db, wl.symbol_id)
+        latest = _get_latest_price_row(db, wl.symbol_id) if wl.symbol_id else None
         
         wl.status = "removed"
         wl.removed_at = now
-        wl.removed_price = latest.close if latest else None
+        wl.removed_price = latest.close if latest else wl.entry_price
         count += 1
 
     user_db.commit()
@@ -175,62 +227,70 @@ def get_watchlist(db: Session, user_db: Session) -> dict:
     """
     Get all watchlist items with computed metrics.
     """
+    heal_watchlist_ids(db, user_db)
+
     items = user_db.query(Watchlist).all()
     active_list = []
     removed_list = []
 
-    # Map symbol_id to symbol
-    s_ids = [wl.symbol_id for wl in items]
-    if not s_ids:
+    s_ids = [wl.symbol_id for wl in items if wl.symbol_id is not None]
+    if not items:
         return {"active": [], "removed": []}
         
-    symbols = db.query(Symbol).filter(Symbol.id.in_(s_ids)).all()
-    sym_map = {s.id: s for s in symbols}
+    sym_map = {}
+    if s_ids:
+        symbols = db.query(Symbol).filter(Symbol.id.in_(s_ids)).all()
+        sym_map = {s.id: s for s in symbols}
 
     for wl in items:
-        sym = sym_map.get(wl.symbol_id)
-        if sym is None:
-            continue
+        ticker = wl.ticker
+        name = wl.ticker
+        
+        sym = sym_map.get(wl.symbol_id) if wl.symbol_id else None
+        if sym:
+            name = sym.name
 
-        latest_dp = _get_latest_price_row(db, wl.symbol_id)
-        latest_close = latest_dp.close if latest_dp else 0.0
+        latest_close = 0.0
+        latest_ind = None
+        max_gain_pct = 0.0
+        min_gain_pct = 0.0
+        rs_sparkline = []
 
-        # Latest indicator
-        latest_ind = db.query(Indicator).filter_by(
-            symbol_id=wl.symbol_id
-        ).order_by(Indicator.date.desc()).first()
+        if wl.symbol_id:
+            latest_dp = _get_latest_price_row(db, wl.symbol_id)
+            latest_close = latest_dp.close if latest_dp else 0.0
 
-        # Compute gain
+            latest_ind = db.query(Indicator).filter_by(
+                symbol_id=wl.symbol_id
+            ).order_by(Indicator.date.desc()).first()
+
+            prices_in_range = db.query(DailyPrice).filter(
+                DailyPrice.symbol_id == wl.symbol_id,
+                DailyPrice.date >= wl.entry_date,
+            ).all()
+
+            if prices_in_range and wl.entry_price:
+                max_close = max(p.close for p in prices_in_range)
+                min_close = min(p.close for p in prices_in_range)
+                max_gain_pct = (max_close - wl.entry_price) / wl.entry_price * 100
+                min_gain_pct = (min_close - wl.entry_price) / wl.entry_price * 100
+
+            rs_ranks = db.query(RelativeRank.percent_rank).filter(
+                RelativeRank.symbol_id == wl.symbol_id,
+                RelativeRank.indicator_name == "rs_ratio_21",
+            ).order_by(RelativeRank.date.desc()).limit(30).all()
+            rs_sparkline = [r[0] for r in reversed(rs_ranks)]
+        else:
+            latest_close = wl.removed_price if wl.status == "removed" and wl.removed_price else wl.entry_price
+
         gain_pct = ((latest_close - wl.entry_price) / wl.entry_price * 100
                     if wl.entry_price else 0.0)
-
-        # Max/Min gain from price history between entry_date and latest
-        prices_in_range = db.query(DailyPrice).filter(
-            DailyPrice.symbol_id == wl.symbol_id,
-            DailyPrice.date >= wl.entry_date,
-        ).all()
-
-        if prices_in_range and wl.entry_price:
-            max_close = max(p.close for p in prices_in_range)
-            min_close = min(p.close for p in prices_in_range)
-            max_gain_pct = (max_close - wl.entry_price) / wl.entry_price * 100
-            min_gain_pct = (min_close - wl.entry_price) / wl.entry_price * 100
-        else:
-            max_gain_pct = 0.0
-            min_gain_pct = 0.0
-
-        # RS sparkline (last 30 days of rs_ratio_21 rank)
-        rs_ranks = db.query(RelativeRank.percent_rank).filter(
-            RelativeRank.symbol_id == wl.symbol_id,
-            RelativeRank.indicator_name == "rs_ratio_21",
-        ).order_by(RelativeRank.date.desc()).limit(30).all()
-        rs_sparkline = [r[0] for r in reversed(rs_ranks)]
 
         item_dict = {
             "id": wl.id,
             "symbol_id": wl.symbol_id,
-            "ticker": sym.ticker,
-            "name": sym.name,
+            "ticker": ticker,
+            "name": name,
             "entry_date": wl.entry_date.isoformat(),
             "entry_price": wl.entry_price,
             "latest_close": latest_close,
@@ -252,7 +312,6 @@ def get_watchlist(db: Session, user_db: Session) -> dict:
         else:
             removed_list.append(item_dict)
 
-    # Sort active by entry_date descending
     active_list.sort(key=lambda x: x["entry_date"], reverse=True)
 
     return {"active": active_list, "removed": removed_list}
@@ -260,10 +319,8 @@ def get_watchlist(db: Session, user_db: Session) -> dict:
 
 def get_watchlist_tickers(db: Session, user_db: Session) -> list[str]:
     """Get list of active watchlist tickers."""
-    active_items = user_db.query(Watchlist).filter_by(status="active").all()
-    s_ids = [wl.symbol_id for wl in active_items]
-    if not s_ids:
-        return []
+    heal_watchlist_ids(db, user_db)
     
-    rows = db.query(Symbol.ticker).filter(Symbol.id.in_(s_ids)).all()
-    return [r[0] for r in rows]
+    active_items = user_db.query(Watchlist).filter_by(status="active").all()
+    return [wl.ticker for wl in active_items]
+

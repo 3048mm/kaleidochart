@@ -409,3 +409,49 @@ class TestAnalytics:
         assert analytics["win_rate"] == 0.0
         assert len(analytics["equity_curve"]) == 0
         assert len(analytics["monthly_returns"]) == 0
+
+
+class TestSelfHealing:
+    """Test self-healing logic for portfolios."""
+
+    def test_heal_portfolio_ids(self, seed_data):
+        db, user_db = seed_data
+        pf = create_portfolio(user_db, name="Self Healing PF", currency="JPY",
+                              total_capital=10_000_000, risk_pct=1.0,
+                              default_stop_loss_pct=8.0,
+                              stop_loss_method="fixed_pct", max_positions=8)
+                              
+        # Add position (normally binds symbol_id = 1)
+        pos = add_position(db, user_db, portfolio_id=pf.id, ticker="AAPL",
+                           entry_date=date(2026, 5, 1), shares=100)
+        assert pos is not None
+        assert pos.symbol_id == 1
+        
+        # Corrupt symbol_id: make it incorrect (e.g. 999) or None
+        pos.symbol_id = 999
+        user_db.commit()
+        
+        # Adding sold position to history to test history healing as well
+        hist = sell_position(user_db, position_id=pos.id, exit_date=date(2026, 5, 5),
+                             exit_price=187.0, exit_shares=50, exit_reason="trim")
+        assert hist is not None
+        assert hist.symbol_id == 999
+        
+        # Corrupt history symbol_id
+        hist.symbol_id = None
+        user_db.commit()
+        
+        # Calling get_positions_with_metrics should trigger self-healing for pos
+        positions = get_positions_with_metrics(db, user_db, pf.id)
+        assert len(positions) == 1
+        
+        # Re-fetch pos and hist from DB to verify they have been healed back to 1
+        healed_pos = user_db.query(PortfolioPosition).filter_by(id=pos.id).first()
+        assert healed_pos.symbol_id == 1
+        
+        # Calling get_history should trigger self-healing for history as well
+        history = get_history(db, user_db, pf.id)
+        assert len(history) == 1
+        
+        healed_hist = user_db.query(PositionHistory).filter_by(id=hist.id).first()
+        assert healed_hist.symbol_id == 1

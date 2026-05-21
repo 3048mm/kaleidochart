@@ -14,6 +14,7 @@ from optimization_runner import (
     apply_trial_params,
     parse_optimization_periods,
     calculate_prune_penalty,
+    enqueue_baseline_trial,
 )
 
 
@@ -295,3 +296,39 @@ class TestCalculatePrunePenalty:
         p_worst = calculate_prune_penalty(5.0, 0.0, bounds)
         assert p_worst == -100.0 - (5.0 * 100) # -600.0
         assert p_worst < p_mild
+
+
+# ============================================================
+# Tests for enqueue_baseline_trial()
+# ============================================================
+
+class TestEnqueueBaselineTrial:
+    """enqueue_baseline_trial(study, config, strategy_short) should extract
+    the strategy's default parameters and enqueue them as a trial."""
+
+    def test_enqueue_baseline_trial_success(self, sample_config):
+        mock_study = MagicMock()
+        
+        # 'B' strategy matches 'B_theme_momentum'
+        # Default params in B_theme_momentum:
+        # - min_1d_gain_pct = 2.0
+        # - min_market_cap = 1e8
+        
+        from optimization_runner import enqueue_baseline_trial
+        
+        success = enqueue_baseline_trial(mock_study, sample_config, "B")
+        
+        assert success is True
+        mock_study.enqueue_trial.assert_called_once_with({
+            "min_1d_gain_pct": 2.0,
+            "min_market_cap": 1e8,
+        })
+
+    def test_enqueue_baseline_trial_strategy_not_found(self, sample_config):
+        mock_study = MagicMock()
+        from optimization_runner import enqueue_baseline_trial
+        
+        # Strategy 'Z' is not in sample_config
+        with pytest.raises(ValueError, match="Strategy"):
+            enqueue_baseline_trial(mock_study, sample_config, "Z")
+
