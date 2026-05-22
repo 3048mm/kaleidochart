@@ -253,7 +253,7 @@ export const WatchlistPage: React.FC = () => {
                         watchlist.active.length === 0 ? (
                             <div style={{ textAlign: 'center', padding: '60px', color: '#666' }}>No active stocks in watchlist. Start by adding some stars!</div>
                         ) : (
-                            <div style={{ overflowX: 'auto' }}>
+                            <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch', width: '100%', maxWidth: '100%' }}>
                                 {selectedTickers.size > 0 && (
                                     <div style={{ marginBottom: '15px', display: 'flex', alignItems: 'center', gap: '15px', padding: '10px', background: 'rgba(255,255,255,0.05)', borderRadius: '8px' }}>
                                         <span style={{ fontSize: '14px', color: '#aaa' }}>{selectedTickers.size} items selected</span>
@@ -280,7 +280,7 @@ export const WatchlistPage: React.FC = () => {
                                         </button>
                                     </div>
                                 )}
-                                <table className="screener-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                                <table className="screener-table" style={{ width: 'max-content', minWidth: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                                     <thead style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
                                         <tr style={{ color: '#888', textAlign: 'left' }}>
                                             <th style={{ padding: '12px 10px', width: '30px' }}>
@@ -417,8 +417,8 @@ export const WatchlistPage: React.FC = () => {
                             {watchlist.removed.length === 0 ? (
                                 <div style={{ textAlign: 'center', padding: '60px', color: '#666' }}>History is empty.</div>
                             ) : (
-                                <div style={{ overflowX: 'auto' }}>
-                                    <table className="screener-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                                <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch', width: '100%', maxWidth: '100%' }}>
+                                    <table className="screener-table" style={{ width: 'max-content', minWidth: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                                         <thead style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
                                             <tr style={{ color: '#888', textAlign: 'left' }}>
                                                 <th style={headerStyle} onClick={() => handleSort('ticker')}>Ticker {renderSortIcon('ticker')}</th>

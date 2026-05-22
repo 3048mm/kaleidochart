@@ -19,10 +19,18 @@ export const EtfFeaturePanel: React.FC<EtfFeaturePanelProps> = ({
     return (
         <div className="glass-panel" style={{ padding: '20px', marginBottom: '20px', display: 'flex', gap: '24px', flexWrap: 'wrap' }}>
             {/* Left: KPIs */}
-            <div style={{ flex: '1', minWidth: '350px', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ flex: '1', minWidth: '280px', display: 'flex', flexDirection: 'column' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: `1px solid ${appConfig.colors.glassBorder}`, paddingBottom: '10px', marginBottom: '15px' }}>
-                    <h2 style={{ margin: 0, fontSize: '20px' }}>
-                        {feature.ticker} <span style={{ fontSize: '14px', color: '#aaa', fontWeight: 'normal' }}>{feature.name || titleSuffix}</span>
+                    <h2 style={{ margin: 0, fontSize: '20px', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                        <span>{feature.ticker}</span>
+                        {feature.name && feature.name.includes('::') ? (
+                            <div style={{ display: 'inline-flex', flexDirection: 'column', marginLeft: '4px', lineHeight: 1.2, textAlign: 'left' }}>
+                                <span style={{ fontSize: '10px', color: '#8b9cc8', fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase' }}>{feature.name.split('::')[0]}</span>
+                                <span style={{ fontSize: '16px', color: '#fff', fontWeight: 'bold' }}>{feature.name.split('::')[1]}</span>
+                            </div>
+                        ) : (
+                            <span style={{ fontSize: '14px', color: '#aaa', fontWeight: 'normal', marginLeft: '10px' }}>{feature.name || titleSuffix}</span>
+                        )}
                     </h2>
                     <div style={{ fontSize: '20px', fontWeight: 'bold' }}>{(feature.close || 0).toFixed(2)}</div>
                     {showFullChartLink && (
@@ -30,14 +38,14 @@ export const EtfFeaturePanel: React.FC<EtfFeaturePanelProps> = ({
                     )}
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: '15px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(70px, 1fr))', gap: '10px', marginBottom: '15px' }}>
                     {[
                         { label: '1D Gain', val: feature.change_1d_pct },
                         { label: '1W Gain', val: feature.change_1w_pct },
                         { label: '1M Gain', val: feature.change_1m_pct },
                         { label: '1Y Gain', val: feature.change_1y_pct },
                     ].map(metric => (
-                        <div key={metric.label} style={{ background: 'rgba(255,255,255,0.05)', padding: '10px', borderRadius: '6px', textAlign: 'center' }}>
+                        <div key={metric.label} style={{ background: 'rgba(255,255,255,0.05)', padding: '10px 5px', borderRadius: '6px', textAlign: 'center' }}>
                             <div style={{ fontSize: '10px', color: '#aaa', marginBottom: '4px' }}>{metric.label}</div>
                             <div style={{ fontSize: '14px', fontWeight: 'bold', color: (metric.val || 0) > 0 ? appConfig.colors.good : (metric.val || 0) < 0 ? appConfig.colors.bad : '#fff' }}>
                                 {(metric.val || 0) > 0 ? '+' : ''}{(metric.val || 0).toFixed(2)}%
@@ -46,14 +54,14 @@ export const EtfFeaturePanel: React.FC<EtfFeaturePanelProps> = ({
                     ))}
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: '15px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(70px, 1fr))', gap: '10px', marginBottom: '15px' }}>
                     {[
                         { label: 'dist SMA5', val: feature.dist_sma5_pct },
                         { label: 'dist SMA21', val: feature.dist_sma21_pct },
                         { label: 'dist SMA63', val: feature.dist_sma63_pct },
                         { label: 'SMA21/63 diff', val: feature.sma21_sma63_pct },
                     ].map(metric => (
-                        <div key={metric.label} style={{ background: 'rgba(255,255,255,0.05)', padding: '10px', borderRadius: '6px', textAlign: 'center' }}>
+                        <div key={metric.label} style={{ background: 'rgba(255,255,255,0.05)', padding: '10px 5px', borderRadius: '6px', textAlign: 'center' }}>
                             <div style={{ fontSize: '10px', color: '#aaa', marginBottom: '4px' }}>{metric.label}</div>
                             <div style={{ fontSize: '14px', fontWeight: 'bold', color: (metric.val || 0) > 0 ? appConfig.colors.good : (metric.val || 0) < 0 ? appConfig.colors.bad : '#fff' }}>
                                 {(metric.val || 0) > 0 ? '+' : ''}{(metric.val || 0).toFixed(2)}%
@@ -63,7 +71,7 @@ export const EtfFeaturePanel: React.FC<EtfFeaturePanelProps> = ({
                 </div>
 
                 {/* RS Ranks & Sparklines */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(90px, 1fr))', gap: '10px' }}>
                     {[
                         { label: 'RS Ratio 14', spark: feature.rs14_sparkline, rank: feature.rank_rs_ratio_14 },
                         { label: 'RS Ratio 21', spark: feature.rs21_sparkline, rank: feature.rank_rs_ratio_21 },
@@ -94,7 +102,7 @@ export const EtfFeaturePanel: React.FC<EtfFeaturePanelProps> = ({
             </div>
             
             {/* Right: Mini Chart */}
-            <div style={{ flex: '1', minWidth: '350px', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', padding: '10px' }}>
+            <div style={{ flex: '1', minWidth: '280px', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', padding: '10px' }}>
                     <div style={{ fontSize: '11px', color: '#aaa', marginBottom: '10px', textAlign: 'center' }}>6-Month Trend</div>
                     <MiniChart data={feature.chart_data} height={160} />
             </div>

@@ -56,15 +56,18 @@ export const MiniChart: React.FC<MiniChartProps> = ({ data, height = 200 }) => {
         candleSeriesRef.current = candleSeries;
 
         // Handle resize
-        const handleResize = () => {
-            if (chartContainerRef.current && chartRef.current) {
-                chartRef.current.applyOptions({ width: chartContainerRef.current.clientWidth });
-            }
-        };
-        window.addEventListener('resize', handleResize);
+        const resizeObserver = new ResizeObserver(entries => {
+            if (entries.length === 0 || !chartRef.current) return;
+            const { width } = entries[0].contentRect;
+            chartRef.current.applyOptions({ width });
+        });
+
+        if (chartContainerRef.current) {
+            resizeObserver.observe(chartContainerRef.current);
+        }
 
         return () => {
-            window.removeEventListener('resize', handleResize);
+            resizeObserver.disconnect();
             chart.remove();
         };
     }, [height]);

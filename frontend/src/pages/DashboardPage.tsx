@@ -86,95 +86,97 @@ export const DashboardPage: React.FC = () => {
         if (items.length === 0) return <div style={{ color: '#888' }}>データなし</div>;
 
         return (
-            <div className="dashboard-list">
-                {/* Header Row */}
-                <div style={{
-                    display: 'flex', fontSize: '11px', color: '#aaa', paddingBottom: '8px', borderBottom: `1px solid ${appConfig.colors.glassBorder}`, marginBottom: '8px'
-                }}>
-                    <div style={{ flex: '1', minWidth: '80px' }}>Indicator</div>
-                    <div style={{ width: '60px', textAlign: 'right', paddingRight: '10px' }}>Close</div>
-                    <div style={{ width: '56px', textAlign: 'center' }}>1D%</div>
-                    <div style={{ width: '56px', textAlign: 'center', marginLeft: '5px' }}>1W%</div>
-                    <div style={{ width: '56px', textAlign: 'center', marginLeft: '5px' }}>1M%</div>
-                    <div style={{ width: '60px', textAlign: 'right', paddingRight: '10px' }}>21EMA乖離</div>
-                    <div style={{ width: '80px', textAlign: 'center' }}>1M Price</div>
+            <div className="dashboard-list" style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch', width: '100%', maxWidth: '100%' }}>
+                <div style={{ minWidth: '550px' }}>
+                    {/* Header Row */}
+                    <div style={{
+                        display: 'flex', fontSize: '11px', color: '#aaa', paddingBottom: '8px', borderBottom: `1px solid ${appConfig.colors.glassBorder}`, marginBottom: '8px'
+                    }}>
+                        <div style={{ flex: '1', minWidth: '80px' }}>Indicator</div>
+                        <div style={{ width: '60px', textAlign: 'right', paddingRight: '10px' }}>Close</div>
+                        <div style={{ width: '56px', textAlign: 'center' }}>1D%</div>
+                        <div style={{ width: '56px', textAlign: 'center', marginLeft: '5px' }}>1W%</div>
+                        <div style={{ width: '56px', textAlign: 'center', marginLeft: '5px' }}>1M%</div>
+                        <div style={{ width: '60px', textAlign: 'right', paddingRight: '10px' }}>21EMA乖離</div>
+                        <div style={{ width: '80px', textAlign: 'center' }}>1M Price</div>
+                    </div>
+
+                    {items.map(item => {
+                        const getBgColor = (pct: number) => {
+                            let baseColor = pct >= 0 ? appConfig.colors.good : appConfig.colors.bad;
+                            // Invert color for VIX indicators (Rise is bad, Fall is good)
+                            if (item.ticker.startsWith('^VIX')) {
+                                baseColor = pct >= 0 ? appConfig.colors.bad : appConfig.colors.good;
+                            }
+                            return getIntensityColor(pct, appConfig.thresholds.sparkline_max_pct_index, baseColor);
+                        };
+                        const getTextColor = (pct: number) => Math.abs(pct) > appConfig.thresholds.sparkline_max_pct_index * 0.5 ? '#000' : '#fff';
+                        const formatPct = (pct: number) => `${pct > 0 ? '+' : ''}${pct.toFixed(1)}%`;
+                        const colorNeutral = (pct: number) => {
+                            let color = pct > 0 ? appConfig.colors.good : pct < 0 ? appConfig.colors.bad : '#fff';
+                            if (item.ticker.startsWith('^VIX')) {
+                                color = pct > 0 ? appConfig.colors.bad : pct < 0 ? appConfig.colors.good : '#fff';
+                            }
+                            return color;
+                        };
+
+                        return (
+                            <div key={item.id} className="dashboard-item" style={{
+                                display: 'flex', alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${appConfig.colors.glassBorder}`, gap: '8px',
+                            }}>
+                                {/* 1. Name */}
+                                <div style={{ flex: '1', minWidth: '80px', display: 'flex', flexDirection: 'column' }}>
+                                    <Link to={`/chart/${encodeURIComponent(item.ticker)}`} style={{ color: appConfig.colors.chartText, textDecoration: 'none', fontWeight: 'bold', fontSize: '13px' }}>
+                                        {item.ticker}
+                                    </Link>
+                                    <span style={{ fontSize: '10px', color: '#666', lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '120px' }}>{item.name}</span>
+                                </div>
+
+                                {/* 2. Close */}
+                                <div style={{ width: '60px', textAlign: 'right', paddingRight: '10px', fontSize: '12px', fontVariantNumeric: 'tabular-nums' }}>
+                                    {item.close.toFixed(2)}
+                                </div>
+
+                                {/* 3. %1D */}
+                                <div style={{ width: '56px', textAlign: 'center', padding: '3px', borderRadius: '4px', backgroundColor: getBgColor(item.change_1d_pct), color: getTextColor(item.change_1d_pct), fontWeight: '600', fontSize: '11px', flexShrink: 0 }}>
+                                    {formatPct(item.change_1d_pct)}
+                                </div>
+
+                                {/* 4. %1W */}
+                                <div style={{ width: '56px', textAlign: 'center', padding: '3px', borderRadius: '4px', border: `1px solid ${appConfig.colors.glassBorder}`, color: colorNeutral(item.change_1w_pct), fontWeight: '600', fontSize: '11px', flexShrink: 0 }}>
+                                    {formatPct(item.change_1w_pct)}
+                                </div>
+
+                                {/* 5. %1M */}
+                                <div style={{ width: '56px', textAlign: 'center', padding: '3px', borderRadius: '4px', border: `1px solid ${appConfig.colors.glassBorder}`, color: colorNeutral(item.change_1m_pct), fontWeight: '600', fontSize: '11px', flexShrink: 0 }}>
+                                    {formatPct(item.change_1m_pct)}
+                                </div>
+
+                                {/* 6. Dist 21EMA */}
+                                <div style={{ width: '60px', textAlign: 'right', paddingRight: '10px', color: colorNeutral(item.dist_21ema_pct), fontSize: '11px', fontWeight: '600', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+                                    {formatPct(item.dist_21ema_pct)}
+                                </div>
+
+                                {/* 7. Sparkline */}
+                                <div style={{ width: '80px', flexShrink: 0 }}>
+                                    <Sparkline
+                                        data={item.sparkline}
+                                        width={80}
+                                        height={28}
+                                        color={item.change_1m_pct >= 0 ? appConfig.colors.good : appConfig.colors.bad}
+                                        fixedRange={false}
+                                    />
+                                </div>
+                            </div>
+                        );
+                    })}
                 </div>
-
-                {items.map(item => {
-                    const getBgColor = (pct: number) => {
-                        let baseColor = pct >= 0 ? appConfig.colors.good : appConfig.colors.bad;
-                        // Invert color for VIX indicators (Rise is bad, Fall is good)
-                        if (item.ticker.startsWith('^VIX')) {
-                            baseColor = pct >= 0 ? appConfig.colors.bad : appConfig.colors.good;
-                        }
-                        return getIntensityColor(pct, appConfig.thresholds.sparkline_max_pct_index, baseColor);
-                    };
-                    const getTextColor = (pct: number) => Math.abs(pct) > appConfig.thresholds.sparkline_max_pct_index * 0.5 ? '#000' : '#fff';
-                    const formatPct = (pct: number) => `${pct > 0 ? '+' : ''}${pct.toFixed(1)}%`;
-                    const colorNeutral = (pct: number) => {
-                        let color = pct > 0 ? appConfig.colors.good : pct < 0 ? appConfig.colors.bad : '#fff';
-                        if (item.ticker.startsWith('^VIX')) {
-                            color = pct > 0 ? appConfig.colors.bad : pct < 0 ? appConfig.colors.good : '#fff';
-                        }
-                        return color;
-                    };
-
-                    return (
-                        <div key={item.id} className="dashboard-item" style={{
-                            display: 'flex', alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${appConfig.colors.glassBorder}`, gap: '8px',
-                        }}>
-                            {/* 1. Name */}
-                            <div style={{ flex: '1', minWidth: '80px', display: 'flex', flexDirection: 'column' }}>
-                                <Link to={`/chart/${encodeURIComponent(item.ticker)}`} style={{ color: appConfig.colors.chartText, textDecoration: 'none', fontWeight: 'bold', fontSize: '13px' }}>
-                                    {item.ticker}
-                                </Link>
-                                <span style={{ fontSize: '10px', color: '#666', lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '120px' }}>{item.name}</span>
-                            </div>
-
-                            {/* 2. Close */}
-                            <div style={{ width: '60px', textAlign: 'right', paddingRight: '10px', fontSize: '12px', fontVariantNumeric: 'tabular-nums' }}>
-                                {item.close.toFixed(2)}
-                            </div>
-
-                            {/* 3. %1D */}
-                            <div style={{ width: '56px', textAlign: 'center', padding: '3px', borderRadius: '4px', backgroundColor: getBgColor(item.change_1d_pct), color: getTextColor(item.change_1d_pct), fontWeight: '600', fontSize: '11px', flexShrink: 0 }}>
-                                {formatPct(item.change_1d_pct)}
-                            </div>
-
-                            {/* 4. %1W */}
-                            <div style={{ width: '56px', textAlign: 'center', padding: '3px', borderRadius: '4px', border: `1px solid ${appConfig.colors.glassBorder}`, color: colorNeutral(item.change_1w_pct), fontWeight: '600', fontSize: '11px', flexShrink: 0 }}>
-                                {formatPct(item.change_1w_pct)}
-                            </div>
-
-                            {/* 5. %1M */}
-                            <div style={{ width: '56px', textAlign: 'center', padding: '3px', borderRadius: '4px', border: `1px solid ${appConfig.colors.glassBorder}`, color: colorNeutral(item.change_1m_pct), fontWeight: '600', fontSize: '11px', flexShrink: 0 }}>
-                                {formatPct(item.change_1m_pct)}
-                            </div>
-
-                            {/* 6. Dist 21EMA */}
-                            <div style={{ width: '60px', textAlign: 'right', paddingRight: '10px', color: colorNeutral(item.dist_21ema_pct), fontSize: '11px', fontWeight: '600', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
-                                {formatPct(item.dist_21ema_pct)}
-                            </div>
-
-                            {/* 7. Sparkline */}
-                            <div style={{ width: '80px', flexShrink: 0 }}>
-                                <Sparkline
-                                    data={item.sparkline}
-                                    width={80}
-                                    height={28}
-                                    color={item.change_1m_pct >= 0 ? appConfig.colors.good : appConfig.colors.bad}
-                                    fixedRange={false}
-                                />
-                            </div>
-                        </div>
-                    );
-                })}
             </div>
         );
     };
 
     return (
-        <div className="dashboard-page" style={{ padding: '20px', maxWidth: '1200px', margin: '0 auto' }}>
+        <div className="dashboard-page" style={{ padding: '20px', width: '100%', maxWidth: '1200px', margin: '0 auto', boxSizing: 'border-box' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
                 <h1 style={{ margin: 0 }}>Market Dashboard</h1>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -222,7 +224,7 @@ export const DashboardPage: React.FC = () => {
             ) : data ? (
                 <>
                     {/* Tabs Navigation */}
-                    <div style={{ display: 'flex', borderBottom: `1px solid ${appConfig.colors.glassBorder}`, marginBottom: '20px' }}>
+                    <div className="dashboard-tabs" style={{ display: 'flex', borderBottom: `1px solid ${appConfig.colors.glassBorder}`, marginBottom: '20px' }}>
                         {[
                             { id: 'indicator', label: '🧭 Indicators' },
                             { id: 'market', label: '🌍 Markets' },
@@ -266,44 +268,47 @@ export const DashboardPage: React.FC = () => {
                     {activeTab === 'indicator' && (
                         <>
                             {/* Top Row: Trend */}
-                            <div style={{ marginBottom: '20px', display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+                            <div className="indicators-row-container" style={{ marginBottom: '20px', display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
                                 {/* 1. Market Phase Meter */}
-                                <div style={{ flex: '2', minWidth: '400px' }}>
+                                <div style={{ flex: '2', minWidth: '280px' }}>
                                     <MarketPhaseMeter phase={data.market_phase} />
                                 </div>
                                 
-                                {/* 2. Market Trend Score Card */}
-                                <div className="glass-panel" style={{ flex: '1', padding: '20px', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', minWidth: '150px' }}>
-                                    <div style={{ fontSize: '11px', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Trend Score</div>
-                                    <div style={{ 
-                                        fontSize: '42px', 
-                                        fontWeight: 'bold', 
-                                        color: data.market_trend_score >= 50 ? appConfig.colors.good : appConfig.colors.bad,
-                                        lineHeight: 1
-                                    }}>
-                                        {Math.round(data.market_trend_score)}
+                                {/* 2 & 3. Trend & Distribution Cards Wrapper */}
+                                <div className="trend-cards-container" style={{ flex: '1.2', display: 'flex', gap: '20px', minWidth: '280px', width: '100%' }}>
+                                    {/* 2. Market Trend Score Card */}
+                                    <div className="glass-panel" style={{ flex: '1', padding: '20px', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', minWidth: '120px' }}>
+                                        <div style={{ fontSize: '11px', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Trend Score</div>
+                                        <div style={{ 
+                                            fontSize: '42px', 
+                                            fontWeight: 'bold', 
+                                            color: data.market_trend_score >= 50 ? appConfig.colors.good : appConfig.colors.bad,
+                                            lineHeight: 1
+                                        }}>
+                                            {Math.round(data.market_trend_score)}
+                                        </div>
+                                        <div style={{ fontSize: '12px', marginTop: '5px', color: '#888', textAlign: 'center' }}>
+                                            {data.market_trend_score >= 80 ? 'EXTREME BULL' : data.market_trend_score >= 50 ? 'BULL' : data.market_trend_score >= 20 ? 'BEAR' : 'EXTREME BEAR'}
+                                        </div>
                                     </div>
-                                    <div style={{ fontSize: '12px', marginTop: '5px', color: '#888' }}>
-                                        {data.market_trend_score >= 80 ? 'EXTREME BULL' : data.market_trend_score >= 50 ? 'BULL' : data.market_trend_score >= 20 ? 'BEAR' : 'EXTREME BEAR'}
-                                    </div>
-                                </div>
 
-                                {/* 3. Distribution Days Card */}
-                                <div className="glass-panel" style={{ flex: '1', padding: '20px', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', minWidth: '150px' }}>
-                                    <div style={{ fontSize: '11px', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Distribution Days</div>
-                                    <div style={{ fontSize: '42px', fontWeight: 'bold', color: data.distribution_days >= 4 ? appConfig.colors.bad : '#fff', lineHeight: 1 }}>
-                                        {data.distribution_days}
-                                    </div>
-                                    <div style={{ fontSize: '12px', marginTop: '5px', color: '#888' }}>
-                                        {data.distribution_days >= 5 ? 'DISTRIBUTION' : 'CALM'}
+                                    {/* 3. Distribution Days Card */}
+                                    <div className="glass-panel" style={{ flex: '1', padding: '20px', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', minWidth: '120px' }}>
+                                        <div style={{ fontSize: '11px', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px' }}>Distribution Days</div>
+                                        <div style={{ fontSize: '42px', fontWeight: 'bold', color: data.distribution_days >= 4 ? appConfig.colors.bad : '#fff', lineHeight: 1 }}>
+                                            {data.distribution_days}
+                                        </div>
+                                        <div style={{ fontSize: '12px', marginTop: '5px', color: '#888', textAlign: 'center' }}>
+                                            {data.distribution_days >= 5 ? 'DISTRIBUTION' : 'CALM'}
+                                        </div>
                                     </div>
                                 </div>
                             </div>
 
                             {/* Market Trend Score History Graph */}
                             {data.trend_score_history && data.trend_score_history.length > 0 && (
-                                <div style={{ display: 'flex', gap: '20px', marginBottom: '20px', flexWrap: 'wrap' }}>
-                                    <div className="glass-panel" style={{ flex: '1', padding: '20px', minWidth: '400px' }}>
+                                <div className="charts-row-container" style={{ display: 'flex', gap: '20px', marginBottom: '20px', flexWrap: 'wrap' }}>
+                                    <div className="glass-panel" style={{ flex: '1', padding: '20px', minWidth: '280px' }}>
                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', borderBottom: `1px solid ${appConfig.colors.glassBorder}`, paddingBottom: '10px' }}>
                                             <h3 style={{ margin: 0 }}>📈 Market Trend Score History</h3>
                                             <div style={{ fontSize: '12px', color: '#aaa' }}>Last 100 Trading Days</div>
@@ -311,7 +316,7 @@ export const DashboardPage: React.FC = () => {
                                         <TrendScoreChart data={data.trend_score_history} height={180} />
                                     </div>
 
-                                    <div className="glass-panel" style={{ flex: '1', padding: '20px', minWidth: '400px' }}>
+                                    <div className="glass-panel" style={{ flex: '1', padding: '20px', minWidth: '280px' }}>
                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', borderBottom: `1px solid ${appConfig.colors.glassBorder}`, paddingBottom: '10px' }}>
                                             <h3 style={{ margin: 0 }}>📊 VXV/VIX Ratio History</h3>
                                             <div style={{ fontSize: '12px', color: '#aaa' }}>Ref: Bottom (1.0) / Top (1.2)</div>
@@ -364,7 +369,7 @@ export const DashboardPage: React.FC = () => {
                                 <SummaryTable 
                                     items={data.indices} 
                                     maxPct={appConfig.thresholds.sparkline_max_pct_index} 
-                                />
+                                 />
                             </div>
                         </>
                     )}
@@ -372,9 +377,9 @@ export const DashboardPage: React.FC = () => {
                     {activeTab === 'sector-theme' && (
                         <>
                             {/* Columns: Sectors + Themes */}
-                            <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+                            <div className="sectors-themes-container" style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
                                 {/* Column 1: Sectors */}
-                            <div style={{ flex: '1', minWidth: '300px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                                <div style={{ flex: '1', minWidth: '280px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
                                     <div className="glass-panel" style={{ padding: '20px' }}>
                                         <h3 style={{ marginTop: 0, borderBottom: `1px solid ${appConfig.colors.glassBorder}`, paddingBottom: '10px' }}>🏢 Sectors Overview</h3>
                                         <SummaryTable 
@@ -387,7 +392,7 @@ export const DashboardPage: React.FC = () => {
                                 </div>
 
                                 {/* Column 2: Themes Top/Bottom */}
-                                <div style={{ flex: '1', minWidth: '300px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                                <div style={{ flex: '1', minWidth: '280px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
                                     <div className="glass-panel" style={{ padding: '20px' }}>
                                         <h3 style={{ marginTop: 0, borderBottom: `1px solid ${appConfig.colors.glassBorder}`, paddingBottom: '10px' }}>🔥 Top Themes (1M RS Rank) <span style={{ fontSize: '12px', fontWeight: 'normal', color: '#aaa' }}>Top {Math.min(themesVisibleCount, data.themes_top.length)}</span></h3>
                                         <SummaryTable 
@@ -467,8 +472,12 @@ export const DashboardPage: React.FC = () => {
                                                 data: [{
                                                     time: data.date,
                                                     close: item.close,
-                                                    rs_ratio_14: item.rs_ratio_21, // Hack: using 21 values since RrgChart defaults to 14
+                                                    rs_ratio_14: item.rs_ratio_21,
                                                     rs_momentum_14: item.rs_momentum_21,
+                                                    rs_ratio_21: item.rs_ratio_21,
+                                                    rs_momentum_21: item.rs_momentum_21,
+                                                    rs_ratio_63: item.rs_ratio_21,
+                                                    rs_momentum_63: item.rs_momentum_21,
                                                     open: item.close, high: item.close, low: item.close, volume: 0
                                                 }]
                                             })),
@@ -480,6 +489,10 @@ export const DashboardPage: React.FC = () => {
                                                     close: item.close,
                                                     rs_ratio_14: item.rs_ratio_21,
                                                     rs_momentum_14: item.rs_momentum_21,
+                                                    rs_ratio_21: item.rs_ratio_21,
+                                                    rs_momentum_21: item.rs_momentum_21,
+                                                    rs_ratio_63: item.rs_ratio_21,
+                                                    rs_momentum_63: item.rs_momentum_21,
                                                     open: item.close, high: item.close, low: item.close, volume: 0
                                                 }]
                                             }))

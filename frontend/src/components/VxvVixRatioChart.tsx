@@ -77,16 +77,18 @@ export const VxvVixRatioChart: React.FC<VxvVixRatioChartProps> = ({ data, height
 
         chartRef.current = chart;
 
-        const handleResize = () => {
-            if (chartContainerRef.current && chartRef.current) {
-                chartRef.current.applyOptions({ width: chartContainerRef.current.clientWidth });
-            }
-        };
+        const resizeObserver = new ResizeObserver(entries => {
+            if (entries.length === 0 || !chartRef.current) return;
+            const { width } = entries[0].contentRect;
+            chartRef.current.applyOptions({ width });
+        });
 
-        window.addEventListener('resize', handleResize);
+        if (chartContainerRef.current) {
+            resizeObserver.observe(chartContainerRef.current);
+        }
 
         return () => {
-            window.removeEventListener('resize', handleResize);
+            resizeObserver.disconnect();
             chart.remove();
         };
     }, [data, height]);

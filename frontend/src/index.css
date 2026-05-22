@@ -74,9 +74,179 @@ body {
     "header header"
     "sidebar main";
   grid-template-rows: var(--header-h) 1fr;
-  grid-template-columns: var(--sidebar-w) 1fr;
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
   height: 100vh;
+  width: 100vw;
+  max-width: 100vw;
+  overflow: hidden;
   gap: 0;
+  transition: grid-template-columns 0.3s ease;
+}
+
+.app-shell.sidebar-collapsed {
+  grid-template-columns: 0 minmax(0, 1fr);
+}
+
+/* === Sidebar Toggle Button === */
+.sidebar-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: rgba(30, 40, 70, 0.5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.sidebar-toggle:hover {
+  background: var(--bg-glass-hover);
+  border-color: var(--border-accent);
+  color: var(--text-primary);
+}
+
+.sidebar-backdrop {
+  display: none;
+}
+
+/* === Mobile Responsive === */
+@media (max-width: 768px) {
+  .app-shell,
+  .app-shell.sidebar-collapsed {
+    grid-template-areas:
+      "header"
+      "main";
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-sidebar {
+    position: fixed;
+    top: var(--header-h);
+    left: 0;
+    bottom: 0;
+    width: var(--sidebar-w);
+    z-index: 200;
+    transform: translateX(-100%);
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .app-sidebar.open {
+    transform: translateX(0);
+  }
+
+  /* Override PC collapsed styles on mobile */
+  .app-shell.sidebar-collapsed .app-sidebar {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .sidebar-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    top: var(--header-h);
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 199;
+    backdrop-filter: blur(2px);
+  }
+
+  .sidebar-backdrop.open {
+    display: block;
+    animation: fade-in 0.3s ease;
+  }
+
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  .app-header {
+    padding: 0 10px !important;
+    justify-content: space-between;
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow: hidden;
+  }
+
+  .app-header nav {
+    gap: 8px !important;
+    font-size: 11px !important;
+    margin-right: 0 !important;
+  }
+
+  /* Reduce padding and enforce width constraints on mobile to maximize screen width usage and prevent layout stretching */
+  .app-main > div {
+    padding: 12px !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    box-sizing: border-box;
+  }
+
+  /* Optimize glass-panel padding and constraints for mobile screens to maximize table space */
+  .glass-panel {
+    padding: 12px !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow: hidden !important; /* 親要素の突き抜けを防止 */
+  }
+
+  .dashboard-list {
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Responsive Dashboard / Screener / Layout utility classes */
+  .indicators-row-container,
+  .charts-row-container,
+  .sectors-themes-container,
+  .screener-panels-container {
+    flex-direction: column !important;
+    gap: 16px !important;
+  }
+
+  .indicators-row-container > div,
+  .charts-row-container > div,
+  .sectors-themes-container > div,
+  .screener-panels-container > div {
+    flex: none !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important; /* Prevents being stretched by children (like wide tables) */
+  }
+
+  /* Force side-by-side layout for Trend & Distribution Cards on Mobile */
+  .trend-cards-container {
+    flex-direction: row !important;
+    width: 100% !important;
+    gap: 12px !important;
+  }
+
+  /* Horizontal scroll tabs for mobile dashboard navigation */
+  .dashboard-tabs {
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+    width: 100% !important;
+    scrollbar-width: none; /* Hide scrollbar Firefox */
+  }
+  .dashboard-tabs::-webkit-scrollbar {
+    display: none; /* Hide scrollbar Chrome/Safari */
+  }
+  .dashboard-tabs button {
+    flex: 1 !important; /* 横幅いっぱいに等幅フィット */
+    padding: 8px 14px !important;
+    font-size: 13px !important;
+    white-space: nowrap !important; /* Prevent text wrap */
+  }
 }
 
 /* === Header === */
@@ -154,6 +324,14 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  transition: opacity 0.2s ease;
+  min-width: 0;
+}
+
+.app-shell.sidebar-collapsed .app-sidebar {
+  opacity: 0;
+  pointer-events: none;
+  border-right: none;
 }
 
 .sidebar-search {
@@ -254,6 +432,8 @@ body {
   flex-direction: column;
   overflow: hidden;
   background: var(--bg-surface);
+  min-width: 0; /* フレックスアイテムとしての横幅突き抜けを防止 */
+  width: 100%;
 }
 
 /* === Chart Header === */

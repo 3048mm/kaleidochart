@@ -440,7 +440,7 @@ export const ScreenerPage: React.FC = () => {
                                 <h3 style={{ margin: '0 0 15px 5px', fontSize: '18px', color: '#ccc', borderLeft: `4px solid ${appConfig.colors.accent}`, paddingLeft: '10px' }}>
                                     [{groupName}]
                                 </h3>
-                                <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+                                <div className="screener-panels-container" style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
                                     {categories.map(cat => renderPanel(cat))}
                                 </div>
                             </div>

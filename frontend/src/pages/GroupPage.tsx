@@ -1,7 +1,7 @@
 /* Integrated GroupPage: Features from ThemePage ported here */
 import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useSearchParams, Link } from 'react-router-dom';
-import { GroupDataResponse, ThemeDetailResponse, ThemeConstituentItem } from '../types';
+import { GroupDataResponse, ThemeDetailResponse } from '../types';
 import { EtfFeaturePanel } from '../components/EtfFeaturePanel';
 import { Sparkline } from '../components/Sparkline';
 import { RrgChart, RrgSeries } from '../components/RrgChart';
@@ -96,7 +96,17 @@ export const GroupPage: React.FC = () => {
         <div className="group-page" style={{ padding: '20px', maxWidth: '1400px', margin: '0 auto' }}>
             <div style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '15px' }}>
                  <button onClick={() => window.history.back()} style={{ background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: '20px' }}>⬅</button>
-                 <h1 style={{ margin: 0 }}>{data.ticker} <span style={{ fontSize: '18px', color: '#aaa', fontWeight: 'normal' }}>{data.name}</span></h1>
+                 <h1 style={{ margin: 0, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                     <span>{data.ticker}</span>
+                     {data.name && data.name.includes('::') ? (
+                         <div style={{ display: 'inline-flex', flexDirection: 'column', marginLeft: '4px', lineHeight: 1.2, textAlign: 'left' }}>
+                             <span style={{ fontSize: '11px', color: '#8b9cc8', fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase' }}>{data.name.split('::')[0]}</span>
+                             <span style={{ fontSize: '20px', color: '#fff', fontWeight: 'bold' }}>{data.name.split('::')[1]}</span>
+                         </div>
+                     ) : (
+                         <span style={{ fontSize: '18px', color: '#aaa', fontWeight: 'normal', marginLeft: '10px' }}>{data.name}</span>
+                     )}
+                 </h1>
             </div>
 
             <EtfFeaturePanel feature={data as any} titleSuffix="ETF" />
@@ -114,8 +124,8 @@ export const GroupPage: React.FC = () => {
                     </div>
                 </div>
 
-                <div style={{ overflowX: 'auto' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+                    <table style={{ width: 'max-content', minWidth: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
                         <thead>
                             <tr style={{ color: '#aaa', borderBottom: `1px solid ${appConfig.colors.glassBorder}`, textAlign: 'left' }}>
                                 <th style={{ padding: '8px', width: '30px' }}>RRG</th>

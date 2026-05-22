@@ -83,17 +83,15 @@ export const TrendScoreChart: React.FC<TrendScoreChartProps> = ({ data, height =
         // Invisible series to align markers
         const ddSeries = chart.addLineSeries({
             color: 'transparent',
-            lineWidth: 0,
+            lineWidth: 1,
             priceLineVisible: false,
             lastValueVisible: false,
-            axisLabelVisible: false,
         });
         const ftdSeries = chart.addLineSeries({
             color: 'transparent',
-            lineWidth: 0,
+            lineWidth: 1,
             priceLineVisible: false,
             lastValueVisible: false,
-            axisLabelVisible: false,
         });
 
         ddSeries.setData(data.map(item => ({ time: item.date, value: 90 })));
@@ -143,16 +141,18 @@ export const TrendScoreChart: React.FC<TrendScoreChartProps> = ({ data, height =
 
         chartRef.current = chart;
 
-        const handleResize = () => {
-            if (chartContainerRef.current && chartRef.current) {
-                chartRef.current.applyOptions({ width: chartContainerRef.current.clientWidth });
-            }
-        };
+        const resizeObserver = new ResizeObserver(entries => {
+            if (entries.length === 0 || !chartRef.current) return;
+            const { width } = entries[0].contentRect;
+            chartRef.current.applyOptions({ width });
+        });
 
-        window.addEventListener('resize', handleResize);
+        if (chartContainerRef.current) {
+            resizeObserver.observe(chartContainerRef.current);
+        }
 
         return () => {
-            window.removeEventListener('resize', handleResize);
+            resizeObserver.disconnect();
             chart.remove();
         };
     }, [data, height]);

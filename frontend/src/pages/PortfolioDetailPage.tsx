@@ -243,7 +243,7 @@ export const PortfolioDetailPage: React.FC = () => {
                 </div>
             )}
 
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '20px' }}>
                 {tabBtn('positions', `Positions (保有銘柄: ${positions.length})`)}
                 {tabBtn('history', `History (取引履歴: ${history.length})`)}
                 {tabBtn('analytics', 'Analytics (分析)')}
@@ -267,7 +267,7 @@ export const PortfolioDetailPage: React.FC = () => {
                         const targetShares = addForm.entry_price > 0 ? Math.floor(maxInvestment / addForm.entry_price) : 0;
                         return (
                         <form onSubmit={handleAddPosition} style={{ background: 'rgba(15,23,42,0.6)', border: '1px solid rgba(59,130,246,0.3)', borderRadius: '10px', padding: '20px', marginBottom: '16px' }}>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr auto', gap: '12px', alignItems: 'end' }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', alignItems: 'end' }}>
                                 <div><label style={labelStyle}>Ticker (ティッカー)</label><input style={inputStyle} value={addForm.ticker} onChange={e => setAddForm({ ...addForm, ticker: e.target.value.toUpperCase() })} required /></div>
                                 <div><label style={labelStyle}>Entry Date (購入日)</label><input style={inputStyle} type="date" value={addForm.entry_date} onChange={e => setAddForm({ ...addForm, entry_date: e.target.value })} required /></div>
                                 <div><label style={labelStyle}>Price (単価)</label><input style={inputStyle} type="number" step="0.01" value={addForm.entry_price} onChange={e => setAddForm({ ...addForm, entry_price: Number(e.target.value) })} required /></div>
@@ -287,8 +287,8 @@ export const PortfolioDetailPage: React.FC = () => {
                     {positions.length === 0 ? (
                         <div style={{ textAlign: 'center', padding: '60px', color: '#475685' }}>No open positions</div>
                     ) : (
-                        <div style={{ overflowX: 'auto' }}>
-                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                        <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+                            <table style={{ width: 'max-content', minWidth: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                                 <thead style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
                                     <tr style={{ color: '#888' }}>
                                         <th style={thStyle}>Ticker</th>
@@ -340,7 +340,7 @@ export const PortfolioDetailPage: React.FC = () => {
                                             </tr>
                                             {showSellForm === p.id && (
                                                 <tr><td colSpan={10} style={{ padding: '12px 10px', background: 'rgba(15,23,42,0.4)' }}>
-                                                    <form onSubmit={(e) => handleSell(p.id, e)} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr auto', gap: '10px', alignItems: 'end' }}>
+                                                    <form onSubmit={(e) => handleSell(p.id, e)} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px', alignItems: 'end' }}>
                                                         <div><label style={labelStyle}>Exit Date (売却日)</label><input style={inputStyle} type="date" value={sellForm.exit_date} onChange={e => setSellForm({ ...sellForm, exit_date: e.target.value })} required /></div>
                                                         <div><label style={labelStyle}>Exit Price (売却単価)</label><input style={inputStyle} type="number" step="0.01" value={sellForm.exit_price} onChange={e => setSellForm({ ...sellForm, exit_price: Number(e.target.value) })} required /></div>
                                                         <div><label style={labelStyle}>Shares (株数) (max {p.shares})</label><input style={inputStyle} type="number" step="0.01" max={p.shares} value={sellForm.exit_shares} onChange={e => setSellForm({ ...sellForm, exit_shares: Number(e.target.value) })} required /></div>
@@ -359,7 +359,7 @@ export const PortfolioDetailPage: React.FC = () => {
                                             )}
                                             {showEditForm === p.id && (
                                                 <tr><td colSpan={10} style={{ padding: '12px 10px', background: 'rgba(15,23,42,0.4)' }}>
-                                                    <form onSubmit={(e) => handleEdit(p.id, e)} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: '10px', alignItems: 'end' }}>
+                                                    <form onSubmit={(e) => handleEdit(p.id, e)} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px', alignItems: 'end' }}>
                                                         <div><label style={labelStyle}>Entry Date (購入日)</label><input style={inputStyle} type="date" value={editForm.entry_date} onChange={e => setEditForm({ ...editForm, entry_date: e.target.value })} required /></div>
                                                         <div><label style={labelStyle}>Entry Price (購入単価)</label><input style={inputStyle} type="number" step="0.01" value={editForm.entry_price} onChange={e => setEditForm({ ...editForm, entry_price: Number(e.target.value) })} required /></div>
                                                         <div><label style={labelStyle}>Shares (株数)</label><input style={inputStyle} type="number" step="0.01" value={editForm.shares} onChange={e => setEditForm({ ...editForm, shares: Number(e.target.value) })} required /></div>
@@ -387,8 +387,8 @@ export const PortfolioDetailPage: React.FC = () => {
                 history.length === 0 ? (
                     <div style={{ textAlign: 'center', padding: '60px', color: '#475685' }}>No trade history yet</div>
                 ) : (
-                    <div style={{ overflowX: 'auto' }}>
-                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                    <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+                        <table style={{ width: 'max-content', minWidth: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                             <thead style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
                                 <tr style={{ color: '#888' }}>
                                     <th style={thStyle}>Ticker</th><th style={thStyle}>Entry</th><th style={thStyle}>Exit</th>
@@ -427,7 +427,7 @@ export const PortfolioDetailPage: React.FC = () => {
                                         </tr>
                                         {showEditHistForm === h.id && (
                                             <tr><td colSpan={12} style={{ padding: '12px 10px', background: 'rgba(15,23,42,0.4)' }}>
-                                                <form onSubmit={(e) => handleEditHistory(h.id, e)} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr auto', gap: '10px', alignItems: 'end' }}>
+                                                <form onSubmit={(e) => handleEditHistory(h.id, e)} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px', alignItems: 'end' }}>
                                                     <div><label style={labelStyle}>Entry Date (購入日)</label><input style={inputStyle} type="date" value={editHistForm.entry_date} onChange={e => setEditHistForm({ ...editHistForm, entry_date: e.target.value })} required /></div>
                                                     <div><label style={labelStyle}>Entry Price (購入単価)</label><input style={inputStyle} type="number" step="0.01" value={editHistForm.entry_price} onChange={e => setEditHistForm({ ...editHistForm, entry_price: Number(e.target.value) })} required /></div>
                                                     <div><label style={labelStyle}>Exit Date (売却日)</label><input style={inputStyle} type="date" value={editHistForm.exit_date} onChange={e => setEditHistForm({ ...editHistForm, exit_date: e.target.value })} required /></div>
@@ -556,7 +556,7 @@ export const PortfolioDetailPage: React.FC = () => {
             {tab === 'settings' && (
                 <form onSubmit={handleSaveSettings} style={{ background: 'rgba(15,23,42,0.6)', border: '1px solid rgba(99,120,180,0.18)', borderRadius: '10px', padding: '24px', maxWidth: '600px' }}>
                     <h3 style={{ margin: '0 0 20px', fontSize: '16px' }}>Portfolio Settings (ポートフォリオ設定)</h3>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
                         <div><label style={labelStyle}>Name (名前)</label><input style={inputStyle} value={settingsForm.name || ''} onChange={e => setSettingsForm({ ...settingsForm, name: e.target.value })} /></div>
                         <div><label style={labelStyle}>Currency (通貨)</label>
                             <select style={inputStyle} value={settingsForm.currency || 'JPY'} onChange={e => setSettingsForm({ ...settingsForm, currency: e.target.value })}>

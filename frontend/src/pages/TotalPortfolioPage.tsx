@@ -94,21 +94,21 @@ const BreakdownCard: React.FC<BreakdownCardProps> = ({ title, data, totalValue, 
                 </div>
             </div>
             
-            <div style={{ height: '250px', overflowY: 'auto' }}>
+            <div style={{ height: '250px', overflowY: 'auto', overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
                 {data.length === 0 ? (
                     <div style={{ textAlign: 'center', paddingTop: '80px', color: '#666' }}>No data</div>
                 ) : viewMode === 'chart' ? (
                     <ResponsiveContainer width="100%" height="100%">
                         <PieChart>
                             <Pie data={data} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
-                                {data.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
+                                {data.map((_, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
                             </Pie>
-                            <Tooltip formatter={(value: number) => formatCurrency(value, currency)} contentStyle={{ background: '#1e293b', border: 'none', borderRadius: '8px', color: '#fff' }} />
+                            <Tooltip formatter={(value: any) => formatCurrency(Number(value || 0), currency)} contentStyle={{ background: '#1e293b', border: 'none', borderRadius: '8px', color: '#fff' }} />
                             <Legend wrapperStyle={{ fontSize: '12px' }} />
                         </PieChart>
                     </ResponsiveContainer>
                 ) : (
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                    <table style={{ width: 'max-content', minWidth: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                         <thead style={{ position: 'sticky', top: 0, background: 'rgba(15, 23, 42, 0.95)' }}>
                             <tr style={{ color: '#8b9cc8', textAlign: 'left', borderBottom: '1px solid rgba(99, 120, 180, 0.2)' }}>
                                 <th style={{ padding: '8px 4px', fontWeight: 600 }}>Name</th>
@@ -282,8 +282,6 @@ export const TotalPortfolioPage: React.FC = () => {
         marginBottom: '4px', display: 'block',
     };
 
-    const COLORS = ['#3b82f6', '#22d3a0', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6'];
-
     if (loading || !summary) {
         return <div style={{ textAlign: 'center', padding: '80px', color: '#666' }}>Loading Total Portfolio Dashboard...</div>;
     }
@@ -294,7 +292,7 @@ export const TotalPortfolioPage: React.FC = () => {
     return (
         <div style={{ padding: '24px', maxWidth: '1400px', margin: '0 auto' }}>
             {/* Header */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '28px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '28px' }}>
                 <div>
                     <h1 style={{ margin: 0, fontSize: '28px', fontWeight: 700,
                         background: 'linear-gradient(135deg, #3b82f6, #22d3a0)',
@@ -305,7 +303,7 @@ export const TotalPortfolioPage: React.FC = () => {
                         {summary.name}
                     </p>
                 </div>
-                <div style={{ display: 'flex', gap: '12px' }}>
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
                     <button
                         onClick={() => setShowTxForm(!showTxForm)}
                         style={{
@@ -333,7 +331,7 @@ export const TotalPortfolioPage: React.FC = () => {
             </div>
 
             {/* Master Metrics */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '24px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px', marginBottom: '24px' }}>
                 <div style={cardStyle}>
                     <div style={labelStyle}>Total Equity (総評価額)</div>
                     <div style={{ fontSize: '24px', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
@@ -399,7 +397,7 @@ export const TotalPortfolioPage: React.FC = () => {
                     boxShadow: '0 0 30px rgba(96, 165, 250, 0.1)',
                 }}>
                     <h3 style={{ margin: '0 0 20px', fontSize: '16px', fontWeight: 600 }}>Execute Transaction</h3>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '16px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px' }}>
                         <div>
                             <label style={labelStyle}>Type</label>
                             <select style={inputStyle} value={txForm.transaction_type} onChange={e => {
@@ -465,7 +463,7 @@ export const TotalPortfolioPage: React.FC = () => {
                     boxShadow: '0 0 30px rgba(59, 130, 246, 0.08)',
                 }}>
                     <h3 style={{ margin: '0 0 20px', fontSize: '16px', fontWeight: 600 }}>Create New Sub-Portfolio</h3>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px' }}>
                         <div>
                             <label style={labelStyle}>Name</label>
                             <input style={inputStyle} value={pfForm.name} onChange={e => setPfForm({ ...pfForm, name: e.target.value })} placeholder="e.g. スイング" required />
@@ -503,7 +501,7 @@ export const TotalPortfolioPage: React.FC = () => {
             )}
 
             {/* Pie Charts / Tables */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '24px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px', marginBottom: '24px' }}>
                 <BreakdownCard
                     title="Asset Allocation (Cash vs Equity)"
                     data={summary.asset_allocation}
