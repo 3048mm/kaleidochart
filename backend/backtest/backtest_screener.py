@@ -17,6 +17,9 @@ try:
         filter_rs_rank_21_gt_63,
         filter_theme_rs21_gt_63,
         filter_theme_rs_rank_21_gt_63,
+        filter_rs_rank_14_gt_21,
+        filter_theme_rs14_gt_21,
+        filter_theme_rs_rank_14_gt_21,
         filter_rrg_leading_in,
         filter_rrg_improving_in,
         filter_rrg_lagging_in,
@@ -26,6 +29,9 @@ except ModuleNotFoundError:
         filter_rs_rank_21_gt_63,
         filter_theme_rs21_gt_63,
         filter_theme_rs_rank_21_gt_63,
+        filter_rs_rank_14_gt_21,
+        filter_theme_rs14_gt_21,
+        filter_theme_rs_rank_14_gt_21,
         filter_rrg_leading_in,
         filter_rrg_improving_in,
         filter_rrg_lagging_in,
@@ -158,10 +164,11 @@ def apply_filters_to_df(
 
     # --- RS Rank merge ---
     sort_col = strategy.get('sort_column', 'rs21_rank')
-    needs_rs21 = 'min_rs_ratio_21_rank' in strategy or strategy.get('rs_rank_21_gt_63') or strategy.get('theme_rs_rank_21_gt_63') or sort_col in ('rs21_rank', 'rs_ratio_21_rank')
+    needs_rs14 = strategy.get('rs_rank_14_gt_21') or strategy.get('theme_rs_rank_14_gt_21') or sort_col in ('rs14_rank', 'rs_ratio_14_rank')
+    needs_rs21 = 'min_rs_ratio_21_rank' in strategy or strategy.get('rs_rank_21_gt_63') or strategy.get('theme_rs_rank_21_gt_63') or strategy.get('rs_rank_14_gt_21') or strategy.get('theme_rs_rank_14_gt_21') or sort_col in ('rs21_rank', 'rs_ratio_21_rank')
     needs_rs63 = strategy.get('rs_rank_21_gt_63') or strategy.get('theme_rs_rank_21_gt_63') or sort_col in ('rs63_rank', 'rs_ratio_63_rank')
 
-    if needs_rs21 or needs_rs63:
+    if needs_rs14 or needs_rs21 or needs_rs63:
         # Use bisect to find the nearest previous date (ranks may not exist for every trading day)
         if ranks_dates_sorted is not None:
             cache_dates = ranks_dates_sorted
@@ -181,6 +188,12 @@ def apply_filters_to_df(
             ranks_day = None
 
         if ranks_day is not None:
+            if needs_rs14:
+                r14 = ranks_day[ranks_day['indicator_name'] == 'rs_ratio_14'][['symbol_id', 'percent_rank']].rename(
+                    columns={'percent_rank': 'rs14_rank'}
+                )
+                merged = merged.merge(r14, on='symbol_id', how='left').reset_index(drop=True)
+
             if needs_rs21:
                 r21 = ranks_day[ranks_day['indicator_name'] == 'rs_ratio_21'][['symbol_id', 'percent_rank']].rename(
                     columns={'percent_rank': 'rs21_rank'}
@@ -193,7 +206,7 @@ def apply_filters_to_df(
                 )
                 merged = merged.merge(r63, on='symbol_id', how='left').reset_index(drop=True)
         else:
-            if 'min_rs_ratio_21_rank' in strategy or strategy.get('rs_rank_21_gt_63'):
+            if 'min_rs_ratio_21_rank' in strategy or strategy.get('rs_rank_21_gt_63') or strategy.get('rs_rank_14_gt_21'):
                 return pd.DataFrame(columns=merged.columns)
 
     # --- RRG merges ---
@@ -263,6 +276,21 @@ def apply_filters_to_df(
 
     if strategy.get('theme_rs_rank_21_gt_63'):
         mask &= filter_theme_rs_rank_21_gt_63(merged, df_symbols, df_theme_constituents)
+
+    if strategy.get('rs_rank_14_gt_21'):
+        mask &= filter_rs_rank_14_gt_21(merged)
+
+    if strategy.get('theme_rs14_gt_21'):
+        if ind_day_cache is not None:
+            ind_day_for_theme = ind_day_cache.get(target_date)
+        else:
+            ind_day_for_theme = df_ind[df_ind['date'] == target_date]
+            
+        if ind_day_for_theme is not None:
+            mask &= filter_theme_rs14_gt_21(merged, ind_day_for_theme, df_symbols, df_theme_constituents)
+
+    if strategy.get('theme_rs_rank_14_gt_21'):
+        mask &= filter_theme_rs_rank_14_gt_21(merged, df_symbols, df_theme_constituents)
 
     # RRG
     intensity_threshold = strategy.get('rrg_intensity_threshold', 0.0)

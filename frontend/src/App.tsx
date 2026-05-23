@@ -80,11 +80,37 @@ export default function App() {
 
     // Group filtered symbols by category
     const grouped = useMemo(() => {
-        return filteredSymbols.reduce<Record<string, Symbol[]>>((acc, s) => {
+        const groups = filteredSymbols.reduce<Record<string, Symbol[]>>((acc, s) => {
             const cat = s.category || '未分類'
-                ; (acc[cat] ||= []).push(s)
+            ;(acc[cat] ||= []).push(s)
             return acc
         }, {})
+
+        // Sort 'テーマ' category by ThemeGroup > Theme (locale-aware for Japanese/English)
+        if (groups['テーマ']) {
+            groups['テーマ'].sort((a, b) => {
+                const aName = a.name || '';
+                const bName = b.name || '';
+                
+                const aHasDelim = aName.includes('::');
+                const bHasDelim = bName.includes('::');
+
+                const aGroup = aHasDelim ? aName.split('::')[0] : aName;
+                const bGroup = bHasDelim ? bName.split('::')[0] : bName;
+
+                const aTheme = aHasDelim ? aName.split('::')[1] : aName;
+                const bTheme = bHasDelim ? bName.split('::')[1] : bName;
+
+                // Compare ThemeGroup first
+                const groupComp = aGroup.localeCompare(bGroup, 'ja');
+                if (groupComp !== 0) return groupComp;
+
+                // Compare Theme next
+                return aTheme.localeCompare(bTheme, 'ja');
+            });
+        }
+
+        return groups;
     }, [filteredSymbols])
 
     // Navigation handler for sidebar items

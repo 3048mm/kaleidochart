@@ -1363,6 +1363,9 @@ def get_screener(
     rs_rank_21_gt_63: bool = Query(False),
     theme_rs21_gt_63: bool = Query(False),
     theme_rs_rank_21_gt_63: bool = Query(False),
+    rs_rank_14_gt_21: bool = Query(False),
+    theme_rs14_gt_21: bool = Query(False),
+    theme_rs_rank_14_gt_21: bool = Query(False),
     require_positive_eps: bool = Query(False),
     expression: Optional[str] = Query(None, description="Expression filter string"),
 ):
@@ -1393,8 +1396,9 @@ def get_screener(
     # Collect all query params except reserved ones
     _RESERVED_PARAMS = {"target_date", "rrg_leading_in", "rrg_lagging_in", "rrg_improving_in",
                         "rrg_intensity_threshold",
-                        "rs_rank_21_gt_63", "theme_rs21_gt_63", "theme_rs_rank_21_gt_63", "require_positive_eps",
-                        "preset", "expression"}
+                        "rs_rank_21_gt_63", "theme_rs21_gt_63", "theme_rs_rank_21_gt_63",
+                        "rs_rank_14_gt_21", "theme_rs14_gt_21", "theme_rs_rank_14_gt_21",
+                        "require_positive_eps", "preset", "expression"}
     for key, value in request.query_params.items():
         if key in _RESERVED_PARAMS:
             continue
@@ -1482,6 +1486,76 @@ def get_screener(
             ).filter(
                 Symbol.category == "テーマ",
                 rank21_subq.c.r21 > rank63_subq.c.r63
+            ).subquery()
+            stock_in_leading_themes_subq = db.query(ThemeConstituent.symbol_id).filter(
+                ThemeConstituent.theme_id.in_(theme_momentum_subq.select())
+            ).subquery()
+            query = query.filter(
+                or_(
+                    (Symbol.category == "テーマ") & (Symbol.id.in_(theme_momentum_subq.select())),
+                    (Symbol.category == "個別") & (Symbol.id.in_(stock_in_leading_themes_subq.select()))
+                )
+            )
+    if rs_rank_14_gt_21:
+        _rk_date = db.query(func.max(RelativeRank.date)).filter(RelativeRank.date <= latest_date_result).scalar()
+        if _rk_date:
+            rank14_subq = db.query(
+                RelativeRank.symbol_id,
+                RelativeRank.percent_rank.label('r14')
+            ).filter(
+                RelativeRank.date == _rk_date,
+                RelativeRank.indicator_name == 'rs_ratio_14'
+            ).subquery(name="rank14_gt21_14")
+            rank21_subq = db.query(
+                RelativeRank.symbol_id,
+                RelativeRank.percent_rank.label('r21')
+            ).filter(
+                RelativeRank.date == _rk_date,
+                RelativeRank.indicator_name == 'rs_ratio_21'
+            ).subquery(name="rank14_gt21_21")
+            query = query.join(rank14_subq, Symbol.id == rank14_subq.c.symbol_id)
+            query = query.join(rank21_subq, Symbol.id == rank21_subq.c.symbol_id)
+            query = query.filter(rank14_subq.c.r14 > rank21_subq.c.r21)
+
+    if theme_rs14_gt_21:
+        theme_momentum_subq = db.query(Indicator.symbol_id).filter(
+            Indicator.date == latest_date_result,
+            Indicator.rs_ratio_14 > Indicator.rs_ratio_21
+        ).subquery()
+        stock_in_leading_themes_subq = db.query(ThemeConstituent.symbol_id).filter(
+            ThemeConstituent.theme_id.in_(theme_momentum_subq.select())
+        ).subquery()
+        query = query.filter(
+            or_(
+                (Symbol.category == "テーマ") & (Symbol.id.in_(theme_momentum_subq.select())),
+                (Symbol.category == "個別") & (Symbol.id.in_(stock_in_leading_themes_subq.select()))
+            )
+        )
+
+    if theme_rs_rank_14_gt_21:
+        _rk_date = db.query(func.max(RelativeRank.date)).filter(RelativeRank.date <= latest_date_result).scalar()
+        if _rk_date:
+            rank14_subq = db.query(
+                RelativeRank.symbol_id,
+                RelativeRank.percent_rank.label('r14')
+            ).filter(
+                RelativeRank.date == _rk_date,
+                RelativeRank.indicator_name == 'rs_ratio_14'
+            ).subquery(name="theme_rank14_get")
+            rank21_subq = db.query(
+                RelativeRank.symbol_id,
+                RelativeRank.percent_rank.label('r21')
+            ).filter(
+                RelativeRank.date == _rk_date,
+                RelativeRank.indicator_name == 'rs_ratio_21'
+            ).subquery(name="theme_rank21_get_14")
+            theme_momentum_subq = db.query(Symbol.id).join(
+                rank14_subq, Symbol.id == rank14_subq.c.symbol_id
+            ).join(
+                rank21_subq, Symbol.id == rank21_subq.c.symbol_id
+            ).filter(
+                Symbol.category == "テーマ",
+                rank14_subq.c.r14 > rank21_subq.c.r21
             ).subquery()
             stock_in_leading_themes_subq = db.query(ThemeConstituent.symbol_id).filter(
                 ThemeConstituent.theme_id.in_(theme_momentum_subq.select())

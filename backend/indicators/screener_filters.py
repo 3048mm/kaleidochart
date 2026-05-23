@@ -195,3 +195,93 @@ def filter_theme_rs_rank_21_gt_63(
     )
     return mask
 
+
+def filter_theme_rs14_gt_21(
+    merged: pd.DataFrame,
+    df_ind_day: pd.DataFrame,
+    df_symbols: pd.DataFrame,
+    df_theme_constituents: pd.DataFrame,
+) -> pd.Series:
+    """
+    テーマの RS Ratio 14 > RS Ratio 21 に属する銘柄を通過させるフィルタ。
+
+    - テーマ自体: rs_ratio_14 > rs_ratio_21 のテーマを通過
+    - 個別銘柄: 上記テーマの構成銘柄を通過
+
+    Returns:
+        pd.Series[bool]: True = 通過
+    """
+    # テーマの中で RS14 > RS21 のものを抽出
+    theme_ind = df_ind_day.merge(
+        df_symbols[df_symbols['category'] == 'テーマ'][['id']],
+        left_on='symbol_id', right_on='id', how='inner'
+    )
+    leading_themes = theme_ind[
+        theme_ind['rs_ratio_14'] > theme_ind['rs_ratio_21']
+    ]['symbol_id'].values
+
+    # Leading テーマに属する個別銘柄を抽出
+    stocks_in_themes = df_theme_constituents[
+        df_theme_constituents['theme_id'].isin(leading_themes)
+    ]['symbol_id'].values
+
+    # テーマ自体 or テーマ構成銘柄 → True
+    mask = (
+        ((merged['category'] == 'テーマ') & (merged['symbol_id'].isin(leading_themes))) |
+        ((merged['category'] == '個別') & (merged['symbol_id'].isin(stocks_in_themes)))
+    )
+    return mask
+
+
+def filter_theme_rs_rank_14_gt_21(
+    merged: pd.DataFrame,
+    df_symbols: pd.DataFrame,
+    df_theme_constituents: pd.DataFrame,
+) -> pd.Series:
+    """
+    テーマの RS%rank 14 > RS%rank 21 に属する銘柄を通過させるフィルタ。
+
+    前提: merged に 'rs14_rank' と 'rs21_rank' が存在すること。
+
+    - テーマ自体: rs14_rank > rs21_rank のテーマを通過
+    - 個別銘柄: 上記テーマの構成銘柄を通過
+
+    Returns:
+        pd.Series[bool]: True = 通過
+    """
+    if 'rs14_rank' not in merged.columns or 'rs21_rank' not in merged.columns:
+        return pd.Series(True, index=merged.index)
+
+    # merged からテーマシンボルを抽出し、その中で rs14_rank > rs21_rank のものを特定
+    theme_rows = merged[merged['category'] == 'テーマ']
+    leading_themes = theme_rows[
+        theme_rows['rs14_rank'] > theme_rows['rs21_rank']
+    ]['symbol_id'].values
+
+    # Leading テーマに属する個別銘柄を抽出
+    stocks_in_themes = df_theme_constituents[
+        df_theme_constituents['theme_id'].isin(leading_themes)
+    ]['symbol_id'].values
+
+    # テーマ自体 or テーマ構成銘柄 → True
+    mask = (
+        ((merged['category'] == 'テーマ') & (merged['symbol_id'].isin(leading_themes))) |
+        ((merged['category'] == '個別') & (merged['symbol_id'].isin(stocks_in_themes)))
+    )
+    return mask
+
+
+def filter_rs_rank_14_gt_21(merged: pd.DataFrame) -> pd.Series:
+    """
+    個別銘柄の RS%rank 14 > RS%rank 21 の銘柄のみを通過させるフィルタ。
+
+    前提: merged に 'rs14_rank' と 'rs21_rank' カラムが存在すること。
+
+    Returns:
+        pd.Series[bool]: True = 通過
+    """
+    if 'rs14_rank' not in merged.columns or 'rs21_rank' not in merged.columns:
+        return pd.Series(True, index=merged.index)
+    return merged['rs14_rank'] > merged['rs21_rank']
+
+
