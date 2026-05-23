@@ -154,6 +154,7 @@ export const ScreenerResultPage: React.FC = () => {
 
     const [sortKey, setSortKey] = useState<SortKey>('change_pct');
     const [sortDesc, setSortDesc] = useState(true);
+    const [isFilterOpen, setIsFilterOpen] = useState(false);
     const { isTickerActive, toggleWatchlist } = useWatchlist();
 
 
@@ -426,12 +427,32 @@ export const ScreenerResultPage: React.FC = () => {
                 </div>
             </div>
 
+            {/* Backdrop for Mobile Drawer */}
+            <div className={`screener-filter-backdrop ${isFilterOpen ? 'open' : ''}`} onClick={() => setIsFilterOpen(false)} />
+
             <div style={{ display: 'flex', gap: '20px', flex: 1, minHeight: 0 }}>
                 {/* Left Panel: Dynamic Filters */}
-                <div className="glass-panel" style={{ width: '270px', padding: '15px', display: 'flex', flexDirection: 'column', flexShrink: 0, overflowY: 'auto' }}>
-                    <h3 style={{ fontSize: '14px', margin: '0 0 15px 0', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '10px' }}>
-                        Custom Filters
-                    </h3>
+                <div className={`screener-filter-sidebar glass-panel ${isFilterOpen ? 'open' : ''}`} style={{ width: '270px', padding: '15px', display: 'flex', flexDirection: 'column', flexShrink: 0, overflowY: 'auto' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '0 0 15px 0', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '10px' }}>
+                        <h3 style={{ fontSize: '14px', margin: 0 }}>
+                            Custom Filters
+                        </h3>
+                        <button 
+                            className="mobile-filter-close-btn"
+                            onClick={() => setIsFilterOpen(false)}
+                            style={{
+                                display: 'none',
+                                background: 'transparent',
+                                border: 'none',
+                                color: '#aaa',
+                                fontSize: '16px',
+                                cursor: 'pointer',
+                                padding: '4px'
+                            }}
+                        >
+                            ✕
+                        </button>
+                    </div>
                     
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
                         {Object.entries(grouped).map(([categoryName, cols]) => (
@@ -461,15 +482,36 @@ export const ScreenerResultPage: React.FC = () => {
 
                 {/* Right Panel: Results */}
                 <div className="glass-panel" style={{ flex: 1, padding: '20px', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '10px' }}>
                         <div>
                             <h2 style={{ margin: 0, fontSize: '20px' }}>
                                 {presetId ? `Screener: ${presetId}` : 'Custom Screener'}
                             </h2>
-                            <p style={{ margin: '5px 0 0 0', color: '#888', fontSize: '12px' }}>Additional criteria can be added from the left panel.</p>
+                            <p style={{ margin: '5px 0 0 0', color: '#888', fontSize: '12px' }} className="pc-only-text">Additional criteria can be added from the left panel.</p>
                         </div>
-                        <div style={{ fontSize: '14px', color: '#888', background: 'rgba(255,255,255,0.05)', padding: '4px 10px', borderRadius: '4px' }}>
-                            {results.length} results
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <button
+                                className="mobile-filter-toggle-btn"
+                                onClick={() => setIsFilterOpen(true)}
+                                style={{
+                                    display: 'none',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    padding: '6px 12px',
+                                    fontSize: '12px',
+                                    fontWeight: 'bold',
+                                    background: 'rgba(59, 130, 246, 0.15)',
+                                    border: `1px solid ${appConfig.colors.accent}`,
+                                    borderRadius: '6px',
+                                    color: appConfig.colors.accent,
+                                    cursor: 'pointer',
+                                }}
+                            >
+                                🔍 フィルター ({results.length})
+                            </button>
+                            <div style={{ fontSize: '14px', color: '#888', background: 'rgba(255,255,255,0.05)', padding: '4px 10px', borderRadius: '4px' }}>
+                                {results.length} results
+                            </div>
                         </div>
                     </div>
                     

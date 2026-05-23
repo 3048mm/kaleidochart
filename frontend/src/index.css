@@ -247,6 +247,56 @@ body {
     font-size: 13px !important;
     white-space: nowrap !important; /* Prevent text wrap */
   }
+
+  /* Mobile Screener Filter Drawer */
+  .screener-filter-sidebar {
+    position: fixed !important;
+    top: var(--header-h) !important;
+    left: 0 !important;
+    bottom: 0 !important;
+    width: 280px !important;
+    z-index: 210 !important;
+    transform: translateX(-100%) !important;
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    opacity: 1 !important;
+    pointer-events: auto !important;
+    border-radius: 0 !important;
+    border-right: 1px solid var(--border) !important;
+    border-top: none !important;
+    border-bottom: none !important;
+  }
+
+  .screener-filter-sidebar.open {
+    transform: translateX(0) !important;
+  }
+
+  .screener-filter-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    top: var(--header-h);
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 209;
+    backdrop-filter: blur(2px);
+  }
+
+  .screener-filter-backdrop.open {
+    display: block;
+    animation: fade-in 0.3s ease;
+  }
+
+  /* Show toggle buttons on mobile */
+  .mobile-filter-toggle-btn {
+    display: flex !important;
+  }
+  
+  .mobile-filter-close-btn {
+    display: block !important;
+  }
+  
+  .pc-only-text {
+    display: none !important;
+  }
 }
 
 /* === Header === */
@@ -378,51 +428,66 @@ body {
 
 .symbol-item {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
   padding: 8px 14px;
+  margin: 4px 10px;
+  border-radius: 6px;
   cursor: pointer;
-  border-radius: 0;
-  transition: background 0.15s;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   user-select: none;
+  border: 1px solid transparent;
 }
 
 .symbol-item:hover {
-  background: var(--bg-glass-hover);
+  background: rgba(59, 130, 246, 0.06);
+  border-color: rgba(59, 130, 246, 0.15);
 }
 
 .symbol-item.active {
-  background: linear-gradient(90deg, rgba(59, 130, 246, 0.15) 0%, transparent 100%);
-  border-left: 2px solid var(--accent);
+  background: linear-gradient(90deg, rgba(59, 130, 246, 0.15) 0%, rgba(59, 130, 246, 0.02) 100%);
+  border-color: rgba(59, 130, 246, 0.25);
+  box-shadow: inset 3px 0 0 var(--accent); /* 左端のアクティブバー */
 }
 
 .symbol-ticker {
-  font-weight: 600;
+  font-weight: 700;
   font-size: 13px;
   color: var(--text-primary);
 }
 
 .symbol-item.active .symbol-ticker {
-  color: var(--accent);
+  color: #fff;
 }
 
 .symbol-badge {
-  font-size: 9px;
+  font-size: 8px;
   padding: 2px 5px;
   border-radius: 3px;
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
 .badge-etf {
-  background: rgba(59, 130, 246, 0.15);
-  color: var(--accent);
+  background: rgba(168, 85, 247, 0.15);
+  color: #a855f7;
 }
 
 .badge-equity {
   background: rgba(34, 211, 160, 0.12);
   color: var(--accent-green);
+}
+
+.badge-theme {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--accent-yellow);
+}
+
+.badge-sector {
+  background: rgba(59, 130, 246, 0.15);
+  color: var(--accent);
 }
 
 /* === Main Content === */

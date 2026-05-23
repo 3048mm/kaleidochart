@@ -74,23 +74,23 @@ min_market_cap =  1e7
 #  Port CAGR:      1108.01%
 #  SPY B&H CAGR:   7.37%
 #  Port vs SPY:    1100.64%
-# min_change_1d_pct = 2.0
-# min_vol_surge_21 = 2.8000000000000003
-# min_adr_pct_21 = 5.5
-# max_dist_sma50_atr = 7.0
-# min_market_cap = 50000000.0
-# rs_rank_21_gt_63 = true
+#min_change_1d_pct = 7.0
+#min_vol_surge_21 = 2.8
+#min_adr_pct_21 = 6.0
+#max_dist_sma50_atr = 4.5
+#min_market_cap = 1e7.0
+#theme_rs_rank_21_gt_63 = true
 # [backtest results]
-#  Expectancy:     2.116%
-#  Avg Gain/Trade: 2.116%
-#  Avg SPY Gain:   0.063%
-#  Alpha:          2.053%
-#  Max Drawdown:   -78.0%
-#  Win Rate:       35.3%
-#  Total Trades:   2121
-#  Port CAGR:      374.19%
+#  Expectancy:     3.078%
+#  Avg Gain/Trade: 3.078%
+#  Avg SPY Gain:   0.060%
+#  Alpha:          3.018%
+#  Max Drawdown:   -36.4%
+#  Win Rate:       33.9%
+#  Total Trades:   1657
+#  Port CAGR:      907.40%
 #  SPY B&H CAGR:   7.37%
-#  Port vs SPY:    366.82%
+#  Port vs SPY:    900.02%
 
 [[rise]]
 id = "momentum_breakout"

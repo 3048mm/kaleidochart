@@ -124,7 +124,18 @@ export const SummaryTable: React.FC<SummaryTableProps> = ({
                                 <Link to={linkTo ? linkTo(item) : `/chart/${encodeURIComponent(item.ticker)}`} style={{ color: appConfig.colors.chartText, textDecoration: 'none', fontWeight: 'bold', fontSize: '13px' }}>
                                     {item.ticker}
                                 </Link>
-                                <span style={{ fontSize: '10px', color: '#666', lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '120px' }}>{item.name}</span>
+                                {item.name && item.name.includes('::') ? (
+                                    <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.2, marginTop: '2px' }}>
+                                        <span style={{ fontSize: '9px', color: '#8b9cc8', fontWeight: 600, textTransform: 'uppercase', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '120px' }}>
+                                            {item.name.split('::')[0]}
+                                        </span>
+                                        <span style={{ fontSize: '11px', color: '#ccc', fontWeight: 'bold', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '120px' }}>
+                                            {item.name.split('::')[1]}
+                                        </span>
+                                    </div>
+                                ) : (
+                                    <span style={{ fontSize: '10px', color: '#666', lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '120px' }}>{item.name}</span>
+                                )}
                             </div>
 
                             {/* 2. Close */}

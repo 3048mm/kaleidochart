@@ -1322,16 +1322,11 @@ def get_screener_dashboard(
 
     # Load presets from TOML
     presets = _load_presets()
-    active_rise_ids = presets.get("active_rise_ids", [])
-    active_fall_ids = presets.get("active_fall_ids", [])
     
     rise_categories = []
     fall_categories = []
 
     for p in presets.get("rise", []):
-        p_id = p.get("id")
-        if active_rise_ids and p_id not in active_rise_ids:
-            continue
         try:
             q = _build_preset_query(p)
             rise_categories.append(schemas.ScreenerDashboardCategory(
@@ -1343,9 +1338,6 @@ def get_screener_dashboard(
             logger.error(f"Screener preset '{p.get('id')}' failed: {e}")
 
     for p in presets.get("fall", []):
-        p_id = p.get("id")
-        if active_fall_ids and p_id not in active_fall_ids:
-            continue
         try:
             q = _build_preset_query(p)
             fall_categories.append(schemas.ScreenerDashboardCategory(
