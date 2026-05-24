@@ -61,7 +61,7 @@ def test_evaluate_exit_for_day_profit_target(mock_simulator_data):
     exits = simulator.evaluate_exit_for_day(pd.Timestamp('2024-01-04'), {'profit_target_pct': 0.08})
     
     assert len(exits) == 1
-    assert exits[0]['reason'] == 'profit_target'
+    assert exits[0]['reason'] == 'partial_take_profit'
     assert exits[0]['exit_price'] == 110.0
 
 def test_evaluate_exit_for_day_removes_position(mock_simulator_data):

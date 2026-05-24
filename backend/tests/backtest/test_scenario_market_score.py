@@ -85,7 +85,8 @@ class TestScenarioMarketTrendScorer(unittest.TestCase):
             self.prices_df, 
             self.symbols_df, 
             daily_metrics=self.daily_metrics,
-            weights=weights
+            weights=weights,
+            scaling_ratio=1.0
         )
         
         target_date = pd.Timestamp('2026-05-17').date()
@@ -118,7 +119,8 @@ class TestScenarioMarketTrendScorer(unittest.TestCase):
             self.prices_df, 
             self.symbols_df, 
             daily_metrics=self.daily_metrics,
-            weights=weights
+            weights=weights,
+            scaling_ratio=1.0
         )
         
         target_date = pd.Timestamp('2026-05-17').date()
@@ -206,7 +208,8 @@ class TestScenarioMarketTrendScorer(unittest.TestCase):
             symbols_extended,
             daily_metrics=self.daily_metrics,
             use_vxv_vix=True,
-            weights=weights
+            weights=weights,
+            scaling_ratio=1.0
         )
         
         score, phase = scorer.evaluate_market_phase(target_date)

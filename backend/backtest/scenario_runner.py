@@ -262,7 +262,7 @@ def run_scenario_test(
     prev_date = None
     for i, current_date in enumerate(dates):
         # current_date is already a datetime.date from preload_data
-        c_date = current_date
+        c_date = pd.to_datetime(current_date).date()
         
         if c_date < start_date_obj or c_date > end_date_obj:
             prev_date = c_date
