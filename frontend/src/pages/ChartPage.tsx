@@ -28,6 +28,13 @@ const formatMarketCap = (val: number): string => {
     return `$${val.toLocaleString()}`;
 };
 
+const formatNumberCompact = (val: number): string => {
+    if (Math.abs(val) >= 1.0e9) return `${(val / 1.0e9).toFixed(2)}B`;
+    if (Math.abs(val) >= 1.0e6) return `${(val / 1.0e6).toFixed(2)}M`;
+    if (Math.abs(val) >= 1.0e3) return `${(val / 1.0e3).toFixed(1)}K`;
+    return val.toLocaleString();
+};
+
 const EarningsChart: React.FC<{ earnings: EarningData[] }> = ({ earnings }) => {
     if (!earnings || earnings.length === 0) return null;
 
@@ -111,6 +118,14 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
     const [error, setError] = useState('');
 
     const [viewMode, setViewMode] = useState<'chart' | 'rs' | 'table' | 'fundamentals'>('chart');
+    const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+    const [showIndicatorModal, setShowIndicatorModal] = useState(false);
+
+    useEffect(() => {
+        const handleResize = () => setIsMobile(window.innerWidth <= 768);
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
     const [earnings, setEarnings] = useState<EarningData[]>([]);
     const [earningsLoading, setEarningsLoading] = useState(false);
     const { isTickerActive, toggleWatchlist } = useWatchlist();
@@ -501,6 +516,7 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
                 <td style={{ padding: '2px 10px', textAlign: 'right', color: change && change >= 0 ? appConfig.colors.good : appConfig.colors.bad }}>
                     {change != null ? `${change.toFixed(2)}%` : '-'}
                 </td>
+                <td style={{ padding: '2px 10px', textAlign: 'right' }}>{formatNumberCompact(point.volume)}</td>
                 <td style={{ padding: '2px 10px', textAlign: 'right' }}>{point.sma_21?.toFixed(2) ?? '-'}</td>
                 <td style={{ padding: '2px 10px', textAlign: 'right' }}>{point.sma_50?.toFixed(2) ?? '-'}</td>
                 <td style={{ padding: '2px 10px', textAlign: 'right' }}>{point.sma_200?.toFixed(2) ?? '-'}</td>
@@ -524,91 +540,126 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
                 <td style={{ padding: '2px 10px', textAlign: 'right' }}>-</td>
                 <td style={{ padding: '2px 10px', textAlign: 'right' }}>-</td>
                 <td style={{ padding: '2px 10px', textAlign: 'right' }}>-</td>
+                <td style={{ padding: '2px 10px', textAlign: 'right' }}>-</td>
             </tr>
         );
     }
 
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-            <div style={{ padding: '10px 20px', display: 'flex', alignItems: 'center', gap: '20px' }}>
-                <Link to="/" style={{ color: '#00ff88', textDecoration: 'none' }}>&larr; Dashboard</Link>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <WatchlistButton 
-                        isActive={isTickerActive(selected.ticker)} 
-                        onClick={() => toggleWatchlist(selected.ticker, latest?.time)}
-                        size={24}
-                    />
-                    <span style={{ fontSize: '18px', fontWeight: 700 }}>{selected.ticker}</span>
+        <div style={{ display: 'flex', flexDirection: 'column', height: isMobile ? 'calc(100vh - 130px)' : '100%', boxSizing: 'border-box' }}>
+            <div style={{ padding: isMobile ? '10px' : '10px 20px', display: 'flex', flexDirection: isMobile ? 'column' : 'row', alignItems: isMobile ? 'flex-start' : 'center', gap: isMobile ? '8px' : '20px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between' }}>
+                    <Link to="/" style={{ color: '#00ff88', textDecoration: 'none', fontSize: isMobile ? '13px' : '14px' }}>&larr; Dashboard</Link>
+                    <a href={tradingViewUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#2962FF', textDecoration: 'none', fontSize: '12px' }}>
+                        TradingView ↗
+                    </a>
+                </div>
+                
+                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: isMobile ? '6px' : '10px', width: '100%' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <WatchlistButton 
+                            isActive={isTickerActive(selected.ticker)} 
+                            onClick={() => toggleWatchlist(selected.ticker, latest?.time)}
+                            size={isMobile ? 20 : 24}
+                        />
+                        <span style={{ fontSize: isMobile ? '16px' : '18px', fontWeight: 700 }}>{selected.ticker}</span>
+                    </div>
 
-                    <span style={{ fontSize: '12px', color: '#888' }}>{selected.name} ({selected.category})</span>
+                    <span style={{ fontSize: '11px', color: '#888' }}>
+                        {selected.name && selected.name.includes('::') ? selected.name.split('::')[1] : selected.name} ({selected.category})
+                    </span>
+                    
                     {themes.length > 0 && (
-                        <div style={{ display: 'flex', gap: '8px', marginLeft: '10px', alignItems: 'center' }}>
-                            <span style={{ fontSize: '11px', color: '#666' }}>Themes:</span>
-                            {themes.map(t => (
-                                <Link 
-                                    key={t.id} 
-                                    to={`/chart/${t.ticker}`} 
-                                    style={{ 
-                                        fontSize: '11px', 
-                                        color: '#00ff88', 
-                                        background: 'rgba(0, 255, 136, 0.1)', 
-                                        padding: '2px 8px', 
-                                        borderRadius: '12px', 
-                                        textDecoration: 'none',
-                                        border: '1px solid rgba(0, 255, 136, 0.2)',
-                                        transition: 'all 0.2s'
-                                    }}
-                                    onMouseEnter={e => {
-                                        e.currentTarget.style.background = 'rgba(0, 255, 136, 0.2)';
-                                        e.currentTarget.style.borderColor = 'rgba(0, 255, 136, 0.4)';
-                                    }}
-                                    onMouseLeave={e => {
-                                        e.currentTarget.style.background = 'rgba(0, 255, 136, 0.1)';
-                                        e.currentTarget.style.borderColor = 'rgba(0, 255, 136, 0.2)';
-                                    }}
-                                >
-                                    {t.name}
-                                </Link>
-                            ))}
+                        <div style={{ 
+                            display: 'flex', 
+                            gap: '6px', 
+                            alignItems: 'center',
+                            overflowX: isMobile ? 'auto' : 'visible',
+                            whiteSpace: 'nowrap',
+                            maxWidth: isMobile ? '100%' : 'none',
+                            paddingBottom: isMobile ? '2px' : '0',
+                            WebkitOverflowScrolling: 'touch',
+                            scrollbarWidth: 'none', // hide scrollbar for Firefox
+                        }}>
+                            {!isMobile && <span style={{ fontSize: '11px', color: '#666', marginLeft: '6px' }}>Themes:</span>}
+                            {themes.map(t => {
+                                const hasDelim = t.name && t.name.includes('::');
+                                const themeGroup = hasDelim ? t.name.split('::')[0] : '';
+                                const themeName = hasDelim ? t.name.split('::')[1] : t.name;
+
+                                return (
+                                    <Link 
+                                        key={t.id} 
+                                        to={`/chart/${t.ticker}`} 
+                                        style={{ 
+                                            fontSize: '10px', 
+                                            color: '#00ff88', 
+                                            background: 'rgba(0, 255, 136, 0.08)', 
+                                            padding: hasDelim ? '2px 8px' : '4px 8px', 
+                                            borderRadius: '6px', 
+                                            textDecoration: 'none',
+                                            border: '1px solid rgba(0, 255, 136, 0.2)',
+                                            transition: 'all 0.2s',
+                                            display: 'inline-block',
+                                            flexShrink: 0
+                                        }}
+                                        onMouseEnter={e => {
+                                            e.currentTarget.style.background = 'rgba(0, 255, 136, 0.15)';
+                                            e.currentTarget.style.borderColor = 'rgba(0, 255, 136, 0.4)';
+                                        }}
+                                        onMouseLeave={e => {
+                                            e.currentTarget.style.background = 'rgba(0, 255, 136, 0.08)';
+                                            e.currentTarget.style.borderColor = 'rgba(0, 255, 136, 0.2)';
+                                        }}
+                                    >
+                                        {hasDelim ? (
+                                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', lineHeight: 1.1 }}>
+                                                <span style={{ fontSize: '7px', color: '#8b9cc8', fontWeight: 600, letterSpacing: '0.02em' }}>{themeGroup}</span>
+                                                <span style={{ fontSize: '9px', color: '#00ff88', fontWeight: 700 }}>{themeName}</span>
+                                            </div>
+                                        ) : (
+                                            <span style={{ fontSize: '9px', color: '#00ff88', fontWeight: 700 }}>{themeName}</span>
+                                        )}
+                                    </Link>
+                                );
+                            })}
                         </div>
                     )}
-                    {latest && latest.market_cap && (
-                        <span style={{ fontSize: '12px', color: '#aaa', marginLeft: '10px', padding: '2px 8px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px' }}>
+                    
+                    {latest && latest.market_cap && !isMobile && (
+                        <span style={{ fontSize: '11px', color: '#aaa', marginLeft: 'auto', padding: '2px 8px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px' }}>
                             Market Cap: <strong style={{ color: '#fff' }}>{formatMarketCap(latest.market_cap)}</strong>
                         </span>
                     )}
                 </div>
-                <a href={tradingViewUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#2962FF', textDecoration: 'none', fontSize: '12px', marginLeft: 'auto' }}>
-                    TradingView ↗
-                </a>
             </div>
 
-            <div style={{ padding: '0 20px', display: 'flex', gap: '10px', marginBottom: '10px' }}>
+            <div style={{ padding: isMobile ? '0 10px' : '0 20px', display: 'flex', gap: '8px', marginBottom: '8px', overflowX: 'auto', whiteSpace: 'nowrap' }}>
                 <button
                     className={`toggle-btn ${viewMode === 'chart' ? 'active' : ''}`}
                     onClick={() => setViewMode('chart')}
-                    style={{ padding: '6px 16px', fontSize: '14px', borderRadius: '4px' }}
+                    style={{ padding: '6px 12px', fontSize: '12px', borderRadius: '4px', flexShrink: 0 }}
                 >
                     Chart View
                 </button>
                 <button
                     className={`toggle-btn ${viewMode === 'rs' ? 'active' : ''}`}
                     onClick={() => setViewMode('rs')}
-                    style={{ padding: '6px 16px', fontSize: '14px', borderRadius: '4px' }}
+                    style={{ padding: '6px 12px', fontSize: '12px', borderRadius: '4px', flexShrink: 0 }}
                 >
                     RS View
                 </button>
                 <button
                     className={`toggle-btn ${viewMode === 'table' ? 'active' : ''}`}
                     onClick={() => setViewMode('table')}
-                    style={{ padding: '6px 16px', fontSize: '14px', borderRadius: '4px' }}
+                    style={{ padding: '6px 12px', fontSize: '12px', borderRadius: '4px', flexShrink: 0 }}
                 >
                     Data View
                 </button>
                 <button
                     className={`toggle-btn ${viewMode === 'fundamentals' ? 'active' : ''}`}
                     onClick={() => setViewMode('fundamentals')}
-                    style={{ padding: '6px 16px', fontSize: '14px', borderRadius: '4px' }}
+                    style={{ padding: '6px 12px', fontSize: '12px', borderRadius: '4px', flexShrink: 0 }}
                 >
                     Fundamentals
                 </button>
@@ -616,99 +667,216 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
 
             {error && <div style={{ color: '#ff4444', padding: '0 20px' }}>{error}</div>}
 
-            {/* === Two-row Stats Table === */}
+            {/* === Stats Table (PC) or HUD (Mobile) === */}
             {latest && (
-                <div style={{ padding: '0 20px 6px 20px', overflowX: 'auto' }}>
-                    <table style={{ borderCollapse: 'collapse', fontSize: '12px', maxWidth: '800px' }}>
-                        <thead>
-                            <tr style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                                <th style={{ padding: '2px 10px', textAlign: 'left' }}></th>
-                                <th style={{ padding: '2px 10px', textAlign: 'left' }}>Date</th>
-                                <th style={{ padding: '2px 10px', textAlign: 'right' }}>Close</th>
-                                <th style={{ padding: '2px 10px', textAlign: 'right' }}>1D%</th>
-                                <th style={{ padding: '2px 10px', textAlign: 'right' }}>SMA21</th>
-                                <th style={{ padding: '2px 10px', textAlign: 'right' }}>SMA50</th>
-                                <th style={{ padding: '2px 10px', textAlign: 'right' }}>SMA200</th>
-                                <th style={{ padding: '2px 10px', textAlign: 'right' }}>ADR%(21)</th>
-                                <th style={{ padding: '2px 10px', textAlign: 'right' }}>SMA50/ATR%(14)</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <StatRow label="Latest" point={latest} change={latestChange} />
-                            {hoverData && hoverData.time !== latest.time ? (
-                                <StatRow label="Cursor" point={hoverData} change={hoverChange} />
-                            ) : (
-                                <PlaceholderRow />
-                            )}
-                        </tbody>
-                    </table>
-                </div>
+                isMobile ? (
+                    <div style={{ 
+                        padding: '6px 12px', 
+                        background: 'rgba(255,255,255,0.02)', 
+                        borderBottom: '1px solid rgba(255,255,255,0.05)',
+                        fontSize: '11px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        color: '#aaa',
+                        gap: '6px',
+                        flexWrap: 'wrap'
+                    }}>
+                        {(() => {
+                            const activePoint = hoverData && hoverData.time !== latest.time ? hoverData : latest;
+                            const activeChange = hoverData && hoverData.time !== latest.time ? hoverChange : latestChange;
+                            const isHover = hoverData && hoverData.time !== latest.time;
+                            const changeColor = activeChange != null && activeChange >= 0 ? appConfig.colors.good : appConfig.colors.bad;
+                            const priceColor = activePoint.close >= activePoint.open ? appConfig.colors.good : appConfig.colors.bad;
+
+                            return (
+                                <>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                        <span style={{ 
+                                            padding: '1px 4px', 
+                                            background: isHover ? 'rgba(41,98,255,0.2)' : 'rgba(0,255,136,0.1)', 
+                                            color: isHover ? '#60a5fa' : '#00ff88', 
+                                            borderRadius: '3px',
+                                            fontSize: '8px',
+                                            fontWeight: 'bold'
+                                        }}>
+                                            {isHover ? 'CURSOR' : 'LATEST'}
+                                        </span>
+                                        <span style={{ fontWeight: '500', color: '#fff' }}>{activePoint.time}</span>
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <span>C: <strong style={{ color: priceColor }}>{activePoint.close.toFixed(2)}</strong></span>
+                                        <span>(<strong style={{ color: changeColor }}>{activeChange != null ? `${activeChange.toFixed(2)}%` : '-'}</strong>)</span>
+                                        <span>V: <strong style={{ color: '#fff' }}>{formatNumberCompact(activePoint.volume)}</strong></span>
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '9px', color: '#666' }}>
+                                        {showSma21 && activePoint.sma_21 && <span>SMA21:<strong style={{ color: '#2962FF' }}>{activePoint.sma_21.toFixed(1)}</strong></span>}
+                                        {showSma50 && activePoint.sma_50 && <span>SMA50:<strong style={{ color: '#FF6D00' }}>{activePoint.sma_50.toFixed(1)}</strong></span>}
+                                        {activePoint.adr_pct_21 && <span>ADR:<strong style={{ color: '#ccc' }}>{activePoint.adr_pct_21.toFixed(1)}%</strong></span>}
+                                        {activePoint.dist_sma50_atr != null && (() => {
+                                            const distColor = activePoint.dist_sma50_atr >= appConfig.thresholds.atr_multiple_red 
+                                                ? '#ff4444' 
+                                                : activePoint.dist_sma50_atr >= appConfig.thresholds.atr_multiple_yellow 
+                                                    ? '#ffff00' 
+                                                    : '#ccc';
+                                            return (
+                                                <span>50/ATR:<strong style={{ color: distColor }}>{activePoint.dist_sma50_atr.toFixed(1)}</strong></span>
+                                            );
+                                        })()}
+                                    </div>
+                                </>
+                            );
+                        })()}
+                    </div>
+                ) : (
+                    <div style={{ padding: '0 20px 6px 20px', overflowX: 'auto' }}>
+                        <table style={{ borderCollapse: 'collapse', fontSize: '12px', maxWidth: '850px', width: '100%' }}>
+                            <thead>
+                                <tr style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                    <th style={{ padding: '2px 10px', textAlign: 'left' }}></th>
+                                    <th style={{ padding: '2px 10px', textAlign: 'left' }}>Date</th>
+                                    <th style={{ padding: '2px 10px', textAlign: 'right' }}>Close</th>
+                                    <th style={{ padding: '2px 10px', textAlign: 'right' }}>1D%</th>
+                                    <th style={{ padding: '2px 10px', textAlign: 'right' }}>Volume</th>
+                                    <th style={{ padding: '2px 10px', textAlign: 'right' }}>SMA21</th>
+                                    <th style={{ padding: '2px 10px', textAlign: 'right' }}>SMA50</th>
+                                    <th style={{ padding: '2px 10px', textAlign: 'right' }}>SMA200</th>
+                                    <th style={{ padding: '2px 10px', textAlign: 'right' }}>ADR%(21)</th>
+                                    <th style={{ padding: '2px 10px', textAlign: 'right' }}>SMA50/ATR%(14)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <StatRow label="Latest" point={latest} change={latestChange} />
+                                {hoverData && hoverData.time !== latest.time ? (
+                                    <StatRow label="Cursor" point={hoverData} change={hoverChange} />
+                                ) : (
+                                    <PlaceholderRow />
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                )
             )}
 
             <div className="main-content" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
                 {viewMode === 'rs' && data.length > 0 && (
-                    <main className="chart-area glass-panel" style={{ flex: 1, display: 'flex', flexDirection: 'column', margin: '0 20px 20px 20px' }}>
+                    <main className="chart-area glass-panel" style={{ flex: 1, display: 'flex', flexDirection: 'column', margin: isMobile ? '0 10px 10px 10px' : '0 20px 20px 20px' }}>
                         <RrgChart data={data} ticker={selected.ticker} />
                     </main>
                 )}
                 {viewMode === 'table' && <SymbolDataTable data={data} />}
-                <main className="chart-area glass-panel" style={{ flex: 1, display: viewMode === 'chart' ? 'flex' : 'none', flexDirection: 'column', margin: '0 20px 20px 20px' }}>
+                <main className="chart-area glass-panel" style={{ flex: 1, display: viewMode === 'chart' ? 'flex' : 'none', flexDirection: 'column', margin: isMobile ? '0 10px 10px 10px' : '0 20px 20px 20px', minHeight: '0' }}>
                     {loading && <div className="loading">Loading chart data...</div>}
                     {!loading && data.length > 0 && (
                         <>
-                            <div className="chart-controls" style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', padding: '10px' }}>
-                                <span style={{ color: '#aaa', marginRight: '10px', alignSelf: 'center' }}>SMA:</span>
-                                <button className={`toggle-btn ${showSma21 ? 'active' : ''}`} onClick={() => setShowSma21(!showSma21)}>21</button>
-                                <button className={`toggle-btn ${showSma50 ? 'active' : ''}`} onClick={() => setShowSma50(!showSma50)}>50</button>
-                                <button className={`toggle-btn ${showSma63 ? 'active' : ''}`} onClick={() => setShowSma63(!showSma63)}>63</button>
-                                <button className={`toggle-btn ${showSma150 ? 'active' : ''}`} onClick={() => setShowSma150(!showSma150)}>150</button>
-                                <button className={`toggle-btn ${showSma200 ? 'active' : ''}`} onClick={() => setShowSma200(!showSma200)}>200</button>
-
-                                <span style={{ color: '#aaa', margin: '0 10px', alignSelf: 'center' }}>EMA:</span>
-                                <button className={`toggle-btn ${showEma5 ? 'active' : ''}`} onClick={() => setShowEma5(!showEma5)}>5</button>
-                                <button className={`toggle-btn ${showEma21 ? 'active' : ''}`} onClick={() => setShowEma21(!showEma21)}>21</button>
-                                <button className={`toggle-btn ${showEma50 ? 'active' : ''}`} onClick={() => setShowEma50(!showEma50)}>50</button>
-                                <button className={`toggle-btn ${showEma63 ? 'active' : ''}`} onClick={() => setShowEma63(!showEma63)}>63</button>
-                                <button className={`toggle-btn ${showEma200 ? 'active' : ''}`} onClick={() => setShowEma200(!showEma200)}>200</button>
-
-                                <div style={{ borderLeft: '1px solid #333', margin: '0 10px', height: '24px', alignSelf: 'center' }}></div>
-
-                                <button className={`toggle-btn ${showVolume ? 'active' : ''}`} onClick={() => setShowVolume(!showVolume)}>Vol</button>
-                                <button className={`toggle-btn ${showTd9 ? 'active' : ''}`} onClick={() => setShowTd9(!showTd9)}>TD9</button>
-                                <button className={`toggle-btn ${showBB ? 'active' : ''}`} onClick={() => setShowBB(!showBB)}>BB</button>
-                                <button className={`toggle-btn ${showRsDots ? 'active' : ''}`} onClick={() => setShowRsDots(!showRsDots)}>RS.</button>
-
-                                <div style={{ borderLeft: '1px solid #333', margin: '0 10px', height: '24px', alignSelf: 'center' }}></div>
-
-                                {/* Compare Logic */}
-                                <form onSubmit={handleCompare} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                                    <span style={{ color: '#aaa' }}>Vs:</span>
-                                    <input
-                                        type="text"
-                                        value={compareTicker}
-                                        onChange={e => setCompareTicker(e.target.value)}
-                                        placeholder="Ticker..."
-                                        style={{
-                                            padding: '4px 8px',
-                                            borderRadius: '4px',
-                                            background: 'rgba(255,255,255,0.1)',
-                                            border: '1px solid rgba(255,255,255,0.2)',
+                            {isMobile ? (
+                                <div style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between', padding: '6px 10px', borderBottom: '1px solid rgba(255,255,255,0.05)', boxSizing: 'border-box' }}>
+                                    <button 
+                                        className="toggle-btn active"
+                                        onClick={() => setShowIndicatorModal(true)}
+                                        style={{ 
+                                            display: 'flex', 
+                                            alignItems: 'center', 
+                                            gap: '6px', 
+                                            padding: '6px 14px', 
+                                            fontSize: '12px',
+                                            borderRadius: '6px',
+                                            background: 'linear-gradient(135deg, #2962FF 0%, #1565C0 100%)',
+                                            border: 'none',
                                             color: '#fff',
-                                            width: '80px',
-                                            textTransform: 'uppercase'
+                                            fontWeight: 'bold',
+                                            boxShadow: '0 4px 10px rgba(41,98,255,0.3)',
+                                            cursor: 'pointer'
                                         }}
-                                    />
-                                    <button type="submit" className="toggle-btn active" style={{ padding: '4px 12px' }}>
-                                        {compareLoading ? '...' : 'Compare'}
+                                    >
+                                        <span>📊 指標設定</span>
                                     </button>
-                                    {compareData.length > 0 && (
-                                        <button type="button" className="toggle-btn" onClick={() => { setCompareTicker(''); setCompareData([]); }}>
-                                            Clear
+                                    
+                                    {/* Compare Logic Mobile */}
+                                    <form onSubmit={handleCompare} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                        <span style={{ fontSize: '11px', color: '#aaa' }}>Vs:</span>
+                                        <input
+                                            type="text"
+                                            value={compareTicker}
+                                            onChange={e => setCompareTicker(e.target.value)}
+                                            placeholder="Ticker..."
+                                            style={{
+                                                padding: '4px 8px',
+                                                fontSize: '11px',
+                                                borderRadius: '4px',
+                                                background: 'rgba(255,255,255,0.1)',
+                                                border: '1px solid rgba(255,255,255,0.2)',
+                                                color: '#fff',
+                                                width: '65px',
+                                                textTransform: 'uppercase',
+                                                boxSizing: 'border-box'
+                                            }}
+                                        />
+                                        <button type="submit" className="toggle-btn active" style={{ padding: '4px 8px', fontSize: '11px', cursor: 'pointer' }}>
+                                            {compareLoading ? '...' : '比較'}
                                         </button>
-                                    )}
-                                </form>
-                            </div>
-                            <div ref={chartContainerRef} className="chart-container" />
+                                        {compareData.length > 0 && (
+                                            <button type="button" className="toggle-btn" style={{ fontSize: '11px', padding: '4px 8px', cursor: 'pointer' }} onClick={() => { setCompareTicker(''); setCompareData([]); }}>
+                                                ✕
+                                            </button>
+                                        )}
+                                    </form>
+                                </div>
+                            ) : (
+                                <div className="chart-controls" style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', padding: '10px' }}>
+                                    <span style={{ color: '#aaa', marginRight: '10px', alignSelf: 'center' }}>SMA:</span>
+                                    <button className={`toggle-btn ${showSma21 ? 'active' : ''}`} onClick={() => setShowSma21(!showSma21)}>21</button>
+                                    <button className={`toggle-btn ${showSma50 ? 'active' : ''}`} onClick={() => setShowSma50(!showSma50)}>50</button>
+                                    <button className={`toggle-btn ${showSma63 ? 'active' : ''}`} onClick={() => setShowSma63(!showSma63)}>63</button>
+                                    <button className={`toggle-btn ${showSma150 ? 'active' : ''}`} onClick={() => setShowSma150(!showSma150)}>150</button>
+                                    <button className={`toggle-btn ${showSma200 ? 'active' : ''}`} onClick={() => setShowSma200(!showSma200)}>200</button>
+
+                                    <span style={{ color: '#aaa', margin: '0 10px', alignSelf: 'center' }}>EMA:</span>
+                                    <button className={`toggle-btn ${showEma5 ? 'active' : ''}`} onClick={() => setShowEma5(!showEma5)}>5</button>
+                                    <button className={`toggle-btn ${showEma21 ? 'active' : ''}`} onClick={() => setShowEma21(!showEma21)}>21</button>
+                                    <button className={`toggle-btn ${showEma50 ? 'active' : ''}`} onClick={() => setShowEma50(!showEma50)}>50</button>
+                                    <button className={`toggle-btn ${showEma63 ? 'active' : ''}`} onClick={() => setShowEma63(!showEma63)}>63</button>
+                                    <button className={`toggle-btn ${showEma200 ? 'active' : ''}`} onClick={() => setShowEma200(!showEma200)}>200</button>
+
+                                    <div style={{ borderLeft: '1px solid #333', margin: '0 10px', height: '24px', alignSelf: 'center' }}></div>
+
+                                    <button className={`toggle-btn ${showVolume ? 'active' : ''}`} onClick={() => setShowVolume(!showVolume)}>Vol</button>
+                                    <button className={`toggle-btn ${showTd9 ? 'active' : ''}`} onClick={() => setShowTd9(!showTd9)}>TD9</button>
+                                    <button className={`toggle-btn ${showBB ? 'active' : ''}`} onClick={() => setShowBB(!showBB)}>BB</button>
+                                    <button className={`toggle-btn ${showRsDots ? 'active' : ''}`} onClick={() => setShowRsDots(!showRsDots)}>RS.</button>
+
+                                    <div style={{ borderLeft: '1px solid #333', margin: '0 10px', height: '24px', alignSelf: 'center' }}></div>
+
+                                    {/* Compare Logic */}
+                                    <form onSubmit={handleCompare} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                        <span style={{ color: '#aaa' }}>Vs:</span>
+                                        <input
+                                            type="text"
+                                            value={compareTicker}
+                                            onChange={e => setCompareTicker(e.target.value)}
+                                            placeholder="Ticker..."
+                                            style={{
+                                                padding: '4px 8px',
+                                                borderRadius: '4px',
+                                                background: 'rgba(255,255,255,0.1)',
+                                                border: '1px solid rgba(255,255,255,0.2)',
+                                                color: '#fff',
+                                                width: '80px',
+                                                textTransform: 'uppercase'
+                                            }}
+                                        />
+                                        <button type="submit" className="toggle-btn active" style={{ padding: '4px 12px' }}>
+                                            {compareLoading ? '...' : 'Compare'}
+                                        </button>
+                                        {compareData.length > 0 && (
+                                            <button type="button" className="toggle-btn" onClick={() => { setCompareTicker(''); setCompareData([]); }}>
+                                                Clear
+                                            </button>
+                                        )}
+                                    </form>
+                                </div>
+                            )}
+                            <div ref={chartContainerRef} className="chart-container" style={{ flex: 1, minHeight: 0 }} />
                         </>
                     )}
                     {!loading && data.length === 0 && !error && (
@@ -716,7 +884,7 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
                     )}
                 </main>
                 {viewMode === 'fundamentals' && (
-                    <main className="chart-area glass-panel" style={{ flex: 1, display: 'flex', flexDirection: 'column', margin: '0 20px 20px 20px', padding: '20px', overflowY: 'auto' }}>
+                    <main className="chart-area glass-panel" style={{ flex: 1, display: 'flex', flexDirection: 'column', margin: isMobile ? '0 10px 10px 10px' : '0 20px 20px 20px', padding: '20px', overflowY: 'auto' }}>
                         <h3 style={{ margin: '0 0 20px 0', fontSize: '18px', fontWeight: 600 }}>Earnings & Fundamentals</h3>
                         
                         {earningsLoading ? (
@@ -760,6 +928,118 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
                     </main>
                 )}
             </div>
+
+            {/* Indicator Modal (Mobile Only) */}
+            {isMobile && showIndicatorModal && (
+                <div style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+                    backdropFilter: 'blur(8px)',
+                    zIndex: 2000,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'flex-end',
+                }} onClick={() => setShowIndicatorModal(false)}>
+                    <div style={{
+                        background: '#121620',
+                        borderTop: '1px solid rgba(255,255,255,0.08)',
+                        borderRadius: '20px 20px 0 0',
+                        padding: '20px',
+                        maxHeight: '85%',
+                        overflowY: 'auto',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '16px',
+                        boxShadow: '0 -10px 30px rgba(0,0,0,0.5)'
+                    }} onClick={e => e.stopPropagation()}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '10px' }}>
+                            <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 'bold', color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                📊 テクニカル指標設定
+                            </h3>
+                            <button 
+                                onClick={() => setShowIndicatorModal(false)}
+                                style={{ background: 'transparent', border: 'none', color: '#8b9cc8', fontSize: '18px', cursor: 'pointer', padding: '4px' }}
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        {/* SMAs */}
+                        <div>
+                            <span style={{ fontSize: '10px', color: '#687fa1', textTransform: 'uppercase', display: 'block', marginBottom: '6px', fontWeight: '600', letterSpacing: '0.05em' }}>SMA (単純移動平均)</span>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                                {[21, 50, 63, 150, 200].map(period => {
+                                    const showVar = period === 21 ? showSma21 : period === 50 ? showSma50 : period === 63 ? showSma63 : period === 150 ? showSma150 : showSma200;
+                                    const setFunc = period === 21 ? setShowSma21 : period === 50 ? setShowSma50 : period === 63 ? setShowSma63 : period === 150 ? setShowSma150 : setShowSma200;
+                                    return (
+                                        <button 
+                                            key={period} 
+                                            className={`toggle-btn ${showVar ? 'active' : ''}`} 
+                                            style={{ padding: '8px', fontSize: '11px', borderRadius: '6px', flex: '1 0 18%', minWidth: '45px', cursor: 'pointer' }}
+                                            onClick={() => setFunc(!showVar)}
+                                        >
+                                            {period}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        {/* EMAs */}
+                        <div>
+                            <span style={{ fontSize: '10px', color: '#687fa1', textTransform: 'uppercase', display: 'block', marginBottom: '6px', fontWeight: '600', letterSpacing: '0.05em' }}>EMA (指数平滑移動平均)</span>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                                {[5, 21, 50, 63, 200].map(period => {
+                                    const showVar = period === 5 ? showEma5 : period === 21 ? showEma21 : period === 50 ? showEma50 : period === 63 ? showEma63 : showEma200;
+                                    const setFunc = period === 5 ? setShowEma5 : period === 21 ? setShowEma21 : period === 50 ? setShowEma50 : period === 63 ? setShowEma63 : setShowEma200;
+                                    return (
+                                        <button 
+                                            key={period} 
+                                            className={`toggle-btn ${showVar ? 'active' : ''}`} 
+                                            style={{ padding: '8px', fontSize: '11px', borderRadius: '6px', flex: '1 0 18%', minWidth: '45px', cursor: 'pointer' }}
+                                            onClick={() => setFunc(!showVar)}
+                                        >
+                                            {period}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        {/* Other Indicators */}
+                        <div>
+                            <span style={{ fontSize: '10px', color: '#687fa1', textTransform: 'uppercase', display: 'block', marginBottom: '6px', fontWeight: '600', letterSpacing: '0.05em' }}>その他表示</span>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+                                <button className={`toggle-btn ${showVolume ? 'active' : ''}`} style={{ padding: '8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }} onClick={() => setShowVolume(!showVolume)}>出来高 (Volume)</button>
+                                <button className={`toggle-btn ${showTd9 ? 'active' : ''}`} style={{ padding: '8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }} onClick={() => setShowTd9(!showTd9)}>TD9 シーケンシャル</button>
+                                <button className={`toggle-btn ${showBB ? 'active' : ''}`} style={{ padding: '8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }} onClick={() => setShowBB(!showBB)}>ボリンジャーバンド</button>
+                                <button className={`toggle-btn ${showRsDots ? 'active' : ''}`} style={{ padding: '8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }} onClick={() => setShowRsDots(!showRsDots)}>RSシグナルドット</button>
+                            </div>
+                        </div>
+
+                        <button 
+                            onClick={() => setShowIndicatorModal(false)}
+                            style={{ 
+                                marginTop: '8px', 
+                                padding: '10px', 
+                                background: 'linear-gradient(135deg, #2962FF 0%, #1565C0 100%)',
+                                border: 'none', 
+                                borderRadius: '8px', 
+                                color: '#fff', 
+                                fontWeight: 'bold',
+                                fontSize: '13px',
+                                cursor: 'pointer'
+                            }}
+                        >
+                            決定
+                        </button>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

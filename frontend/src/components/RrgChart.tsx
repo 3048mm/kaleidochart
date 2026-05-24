@@ -30,6 +30,13 @@ export const RrgChart: React.FC<RrgChartProps> = ({ data, ticker, series: propSe
     const [rrgTimeframe, setRrgTimeframe] = useState<14 | 21 | 63>(21);
     const [trailLength, setTrailLength] = useState<number>(20);
     const [hoveredPoint, setHoveredPoint] = useState<{ ticker: string; time: string; x: number; y: number; cond?: number; close: number } | null>(null);
+    const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+
+    React.useEffect(() => {
+        const handleResize = () => setIsMobile(window.innerWidth <= 768);
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
 
     const isIndividualMode = !propSeries || propSeries.length === 0;
 
@@ -110,54 +117,74 @@ export const RrgChart: React.FC<RrgChartProps> = ({ data, ticker, series: propSe
     const originX = scaleX(0);
     const originY = scaleY(0);
 
-    const hasData = computedSeries.some(s => s.points.length > 0);
-
-    if (!hasData) {
-        return <div style={{ padding: '20px', color: '#888' }}>Not enough data for RRG ({rrgTimeframe}-day)</div>;
-    }
-
-    return (
-        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
-            {/* Controls */}
-            <div style={{ display: 'flex', gap: '15px', padding: '10px 20px', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.05)', flexWrap: 'wrap', flexShrink: 0 }}>
-                <span style={{ color: '#aaa', fontSize: '13px' }}>RRG Timeframe:</span>
-                <div style={{ display: 'flex', gap: '5px' }}>
+    const renderControls = () => (
+        <div style={{ 
+            display: 'flex', 
+            flexDirection: isMobile ? 'column' : 'row', 
+            gap: isMobile ? '6px' : '15px', 
+            padding: isMobile ? '4px 0' : '10px 20px', 
+            alignItems: isMobile ? 'flex-start' : 'center', 
+            borderBottom: isMobile ? 'none' : '1px solid rgba(255,255,255,0.05)', 
+            flexShrink: 0 
+        }}>
+            {/* Timeframe */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ color: '#aaa', fontSize: isMobile ? '11px' : '13px' }}>RRG Timeframe:</span>
+                <div style={{ display: 'flex', gap: '3px' }}>
                     {[14, 21, 63].map(tf => (
                         <button
                             key={tf}
                             className={`toggle-btn ${rrgTimeframe === tf ? 'active' : ''}`}
                             onClick={() => setRrgTimeframe(tf as any)}
+                            style={isMobile ? { padding: '4px 8px', fontSize: '11px' } : undefined}
                         >
                             {tf}d
                         </button>
                     ))}
                 </div>
+            </div>
 
-                <span style={{ color: '#aaa', fontSize: '13px', marginLeft: '10px' }}>Trail Length:</span>
-                <div style={{ display: 'flex', gap: '5px' }}>
+            {/* Trail */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ color: '#aaa', fontSize: isMobile ? '11px' : '13px', marginLeft: isMobile ? '0' : '10px' }}>Trail:</span>
+                <div style={{ display: 'flex', gap: '3px' }}>
                     {[10, 20, 30, 60].map(tr => (
                         <button
                             key={tr}
                             className={`toggle-btn ${trailLength === tr ? 'active' : ''}`}
                             onClick={() => setTrailLength(tr)}
+                            style={isMobile ? { padding: '4px 8px', fontSize: '11px' } : undefined}
                         >
                             {tr}
                         </button>
                     ))}
                 </div>
             </div>
+        </div>
+    );
 
+    const hasData = computedSeries.some(s => s.points.length > 0);
+
+    return (
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+            {/* Note: Top controls removed. Controls are now rendered via renderControls helper */}
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflowY: 'auto' }}>
-                {/* Top Panel: RS Line Chart (Individual Mode Only) */}
+                {/* 1. Top Panel: RS Line Chart (Individual Mode Only) */}
                 {isIndividualMode && data && (
-                    <div style={{ padding: '20px 20px 0 20px', flexShrink: 0 }}>
-                        <RsLineChart data={data} />
+                    <div style={{ padding: isMobile ? '10px 10px 0 10px' : '20px 20px 0 20px', flexShrink: 0 }}>
+                        <RsLineChart data={data} height={isMobile ? 160 : 250} />
                     </div>
                 )}
 
-                <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-                    {/* Left Panel: RS Minimaps (Individual Mode Only) */}
-                    {isIndividualMode && minimaps && (
+                <div style={{ 
+                    flex: 1, 
+                    display: 'flex', 
+                    flexDirection: isMobile ? 'column' : 'row', 
+                    minHeight: 0,
+                    paddingBottom: isMobile ? '20px' : '0'
+                }}>
+                    {/* 2. Left Panel: RS Minimaps (Individual Mode, PC ONLY) */}
+                    {isIndividualMode && minimaps && !isMobile && (
                         <div style={{ 
                             width: '180px', 
                             padding: '15px', 
@@ -195,110 +222,196 @@ export const RrgChart: React.FC<RrgChartProps> = ({ data, ticker, series: propSe
                         </div>
                     )}
 
-                    {/* Main RRG SVG Area */}
-                    <div style={{ flex: 1, position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '20px', minHeight: 0 }}>
-                        <svg
-                            width="100%"
-                            height="100%"
-                            viewBox={`0 0 ${width} ${height}`}
-                            preserveAspectRatio="xMidYMid meet"
-                            style={{ background: '#131722', borderRadius: '8px', border: '1px solid #2B3139', flex: 1 }}
-                        >
-                            <defs>
-                                <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-                                    <polygon points="0 0, 10 3.5, 0 7" fill="#fff" />
-                                </marker>
-                            </defs>
+                    {/* Right Panel (PC) or Main Stack (Mobile) */}
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+                        
+                        {/* 3. RRG Controls (Mobile Only, Placed ABOVE Minimaps) */}
+                        {isMobile && (
+                            <div style={{ padding: '8px 12px 2px 12px' }}>
+                                {renderControls()}
+                            </div>
+                        )}
 
-                            {/* Quadrant Backgrounds */}
-                            <rect x={originX} y={padding}      width={Math.max(0, width - originX - padding)} height={Math.max(0, originY - padding)}              fill="rgba(38, 166, 154, 0.1)" />
-                            <rect x={originX} y={originY}      width={Math.max(0, width - originX - padding)} height={Math.max(0, padding + innerHeight - originY)} fill="rgba(255, 235, 59, 0.05)" />
-                            <rect x={padding} y={originY}      width={Math.max(0, originX - padding)}         height={Math.max(0, padding + innerHeight - originY)} fill="rgba(239, 83, 80, 0.1)" />
-                            <rect x={padding} y={padding}      width={Math.max(0, originX - padding)}         height={Math.max(0, originY - padding)}               fill="rgba(41, 98, 255, 0.1)" />
-
-                            {/* Quadrant Labels */}
-                            <text x={width - padding - 10} y={padding + 20}          fill="rgba(38, 166, 154, 0.3)"  fontSize="20" fontWeight="bold" textAnchor="end">LEADING</text>
-                            <text x={width - padding - 10} y={height - padding - 10} fill="rgba(255, 235, 59, 0.2)"  fontSize="20" fontWeight="bold" textAnchor="end">WEAKENING</text>
-                            <text x={padding + 10}          y={height - padding - 10} fill="rgba(239, 83, 80, 0.3)"  fontSize="20" fontWeight="bold">LAGGING</text>
-                            <text x={padding + 10}          y={padding + 20}          fill="rgba(41, 98, 255, 0.3)"  fontSize="20" fontWeight="bold">IMPROVING</text>
-
-                            {/* Axes */}
-                            <line x1={padding} y1={originY} x2={width - padding} y2={originY} stroke="#333" strokeWidth="2" />
-                            <line x1={originX} y1={padding} x2={originX} y2={height - padding} stroke="#333" strokeWidth="2" />
-
-                            {/* Axis Labels */}
-                            <text x={width / 2} y={height - 15} fill="#888" fontSize="12" textAnchor="middle">RS-Ratio (Trend)</text>
-                            <text x={15} y={height / 2} fill="#888" fontSize="12" textAnchor="middle" transform={`rotate(-90, 15, ${height / 2})`}>RS-Momentum (Rate of Change)</text>
-
-                            {/* Render each series trail + points */}
-                            {computedSeries.map(s => {
-                                if (s.points.length === 0) return null;
-                                const pathD = s.points.map((d, i) => `${i === 0 ? 'M' : 'L'} ${scaleX(d.x)} ${scaleY(d.y)}`).join(' ');
-                                return (
-                                    <g key={s.ticker}>
-                                        {/* Trail */}
-                                        <path d={pathD} fill="none" stroke={s.color} strokeWidth="2" strokeOpacity="0.6" />
-
-                                        {/* Trail Dots */}
-                                        {s.points.map((d, i) => {
-                                            const isLast = i === s.points.length - 1;
-                                            const px = scaleX(d.x);
-                                            const py = scaleY(d.y);
-                                            return (
-                                                <g key={i}
-                                                    onMouseEnter={() => setHoveredPoint({ ticker: s.ticker, ...d })}
-                                                    onMouseLeave={() => setHoveredPoint(null)}
-                                                    style={{ cursor: 'pointer' }}
-                                                >
-                                                    <circle
-                                                        cx={px}
-                                                        cy={py}
-                                                        r={isLast ? 7 : 3}
-                                                        fill={isLast ? s.color : `${s.color}99`}
-                                                        stroke="#131722"
-                                                        strokeWidth={isLast ? 2 : 1}
-                                                    />
-                                                    {isLast && (
-                                                        <text x={px + 10} y={py + 4} fill={s.color} fontSize="13" fontWeight="bold" style={{ textShadow: '1px 1px 2px #000' }}>
-                                                            {s.ticker}
-                                                        </text>
-                                                    )}
-                                                </g>
-                                            );
-                                        })}
-                                    </g>
-                                );
-                            })}
-                        </svg>
-
-                        {/* Floating Tooltip */}
-                        {hoveredPoint && (() => {
-                            const px = scaleX(hoveredPoint.x);
-                            const py = scaleY(hoveredPoint.y);
-                            const series = computedSeries.find(s => s.ticker === hoveredPoint.ticker);
-                            return (
-                                <div style={{
-                                    position: 'absolute',
-                                    top: py + 15,
-                                    left: px + 15,
-                                    background: 'rgba(0,0,0,0.85)',
-                                    border: `1px solid ${series?.color || '#444'}`,
-                                    padding: '8px 12px',
-                                    borderRadius: '4px',
-                                    color: '#fff',
-                                    fontSize: '12px',
-                                    pointerEvents: 'none',
-                                    zIndex: 10,
-                                    boxShadow: '0 4px 12px rgba(0,0,0,0.5)'
-                                }}>
-                                    <div style={{ fontWeight: 'bold', marginBottom: '4px', color: series?.color || '#ffb74d' }}>{hoveredPoint.ticker} — {hoveredPoint.time}</div>
-                                    <div>Close: ${hoveredPoint.close.toFixed(2)}</div>
-                                    <div>Ratio: {hoveredPoint.x.toFixed(3)}</div>
-                                    <div>Mom: {hoveredPoint.y.toFixed(3)}</div>
-                                    {hoveredPoint.cond != null && <div>Cond: {hoveredPoint.cond.toFixed(3)}</div>}
+                        {/* 4. Middle Panel: RS Minimaps (Individual Mode, MOBILE ONLY, Placed BELOW Controls) */}
+                        {isIndividualMode && minimaps && isMobile && (
+                            /* Mobile horizontal 3-column layout for minimaps */
+                            <div style={{ 
+                                padding: '10px 12px', 
+                                borderTop: '1px solid rgba(255,255,255,0.05)', 
+                                borderBottom: '1px solid rgba(255,255,255,0.05)', 
+                                display: 'flex', 
+                                flexDirection: 'column', 
+                                gap: '6px',
+                                flexShrink: 0
+                            }}>
+                                <div style={{ fontSize: '11px', color: '#aaa', fontWeight: 'bold' }}>Relative Rank (30d)</div>
+                                <div style={{ display: 'flex', gap: '6px', justifyContent: 'space-between', width: '100%' }}>
+                                    {[
+                                        { label: 'RS Ratio', data: minimaps.ratio },
+                                        { label: 'RS Momentum', data: minimaps.mom },
+                                        { label: 'RS Condition', data: minimaps.cond },
+                                    ].map(m => (
+                                        <div key={m.label} style={{ background: 'rgba(255,255,255,0.02)', padding: '6px', borderRadius: '6px', flex: 1 }}>
+                                            <div style={{ fontSize: '9px', color: '#888', marginBottom: '2px', textAlign: 'center', whiteSpace: 'nowrap' }}>{m.label}</div>
+                                            <div style={{ display: 'flex', justifyContent: 'center', margin: '4px 0' }}>
+                                                <Sparkline 
+                                                    data={m.data} 
+                                                    width={90} 
+                                                    height={30} 
+                                                    color={m.data[m.data.length-1] > 0.5 ? appConfig.colors.good : appConfig.colors.bad}
+                                                    fixedRange={true}
+                                                />
+                                            </div>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '8px', color: '#555', marginTop: '2px' }}>
+                                                <span>30d</span>
+                                                <span style={{ color: (m.data[m.data.length-1] || 0) > 0.8 ? appConfig.colors.good : 'inherit' }}>
+                                                    {((m.data[m.data.length-1] || 0) * 100).toFixed(0)}%
+                                                </span>
+                                            </div>
+                                        </div>
+                                    ))}
                                 </div>
-                            );
-                        })()}
+                            </div>
+                        )}
+
+                        {/* 5. RRG Controls (PC Only, Placed immediately above RRG SVG) */}
+                        {!isMobile && renderControls()}
+
+                        {/* 6. Main RRG SVG Area */}
+                        <div style={{ 
+                            flex: 1, 
+                            position: 'relative', 
+                            display: 'flex', 
+                            justifyContent: 'center', 
+                            alignItems: 'center', 
+                            padding: isMobile ? '10px' : '20px', 
+                            minHeight: isMobile ? '320px' : '0',
+                            boxSizing: 'border-box'
+                        }}>
+                            {!hasData ? (
+                                <div style={{ 
+                                    color: '#888', 
+                                    fontSize: isMobile ? '12px' : '14px', 
+                                    textAlign: 'center',
+                                    padding: '40px',
+                                    background: '#131722',
+                                    borderRadius: '8px',
+                                    border: '1px solid #2B3139',
+                                    width: '100%',
+                                    height: '100%',
+                                    display: 'flex',
+                                    justifyContent: 'center',
+                                    alignItems: 'center',
+                                    boxSizing: 'border-box',
+                                    minHeight: '300px'
+                                }}>
+                                    Not enough data for RRG ({rrgTimeframe}-day)
+                                </div>
+                            ) : (
+                                <svg
+                                    width="100%"
+                                    height="100%"
+                                    viewBox={`0 0 ${width} ${height}`}
+                                    preserveAspectRatio="xMidYMid meet"
+                                    style={{ background: '#131722', borderRadius: '8px', border: '1px solid #2B3139', flex: 1 }}
+                                >
+                                    <defs>
+                                        <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                                            <polygon points="0 0, 10 3.5, 0 7" fill="#fff" />
+                                        </marker>
+                                    </defs>
+
+                                    {/* Quadrant Backgrounds */}
+                                    <rect x={originX} y={padding}      width={Math.max(0, width - originX - padding)} height={Math.max(0, originY - padding)}              fill="rgba(38, 166, 154, 0.1)" />
+                                    <rect x={originX} y={originY}      width={Math.max(0, width - originX - padding)} height={Math.max(0, padding + innerHeight - originY)} fill="rgba(255, 235, 59, 0.05)" />
+                                    <rect x={padding} y={originY}      width={Math.max(0, originX - padding)}         height={Math.max(0, padding + innerHeight - originY)} fill="rgba(239, 83, 80, 0.1)" />
+                                    <rect x={padding} y={padding}      width={Math.max(0, originX - padding)}         height={Math.max(0, originY - padding)}               fill="rgba(41, 98, 255, 0.1)" />
+
+                                    {/* Quadrant Labels */}
+                                    <text x={width - padding - 10} y={padding + 20}          fill="rgba(38, 166, 154, 0.3)"  fontSize="20" fontWeight="bold" textAnchor="end">LEADING</text>
+                                    <text x={width - padding - 10} y={height - padding - 10} fill="rgba(255, 235, 59, 0.2)"  fontSize="20" fontWeight="bold" textAnchor="end">WEAKENING</text>
+                                    <text x={padding + 10}          y={height - padding - 10} fill="rgba(239, 83, 80, 0.3)"  fontSize="20" fontWeight="bold">LAGGING</text>
+                                    <text x={padding + 10}          y={padding + 20}          fill="rgba(41, 98, 255, 0.3)"  fontSize="20" fontWeight="bold">IMPROVING</text>
+
+                                    {/* Axes */}
+                                    <line x1={padding} y1={originY} x2={width - padding} y2={originY} stroke="#333" strokeWidth="2" />
+                                    <line x1={originX} y1={padding} x2={originX} y2={height - padding} stroke="#333" strokeWidth="2" />
+
+                                    {/* Axis Labels */}
+                                    <text x={width / 2} y={height - 15} fill="#888" fontSize="12" textAnchor="middle">RS-Ratio (Trend)</text>
+                                    <text x={15} y={height / 2} fill="#888" fontSize="12" textAnchor="middle" transform={`rotate(-90, 15, ${height / 2})`}>RS-Momentum (Rate of Change)</text>
+
+                                    {/* Render each series trail + points */}
+                                    {computedSeries.map(s => {
+                                        if (s.points.length === 0) return null;
+                                        const pathD = s.points.map((d, i) => `${i === 0 ? 'M' : 'L'} ${scaleX(d.x)} ${scaleY(d.y)}`).join(' ');
+                                        return (
+                                            <g key={s.ticker}>
+                                                {/* Trail */}
+                                                <path d={pathD} fill="none" stroke={s.color} strokeWidth="2" strokeOpacity="0.6" />
+
+                                                {/* Trail Dots */}
+                                                {s.points.map((d, i) => {
+                                                    const isLast = i === s.points.length - 1;
+                                                    const px = scaleX(d.x);
+                                                    const py = scaleY(d.y);
+                                                    return (
+                                                        <g key={i}
+                                                            onMouseEnter={() => setHoveredPoint({ ticker: s.ticker, ...d })}
+                                                            onMouseLeave={() => setHoveredPoint(null)}
+                                                            style={{ cursor: 'pointer' }}
+                                                        >
+                                                            <circle
+                                                                cx={px}
+                                                                cy={py}
+                                                                r={isLast ? 7 : 3}
+                                                                fill={isLast ? s.color : `${s.color}99`}
+                                                                stroke="#131722"
+                                                                strokeWidth={isLast ? 2 : 1}
+                                                            />
+                                                            {isLast && (
+                                                                <text x={px + 10} y={py + 4} fill={s.color} fontSize="13" fontWeight="bold" style={{ textShadow: '1px 1px 2px #000' }}>
+                                                                    {s.ticker}
+                                                                </text>
+                                                            )}
+                                                        </g>
+                                                    );
+                                                })}
+                                            </g>
+                                        );
+                                    })}
+                                </svg>
+                            )}
+
+                            {/* Floating Tooltip */}
+                            {hoveredPoint && (() => {
+                                const px = scaleX(hoveredPoint.x);
+                                const py = scaleY(hoveredPoint.y);
+                                const series = computedSeries.find(s => s.ticker === hoveredPoint.ticker);
+                                return (
+                                    <div style={{
+                                        position: 'absolute',
+                                        top: py + 15,
+                                        left: px + 15,
+                                        background: 'rgba(0,0,0,0.85)',
+                                        border: `1px solid ${series?.color || '#444'}`,
+                                        padding: '8px 12px',
+                                        borderRadius: '4px',
+                                        color: '#fff',
+                                        fontSize: '12px',
+                                        pointerEvents: 'none',
+                                        zIndex: 10,
+                                        boxShadow: '0 4px 12px rgba(0,0,0,0.5)'
+                                    }}>
+                                        <div style={{ fontWeight: 'bold', marginBottom: '4px', color: series?.color || '#ffb74d' }}>{hoveredPoint.ticker} — {hoveredPoint.time}</div>
+                                        <div>Close: ${hoveredPoint.close.toFixed(2)}</div>
+                                        <div>Ratio: {hoveredPoint.x.toFixed(3)}</div>
+                                        <div>Mom: {hoveredPoint.y.toFixed(3)}</div>
+                                        {hoveredPoint.cond != null && <div>Cond: {hoveredPoint.cond.toFixed(3)}</div>}
+                                    </div>
+                                );
+                            })()}
+                        </div>
                     </div>
                 </div>
             </div>

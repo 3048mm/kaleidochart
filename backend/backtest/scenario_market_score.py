@@ -58,7 +58,7 @@ class MarketTrendScorer:
         # Extract symbol IDs for quick lookup
         self.spy_id = self._get_symbol_id(symbols_df, 'SPY')
         self.vix_id = self._get_symbol_id(symbols_df, '^VIX')
-        self.vxv_id = self._get_symbol_id(symbols_df, '^VIX3M') if self.use_vxv_vix else None
+        self.vxv_id = self._get_symbol_id(symbols_df, '^VIX3M')
         
         # Pre-filter and index for O(1) daily lookup
         self._spy_by_date = {}
@@ -84,6 +84,20 @@ class MarketTrendScorer:
         match = symbols_df[symbols_df['ticker'] == ticker]
         if not match.empty:
             return int(match['id'].values[0])
+        return None
+
+    def get_vxv_vix_ratio(self, target_date: object) -> Optional[float]:
+        """
+        Calculates the VXV/VIX ratio on a specific date.
+        """
+        vxv_row = self._vxv_by_date.get(target_date)
+        vix_row = self._vix_by_date.get(target_date)
+        
+        vxv_val = vxv_row.get('close') if vxv_row is not None else None
+        vix_val = vix_row.get('close') if vix_row is not None else None
+        
+        if vxv_val is not None and vix_val is not None and not pd.isna(vxv_val) and not pd.isna(vix_val) and vix_val > 0:
+            return float(vxv_val / vix_val)
         return None
 
     def evaluate_market_phase(self, target_date: object) -> Tuple[float, MarketPhase]:

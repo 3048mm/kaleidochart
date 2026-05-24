@@ -108,7 +108,9 @@ def load_scenario_config(config_path: str = "data/screener_presets.toml") -> Dic
                 filters['expression'] = expression
 
             strat_name = f"{section.capitalize()} - {group} - {name}"
-            filters['_use_hysteresis'] = item.get('use_hysteresis', False)
+            filters['_use_hysteresis'] = item.get('use_hysteresis', False) or item.get('use_vxv_vix_hysteresis', False)
+            filters['use_vxv_vix_hysteresis'] = item.get('use_vxv_vix_hysteresis', False)
+            filters['vxv_vix_hysteresis_type'] = item.get('vxv_vix_hysteresis_type', 'trend_follow')
             strategies[strat_name] = filters
         
     if not strategies:
@@ -291,7 +293,19 @@ def run_scenario_test(
         
         # Update portfolio with daily score for dynamic hysteresis position allocation
         if hasattr(portfolio, 'update_market_state'):
-            portfolio.update_market_state(score)
+            use_vxv_vix_hyst = False
+            h_type = "trend_follow"
+            for strat_rules in strategies.values():
+                if strat_rules.get('use_vxv_vix_hysteresis'):
+                    use_vxv_vix_hyst = True
+                    h_type = strat_rules.get('vxv_vix_hysteresis_type', 'trend_follow')
+                    break
+            
+            if use_vxv_vix_hyst:
+                ratio = market_scorer.get_vxv_vix_ratio(current_date)
+                portfolio.update_vxv_vix_state(ratio, h_type=h_type)
+            else:
+                portfolio.update_market_state(score)
         
         # Determine target cash/buying capacity. If we need more cash, we might stop buying.
         # Phase constraints are handled inside portfolio.process_buy_candidate.

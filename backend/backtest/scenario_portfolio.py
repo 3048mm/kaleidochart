@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 import datetime
 import pandas as pd
 from backend.backtest.scenario_market_score import MarketPhase
@@ -31,6 +31,57 @@ class ScenarioPortfolio:
         self.prev_market_score = 50.0
         self.dynamic_max_positions = config.max_positions
         
+        # VXV/VIX Ratio hysteresis states
+        self.current_vxv_vix_ratio = 1.10
+        self.prev_vxv_vix_ratio = 1.10
+        self.vxv_vix_hysteresis_type = "trend_follow" # default
+        
+    def update_vxv_vix_state(self, ratio: Optional[float], h_type: str = "trend_follow"):
+        """
+        Updates the portfolio's allocation limit based on VXV/VIX Ratio hysteresis.
+        Supports both 'trend_follow' (Interpretation A) and 'contrarian' (Interpretation B).
+        """
+        if ratio is None:
+            ratio = 1.10
+            
+        self.prev_vxv_vix_ratio = self.current_vxv_vix_ratio
+        self.current_vxv_vix_ratio = ratio
+        
+        if not getattr(self, 'use_hysteresis', True):
+            self.dynamic_max_positions = self.config.max_positions
+            return
+            
+        is_upward = ratio >= self.prev_vxv_vix_ratio
+        
+        if h_type == "trend_follow":
+            # Interpretation A (Trend Follow): Stable market (high ratio) -> Full Pos, Panic (low ratio) -> Cash out
+            if is_upward:
+                if ratio >= 1.20:
+                    self.dynamic_max_positions = self.config.max_positions
+                else:
+                    # Keep previous, or if we were starting, default to 0
+                    pass
+            else: # Downward
+                if ratio < 1.00:
+                    self.dynamic_max_positions = 0
+                else:
+                    # Maintain full
+                    self.dynamic_max_positions = self.config.max_positions
+        elif h_type == "contrarian":
+            # Interpretation B (Contrarian / User literal): Panic (low ratio) -> Full Pos, Stable (high ratio) -> Cash out
+            if is_upward:
+                if ratio >= 1.20:
+                    self.dynamic_max_positions = 0
+                else:
+                    # Maintain full (contrarian buying state)
+                    self.dynamic_max_positions = self.config.max_positions
+            else: # Downward
+                if ratio < 1.00:
+                    self.dynamic_max_positions = self.config.max_positions
+                else:
+                    # Keep previous or remain 0
+                    pass
+
     def update_market_state(self, score: float):
         """
         Updates the daily market score and dynamically adjusts allocation limits

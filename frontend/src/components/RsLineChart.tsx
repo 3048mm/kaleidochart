@@ -4,9 +4,10 @@ import { ChartDataPoint } from '../types';
 
 interface RsLineChartProps {
     data: ChartDataPoint[];
+    height?: number;
 }
 
-export const RsLineChart: React.FC<RsLineChartProps> = ({ data }) => {
+export const RsLineChart: React.FC<RsLineChartProps> = ({ data, height }) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
 
@@ -34,7 +35,7 @@ export const RsLineChart: React.FC<RsLineChartProps> = ({ data }) => {
                 timeVisible: true,
                 fixLeftEdge: true,
             },
-            height: 250,
+            height: height || 250,
             autoSize: true,
         });
 
@@ -164,7 +165,7 @@ export const RsLineChart: React.FC<RsLineChartProps> = ({ data }) => {
                     </div>
                 </div>
             </div>
-            <div ref={containerRef} data-testid="rs-line-chart-container" style={{ width: '100%', height: '250px' }} />
+            <div ref={containerRef} data-testid="rs-line-chart-container" style={{ width: '100%', height: `${height || 250}px` }} />
         </div>
     );
 };
