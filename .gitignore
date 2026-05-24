@@ -71,3 +71,6 @@ tmp_*.json
 doc/*.bak
 *.bak
 data/*.csv
+
+# Backtest Cache (Parquet)
+backend/backtest/cache/

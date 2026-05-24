@@ -190,7 +190,7 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
     query_ind = (
         f"SELECT symbol_id, date, sma_50, sma_150, sma_200, ema_21, atr_14, "
         f"adr_pct_21, dist_sma50_atr, vol_surge_21, rel_vol_vs_spy_21, "
-        f"rs_ratio_21, rs_ratio_63, rs_momentum_21, "
+        f"rs_ratio_14, rs_ratio_21, rs_ratio_63, rs_momentum_21, "
         f"rs_condition_21, trend_template_ok, td9, "
         f"vcr, rs_blue_dot, rs_red_dot, up_down_vol_ratio_50, pct_from_52w_high, "
         f"change_1d_pct, change_1w_pct, change_1m_pct "
@@ -225,7 +225,7 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
         f"SELECT symbol_id, indicator_name, date, percent_rank "
         f"FROM relative_ranks "
         f"WHERE date >= '{rank_start}' AND date <= '{buf_end}' "
-        f"AND indicator_name IN ('rs_ratio_21', 'rs_ratio_63')"
+        f"AND indicator_name IN ('rs_ratio_14', 'rs_ratio_21', 'rs_ratio_63')"
     )
     chunks_ranks = []
     for chunk in pd.read_sql(query_ranks, engine, parse_dates=['date'], chunksize=100000):
