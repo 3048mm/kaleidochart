@@ -301,6 +301,7 @@ def get_watchlist(db: Session, user_db: Session) -> dict:
             "latest_adr_pct": latest_ind.adr_pct_21 if latest_ind and latest_ind.adr_pct_21 else 0.0,
             "latest_dist_sma50_atr": latest_ind.dist_sma50_atr if latest_ind and latest_ind.dist_sma50_atr else 0.0,
             "rs_sparkline": rs_sparkline,
+            "next_earnings_date": sym.next_earnings_date if sym else None,
             "status": wl.status,
             "added_at": wl.added_at.isoformat() if wl.added_at else None,
             "removed_at": wl.removed_at.isoformat() if wl.removed_at else None,

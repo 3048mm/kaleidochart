@@ -369,6 +369,7 @@ class WatchlistItem(BaseModel):
     latest_adr_pct: float
     latest_dist_sma50_atr: float
     rs_sparkline: List[float]
+    next_earnings_date: Optional[date] = None
     status: str               # 'active' | 'removed'
     added_at: str
     removed_at: Optional[str] = None

@@ -49,3 +49,78 @@ def attach_market_cap(ticker: str, df: pd.DataFrame, logger: logging.Logger) -> 
         logger.warning(f"[{ticker}] Failed to attach market_cap: {e}")
         
     return df
+
+from datetime import datetime, date
+from db.models import PipelineMeta
+
+def get_pipeline_meta(db) -> tuple[datetime | None, date | None]:
+    """
+    Retrieves the pipeline execution metadata (last_completed_at, last_spy_date).
+    Returns (None, None) if no metadata exists.
+    """
+    meta = db.query(PipelineMeta).filter(PipelineMeta.id == 1).first()
+    if meta:
+        return meta.last_completed_at, meta.last_spy_date
+    return None, None
+
+def update_pipeline_meta(db, start_time: datetime, spy_latest_date: date):
+    """
+    Upserts the pipeline execution metadata.
+    Stores the data fetch start_time and the latest SPY trading date.
+    """
+    meta = db.query(PipelineMeta).filter(PipelineMeta.id == 1).first()
+    if meta:
+        meta.last_completed_at = start_time
+        meta.last_spy_date = spy_latest_date
+    else:
+        meta = PipelineMeta(id=1, last_completed_at=start_time, last_spy_date=spy_latest_date)
+        db.add(meta)
+    db.commit()
+
+def get_expired_earnings_date_tickers(db, target_tickers: list[str], today: date) -> list[str]:
+    """
+    Filters target_tickers and returns only those that are active and whose
+    next_earnings_date is NULL or prior to today (expired).
+    """
+    from sqlalchemy import or_
+    from db.models import Symbol
+    
+    if not target_tickers:
+        return []
+        
+    expired_symbols = db.query(Symbol.ticker).filter(
+        Symbol.active == 1,
+        Symbol.ticker.in_(target_tickers),
+        or_(
+            Symbol.next_earnings_date.is_(None),
+            Symbol.next_earnings_date < today
+        )
+    ).all()
+    
+    return [r[0] for r in expired_symbols]
+
+def update_earnings_dates_sync(db, tickers: list[str], sleep_seconds: float = 0.0):
+    """
+    Synchronously fetches next earnings dates for tickers and updates the symbols table.
+    """
+    import time
+    from db.models import Symbol
+    from data_collection.fetcher import fetch_next_earnings_date
+    
+    if not tickers:
+        return
+        
+    for i, ticker in enumerate(tickers):
+        next_date = fetch_next_earnings_date(ticker)
+        if next_date:
+            symbol = db.query(Symbol).filter(Symbol.ticker == ticker, Symbol.active == 1).first()
+            if symbol:
+                symbol.next_earnings_date = next_date
+                db.flush()
+                
+        if i < len(tickers) - 1 and sleep_seconds > 0:
+            time.sleep(sleep_seconds)
+            
+    db.commit()
+
+

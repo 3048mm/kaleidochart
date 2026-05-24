@@ -271,6 +271,67 @@ def build_all_virtual_indexes_prices(db, virtual_items: list[dict], symbol_id_ma
         db.query(RelativeRank).filter(RelativeRank.group_name == "テーマ").delete(synchronize_session=False)
         db.commit()
 
+from datetime import datetime, date
+
+def should_run_pipeline_for_date(db, current_time: datetime, spy_latest_date: date) -> tuple[bool, str]:
+    """
+    Determines whether the pipeline should execute for the given SPY date based on metadata.
+    Handles 2-phase updates (morning unconfirmed prompt vs afternoon confirmed confirm).
+    """
+    import pytz
+    from datetime import datetime as dt
+    from pipeline.utils import get_pipeline_meta
+    
+    est_tz = pytz.timezone('America/New_York')
+    # Make sure current_time has tzinfo, default to UTC if missing
+    if current_time.tzinfo is None:
+        current_time = pytz.utc.localize(current_time)
+    current_time_est = current_time.astimezone(est_tz)
+    
+    last_completed_utc, last_spy_date = get_pipeline_meta(db)
+    
+    if last_spy_date is None or last_completed_utc is None:
+        # First execution or empty metadata
+        return True, "prompt"
+        
+    if spy_latest_date > last_spy_date:
+        # New trading day has started
+        return True, "prompt"
+        
+    if spy_latest_date < last_spy_date:
+        # DB date is somehow ahead (rollback safety)
+        return False, "skip"
+        
+    # Same trading day (spy_latest_date == last_spy_date)
+    # Check if we need volume confirmation (EST 22:00 = UTC next day 02:00/03:00)
+    # Ensure last_completed_utc has tzinfo
+    if last_completed_utc.tzinfo is None:
+        last_completed_utc = pytz.utc.localize(last_completed_utc)
+    last_completed_est = last_completed_utc.astimezone(est_tz)
+    
+    # 22:00 America/New_York on the SPY trading date is the limit for unconfirmed data
+    confirmation_limit = est_tz.localize(dt.combine(spy_latest_date, dt.min.time().replace(hour=22)))
+
+    
+    is_last_run_unconfirmed = last_completed_est < confirmation_limit
+    is_now_confirmed_window = current_time_est >= confirmation_limit
+    
+    if is_last_run_unconfirmed and is_now_confirmed_window:
+        return True, "confirm"
+        
+    return False, "skip"
+
+def clear_pipeline_data_for_date(db, target_date: date):
+    """
+    Clears all downstream pipeline data (T2 to T5) for a specific date
+    to prepare for a clean rebuild/overwrite of that day's data.
+    """
+    db.query(MarketSignal).filter(MarketSignal.date == target_date).delete(synchronize_session=False)
+    db.query(RelativeRank).filter(RelativeRank.date == target_date).delete(synchronize_session=False)
+    db.query(Indicator).filter(Indicator.date == target_date).delete(synchronize_session=False)
+    db.query(DailyPrice).filter(DailyPrice.date == target_date).delete(synchronize_session=False)
+    db.commit()
+
 def run_pipeline(config, db_path, logger: logging.Logger, rebuild_from: Optional[str] = None, categories: Optional[List[str]] = None, skip_fetch: bool = False, skip_sync: bool = False, skip_t3: bool = False, recalculate_all: bool = False):
     """
     Main Orchestrator for Step 3 Pipeline.
@@ -278,6 +339,39 @@ def run_pipeline(config, db_path, logger: logging.Logger, rebuild_from: Optional
     logger.info(f"Starting Step 3 Pipeline Orchestrator - rebuild_from={rebuild_from}, categories={categories}, re-calculate={recalculate_all}")
     init_db(db_path)
     
+    start_time_utc = datetime.utcnow()
+    has_explicit_rebuild = (rebuild_from is not None) or recalculate_all
+    
+    # 1. Autonomous check for 2-phase update determination (if no explicit rebuild is requested)
+    spy_latest_date = None
+    if not has_explicit_rebuild and not skip_fetch:
+        try:
+            import yfinance as yf
+            logger.info("Performing autonomous pre-check on SPY latest date from yfinance...")
+            spy_df = yf.download("SPY", period="1d", progress=False)
+            if spy_df is not None and not spy_df.empty:
+                # pandas datetime to date object
+                spy_latest_date = spy_df.index[-1].date()
+                logger.info(f"Latest SPY date check result: {spy_latest_date}")
+        except Exception as e:
+            logger.warning(f"Could not perform autonomous pre-check of SPY date: {e}")
+
+        if spy_latest_date:
+            with get_db() as db:
+                should_run, run_mode = should_run_pipeline_for_date(db, start_time_utc, spy_latest_date)
+                
+            if not should_run:
+                logger.info(f"Pipeline execution SKIPPED autonomously. Data for SPY date {spy_latest_date} is already confirmed and up to date.")
+                return
+                
+            if run_mode == "confirm":
+                logger.info(f"Pipeline triggered in Autonomous VOLUME CONFIRMATION Mode for date: {spy_latest_date}")
+                logger.info(f"Clearing old morning data for date {spy_latest_date} to prepare for clean overwrite...")
+                with get_db() as db:
+                    clear_pipeline_data_for_date(db, spy_latest_date)
+            else:
+                logger.info(f"Pipeline triggered in Autonomous PROMPT Mode for new trading day: {spy_latest_date}")
+                
     lvl_map = {'T2': 2, 'T3': 3, 'T4': 4, 'T5': 5}
     active_lvl = lvl_map.get(str(rebuild_from).upper(), 0)
     if recalculate_all: active_lvl = 2
@@ -349,6 +443,12 @@ def run_pipeline(config, db_path, logger: logging.Logger, rebuild_from: Optional
             t_start = time.time()
             sync_phase_t5_signals(db, logger)
             logger.info(f"T5: Signals completed in {time.time() - t_start:.2f}s")
+
+            # Save pipeline execution metadata to allow self-determining updates next run
+            if spy_latest_date:
+                from pipeline.utils import update_pipeline_meta
+                logger.info(f"Saving pipeline metadata: start_time={start_time_utc}, spy_date={spy_latest_date}")
+                update_pipeline_meta(db, start_time_utc, spy_latest_date)
 
             logger.info("--- Step 3 Pipeline COMPLETED SUCCESSFULLY ---")
     except Exception as e:

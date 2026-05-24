@@ -314,6 +314,7 @@ export interface WatchlistItem {
     latest_adr_pct: number;
     latest_dist_sma50_atr: number;
     rs_sparkline: number[];
+    next_earnings_date?: string | null;
     status: 'active' | 'removed';
     added_at: string;
     removed_at: string | null;

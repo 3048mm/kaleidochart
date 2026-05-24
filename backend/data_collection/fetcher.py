@@ -176,3 +176,46 @@ def fetch_fundamentals(ticker: str) -> dict:
         logger.error(f"[{ticker}] Failed to fetch fundamentals: {e}")
         
     return res
+
+def fetch_next_earnings_date(ticker: str):
+    """
+    Fetches the next earnings announcement date from yfinance calendar.
+    Returns None if missing or on error.
+    """
+    from datetime import date, datetime
+    import yfinance as yf
+    
+    yf_ticker = _normalize_ticker(ticker)
+    logger.info(f"[{ticker}] Fetching next earnings date (as {yf_ticker})...")
+    try:
+        t = yf.Ticker(yf_ticker)
+        calendar = t.calendar
+        
+        if not calendar or 'Earnings Date' not in calendar:
+            logger.debug(f"[{ticker}] Earnings Date not found in calendar.")
+            return None
+            
+        dates_list = calendar['Earnings Date']
+        if not dates_list:
+            return None
+            
+        # Normally yfinance returns a list of datetime.date/datetime objects
+        first_val = dates_list[0]
+        if isinstance(first_val, datetime):
+            return first_val.date()
+        elif isinstance(first_val, date):
+            return first_val
+            
+        # In case it's a string, try parsing
+        if isinstance(first_val, str):
+            try:
+                # Try simple ISO format first
+                return datetime.strptime(first_val.split(' ')[0], "%Y-%m-%d").date()
+            except ValueError:
+                pass
+                
+        return None
+    except Exception as e:
+        logger.warning(f"[{ticker}] Failed to fetch next earnings date: {e}")
+        return None
+

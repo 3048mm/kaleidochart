@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, BackgroundTasks
 from sqlalchemy.orm import Session, aliased
 from sqlalchemy import desc, func, or_, and_, Column as SAColumn
 from typing import List, Optional, Dict, Any
@@ -1720,9 +1720,24 @@ from api.watchlist_service import (
 
 
 @router.get("/watchlist", response_model=schemas.WatchlistResponse)
-def api_get_watchlist(db: Session = Depends(get_api_db), user_db: Session = Depends(get_api_user_db)):
+def api_get_watchlist(
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_api_db),
+    user_db: Session = Depends(get_api_user_db)
+):
     """Get all watchlist items (active + removed) with computed metrics."""
     data = get_watchlist(db, user_db)
+    
+    # Trigger background earnings date update if any active symbols have expired dates
+    active_tickers = [item["ticker"] for item in data.get("active", [])]
+    if active_tickers:
+        from datetime import date
+        from pipeline.utils import get_expired_earnings_date_tickers, update_earnings_dates_sync
+        
+        expired_tickers = get_expired_earnings_date_tickers(db, active_tickers, date.today())
+        if expired_tickers:
+            background_tasks.add_task(update_earnings_dates_sync, db, expired_tickers, sleep_seconds=1.5)
+            
     return schemas.WatchlistResponse(**data)
 
 

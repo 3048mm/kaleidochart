@@ -6,7 +6,7 @@ import { appConfig } from '../config';
 import { useWatchlist } from '../hooks/useWatchlist';
 
 type Tab = 'active' | 'removed';
-type SortKey = 'entry_date' | 'ticker' | 'gain_pct' | 'max_gain_pct' | 'min_gain_pct' | 'latest_dist_sma50_atr' | 'removed_at' | 'result_pct';
+type SortKey = 'entry_date' | 'ticker' | 'gain_pct' | 'max_gain_pct' | 'min_gain_pct' | 'latest_dist_sma50_atr' | 'removed_at' | 'result_pct' | 'next_earnings_date';
 type SortOrder = 'asc' | 'desc';
 
 export const WatchlistPage: React.FC = () => {
@@ -199,6 +199,46 @@ export const WatchlistPage: React.FC = () => {
     const formatPct = (val: number) => `${val > 0 ? '+' : ''}${val.toFixed(2)}%`;
     const getPctColor = (val: number) => val > 0 ? appConfig.colors.good : val < 0 ? appConfig.colors.bad : '#ccc';
 
+    const renderEarningsDate = (item: WatchlistItem) => {
+        if (!item.next_earnings_date) return <span style={{ color: '#666' }}>-</span>;
+        
+        const nextDate = new Date(item.next_earnings_date);
+        const today = new Date();
+        // Reset hours for accurate date difference calculation
+        nextDate.setHours(0,0,0,0);
+        today.setHours(0,0,0,0);
+        
+        const diffTime = nextDate.getTime() - today.getTime();
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        
+        const dateStr = item.next_earnings_date;
+        
+        if (diffDays < 0) {
+            // Past date (could happen briefly during cache refresh)
+            return <span style={{ color: '#666' }}>{dateStr}</span>;
+        } else if (diffDays === 0) {
+            return (
+                <span style={{ color: '#ff4444', fontWeight: 'bold' }}>
+                    {dateStr} <span style={{ fontSize: '11px' }}>今日 🚨</span>
+                </span>
+            );
+        } else if (diffDays <= 3) {
+            return (
+                <span style={{ color: '#ff4444', fontWeight: 600 }}>
+                    {dateStr} <span style={{ fontSize: '11px', background: 'rgba(255, 68, 68, 0.1)', padding: '2px 6px', borderRadius: '4px', marginLeft: '4px' }}>あと {diffDays}日 🚨</span>
+                </span>
+            );
+        } else if (diffDays <= 7) {
+            return (
+                <span style={{ color: '#f59e0b', fontWeight: 600 }}>
+                    {dateStr} <span style={{ fontSize: '11px', background: 'rgba(245, 158, 11, 0.1)', padding: '2px 6px', borderRadius: '4px', marginLeft: '4px' }}>あと {diffDays}日 ⚠️</span>
+                </span>
+            );
+        }
+        
+        return <span style={{ color: '#ccc' }}>{dateStr} (あと {diffDays}日)</span>;
+    };
+
     const handleBuy = async () => {
         if (!buyTarget || !buyForm.portfolio_id) return;
         try {
@@ -292,7 +332,6 @@ export const WatchlistPage: React.FC = () => {
                                                 />
                                             </th>
                                             <th style={headerStyle} onClick={() => handleSort('ticker')}>Ticker {renderSortIcon('ticker')}</th>
-                                            <th style={headerStyle} onClick={() => handleSort('entry_date')}>Entry Date {renderSortIcon('entry_date')}</th>
                                             <th style={{ padding: '12px 10px', textAlign: 'right' }}>Entry Price</th>
                                             <th style={{ padding: '12px 10px', textAlign: 'right' }}>Latest</th>
                                             <th style={{ ...headerStyle, textAlign: 'right' }} onClick={() => handleSort('gain_pct')}>Gain% {renderSortIcon('gain_pct')}</th>
@@ -301,6 +340,8 @@ export const WatchlistPage: React.FC = () => {
                                             <th style={{ padding: '12px 10px', textAlign: 'right' }}>ADR%(21)</th>
                                             <th style={{ ...headerStyle, textAlign: 'right' }} onClick={() => handleSort('latest_dist_sma50_atr')}>50dATR {renderSortIcon('latest_dist_sma50_atr')}</th>
                                             <th style={{ padding: '12px 10px', textAlign: 'center', width: '80px' }}>RS21 (30D)</th>
+                                            <th style={headerStyle} onClick={() => handleSort('next_earnings_date')}>Earnings {renderSortIcon('next_earnings_date')}</th>
+                                            <th style={headerStyle} onClick={() => handleSort('entry_date')}>Entry Date {renderSortIcon('entry_date')}</th>
                                             <th style={{ padding: '12px 10px', textAlign: 'center' }}>Actions</th>
                                         </tr>
                                     </thead>
@@ -327,6 +368,23 @@ export const WatchlistPage: React.FC = () => {
                                                     </Link>
                                                     <div style={{ fontSize: '11px', color: '#666' }}>{item.name}</div>
                                                 </td>
+                                                <td style={{ padding: '12px 10px', textAlign: 'right' }}>{item.entry_price.toFixed(2)}</td>
+                                                <td style={{ padding: '12px 10px', textAlign: 'right' }}>{item.latest_close.toFixed(2)}</td>
+                                                <td style={{ padding: '12px 10px', textAlign: 'right', fontWeight: 700, color: getPctColor(item.gain_pct) }}>
+                                                    {formatPct(item.gain_pct)}
+                                                </td>
+                                                <td style={{ padding: '12px 10px', textAlign: 'right', color: appConfig.colors.good }}>{formatPct(item.max_gain_pct)}</td>
+                                                <td style={{ padding: '12px 10px', textAlign: 'right', color: appConfig.colors.bad }}>{formatPct(item.min_gain_pct)}</td>
+                                                <td style={{ padding: '12px 10px', textAlign: 'right', color: '#ccc' }}>{item.latest_adr_pct.toFixed(2)}</td>
+                                                <td style={{ padding: '12px 10px', textAlign: 'right', color: item.latest_dist_sma50_atr >= 8 ? '#ffff00' : '#ccc' }}>
+                                                    {item.latest_dist_sma50_atr.toFixed(1)}
+                                                </td>
+                                                <td style={{ padding: '12px 10px', textAlign: 'center' }}>
+                                                    <Sparkline data={item.rs_sparkline} width={70} height={28} color={item.gain_pct >= 0 ? appConfig.colors.good : appConfig.colors.bad} fixedRange={true} />
+                                                </td>
+                                                <td style={{ padding: '12px 10px', whiteSpace: 'nowrap' }}>
+                                                    {renderEarningsDate(item)}
+                                                </td>
                                                 <td style={{ padding: '12px 10px' }}>
                                                     <input 
                                                         type="date" 
@@ -344,20 +402,6 @@ export const WatchlistPage: React.FC = () => {
                                                             cursor: 'pointer'
                                                         }}
                                                     />
-                                                </td>
-                                                <td style={{ padding: '12px 10px', textAlign: 'right' }}>{item.entry_price.toFixed(2)}</td>
-                                                <td style={{ padding: '12px 10px', textAlign: 'right' }}>{item.latest_close.toFixed(2)}</td>
-                                                <td style={{ padding: '12px 10px', textAlign: 'right', fontWeight: 700, color: getPctColor(item.gain_pct) }}>
-                                                    {formatPct(item.gain_pct)}
-                                                </td>
-                                                <td style={{ padding: '12px 10px', textAlign: 'right', color: appConfig.colors.good }}>{formatPct(item.max_gain_pct)}</td>
-                                                <td style={{ padding: '12px 10px', textAlign: 'right', color: appConfig.colors.bad }}>{formatPct(item.min_gain_pct)}</td>
-                                                <td style={{ padding: '12px 10px', textAlign: 'right', color: '#ccc' }}>{item.latest_adr_pct.toFixed(2)}</td>
-                                                <td style={{ padding: '12px 10px', textAlign: 'right', color: item.latest_dist_sma50_atr >= 8 ? '#ffff00' : '#ccc' }}>
-                                                    {item.latest_dist_sma50_atr.toFixed(1)}
-                                                </td>
-                                                <td style={{ padding: '12px 10px', textAlign: 'center' }}>
-                                                    <Sparkline data={item.rs_sparkline} width={70} height={28} color={item.gain_pct >= 0 ? appConfig.colors.good : appConfig.colors.bad} fixedRange={true} />
                                                 </td>
                                                 <td style={{ padding: '12px 10px', textAlign: 'center', whiteSpace: 'nowrap' }}>
                                                     <button 

@@ -16,6 +16,7 @@ class Symbol(Base):
     theme_type = Column(String, nullable=True)  # 'etf', 'virtual', None
     tags = Column(String, nullable=True)        # comma-separated tags
     active = Column(SmallInteger, default=1)    # 1=active, 0=inactive (soft delete)
+    next_earnings_date = Column(Date, nullable=True) # Next earnings announcement date
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     __table_args__ = (
@@ -202,5 +203,14 @@ class MarketSignal(Base):
     vxv_vix_ratio       = Column(Float)
     
     created_at = Column(DateTime, default=datetime.utcnow)
+
+class PipelineMeta(Base):
+    """Execution metadata for self-determining 2-phase update pipeline."""
+    __tablename__ = 'pipeline_meta'
+    
+    id = Column(Integer, primary_key=True)
+    last_completed_at = Column(DateTime, nullable=False) # Start time of the last successful pipeline run (UTC)
+    last_spy_date = Column(Date, nullable=False)          # SPY's latest date at completion (YYYY-MM-DD)
+
 
 
