@@ -816,6 +816,12 @@ def get_dashboard(
     price_dict = {p.symbol_id: p for p in prices}
 
     # Get Relative Ranks for target date
+    ranks_14 = db.query(RelativeRank).filter(
+        RelativeRank.date == target_date, 
+        RelativeRank.indicator_name == "rs_ratio_14"
+    ).all()
+    rank_14_dict = {r.symbol_id: r.percent_rank for r in ranks_14}
+
     ranks_21 = db.query(RelativeRank).filter(
         RelativeRank.date == target_date, 
         RelativeRank.indicator_name == "rs_ratio_21"
@@ -833,20 +839,21 @@ def get_dashboard(
             continue
             
         dp = price_dict[sym_id]
+        r14_rank = rank_14_dict.get(sym_id, 0.0)
         r21_rank = rank_21_dict.get(sym_id, 0.0)
         r63_rank = rank_63_dict.get(sym_id, 0.0)
         
         if s.category == "市場":
-            resp.indices.append(_build_panel_item(db, s, dp, r21_rank, r63_rank, target_date))
+            resp.indices.append(_build_panel_item(db, s, dp, r21_rank, r63_rank, target_date, r14_rank))
         elif s.category == "指標":
             if s.ticker == "SPY":
                 resp.spy_feature = _build_etf_feature(db, s, dp, target_date)
             else:
                 resp.leading.append(_build_leading_item(db, s, dp, target_date))
         elif s.category == "セクタ":
-            resp.sectors.append(_build_panel_item(db, s, dp, r21_rank, r63_rank, target_date))
+            resp.sectors.append(_build_panel_item(db, s, dp, r21_rank, r63_rank, target_date, r14_rank))
         elif s.category == "テーマ":
-            item = _build_panel_item(db, s, dp, r21_rank, r63_rank, target_date)
+            item = _build_panel_item(db, s, dp, r21_rank, r63_rank, target_date, r14_rank)
             resp.themes_top.append(item)
             
     # Sort and slice

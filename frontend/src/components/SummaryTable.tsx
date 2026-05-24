@@ -12,7 +12,7 @@ interface SummaryTableProps {
     defaultSortDirection?: SortDirection;
 }
 
-type SortKey = 'ticker' | 'close' | 'change_pct' | 'change_1w_pct' | 'change_1m_pct' | 'dist_21ema_pct' | 'rs_ratio_21_rank' | 'rs_ratio_63_rank';
+type SortKey = 'ticker' | 'close' | 'change_pct' | 'change_1w_pct' | 'change_1m_pct' | 'dist_21ema_pct' | 'rs_ratio_14_rank' | 'rs_ratio_21_rank' | 'rs_ratio_63_rank';
 type SortDirection = 'asc' | 'desc';
 
 export const SummaryTable: React.FC<SummaryTableProps> = ({ 
@@ -86,7 +86,7 @@ export const SummaryTable: React.FC<SummaryTableProps> = ({
 
     return (
         <div className="dashboard-list" style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch', width: '100%', maxWidth: '100%' }}>
-            <div style={{ minWidth: '550px' }}>
+            <div style={{ minWidth: '590px' }}>
                 {/* Header Row */}
                 <div style={{
                     display: 'flex', fontSize: '11px', color: '#aaa', paddingBottom: '8px', borderBottom: `1px solid ${appConfig.colors.glassBorder}`, marginBottom: '8px',
@@ -99,6 +99,7 @@ export const SummaryTable: React.FC<SummaryTableProps> = ({
                     <HeaderItem label="1M%" column="change_1m_pct" style={{ width: '50px', textAlign: 'center' }} />
                     <HeaderItem label="21E%" column="dist_21ema_pct" style={{ width: '50px', textAlign: 'right', paddingRight: '5px' }} />
                     <div style={{ width: '60px', textAlign: 'center' }}>RS21 (30D)</div>
+                    <HeaderItem label="RS14" column="rs_ratio_14_rank" style={{ width: '32px', textAlign: 'right' }} />
                     <HeaderItem label="RS21" column="rs_ratio_21_rank" style={{ width: '32px', textAlign: 'right' }} />
                     <HeaderItem label="RS63" column="rs_ratio_63_rank" style={{ width: '32px', textAlign: 'right' }} />
                 </div>
@@ -184,7 +185,19 @@ export const SummaryTable: React.FC<SummaryTableProps> = ({
                                 />
                             </div>
 
-                            {/* 8. RS Score (21, 63) */}
+                            {/* 8. RS Score (14, 21, 63) */}
+                            <div style={{
+                                width: '32px',
+                                textAlign: 'right',
+                                fontSize: '11px',
+                                fontVariantNumeric: 'tabular-nums',
+                                color: (item.rs_ratio_14_rank || 0) >= 0.7 ? appConfig.colors.good :
+                                    (item.rs_ratio_14_rank || 0) <= 0.3 ? appConfig.colors.bad : '#aaa',
+                                fontWeight: '600',
+                                flexShrink: 0,
+                            }}>
+                                {((item.rs_ratio_14_rank || 0) * 100).toFixed(0)}
+                            </div>
                             <div style={{
                                 width: '32px',
                                 textAlign: 'right',

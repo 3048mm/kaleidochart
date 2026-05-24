@@ -59,12 +59,20 @@ export const GroupPage: React.FC = () => {
             .finally(() => setLoading(false));
     }, [ticker, dateParam]);
 
+    const chartData = useMemo(() => {
+        if (!data) return [];
+        const d = data as any;
+        if (d.chart_data) return d.chart_data;
+        if (d.feature && d.feature.chart_data) return d.feature.chart_data;
+        return [];
+    }, [data]);
+
     const rrgSeries: RrgSeries[] = useMemo(() => {
         if (!data) return [];
         const result: RrgSeries[] = [];
         let colorIdx = 0;
         if (selectedTickers.has(data.ticker)) {
-            result.push({ ticker: data.ticker, data: data.chart_data, color: PALETTE[colorIdx++] });
+            result.push({ ticker: data.ticker, data: chartData, color: PALETTE[colorIdx++] });
         }
         (data.constituents || [])
             .filter(c => selectedTickers.has(c.ticker))
@@ -73,7 +81,7 @@ export const GroupPage: React.FC = () => {
                 colorIdx++;
             });
         return result;
-    }, [data, selectedTickers]);
+    }, [data, selectedTickers, chartData]);
 
     const colorMap = useMemo(() => {
         const m: Record<string, string> = {};
@@ -109,10 +117,13 @@ export const GroupPage: React.FC = () => {
                  </h1>
             </div>
 
-            <EtfFeaturePanel feature={data as any} titleSuffix="ETF" />
+            <EtfFeaturePanel 
+                feature={('feature' in data && data.feature) ? (data.feature as any) : data} 
+                titleSuffix="ETF" 
+            />
 
             <div className="glass-panel" style={{ padding: '20px', marginBottom: '20px' }}>
-                <RsLineChart data={data.chart_data} />
+                <RsLineChart data={chartData} />
             </div>
 
             <div className="glass-panel" style={{ padding: '20px', marginBottom: '20px' }}>
@@ -176,7 +187,7 @@ export const GroupPage: React.FC = () => {
                                         </td>
                                         <td style={{ padding: '8px', color: '#aaa', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</td>
                                         <td style={{ padding: '8px', textAlign: 'right' }}>{c.close?.toFixed(2)}</td>
-                                        {[c.change_1d_pct, c.change_1w_pct, c.change_1m_pct].map((v, i) => (
+                                        {[c.change_1d_pct ?? c.change_pct, c.change_1w_pct, c.change_1m_pct].map((v, i) => (
                                             <td key={i} style={{ padding: '8px', textAlign: 'center', color: v > 0 ? appConfig.colors.good : v < 0 ? appConfig.colors.bad : '#fff' }}>
                                                 {v > 0 ? '+' : ''}{v?.toFixed(2)}%
                                             </td>
@@ -187,7 +198,18 @@ export const GroupPage: React.FC = () => {
                                             </td>
                                         ))}
                                         <td style={{ padding: '8px' }}>
-                                            <Sparkline data={c.rs_sparkline || []} width={80} height={20} color={(c.rs_sparkline?.[c.rs_sparkline.length-1] || 0) > 0 ? appConfig.colors.good : appConfig.colors.bad} />
+                                            {(() => {
+                                                const spark = c.rs_sparkline || c.sparkline || [];
+                                                const lastVal = spark.length > 0 ? spark[spark.length - 1] : 0;
+                                                return (
+                                                    <Sparkline 
+                                                        data={spark} 
+                                                        width={80} 
+                                                        height={20} 
+                                                        color={lastVal > 0 ? appConfig.colors.good : appConfig.colors.bad} 
+                                                    />
+                                                );
+                                            })()}
                                         </td>
                                     </tr>
                                 );

@@ -21,14 +21,16 @@ const getChange = (data: ChartDataPoint[], point: ChartDataPoint): number | null
     return ((point.close - prev.close) / prev.close) * 100;
 };
 
-const formatMarketCap = (val: number): string => {
+const formatMarketCap = (val: number | undefined | null): string => {
+    if (val == null) return '-';
     if (Math.abs(val) >= 1.0e12) return `$${(val / 1.0e12).toFixed(2)}T`;
     if (Math.abs(val) >= 1.0e9) return `$${(val / 1.0e9).toFixed(2)}B`;
     if (Math.abs(val) >= 1.0e6) return `$${(val / 1.0e6).toFixed(2)}M`;
     return `$${val.toLocaleString()}`;
 };
 
-const formatNumberCompact = (val: number): string => {
+const formatNumberCompact = (val: number | undefined | null): string => {
+    if (val == null) return '-';
     if (Math.abs(val) >= 1.0e9) return `${(val / 1.0e9).toFixed(2)}B`;
     if (Math.abs(val) >= 1.0e6) return `${(val / 1.0e6).toFixed(2)}M`;
     if (Math.abs(val) >= 1.0e3) return `${(val / 1.0e3).toFixed(1)}K`;

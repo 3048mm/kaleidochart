@@ -54,7 +54,8 @@ export const RrgChart: React.FC<RrgChartProps> = ({ data, ticker, series: propSe
             const momKey = `rs_momentum_${rrgTimeframe}` as keyof ChartDataPoint;
             const condKey = `rs_condition_${rrgTimeframe}` as keyof ChartDataPoint;
 
-            const points = s.data.filter(d => d[ratioKey] != null && d[momKey] != null).map(d => ({
+            const sData = s.data || [];
+            const points = sData.filter(d => d[ratioKey] != null && d[momKey] != null).map(d => ({
                 time: d.time as string,
                 x: d[ratioKey] as number,
                 y: d[momKey] as number,
@@ -66,17 +67,29 @@ export const RrgChart: React.FC<RrgChartProps> = ({ data, ticker, series: propSe
         });
     }, [allSeries, rrgTimeframe, trailLength]);
 
-    // Minimap data (Individual symbol only, last 30 days)
-    const minimaps = useMemo(() => {
+    // Minimap data (3x3 Matrix, last 30 days)
+    const minimaps3x3 = useMemo(() => {
         if (!isIndividualMode || !data || data.length === 0) return null;
         
         const last30 = data.slice(-30);
-        return {
-            ratio: last30.map(d => (d[`rank_rs_ratio_${rrgTimeframe}` as keyof ChartDataPoint] as number) || 0),
-            mom: last30.map(d => (d[`rank_rs_momentum_${rrgTimeframe}` as keyof ChartDataPoint] as number) || 0),
-            cond: last30.map(d => (d[`rank_rs_condition_${rrgTimeframe}` as keyof ChartDataPoint] as number) || 0),
+        const timeframes: (14 | 21 | 63)[] = [14, 21, 63];
+        
+        const res: Record<14 | 21 | 63, { ratio: number[]; mom: number[]; cond: number[] }> = {
+            14: { ratio: [], mom: [], cond: [] },
+            21: { ratio: [], mom: [], cond: [] },
+            63: { ratio: [], mom: [], cond: [] },
         };
-    }, [isIndividualMode, data, rrgTimeframe]);
+        
+        timeframes.forEach(tf => {
+            res[tf] = {
+                ratio: last30.map(d => (d[`rank_rs_ratio_${tf}` as keyof ChartDataPoint] as number) || 0),
+                mom: last30.map(d => (d[`rank_rs_momentum_${tf}` as keyof ChartDataPoint] as number) || 0),
+                cond: last30.map(d => (d[`rank_rs_condition_${tf}` as keyof ChartDataPoint] as number) || 0),
+            };
+        });
+        
+        return res;
+    }, [isIndividualMode, data]);
 
     // SVG dimensions (Internal coordinate space)
     const width = 800;
@@ -176,116 +189,153 @@ export const RrgChart: React.FC<RrgChartProps> = ({ data, ticker, series: propSe
                     </div>
                 )}
 
+                {/* PC Only: Global RRG Controls placed above both Minimaps and RRG Graph */}
                 <div style={{ 
                     flex: 1, 
                     display: 'flex', 
-                    flexDirection: isMobile ? 'column' : 'row', 
+                    flexDirection: 'column', 
                     minHeight: 0,
-                    paddingBottom: isMobile ? '20px' : '0'
+                    paddingBottom: '20px'
                 }}>
-                    {/* 2. Left Panel: RS Minimaps (Individual Mode, PC ONLY) */}
-                    {isIndividualMode && minimaps && !isMobile && (
+                    {/* 2. Left Panel: RS Minimaps (Individual Mode, PC ONLY - 3x3 Matrix) */}
+                    {isIndividualMode && minimaps3x3 && !isMobile && (
                         <div style={{ 
-                            width: '180px', 
-                            padding: '15px', 
-                            borderRight: '1px solid rgba(255,255,255,0.05)', 
+                            padding: '15px 20px', 
+                            borderBottom: '1px solid rgba(255,255,255,0.05)', 
                             display: 'flex', 
                             flexDirection: 'column', 
-                            gap: '20px',
+                            gap: '15px',
                             flexShrink: 0,
-                            overflowY: 'auto'
+                            maxWidth: '680px' // 横伸びを防ぐために最大幅を制限
                         }}>
-                            <div style={{ fontSize: '12px', color: '#aaa', fontWeight: 'bold', marginBottom: '-10px' }}>Relative Rank (30d)</div>
+                            <div style={{ fontSize: '12px', color: '#aaa', fontWeight: 'bold', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '6px' }}>
+                                Relative Rank (30d) Matrix
+                            </div>
                             
+                            {/* Matrix Column Headers */}
+                            <div style={{ display: 'flex', alignItems: 'center', fontSize: '11px', color: '#666', fontWeight: 'bold', paddingBottom: '4px', textAlign: 'center' }}>
+                                <div style={{ width: '85px', textAlign: 'left' }}>Indicator</div>
+                                <div style={{ flex: 1 }}>RS14</div>
+                                <div style={{ flex: 1 }}>RS21</div>
+                                <div style={{ flex: 1 }}>RS63</div>
+                            </div>
+                            
+                            {/* Matrix Rows */}
                             {[
-                                { label: 'RS Ratio', data: minimaps.ratio },
-                                { label: 'RS Momentum', data: minimaps.mom },
-                                { label: 'RS Condition', data: minimaps.cond },
-                            ].map(m => (
-                                <div key={m.label} style={{ background: 'rgba(255,255,255,0.03)', padding: '10px', borderRadius: '6px' }}>
-                                    <div style={{ fontSize: '10px', color: '#888', marginBottom: '8px' }}>{m.label} %Rank</div>
-                                    <Sparkline 
-                                        data={m.data} 
-                                        width={140} 
-                                        height={40} 
-                                        color={m.data[m.data.length-1] > 0.5 ? appConfig.colors.good : appConfig.colors.bad}
-                                        fixedRange={true}
-                                    />
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px', fontSize: '9px', color: '#555' }}>
-                                        <span>30d ago</span>
-                                        <span style={{ color: (m.data[m.data.length-1] || 0) > 0.8 ? appConfig.colors.good : 'inherit' }}>
-                                            {((m.data[m.data.length-1] || 0) * 100).toFixed(0)}%
-                                        </span>
+                                { key: 'ratio' as const, label: 'RS Ratio', pctLabel: '%Rank' },
+                                { key: 'mom' as const, label: 'RS Momentum', pctLabel: '%Rank' },
+                                { key: 'cond' as const, label: 'RS Condition', pctLabel: '%Rank' }
+                            ].map(row => (
+                                <div key={row.key} style={{ display: 'flex', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
+                                    {/* Row Header Label */}
+                                    <div style={{ width: '85px', display: 'flex', flexDirection: 'column' }}>
+                                        <span style={{ fontSize: '11px', color: '#ccc', fontWeight: 'bold' }}>{row.label.split(' ')[1]}</span>
+                                        <span style={{ fontSize: '8px', color: '#555' }}>{row.pctLabel}</span>
                                     </div>
+                                    
+                                    {/* 3 Columns (14d, 21d, 63d) */}
+                                    {([14, 21, 63] as const).map(tf => {
+                                        const d = minimaps3x3[tf][row.key];
+                                        const lastVal = d[d.length - 1] || 0;
+                                        return (
+                                            <div key={tf} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', background: 'rgba(255,255,255,0.015)', margin: '0 6px', padding: '6px', borderRadius: '4px', maxWidth: '170px' }}>
+                                                <Sparkline 
+                                                    data={d} 
+                                                    width={125} 
+                                                    height={26} 
+                                                    color={lastVal > 0.5 ? appConfig.colors.good : appConfig.colors.bad}
+                                                    fixedRange={true}
+                                                />
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', marginTop: '3px', fontSize: '9px', color: '#555', boxSizing: 'border-box', padding: '0 2px' }}>
+                                                    <span>30d</span>
+                                                    <span style={{ color: lastVal > 0.8 ? appConfig.colors.good : 'inherit', fontWeight: 'bold' }}>
+                                                        {(lastVal * 100).toFixed(0)}%
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
                                 </div>
                             ))}
                         </div>
                     )}
 
-                    {/* Right Panel (PC) or Main Stack (Mobile) */}
-                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-                        
-                        {/* 3. RRG Controls (Mobile Only, Placed ABOVE Minimaps) */}
-                        {isMobile && (
-                            <div style={{ padding: '8px 12px 2px 12px' }}>
-                                {renderControls()}
+                    {/* 2.2 Middle Panel: RS Minimaps (Individual Mode, MOBILE ONLY - 3x3 Matrix) */}
+                    {isIndividualMode && minimaps3x3 && isMobile && (
+                        <div style={{ 
+                            padding: '10px 12px', 
+                            borderTop: '1px solid rgba(255,255,255,0.05)', 
+                            borderBottom: '1px solid rgba(255,255,255,0.05)', 
+                            display: 'flex', 
+                            flexDirection: 'column', 
+                            gap: '8px',
+                            flexShrink: 0
+                        }}>
+                            <div style={{ fontSize: '11px', color: '#aaa', fontWeight: 'bold' }}>Relative Rank (30d) Matrix</div>
+                            
+                            {/* Mobile Columns Headers */}
+                            <div style={{ display: 'flex', fontSize: '9px', color: '#555', fontWeight: 'bold', paddingLeft: '65px', textAlign: 'center' }}>
+                                <div style={{ flex: 1 }}>RS14</div>
+                                <div style={{ flex: 1 }}>RS21</div>
+                                <div style={{ flex: 1 }}>RS63</div>
                             </div>
-                        )}
 
-                        {/* 4. Middle Panel: RS Minimaps (Individual Mode, MOBILE ONLY, Placed BELOW Controls) */}
-                        {isIndividualMode && minimaps && isMobile && (
-                            /* Mobile horizontal 3-column layout for minimaps */
-                            <div style={{ 
-                                padding: '10px 12px', 
-                                borderTop: '1px solid rgba(255,255,255,0.05)', 
-                                borderBottom: '1px solid rgba(255,255,255,0.05)', 
-                                display: 'flex', 
-                                flexDirection: 'column', 
-                                gap: '6px',
-                                flexShrink: 0
-                            }}>
-                                <div style={{ fontSize: '11px', color: '#aaa', fontWeight: 'bold' }}>Relative Rank (30d)</div>
-                                <div style={{ display: 'flex', gap: '6px', justifyContent: 'space-between', width: '100%' }}>
-                                    {[
-                                        { label: 'RS Ratio', data: minimaps.ratio },
-                                        { label: 'RS Momentum', data: minimaps.mom },
-                                        { label: 'RS Condition', data: minimaps.cond },
-                                    ].map(m => (
-                                        <div key={m.label} style={{ background: 'rgba(255,255,255,0.02)', padding: '6px', borderRadius: '6px', flex: 1 }}>
-                                            <div style={{ fontSize: '9px', color: '#888', marginBottom: '2px', textAlign: 'center', whiteSpace: 'nowrap' }}>{m.label}</div>
-                                            <div style={{ display: 'flex', justifyContent: 'center', margin: '4px 0' }}>
+                            {/* Mobile Rows */}
+                            {[
+                                { key: 'ratio' as const, label: 'RS Ratio' },
+                                { key: 'mom' as const, label: 'RS Momentum' },
+                                { key: 'cond' as const, label: 'RS Condition' }
+                            ].map(row => (
+                                <div key={row.key} style={{ display: 'flex', alignItems: 'center', padding: '2px 0' }}>
+                                    {/* Row label on the left */}
+                                    <div style={{ width: '60px', fontSize: '10px', color: '#ccc', fontWeight: 'bold', display: 'flex', flexDirection: 'column' }}>
+                                        <span>{row.label.split(' ')[1]}</span>
+                                        <span style={{ fontSize: '8px', color: '#555', fontWeight: 'normal' }}>%Rank</span>
+                                    </div>
+                                    
+                                    {/* 3 Columns */}
+                                    {([14, 21, 63] as const).map(tf => {
+                                        const d = minimaps3x3[tf][row.key];
+                                        const lastVal = d[d.length - 1] || 0;
+                                        return (
+                                            <div key={tf} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', background: 'rgba(255,255,255,0.01)', margin: '0 2px', padding: '4px', borderRadius: '4px' }}>
                                                 <Sparkline 
-                                                    data={m.data} 
-                                                    width={90} 
-                                                    height={30} 
-                                                    color={m.data[m.data.length-1] > 0.5 ? appConfig.colors.good : appConfig.colors.bad}
+                                                    data={d} 
+                                                    width={75} 
+                                                    height={22} 
+                                                    color={lastVal > 0.5 ? appConfig.colors.good : appConfig.colors.bad}
                                                     fixedRange={true}
                                                 />
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', fontSize: '8px', color: '#444', marginTop: '1px', padding: '0 1px', boxSizing: 'border-box' }}>
+                                                    <span>30d</span>
+                                                    <span style={{ color: lastVal > 0.8 ? appConfig.colors.good : 'inherit', fontWeight: 'bold' }}>
+                                                        {(lastVal * 100).toFixed(0)}%
+                                                    </span>
+                                                </div>
                                             </div>
-                                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '8px', color: '#555', marginTop: '2px' }}>
-                                                <span>30d</span>
-                                                <span style={{ color: (m.data[m.data.length-1] || 0) > 0.8 ? appConfig.colors.good : 'inherit' }}>
-                                                    {((m.data[m.data.length-1] || 0) * 100).toFixed(0)}%
-                                                </span>
-                                            </div>
-                                        </div>
-                                    ))}
+                                        );
+                                    })}
                                 </div>
-                            </div>
-                        )}
+                            ))}
+                        </div>
+                    )}
 
-                        {/* 5. RRG Controls (PC Only, Placed immediately above RRG SVG) */}
-                        {!isMobile && renderControls()}
+                    {/* 3. Main RRG Plot Area */}
+                    <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+                        {/* RRG Controls (PC / Mobile 共通でRRGグラフの直上に配置) */}
+                        <div style={{ padding: isMobile ? '8px 12px 2px 12px' : '10px 20px 0 20px', flexShrink: 0 }}>
+                            {renderControls()}
+                        </div>
 
                         {/* 6. Main RRG SVG Area */}
                         <div style={{ 
-                            flex: 1, 
+                            flexShrink: 0, 
                             position: 'relative', 
                             display: 'flex', 
                             justifyContent: 'center', 
                             alignItems: 'center', 
                             padding: isMobile ? '10px' : '20px', 
-                            minHeight: isMobile ? '320px' : '0',
+                            height: isMobile ? '380px' : '600px',
                             boxSizing: 'border-box'
                         }}>
                             {!hasData ? (
@@ -309,11 +359,18 @@ export const RrgChart: React.FC<RrgChartProps> = ({ data, ticker, series: propSe
                                 </div>
                             ) : (
                                 <svg
-                                    width="100%"
-                                    height="100%"
                                     viewBox={`0 0 ${width} ${height}`}
                                     preserveAspectRatio="xMidYMid meet"
-                                    style={{ background: '#131722', borderRadius: '8px', border: '1px solid #2B3139', flex: 1 }}
+                                    style={{ 
+                                        background: '#131722', 
+                                        borderRadius: '8px', 
+                                        border: '1px solid #2B3139',
+                                        width: '100%',
+                                        height: '100%',
+                                        maxWidth: isMobile ? '100%' : '600px',
+                                        maxHeight: isMobile ? '380px' : '600px',
+                                        aspectRatio: '1 / 1'
+                                    }}
                                 >
                                     <defs>
                                         <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
@@ -328,18 +385,18 @@ export const RrgChart: React.FC<RrgChartProps> = ({ data, ticker, series: propSe
                                     <rect x={padding} y={padding}      width={Math.max(0, originX - padding)}         height={Math.max(0, originY - padding)}               fill="rgba(41, 98, 255, 0.1)" />
 
                                     {/* Quadrant Labels */}
-                                    <text x={width - padding - 10} y={padding + 20}          fill="rgba(38, 166, 154, 0.3)"  fontSize="20" fontWeight="bold" textAnchor="end">LEADING</text>
-                                    <text x={width - padding - 10} y={height - padding - 10} fill="rgba(255, 235, 59, 0.2)"  fontSize="20" fontWeight="bold" textAnchor="end">WEAKENING</text>
-                                    <text x={padding + 10}          y={height - padding - 10} fill="rgba(239, 83, 80, 0.3)"  fontSize="20" fontWeight="bold">LAGGING</text>
-                                    <text x={padding + 10}          y={padding + 20}          fill="rgba(41, 98, 255, 0.3)"  fontSize="20" fontWeight="bold">IMPROVING</text>
+                                    <text x={width - padding - 15} y={padding + 30}          fill="rgba(38, 166, 154, 0.25)" fontSize="26" fontWeight="bold" textAnchor="end">LEADING</text>
+                                    <text x={width - padding - 15} y={height - padding - 15} fill="rgba(255, 235, 59, 0.15)" fontSize="26" fontWeight="bold" textAnchor="end">WEAKENING</text>
+                                    <text x={padding + 15}          y={height - padding - 15} fill="rgba(239, 83, 80, 0.25)" fontSize="26" fontWeight="bold">LAGGING</text>
+                                    <text x={padding + 15}          y={padding + 30}          fill="rgba(41, 98, 255, 0.25)" fontSize="26" fontWeight="bold">IMPROVING</text>
 
                                     {/* Axes */}
                                     <line x1={padding} y1={originY} x2={width - padding} y2={originY} stroke="#333" strokeWidth="2" />
                                     <line x1={originX} y1={padding} x2={originX} y2={height - padding} stroke="#333" strokeWidth="2" />
 
                                     {/* Axis Labels */}
-                                    <text x={width / 2} y={height - 15} fill="#888" fontSize="12" textAnchor="middle">RS-Ratio (Trend)</text>
-                                    <text x={15} y={height / 2} fill="#888" fontSize="12" textAnchor="middle" transform={`rotate(-90, 15, ${height / 2})`}>RS-Momentum (Rate of Change)</text>
+                                    <text x={width / 2} y={height - 15} fill="#aaa" fontSize="16" fontWeight="bold" textAnchor="middle">RS-Ratio (Trend)</text>
+                                    <text x={20} y={height / 2} fill="#aaa" fontSize="16" fontWeight="bold" textAnchor="middle" transform={`rotate(-90, 20, ${height / 2})`}>RS-Momentum (Rate of Change)</text>
 
                                     {/* Render each series trail + points */}
                                     {computedSeries.map(s => {
@@ -348,7 +405,7 @@ export const RrgChart: React.FC<RrgChartProps> = ({ data, ticker, series: propSe
                                         return (
                                             <g key={s.ticker}>
                                                 {/* Trail */}
-                                                <path d={pathD} fill="none" stroke={s.color} strokeWidth="2" strokeOpacity="0.6" />
+                                                <path d={pathD} fill="none" stroke={s.color} strokeWidth="3.5" strokeOpacity="0.8" />
 
                                                 {/* Trail Dots */}
                                                 {s.points.map((d, i) => {
@@ -364,13 +421,13 @@ export const RrgChart: React.FC<RrgChartProps> = ({ data, ticker, series: propSe
                                                             <circle
                                                                 cx={px}
                                                                 cy={py}
-                                                                r={isLast ? 7 : 3}
+                                                                r={isLast ? 9 : 4}
                                                                 fill={isLast ? s.color : `${s.color}99`}
                                                                 stroke="#131722"
-                                                                strokeWidth={isLast ? 2 : 1}
+                                                                strokeWidth={isLast ? 2.5 : 1}
                                                             />
                                                             {isLast && (
-                                                                <text x={px + 10} y={py + 4} fill={s.color} fontSize="13" fontWeight="bold" style={{ textShadow: '1px 1px 2px #000' }}>
+                                                                <text x={px + 12} y={py + 4} fill={s.color} fontSize="14" fontWeight="bold" style={{ textShadow: '1px 1px 2px #000' }}>
                                                                     {s.ticker}
                                                                 </text>
                                                             )}
