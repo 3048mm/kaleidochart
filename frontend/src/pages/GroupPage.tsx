@@ -150,7 +150,7 @@ export const GroupPage: React.FC = () => {
                                 <th style={{ padding: '8px', textAlign: 'center' }}>RSRatio63</th>
                                 <th style={{ padding: '8px', textAlign: 'center' }}>RSMom21</th>
                                 <th style={{ padding: '8px', textAlign: 'center' }}>RSMom63</th>
-                                <th style={{ padding: '8px', textAlign: 'center', width: '80px' }}>Trend</th>
+                                <th style={{ padding: '8px', textAlign: 'center', width: '80px' }}>RS21 (30d)</th>
                             </tr>
                         </thead>
                         <tbody>

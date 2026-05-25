@@ -35,6 +35,7 @@ max_dist_sma50_atr = 7.0
 min_market_cap = 1e8 
 rs_rank_21_gt_63 = true
 
+
 [[strategy]]
 name = "B1_theme_momentum"
 description = "強いテーマに属する銘柄のモメンタム"
@@ -94,10 +95,12 @@ max_hits_per_day = 10
 sort_column = "rs21_rank"
 sort_ascending = false
 rrg_improving_in = true
-min_vol_surge_21 = 1.0
-min_adr_pct_21 = 4.0
-max_dist_sma50_atr = 6.0
-min_market_cap = 1e9
+min_change_1d_pct = 2.0
+min_vol_surge_21 = 1.6 
+min_adr_pct_21 = 3.5 
+max_dist_sma50_atr = 5.0 
+min_market_cap = 1e8
+theme_rs_rank_14_gt_21 = true
 
 [[strategy]]
 name = "D_ema21_pullback"
@@ -193,10 +196,12 @@ min_market_cap     = { type = "categorical", choices = [1e8, 3e8, 1e9] }
 
 [optimization.C2]
 rrg_improving_in     = { type = "categorical", choices = [true] }
+min_change_1d_pct    = { type = "float", min = 1.0, max = 4.0, step = 1.0 }
 min_vol_surge_21   = { type = "float", min = 0.5, max = 2.0, step = 0.1 }
 min_adr_pct_21     = { type = "float", min = 2.0, max = 6.0, step = 0.5 }
 max_dist_sma50_atr = { type = "float", min = 4.0, max = 8.0, step = 0.5 }
-min_market_cap     = { type = "categorical", choices = [1e8, 3e8, 1e9] }
+min_market_cap     = { type = "categorical", choices = [1e5, 5e5, 1e6, 5e6, 1e7, 5e7, 1e8, 3e8, 1e9] }
+theme_rs_rank_14_gt_21   = { type = "categorical", choices = [true] }
 
 [optimization.D]
 #close_gt_sma50 = { type = "categorical", choices = [true, false] }
