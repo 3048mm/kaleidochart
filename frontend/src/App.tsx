@@ -176,7 +176,7 @@ export default function App() {
                     <Link to="/screener" style={{ color: location.pathname === '/screener' ? '#00ff88' : '#d1d4dc', textDecoration: 'none' }}>Screener</Link>
                     <Link to="/watchlist" style={{ color: location.pathname === '/watchlist' ? '#00ff88' : '#d1d4dc', textDecoration: 'none' }}>Watchlist</Link>
                     <Link to="/portfolio" style={{ color: location.pathname.startsWith('/portfolio') ? '#00ff88' : '#d1d4dc', textDecoration: 'none' }}>Portfolio</Link>
-                    <Link to="/backtest" style={{ color: location.pathname.startsWith('/backtest') ? '#00ff88' : '#d1d4dc', textDecoration: 'none' }}>Backtest</Link>
+                    <Link to="/scenariotest" style={{ color: location.pathname.startsWith('/scenariotest') ? '#00ff88' : '#d1d4dc', textDecoration: 'none' }}>Scenario Test</Link>
                 </nav>
                 <div className="header-status">
                     <div className="status-dot" />
@@ -335,7 +335,7 @@ export default function App() {
                     <Route path="/group/:ticker" element={<GroupPage />} />
                     <Route path="/portfolio" element={<TotalPortfolioPage />} />
                     <Route path="/portfolio/:portfolioId" element={<PortfolioDetailPage />} />
-                    <Route path="/backtest" element={<BacktestResultPage />} />
+                    <Route path="/scenariotest" element={<BacktestResultPage />} />
                 </Routes>
             </main>
         </div>
