@@ -14,6 +14,7 @@ project_root = os.path.dirname(backend_dir)
 
 from api import routers
 from api import portfolio_router
+from api import backtest_router
 from db.database import init_db
 from db.database_user import init_user_db
 
@@ -46,6 +47,8 @@ app.add_middleware(
 app.include_router(routers.router, prefix="/api")
 # Include portfolio API router
 app.include_router(portfolio_router.router, prefix="/api")
+# Include backtest API router
+app.include_router(backtest_router.router, prefix="/api")
 
 @app.get("/")
 def read_root():

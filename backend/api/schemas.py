@@ -440,5 +440,36 @@ class TransactionRequest(BaseModel):
     exchange_rate: Optional[float] = None
     local_currency: Optional[str] = None
     date: date
-    portfolio_id: Optional[int] = None
     memo: Optional[str] = None
+
+
+# --- Backtest Results (Phase 1) ---
+
+class BacktestScenarioSummary(BaseModel):
+    cagr: float
+    profit_factor: float
+    max_drawdown: float
+    win_rate: float
+    total_trades: int
+    yearly_performance: Optional[dict] = None
+    # Allow extra fields for safety
+    model_config = {
+        "extra": "allow"
+    }
+
+class BacktestEquityPoint(BaseModel):
+    date: str
+    equity: float
+    cash: float
+    spy_equity: Optional[float] = None
+    trend_score: Optional[float] = None
+
+class BacktestTradeLogItem(BaseModel):
+    date: str
+    ticker: str
+    action: str
+    price: float
+    size: float
+    reason: str
+    pnl_pct: float
+

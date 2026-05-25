@@ -100,7 +100,6 @@ min_vol_surge_21 = 1.6
 min_adr_pct_21 = 3.5 
 max_dist_sma50_atr = 5.0 
 min_market_cap = 1e8
-theme_rs_rank_14_gt_21 = true
 
 [[strategy]]
 name = "D_ema21_pullback"
@@ -201,7 +200,7 @@ min_vol_surge_21   = { type = "float", min = 0.5, max = 2.0, step = 0.1 }
 min_adr_pct_21     = { type = "float", min = 2.0, max = 6.0, step = 0.5 }
 max_dist_sma50_atr = { type = "float", min = 4.0, max = 8.0, step = 0.5 }
 min_market_cap     = { type = "categorical", choices = [1e5, 5e5, 1e6, 5e6, 1e7, 5e7, 1e8, 3e8, 1e9] }
-theme_rs_rank_14_gt_21   = { type = "categorical", choices = [true] }
+
 
 [optimization.D]
 #close_gt_sma50 = { type = "categorical", choices = [true, false] }

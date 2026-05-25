@@ -126,6 +126,24 @@ min_market_cap = 1e8
 # total_trades 1749
 # win_rate 35.906232132647226
 
+[[rise]]
+id = "rrg_improving_in"
+name = "RRG Improving In"
+group = "Check"
+# RRGは前日比較ロジックが必要な特殊プリセット（バックエンド実装）
+special = "rrg_improving_in"
+use_hysteresis = false
+[rise.filters]
+min_vol_surge_21 = 1.6 
+min_adr_pct_21 = 3.5 
+max_dist_sma50_atr = 5.0 
+min_market_cap = 1e8
+# [backtest results]
+# port_cagr 221.56
+# port_vs_spy 214.19
+# spy_cagr 7.37
+# total_trades 1390
+# win_rate 40.35971223021583
 
 [[rise]]
 id = "check_1d_gain"
@@ -216,24 +234,7 @@ trend_template_ok = 1
 # win_rate 40.85952533675433
 
 
-[[rise]]
-id = "rrg_improving_in"
-name = "RRG Improving In"
-group = "Check"
-# RRGは前日比較ロジックが必要な特殊プリセット（バックエンド実装）
-special = "rrg_improving_in"
-use_hysteresis = false
-[rise.filters]
-min_vol_surge_21 = 1.6 
-min_adr_pct_21 = 3.5 
-max_dist_sma50_atr = 5.0 
-min_market_cap = 1e8
-# [backtest results]
-# port_cagr 221.56
-# port_vs_spy 214.19
-# spy_cagr 7.37
-# total_trades 1390
-# win_rate 40.35971223021583
+
 
 
 
