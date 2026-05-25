@@ -925,18 +925,9 @@ def get_theme_detail(
     dist_sma63 = pct(dp.close, ind.sma_63) if ind and ind.sma_63 else 0.0
     sma21_sma63 = pct(ind.sma_21, ind.sma_63) if ind and ind.sma_21 and ind.sma_63 else 0.0
 
-    # RS Sparklines (last 30 trading days)
-    def get_rs_sparkline(sym_id, period):
-        col_name = f'rs_ratio_{period}'
-        rows = db.query(Indicator).filter(
-            Indicator.symbol_id == sym_id,
-            Indicator.date <= target_date
-        ).order_by(desc(Indicator.date)).limit(30).all()
-        vals = [getattr(r, col_name) for r in reversed(rows) if getattr(r, col_name) is not None]
-        return vals
-    rs14_spark = get_rs_sparkline(symbol_id, 14)
-    rs21_spark = get_rs_sparkline(symbol_id, 21)
-    rs63_spark = get_rs_sparkline(symbol_id, 63)
+    rs14_spark = _get_sparkline_data(db, symbol_id, target_date, 14)
+    rs21_spark = _get_sparkline_data(db, symbol_id, target_date, 21)
+    rs63_spark = _get_sparkline_data(db, symbol_id, target_date, 63)
 
     # 6-Month chart data (approx 126 trading days)
     six_m_hist = list(reversed(history[:126]))

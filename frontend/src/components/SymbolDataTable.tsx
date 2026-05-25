@@ -39,8 +39,16 @@ export const SymbolDataTable: React.FC<SymbolDataTableProps> = ({ data }) => {
 
     const getConditionColor = (cond: number | null | undefined) => {
         if (cond == null) return 'inherit';
-        if (cond >= 2) return appConfig.colors.good; 
-        if (cond <= -2) return appConfig.colors.bad;
+        if (cond > 1.0) return appConfig.colors.good; 
+        if (cond < 1.0) return appConfig.colors.bad;
+        return 'inherit';
+    };
+
+    const getVcrColor = (val: number | null | undefined) => {
+        if (val == null) return 'inherit';
+        if (val < 0.4) return '#00ff88'; // 強力なボラティリティ収縮 (VCP間近)
+        if (val < 0.6) return '#81c784'; // 良好なボラティリティ収縮
+        if (val > 1.2) return appConfig.colors.bad;  // ボラティリティ拡大
         return 'inherit';
     };
 
@@ -90,26 +98,29 @@ export const SymbolDataTable: React.FC<SymbolDataTableProps> = ({ data }) => {
                         <th style={{ width: '60px', padding: '8px', textAlign: 'right' }}>EMA63</th>
                         <th style={{ width: '60px', padding: '8px', textAlign: 'right' }}>EMA150</th>
                         <th style={{ width: '60px', padding: '8px', textAlign: 'right' }}>EMA200</th>
+                        
+                        {/* Raw RS */}
+                        <th style={{ width: '55px', padding: '8px', textAlign: 'center', borderLeft: '1px solid #333', color: '#ffb74d' }}>RS<br />Raw</th>
 
                         {/* RS EMA (Smoothed) */}
-                        <th style={{ width: '60px', padding: '8px', textAlign: 'right', borderLeft: '1px solid #333' }}>EMA RS14</th>
-                        <th style={{ width: '60px', padding: '8px', textAlign: 'right' }}>EMA RS21</th>
-                        <th style={{ width: '60px', padding: '8px', textAlign: 'right' }}>EMA RS63</th>
+                        <th style={{ width: '60px', padding: '8px', textAlign: 'center', borderLeft: '1px solid #333' }}>RS<br />EMA14</th>
+                        <th style={{ width: '60px', padding: '8px', textAlign: 'center' }}>RS<br />EMA21</th>
+                        <th style={{ width: '60px', padding: '8px', textAlign: 'center' }}>RS<br />EMA63</th>
 
                         {/* RS Ratio */}
-                        <th style={{ width: '60px', padding: '8px', textAlign: 'right', borderLeft: '1px solid #333' }}>Rat 14</th>
-                        <th style={{ width: '60px', padding: '8px', textAlign: 'right' }}>Rat 21</th>
-                        <th style={{ width: '60px', padding: '8px', textAlign: 'right' }}>Rat 63</th>
+                        <th style={{ width: '60px', padding: '8px', textAlign: 'center', borderLeft: '1px solid #333' }}>RS<br />Ratio14</th>
+                        <th style={{ width: '60px', padding: '8px', textAlign: 'center' }}>RS<br />Ratio21</th>
+                        <th style={{ width: '60px', padding: '8px', textAlign: 'center' }}>RS<br />Ratio63</th>
                         
                         {/* RS Momentum */}
-                        <th style={{ width: '60px', padding: '8px', textAlign: 'right', borderLeft: '1px solid #333' }}>Mom 14</th>
-                        <th style={{ width: '60px', padding: '8px', textAlign: 'right' }}>Mom 21</th>
-                        <th style={{ width: '60px', padding: '8px', textAlign: 'right' }}>Mom 63</th>
+                        <th style={{ width: '60px', padding: '8px', textAlign: 'center', borderLeft: '1px solid #333' }}>RS<br />Mon14</th>
+                        <th style={{ width: '60px', padding: '8px', textAlign: 'center' }}>RS<br />Mon21</th>
+                        <th style={{ width: '60px', padding: '8px', textAlign: 'center' }}>RS<br />Mon63</th>
 
                         {/* RS Condition */}
-                        <th style={{ width: '60px', padding: '8px', textAlign: 'right', borderLeft: '1px solid #333' }}>Cnd 14</th>
-                        <th style={{ width: '60px', padding: '8px', textAlign: 'right' }}>Cnd 21</th>
-                        <th style={{ width: '60px', padding: '8px', textAlign: 'right' }}>Cnd 63</th>
+                        <th style={{ width: '60px', padding: '8px', textAlign: 'center', borderLeft: '1px solid #333' }}>RS<br />Cnd14</th>
+                        <th style={{ width: '60px', padding: '8px', textAlign: 'center' }}>RS<br />Cnd21</th>
+                        <th style={{ width: '60px', padding: '8px', textAlign: 'center' }}>RS<br />Cnd63</th>
                         <th style={{ width: '45px', padding: '8px', textAlign: 'center', color: '#00ff88' }}>Blue</th>
                         <th style={{ width: '45px', padding: '8px', textAlign: 'center', color: '#ff4444' }}>Red</th>
 
@@ -154,7 +165,7 @@ export const SymbolDataTable: React.FC<SymbolDataTableProps> = ({ data }) => {
                                 }}>{formatN(d.dist_sma50_atr, 1)}</td>
                                 <td style={{ 
                                     padding: '6px 8px', textAlign: 'right',
-                                    color: (d.vcr || 1) < 0.5 ? '#00ff88' : '#aaa'
+                                    color: getVcrColor(d.vcr)
                                 }}>{formatN(d.vcr, 2)}</td>
 
                                 {/* MAs */}
@@ -170,6 +181,9 @@ export const SymbolDataTable: React.FC<SymbolDataTableProps> = ({ data }) => {
                                 <td style={{ padding: '6px 8px', textAlign: 'right' }}>{formatN(d.ema_63)}</td>
                                 <td style={{ padding: '6px 8px', textAlign: 'right' }}>{formatN(d.ema_150)}</td>
                                 <td style={{ padding: '6px 8px', textAlign: 'right' }}>{formatN(d.ema_200)}</td>
+                                
+                                {/* Raw RS */}
+                                <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: '#ffb74d' }}>{formatN(d.relative_strength_spy, 4)}</td>
 
                                 {/* RS EMA (Smoothed) */}
                                 <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: '#888' }}>{formatN(d.rs_ema_14, 4)}</td>
@@ -177,9 +191,9 @@ export const SymbolDataTable: React.FC<SymbolDataTableProps> = ({ data }) => {
                                 <td style={{ padding: '6px 8px', textAlign: 'right', color: '#888' }}>{formatN(d.rs_ema_63, 4)}</td>
 
                                 {/* RS Ratio */}
-                                <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: getChgColor((d.rs_ratio_14 || 0) - 100) }}>{formatN(d.rs_ratio_14)}</td>
-                                <td style={{ padding: '6px 8px', textAlign: 'right', color: getChgColor((d.rs_ratio_21 || 0) - 100) }}>{formatN(d.rs_ratio_21)}</td>
-                                <td style={{ padding: '6px 8px', textAlign: 'right', color: getChgColor((d.rs_ratio_63 || 0) - 100) }}>{formatN(d.rs_ratio_63)}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: getChgColor(d.rs_ratio_14) }}>{formatN(d.rs_ratio_14)}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', color: getChgColor(d.rs_ratio_21) }}>{formatN(d.rs_ratio_21)}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', color: getChgColor(d.rs_ratio_63) }}>{formatN(d.rs_ratio_63)}</td>
 
                                 {/* RS Momentum */}
                                 <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: getChgColor(d.rs_momentum_14) }}>{formatN(d.rs_momentum_14)}</td>
