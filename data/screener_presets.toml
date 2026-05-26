@@ -144,6 +144,23 @@ min_market_cap = 1e8
 # spy_cagr 7.37
 # total_trades 1390
 # win_rate 40.35971223021583
+#------------------------------
+#rrg_leading_in = true
+#min_vol_surge_21 = 1.4
+#min_adr_pct_21 = 4.5
+#max_dist_sma50_atr = 6.0
+#min_market_cap = 100000000.0
+#  Expectancy:     1.178%
+#  Avg Gain/Trade: 1.178%
+#  Avg SPY Gain:   -0.048%
+#  Alpha:          1.225%
+#  Max Drawdown:   -39.9%
+#  Win Rate:       33.0%
+#  Total Trades:   1792
+#  Port CAGR:      105.59%
+#  SPY B&H CAGR:   7.37%
+#  Port vs SPY:    98.22%
+#------------------------------
 
 [[rise]]
 id = "check_1d_gain"

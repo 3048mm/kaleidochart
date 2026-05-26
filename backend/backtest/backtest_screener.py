@@ -262,6 +262,9 @@ def apply_filters_to_df(
     if strategy.get('close_gt_sma50') and 'close' in merged.columns and 'sma_50' in merged.columns:
         mask &= merged['close'] > merged['sma_50']
 
+    if strategy.get('close_gt_ema63') and 'close' in merged.columns and 'ema_63' in merged.columns:
+        mask &= merged['close'] > merged['ema_63']
+
     if strategy.get('rs_rank_21_gt_63'):
         mask &= filter_rs_rank_21_gt_63(merged)
 
