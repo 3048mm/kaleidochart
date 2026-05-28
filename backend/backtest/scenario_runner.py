@@ -173,9 +173,14 @@ def run_scenario_test(
     
     # Merge indicators into prices for easier daily slicing
     if not indicators_df.empty:
-        target_cols = ['date', 'symbol_id', 'ema_21', 'sma_50', 'atr_14', 'dist_sma50_atr']
-        if 'ema_63' in indicators_df.columns:
-            target_cols.append('ema_63')
+        target_cols = ['date', 'symbol_id', 'atr_14', 'dist_sma50_atr']
+        major_cols = [
+            'ema_5', 'ema_21', 'ema_50', 'ema_63', 'ema_150', 'ema_200',
+            'sma_5', 'sma_21', 'sma_50', 'sma_63', 'sma_150', 'sma_200'
+        ]
+        for col in major_cols:
+            if col in indicators_df.columns:
+                target_cols.append(col)
         prices_df = prices_df.merge(
             indicators_df[target_cols],
             on=['date', 'symbol_id'], how='left'

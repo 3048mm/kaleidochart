@@ -11,7 +11,7 @@ from db.database import init_db, get_db
 from db.models import Symbol, DailyPrice, Indicator, RelativeRank, MarketSignal, ThemeConstituent
 from data_collection.spreadsheet_sync import fetch_symbols_from_sheet
 
-from .phases.t2_prices import sync_phase_t2_prices
+from .phases.t2_prices import sync_phase_t2_prices, sync_fx_rates
 from .phases.t3_indicators import sync_phase_t3_indicators
 from .phases.t4_ranks import sync_phase_t4_ranks
 from .phases.t5_signals import sync_phase_t5_signals
@@ -73,19 +73,50 @@ def build_virtual_index_prices(db, virtual_id: int):
     for i in range(0, len(c_ids), 900):
         all_prices.extend(db.query(DailyPrice).filter(DailyPrice.symbol_id.in_(c_ids[i:i + 900])).all())
     if not all_prices: return pd.DataFrame()
-    df = pd.DataFrame([{'date': p.date, 'symbol_id': p.symbol_id, 'close': p.close} for p in all_prices if p.close is not None and p.close > 0])
+    # closeに加えてvolumeも取得
+    df = pd.DataFrame([{'date': p.date, 'symbol_id': p.symbol_id, 'close': p.close, 'volume': p.volume} for p in all_prices if p.close is not None and p.close > 0])
     if df.empty: return pd.DataFrame()
     df = df.sort_values('date')
+    
+    import numpy as np
+    
+    # 騰落率の算出
     df['ret'] = df.groupby('symbol_id')['close'].pct_change()
     daily_avg_ret = df.dropna(subset=['ret']).groupby('date')['ret'].mean().reset_index().sort_values('date')
     if daily_avg_ret.empty: return pd.DataFrame()
+    
+    # 売買代金の算出 (Dollar Volume = close * volume)
+    df['dollar_volume'] = df['close'] * df['volume'].fillna(0)
+    
+    # 21日平均売買代金の算出
+    df['dollar_volume_ma21'] = df.groupby('symbol_id')['dollar_volume'].transform(
+        lambda x: x.rolling(window=21, min_periods=1).mean()
+    )
+    
+    # 出来高急増倍率 (Surge) の算出
+    df['surge'] = np.where(
+        df['dollar_volume_ma21'] == 0,
+        1.0,
+        df['dollar_volume'] / df['dollar_volume_ma21']
+    )
+    df['surge'] = df['surge'].fillna(1.0)
+    
+    # 日付ごとの平均出来高急増倍率を算出
+    daily_avg_surge = df.groupby('date')['surge'].mean().reset_index()
+    
     current_val, synth_closes = 1000.0, []
     for _, row in daily_avg_ret.iterrows():
         current_val *= (1 + row['ret'])
         synth_closes.append(current_val)
     daily_avg_ret['close'] = synth_closes
     daily_avg_ret['open'] = daily_avg_ret['high'] = daily_avg_ret['low'] = daily_avg_ret['close']
-    daily_avg_ret['volume'], daily_avg_ret['symbol_id'] = 0, virtual_id
+    
+    # 平均出来高急増倍率を volume カラムに結合
+    daily_avg_ret = pd.merge(daily_avg_ret, daily_avg_surge, on='date', how='left')
+    daily_avg_ret['volume'] = (daily_avg_ret['surge'].fillna(1.0) * 1000000.0).astype(float)
+    daily_avg_ret.drop(columns=['surge'], inplace=True)
+    
+    daily_avg_ret['symbol_id'] = virtual_id
     return daily_avg_ret
 
 def build_all_virtual_indexes_prices(db, virtual_items: list[dict], symbol_id_map: dict, hash_file_path: str = "data/virtual_theme_hashes.json"):
@@ -158,7 +189,7 @@ def build_all_virtual_indexes_prices(db, virtual_items: list[dict], symbol_id_ma
         return
         
     c_ids_str = ",".join(map(str, c_ids_list))
-    query = f"SELECT symbol_id, date, close FROM daily_prices WHERE symbol_id IN ({c_ids_str}) AND close IS NOT NULL AND close > 0"
+    query = f"SELECT symbol_id, date, open, high, low, close, volume FROM daily_prices WHERE symbol_id IN ({c_ids_str}) AND close IS NOT NULL AND close > 0"
     all_prices_df = pd.read_sql_query(query, db.bind)
     if all_prices_df.empty:
         return
@@ -183,23 +214,63 @@ def build_all_virtual_indexes_prices(db, virtual_items: list[dict], symbol_id_ma
             to_delete_indicators.append(v_id)
             
             df = theme_prices_df.copy()
-            df['ret'] = df.groupby('symbol_id')['close'].pct_change()
-            daily_avg_ret = df.dropna(subset=['ret']).groupby('date')['ret'].mean().reset_index().sort_values('date')
+            df['close_prev'] = df.groupby('symbol_id')['close'].shift(1)
             
-            if daily_avg_ret.empty:
+            # 先に売買代金と21日平均およびSurgeの計算を df 全体（Day 1含む）で行う
+            df['dollar_volume'] = df['close'] * df['volume'].fillna(0)
+            df['dollar_volume_ma21'] = df.groupby('symbol_id')['dollar_volume'].transform(
+                lambda x: x.rolling(window=21, min_periods=1).mean()
+            )
+            import numpy as np
+            df['surge'] = np.where(
+                df['dollar_volume_ma21'] == 0,
+                1.0,
+                df['dollar_volume'] / df['dollar_volume_ma21']
+            )
+            df['surge'] = df['surge'].fillna(1.0)
+            
+            df_clean = df.dropna(subset=['close_prev']).copy()
+            
+            if df_clean.empty:
+                continue
+                
+            df_clean['ret'] = df_clean['close'] / df_clean['close_prev'] - 1
+            df_clean['open_ratio'] = df_clean['open'] / df_clean['close_prev']
+            df_clean['high_ratio'] = df_clean['high'] / df_clean['close_prev']
+            df_clean['low_ratio'] = df_clean['low'] / df_clean['close_prev']
+            
+            daily_avg = df_clean.groupby('date').agg({
+                'ret': 'mean',
+                'open_ratio': 'mean',
+                'high_ratio': 'mean',
+                'low_ratio': 'mean',
+                'surge': 'mean'
+            }).reset_index().sort_values('date')
+            
+            if daily_avg.empty:
                 continue
                 
             current_val = 1000.0
-            for _, row in daily_avg_ret.iterrows():
+            for _, row in daily_avg.iterrows():
+                prev_val = current_val
                 current_val *= (1 + row['ret'])
+                
+                o_val = prev_val * row['open_ratio']
+                h_val = prev_val * row['high_ratio']
+                l_val = prev_val * row['low_ratio']
+                c_val = current_val
+                
+                h_final = max(o_val, h_val, l_val, c_val)
+                l_final = min(o_val, h_val, l_val, c_val)
+                
                 objects_to_insert.append(DailyPrice(
                     symbol_id=v_id,
                     date=row['date'],
-                    open=current_val,
-                    high=current_val,
-                    low=current_val,
-                    close=current_val,
-                    volume=0
+                    open=o_val,
+                    high=h_final,
+                    low=l_final,
+                    close=c_val,
+                    volume=float(row['surge'] * 1000000.0)
                 ))
                 
         elif mode == 'incremental':
@@ -210,45 +281,120 @@ def build_all_virtual_indexes_prices(db, virtual_items: list[dict], symbol_id_ma
                 to_delete_vids.append(v_id)
                 to_delete_indicators.append(v_id)
                 df = theme_prices_df.copy()
-                df['ret'] = df.groupby('symbol_id')['close'].pct_change()
-                daily_avg_ret = df.dropna(subset=['ret']).groupby('date')['ret'].mean().reset_index().sort_values('date')
-                if not daily_avg_ret.empty:
-                    current_val = 1000.0
-                    for _, row in daily_avg_ret.iterrows():
-                        current_val *= (1 + row['ret'])
-                        objects_to_insert.append(DailyPrice(
-                            symbol_id=v_id,
-                            date=row['date'],
-                            open=current_val,
-                            high=current_val,
-                            low=current_val,
-                            close=current_val,
-                            volume=0
-                        ))
+                df['close_prev'] = df.groupby('symbol_id')['close'].shift(1)
+                
+                # 先に売買代金と21日平均およびSurgeの計算を df 全体（Day 1含む）で行う
+                df['dollar_volume'] = df['close'] * df['volume'].fillna(0)
+                df['dollar_volume_ma21'] = df.groupby('symbol_id')['dollar_volume'].transform(
+                    lambda x: x.rolling(window=21, min_periods=1).mean()
+                )
+                import numpy as np
+                df['surge'] = np.where(
+                    df['dollar_volume_ma21'] == 0,
+                    1.0,
+                    df['dollar_volume'] / df['dollar_volume_ma21']
+                )
+                df['surge'] = df['surge'].fillna(1.0)
+                
+                df_clean = df.dropna(subset=['close_prev']).copy()
+                if not df_clean.empty:
+                    df_clean['ret'] = df_clean['close'] / df_clean['close_prev'] - 1
+                    df_clean['open_ratio'] = df_clean['open'] / df_clean['close_prev']
+                    df_clean['high_ratio'] = df_clean['high'] / df_clean['close_prev']
+                    df_clean['low_ratio'] = df_clean['low'] / df_clean['close_prev']
+                    
+                    daily_avg = df_clean.groupby('date').agg({
+                        'ret': 'mean',
+                        'open_ratio': 'mean',
+                        'high_ratio': 'mean',
+                        'low_ratio': 'mean',
+                        'surge': 'mean'
+                    }).reset_index().sort_values('date')
+                    
+                    if not daily_avg.empty:
+                        current_val = 1000.0
+                        for _, row in daily_avg.iterrows():
+                            prev_val = current_val
+                            current_val *= (1 + row['ret'])
+                            
+                            o_val = prev_val * row['open_ratio']
+                            h_val = prev_val * row['high_ratio']
+                            l_val = prev_val * row['low_ratio']
+                            c_val = current_val
+                            
+                            h_final = max(o_val, h_val, l_val, c_val)
+                            l_final = min(o_val, h_val, l_val, c_val)
+                            
+                            objects_to_insert.append(DailyPrice(
+                                symbol_id=v_id,
+                                date=row['date'],
+                                open=o_val,
+                                high=h_final,
+                                low=l_final,
+                                close=c_val,
+                                volume=float(row['surge'] * 1000000.0)
+                            ))
                 continue
                 
             seed_date = prev_row.date
             seed_price = prev_row.close
             
             df = theme_prices_df[theme_prices_df['date'] >= seed_date].copy()
-            df['ret'] = df.groupby('symbol_id')['close'].pct_change()
-            daily_avg_ret = df.dropna(subset=['ret']).groupby('date')['ret'].mean().reset_index().sort_values('date')
+            df['close_prev'] = df.groupby('symbol_id')['close'].shift(1)
+            
+            # 先に売買代金と21日平均およびSurgeの計算を df 全体（Day 1含む）で行う
+            df['dollar_volume'] = df['close'] * df['volume'].fillna(0)
+            df['dollar_volume_ma21'] = df.groupby('symbol_id')['dollar_volume'].transform(
+                lambda x: x.rolling(window=21, min_periods=1).mean()
+            )
+            import numpy as np
+            df['surge'] = np.where(
+                df['dollar_volume_ma21'] == 0,
+                1.0,
+                df['dollar_volume'] / df['dollar_volume_ma21']
+            )
+            df['surge'] = df['surge'].fillna(1.0)
+            
+            df_clean = df.dropna(subset=['close_prev']).copy()
             
             db.query(DailyPrice).filter(DailyPrice.symbol_id == v_id, DailyPrice.date >= last_date).delete()
             
-            current_val = seed_price
-            for _, row in daily_avg_ret.iterrows():
-                current_val *= (1 + row['ret'])
-                if row['date'] >= last_date:
-                    objects_to_insert.append(DailyPrice(
-                        symbol_id=v_id,
-                        date=row['date'],
-                        open=current_val,
-                        high=current_val,
-                        low=current_val,
-                        close=current_val,
-                        volume=0
-                    ))
+            if not df_clean.empty:
+                df_clean['ret'] = df_clean['close'] / df_clean['close_prev'] - 1
+                df_clean['open_ratio'] = df_clean['open'] / df_clean['close_prev']
+                df_clean['high_ratio'] = df_clean['high'] / df_clean['close_prev']
+                df_clean['low_ratio'] = df_clean['low'] / df_clean['close_prev']
+                
+                daily_avg = df_clean.groupby('date').agg({
+                    'ret': 'mean',
+                    'open_ratio': 'mean',
+                    'high_ratio': 'mean',
+                    'low_ratio': 'mean',
+                    'surge': 'mean'
+                }).reset_index().sort_values('date')
+                
+                current_val = seed_price
+                for _, row in daily_avg.iterrows():
+                    prev_val = current_val
+                    current_val *= (1 + row['ret'])
+                    if row['date'] >= last_date:
+                        o_val = prev_val * row['open_ratio']
+                        h_val = prev_val * row['high_ratio']
+                        l_val = prev_val * row['low_ratio']
+                        c_val = current_val
+                        
+                        h_final = max(o_val, h_val, l_val, c_val)
+                        l_final = min(o_val, h_val, l_val, c_val)
+                        
+                        objects_to_insert.append(DailyPrice(
+                            symbol_id=v_id,
+                            date=row['date'],
+                            open=o_val,
+                            high=h_final,
+                            low=l_final,
+                            close=c_val,
+                            volume=float(row['surge'] * 1000000.0)
+                        ))
 
     if to_delete_vids:
         db.query(DailyPrice).filter(DailyPrice.symbol_id.in_(to_delete_vids)).delete(synchronize_session=False)
@@ -420,6 +566,14 @@ def run_pipeline(config, db_path, logger: logging.Logger, rebuild_from: Optional
             t_start = time.time()
             spy_latest_date = sync_phase_t2_prices(db, sheet_data, symbol_id_map, config["data_collection"]["initial_fetch_days"], skip_fetch, logger)
             logger.info(f"T2: Prices completed in {time.time() - t_start:.2f}s")
+            
+            logger.info("Starting FX Rates Sync...")
+            t_fx_start = time.time()
+            fx_success = sync_fx_rates(db, skip_fetch=skip_fetch, logger=logger)
+            if fx_success:
+                logger.info(f"FX Rates Sync completed in {time.time() - t_fx_start:.2f}s")
+            else:
+                logger.warning("FX Rates Sync failed.")
             
             virtual_items = [d for d in sheet_data if d['theme_type'] == 'virtual']
             if virtual_items:

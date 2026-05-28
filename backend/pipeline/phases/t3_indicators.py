@@ -4,13 +4,12 @@ import multiprocessing
 from typing import Dict, List, Optional
 from datetime import date
 from sqlalchemy import func
-from concurrent.futures import ProcessPoolExecutor, as_completed
 import pandas as pd
 
 from pipeline.utils import sanitize_numeric
 from db.database import init_db, get_db
 
-def _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_virtual=False):
+def _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_virtual=False, spy_latest_date: Optional[date] = None):
     """Worker function to calculate T3 for a single ticker in a separate process."""
     try:
         from db.database import init_db, get_db
@@ -34,7 +33,11 @@ def _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_vi
             df_ind = calculate_indicators(df_price, spy_df if ticker != "SPY" else None)
             calc_end = time.time()
             
-            delta_df = df_ind[(df_ind['date'] > (t3_max if t3_max else date(2000, 1, 1)))]
+            # SPYの最終日を上限としてインジケーターを計算・保存する
+            if spy_latest_date:
+                delta_df = df_ind[(df_ind['date'] > (t3_max if t3_max else date(2000, 1, 1))) & (df_ind['date'] <= spy_latest_date)]
+            else:
+                delta_df = df_ind[(df_ind['date'] > (t3_max if t3_max else date(2000, 1, 1)))]
             
             if delta_df.empty:
                 return ticker, sid, []
@@ -72,7 +75,6 @@ def sync_phase_t3_indicators(db, sheet_data: List[Dict], symbol_id_map: Dict, sp
     tasks = list(tasks_map.values())
     
     if not tasks:
-
         logger.info("Phase 3: No tickers need indicator update.")
         return
 
@@ -85,7 +87,8 @@ def sync_phase_t3_indicators(db, sheet_data: List[Dict], symbol_id_map: Dict, sp
     indicator_cols = [c.name for c in Indicator.__table__.columns if c.name not in ('id', 'symbol_id', 'date')]
     for sid, ticker, t3_max, is_virt in tasks:
         try:
-            res_ticker, res_sid, records = _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_virt)
+            # spy_latest_date をワーカーに引き渡す
+            res_ticker, res_sid, records = _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_virt, spy_latest_date)
             if isinstance(records, Exception):
                 logger.error(f"[{ticker}] Worker exception: {records}")
                 continue

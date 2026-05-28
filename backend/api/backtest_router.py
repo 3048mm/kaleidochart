@@ -1,0 +1,331 @@
+import os
+import csv
+import json
+from typing import List
+from fastapi import APIRouter, HTTPException
+
+from api.schemas import (
+    BacktestScenarioSummary,
+    BacktestEquityPoint,
+    BacktestTradeLogItem
+)
+
+router = APIRouter(tags=["backtest"])
+
+# Default output directory relative to project root (stocktool/output)
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+OUTPUT_DIR = os.path.join(PROJECT_ROOT, "output")
+
+def resolve_scenario_path(name: str) -> str:
+    """
+    Resolves the directory path for a given scenario name.
+    If name is 'latest', returns the path of the most recently modified scenario directory.
+    Includes security checks to prevent path traversal.
+    """
+    # Prevent path traversal
+    clean_name = os.path.basename(name)
+    if clean_name != name or ".." in name or "/" in name or "\\" in name:
+        raise HTTPException(status_code=400, detail="Invalid scenario name")
+        
+    if name == "latest":
+        if not os.path.exists(OUTPUT_DIR):
+            raise HTTPException(status_code=404, detail="Output directory not found")
+        
+        candidates = []
+        for item in os.listdir(OUTPUT_DIR):
+            d_path = os.path.join(OUTPUT_DIR, item)
+            if os.path.isdir(d_path) and os.path.exists(os.path.join(d_path, "scenario_summary.json")):
+                candidates.append((d_path, os.path.getmtime(d_path)))
+        
+        if not candidates:
+            raise HTTPException(status_code=404, detail="No backtest scenarios found")
+            
+        # Sort by modification time descending
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        return candidates[0][0]
+    else:
+        scenario_path = os.path.join(OUTPUT_DIR, name)
+        if not os.path.exists(scenario_path) or not os.path.isdir(scenario_path):
+            raise HTTPException(status_code=404, detail=f"Scenario '{name}' not found")
+        return scenario_path
+
+@router.get("/backtest/scenarios", response_model=List[str])
+def get_scenarios():
+    """
+    Returns a list of scenario directory names that contain scenario_summary.json.
+    Sorted by modification time (newest first).
+    """
+    if not os.path.exists(OUTPUT_DIR):
+        return []
+        
+    candidates = []
+    for item in os.listdir(OUTPUT_DIR):
+        d_path = os.path.join(OUTPUT_DIR, item)
+        if os.path.isdir(d_path) and os.path.exists(os.path.join(d_path, "scenario_summary.json")):
+            candidates.append((item, os.path.getmtime(d_path)))
+            
+    # Sort newest first
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    return [name for name, _ in candidates]
+
+@router.get("/backtest/scenario/{name}/summary", response_model=BacktestScenarioSummary)
+def get_scenario_summary(name: str):
+    """
+    Returns the scenario summary JSON formatted to the BacktestScenarioSummary schema.
+    Supports 'latest' as a dynamic name alias.
+    """
+    scenario_path = resolve_scenario_path(name)
+    summary_file = os.path.join(scenario_path, "scenario_summary.json")
+    
+    if not os.path.exists(summary_file):
+        raise HTTPException(status_code=404, detail="scenario_summary.json not found in the scenario directory")
+        
+    try:
+        with open(summary_file, "r", encoding="utf-8") as f:
+            raw_data = json.load(f)
+            
+        total_trades = raw_data.get("total_trades", 0)
+        win_rate = raw_data.get("win_rate", 0.0)
+        profit_factor = raw_data.get("profit_factor", 0.0)
+        
+        # 1. Resolve max drawdown
+        raw_dd = raw_data.get("max_drawdown", 0.0)
+        if isinstance(raw_dd, dict):
+            # Convert percentage (e.g. 47.61%) to dynamic negative ratio (e.g. -0.4761)
+            max_drawdown = -raw_dd.get("pct", 0.0) / 100.0
+        else:
+            max_drawdown = float(raw_dd)
+            
+        # 2. Resolve CAGR dynamically if not present
+        cagr = raw_data.get("cagr")
+        if cagr is None:
+            start_date_str = raw_data.get("start_date")
+            end_date_str = raw_data.get("end_date")
+            initial_cap = raw_data.get("initial_capital", 1.0)
+            final_cap = raw_data.get("final_capital", 1.0)
+            
+            if start_date_str and end_date_str:
+                try:
+                    from datetime import datetime
+                    start = datetime.strptime(start_date_str, "%Y-%m-%d")
+                    end = datetime.strptime(end_date_str, "%Y-%m-%d")
+                    years = (end - start).days / 365.25
+                    if years > 0 and initial_cap > 0:
+                        cagr = (final_cap / initial_cap) ** (1 / years) - 1
+                    else:
+                        cagr = 0.0
+                except Exception:
+                    cagr = 0.0
+            else:
+                cagr = 0.0
+        else:
+            cagr = float(cagr)
+            
+        # 3. Calculate and inject exact yearly returns dynamically from scenario_equity_curve.csv
+        yearly_returns = {}
+        equity_file = os.path.join(scenario_path, "scenario_equity_curve.csv")
+        if os.path.exists(equity_file):
+            try:
+                with open(equity_file, "r", encoding="utf-8") as eq_f:
+                    reader = csv.DictReader(eq_f)
+                    equity_by_year = {}
+                    for row in reader:
+                        e_key = "total_equity" if "total_equity" in row else "equity"
+                        if "date" in row and e_key in row:
+                            date_str = row["date"]
+                            year_str = date_str.split("-")[0]
+                            eq_val = float(row[e_key])
+                            if year_str not in equity_by_year:
+                                equity_by_year[year_str] = []
+                            equity_by_year[year_str].append((date_str, eq_val))
+                    
+                    # Sort years chronologically
+                    sorted_years = sorted(equity_by_year.keys())
+                    for i, year in enumerate(sorted_years):
+                        year_data = sorted(equity_by_year[year], key=lambda x: x[0])
+                        first_eq = year_data[0][1]
+                        
+                        # Use previous year's last day equity as base for better precision (start of this year)
+                        if i > 0:
+                            prev_year = sorted_years[i-1]
+                            prev_year_data = sorted(equity_by_year[prev_year], key=lambda x: x[0])
+                            first_eq = prev_year_data[-1][1]
+                            
+                        last_eq = year_data[-1][1]
+                        
+                        if first_eq > 0:
+                            ret_pct = ((last_eq - first_eq) / first_eq) * 100.0
+                        else:
+                            ret_pct = 0.0
+                        yearly_returns[year] = ret_pct
+            except Exception as ex:
+                # Log error and fallback silently
+                print(f"Error dynamically calculating yearly returns from CSV: {ex}")
+                
+        yearly_performance = raw_data.get("yearly_performance", {})
+        for year, item in yearly_performance.items():
+            if isinstance(item, dict):
+                # Inject strategy yearly return pct
+                item["return_pct"] = yearly_returns.get(year, 0.0)
+                
+        return BacktestScenarioSummary(
+            cagr=cagr,
+            profit_factor=profit_factor,
+            max_drawdown=max_drawdown,
+            win_rate=win_rate,
+            total_trades=total_trades,
+            yearly_performance=yearly_performance
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read/parse summary JSON: {str(e)}")
+
+@router.get("/backtest/scenario/{name}/equity", response_model=List[BacktestEquityPoint])
+def get_scenario_equity(name: str):
+    """
+    Returns daily equity curve points from scenario_equity_curve.csv.
+    Enriches with SPY equity comparison and MarketTrendScore history dynamically.
+    """
+    scenario_path = resolve_scenario_path(name)
+    csv_file = os.path.join(scenario_path, "scenario_equity_curve.csv")
+    
+    if not os.path.exists(csv_file):
+        raise HTTPException(status_code=404, detail="scenario_equity_curve.csv not found in the scenario directory")
+        
+    points = []
+    try:
+        with open(csv_file, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+            
+        if not rows:
+            return []
+            
+        start_date_str = rows[0]["date"]
+        end_date_str = rows[-1]["date"]
+        
+        # Read initial capital for SPY index baseline
+        first_row_eq_key = "total_equity" if "total_equity" in rows[0] else "equity"
+        initial_equity = float(rows[0][first_row_eq_key]) if first_row_eq_key in rows[0] else 100000.0
+        
+        # Enriched DB queries
+        spy_prices_dict = {}
+        trend_scores_dict = {}
+        
+        try:
+            from db.database import SessionLocal
+            from db.models import Symbol, DailyPrice, MarketSignal
+            
+            db = SessionLocal()
+            if db:
+                # 1. Fetch SPY daily price history for backtest period
+                spy_sym = db.query(Symbol).filter(Symbol.ticker == "SPY").first()
+                if not spy_sym:
+                    spy_sym = db.query(Symbol).filter(Symbol.ticker == "^GSPC").first()
+                    
+                if spy_sym:
+                    spy_prices = db.query(DailyPrice).filter(
+                        DailyPrice.symbol_id == spy_sym.id,
+                        DailyPrice.date.between(start_date_str, end_date_str)
+                    ).all()
+                    spy_prices_dict = {str(p.date): float(p.close) for p in spy_prices}
+                    
+                # 2. Fetch Market Signal Trend Scores for backtest period
+                signals = db.query(MarketSignal).filter(
+                    MarketSignal.date.between(start_date_str, end_date_str)
+                ).all()
+                trend_scores_dict = {str(s.date): float(s.market_trend_score) for s in signals if s.market_trend_score is not None}
+                
+                db.close()
+        except Exception as db_ex:
+            print(f"Database query skipped during get_scenario_equity: {db_ex}")
+            
+        # Determine baseline SPY price to align chart start
+        spy_start_price = None
+        for row in rows:
+            d_val = row["date"]
+            if d_val in spy_prices_dict:
+                spy_start_price = spy_prices_dict[d_val]
+                break
+                
+        # Parse CSV rows and attach scaled SPY equity and Trend Scores
+        for row in rows:
+            equity_key = "total_equity" if "total_equity" in row else "equity"
+            cash_key = "cash"
+            date_key = "date"
+            
+            if date_key in row and equity_key in row and cash_key in row:
+                date_val = row[date_key]
+                eq_val = float(row[equity_key])
+                cash_val = float(row[cash_key])
+                
+                # Scale SPY equity matching portfolio start balance
+                spy_equity_val = initial_equity
+                if spy_start_price and date_val in spy_prices_dict:
+                    spy_close_val = spy_prices_dict[date_val]
+                    spy_equity_val = (spy_close_val / spy_start_price) * initial_equity
+                    
+                # Market Trend Score (0.0 to 100.0)
+                trend_score_val = trend_scores_dict.get(date_val, 0.0)
+                
+                points.append(BacktestEquityPoint(
+                    date=date_val,
+                    equity=eq_val,
+                    cash=cash_val,
+                    spy_equity=spy_equity_val,
+                    trend_score=trend_score_val
+                ))
+        return points
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse equity CSV: {str(e)}")
+
+@router.get("/backtest/scenario/{name}/trades", response_model=List[BacktestTradeLogItem])
+def get_scenario_trades(name: str):
+    """
+    Returns transaction history from scenario_trade_logs.csv.
+    Supports 'latest' as a dynamic name alias.
+    """
+    scenario_path = resolve_scenario_path(name)
+    csv_file = os.path.join(scenario_path, "scenario_trade_logs.csv")
+    
+    if not os.path.exists(csv_file):
+        raise HTTPException(status_code=404, detail="scenario_trade_logs.csv not found in the scenario directory")
+        
+    trades = []
+    try:
+        with open(csv_file, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                # Support mapping from actual backtest exit logs structure
+                ticker_val = row.get("ticker", "")
+                
+                # Map exit_date as primary date, fallback to entry_date or general date
+                date_val = row.get("exit_date", row.get("date", row.get("entry_date", "")))
+                
+                # Map exit_price as primary price, fallback to price or entry_price
+                price_val = float(row.get("exit_price", row.get("price", row.get("entry_price", 0.0))))
+                
+                # Map shares as primary size, fallback to size
+                size_val = float(row.get("shares", row.get("size", 0.0)))
+                
+                # Map exit_reason as primary reason, fallback to reason
+                reason_val = row.get("exit_reason", row.get("reason", ""))
+                
+                # Convert pnl ratio (e.g. -0.05) to percentage (e.g. -5.0).
+                raw_pnl = float(row.get("pnl_pct", 0.0))
+                if abs(raw_pnl) > 0.0 and abs(raw_pnl) < 1.0:
+                    pnl_pct_val = raw_pnl * 100.0
+                else:
+                    pnl_pct_val = raw_pnl
+                
+                trades.append(BacktestTradeLogItem(
+                    date=date_val,
+                    ticker=ticker_val,
+                    action="SELL",  # Exit trades are sells
+                    price=price_val,
+                    size=size_val,
+                    reason=reason_val,
+                    pnl_pct=pnl_pct_val
+                ))
+        return trades
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse trades CSV: {str(e)}")

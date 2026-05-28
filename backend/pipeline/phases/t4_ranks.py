@@ -1,5 +1,5 @@
 import logging
-from datetime import date
+from datetime import date, timedelta
 from typing import Optional
 from sqlalchemy import func, text
 
@@ -15,10 +15,16 @@ def sync_phase_t4_ranks(db, spy_latest_date: Optional[date], logger: logging.Log
     if not t3_max: 
         return
         
-    # t4_max が存在する場合でも、同日に後からデータが追加されたケースを考慮して
-    # 常に t4_max 以降 (>=) を計算対象とする。
-    start_date = t4_max if t4_max else date(2000, 1, 1)
-    gap_dates = [r[0] for r in db.query(Indicator.date).distinct().filter(Indicator.date >= start_date).order_by(Indicator.date).all()]
+    # t4_max が存在する場合でも、フライングデータ（為替など）により
+    # 他の一般銘柄のデータが揃う前に t4_max が進んでしまう問題を回避するため、
+    # 常に 7 日前まで遡って再計算を行う。
+    start_date = (t4_max - timedelta(days=7)) if t4_max else date(2000, 1, 1)
+    
+    # SPY最新日 (spy_latest_date) を上限として計算対象の日付を制限する
+    query = db.query(Indicator.date).distinct().filter(Indicator.date >= start_date)
+    if spy_latest_date:
+        query = query.filter(Indicator.date <= spy_latest_date)
+    gap_dates = [r[0] for r in query.order_by(Indicator.date).all()]
     if not gap_dates: 
         return
         

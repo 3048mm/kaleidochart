@@ -258,12 +258,20 @@ def apply_filters_to_df(
                 elif op == '<=': mask &= merged[col] <= value
                 elif op == '==': mask &= merged[col] == value
 
-    # 2. Explicit / Complex Filters
-    if strategy.get('close_gt_sma50') and 'close' in merged.columns and 'sma_50' in merged.columns:
-        mask &= merged['close'] > merged['sma_50']
-
-    if strategy.get('close_gt_ema63') and 'close' in merged.columns and 'ema_63' in merged.columns:
-        mask &= merged['close'] > merged['ema_63']
+    # 2. Dynamic Close-Above Filters (e.g. close_gt_sma50, close_gt_ema21, close_gt_ema50, etc.)
+    for key, value in strategy.items():
+        if key.startswith('close_gt_') and value is True:
+            ind_name = key[9:]
+            
+            # Normalize column names if they lack underscores (e.g., ema21 -> ema_21, sma50 -> sma_50)
+            if ind_name in ('sma5', 'sma21', 'sma50', 'sma63', 'sma150', 'sma200', 'ema5', 'ema21', 'ema50', 'ema63', 'ema150', 'ema200'):
+                for num in ('200', '150', '63', '50', '21', '5'):
+                    if ind_name.endswith(num) and not ind_name.endswith('_' + num):
+                        ind_name = ind_name.replace(num, '_' + num)
+                        break
+            
+            if 'close' in merged.columns and ind_name in merged.columns:
+                mask &= merged['close'] > merged[ind_name]
 
     if strategy.get('rs_rank_21_gt_63'):
         mask &= filter_rs_rank_21_gt_63(merged)

@@ -434,3 +434,46 @@ def test_incremental_idempotency(db_session):
     finally:
         if os.path.exists(hash_file_path):
             os.remove(hash_file_path)
+
+
+def test_synthetic_ohlcv_integrity(db_session):
+    """
+    仮想テーマの始値・高値・安値・出来高（平均売買代金）が期待通りに合成されるか検証。
+    """
+    virtual_items = [{"ticker": "_TECH_", "exchange": "VIRTUAL", "theme_type": "virtual"}]
+    symbol_id_map = {("_TECH_", "VIRTUAL"): 101}
+    
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp_file:
+        hash_file_path = tmp_file.name
+        
+    try:
+        # 計算実行
+        build_all_virtual_indexes_prices(
+            db=db_session, 
+            virtual_items=virtual_items, 
+            symbol_id_map=symbol_id_map, 
+            hash_file_path=hash_file_path
+        )
+        
+        prices = db_session.query(DailyPrice).filter(DailyPrice.symbol_id == 101).order_by(DailyPrice.date).all()
+        
+        # 5日間のうち最初の変化日(Day 2, index=0)の検証
+        # Day 1: AAPL dollar_vol=100000, MSFT dollar_vol=300000. rolling_mean=100k, 300k. surge=1.0, 1.0
+        # Day 2: AAPL close=101, vol=1000 -> dollar_vol=101000. rolling_mean=100500. surge=101000/100500=1.004975
+        #        MSFT close=204, vol=1500 -> dollar_vol=306000. rolling_mean=303000. surge=306000/303000=1.009901
+        # Average Surge = (1.004975 + 1.009901) / 2 = 1.007438
+        # Virtual Volume = 1000000 * 1.007438 = 1007438.0
+        assert abs(prices[0].volume - 1007438.0) < 10.0
+        
+        # 始値、高値、安値の論理的整合性の検証
+        for p in prices:
+            assert p.high >= p.open
+            assert p.high >= p.close
+            assert p.low <= p.open
+            assert p.low <= p.close
+            assert p.volume > 0  # 出来高が0より大きいこと
+            
+    finally:
+        if os.path.exists(hash_file_path):
+            os.remove(hash_file_path)
+

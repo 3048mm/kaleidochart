@@ -6,7 +6,7 @@ from datetime import date
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
-from db.models import Symbol, DailyPrice, Indicator, MarketSignal
+from db.models import Symbol, DailyPrice, Indicator, MarketSignal, FxRate
 from db.models_user import Portfolio, PortfolioPosition, PositionHistory, TotalPortfolio, Transaction
 from api.portfolio_logic import calc_max_investment, calc_stop_loss_price, calc_pnl, check_alert_status, calculate_recommended_cash
 
@@ -612,13 +612,9 @@ def get_total_portfolio_summary(db: Session, user_db: Session) -> dict:
 
     recommended_cash = calculate_recommended_cash(phase, score)
 
-    # Fetch latest JPY=X
-    jpy_sym = db.query(Symbol).filter_by(ticker="JPY=X").first()
-    current_exchange_rate = 150.0
-    if jpy_sym:
-        latest_jpy_dp = _get_latest_price(db, jpy_sym.id)
-        if latest_jpy_dp:
-            current_exchange_rate = latest_jpy_dp.close
+    # Fetch latest USD/JPY from FxRate
+    latest_fx = db.query(FxRate).filter_by(currency_pair="USD/JPY").order_by(desc(FxRate.date)).first()
+    current_exchange_rate = latest_fx.rate if latest_fx else 150.0
 
     total_equity_jpy = total_equity_value * current_exchange_rate
     total_unrealized_pnl_jpy = total_equity_jpy - net_injected_jpy
@@ -650,23 +646,19 @@ def get_total_portfolio_summary(db: Session, user_db: Session) -> dict:
     }
     
 def get_historical_fx_rate(db: Session, target_date: date) -> float:
-    jpy_sym = db.query(Symbol).filter_by(ticker="JPY=X").first()
-    if not jpy_sym:
-        return 150.0
+    fx = db.query(FxRate).filter(
+        FxRate.currency_pair == "USD/JPY",
+        FxRate.date <= target_date
+    ).order_by(desc(FxRate.date)).first()
     
-    dp = db.query(DailyPrice).filter(
-        DailyPrice.symbol_id == jpy_sym.id,
-        DailyPrice.date <= target_date
-    ).order_by(desc(DailyPrice.date)).first()
-    
-    if dp:
-        return dp.close
+    if fx:
+        return fx.rate
     
     # Fallback to earliest available
-    dp_fallback = db.query(DailyPrice).filter(
-        DailyPrice.symbol_id == jpy_sym.id
-    ).order_by(DailyPrice.date).first()
-    return dp_fallback.close if dp_fallback else 150.0
+    fx_fallback = db.query(FxRate).filter(
+        FxRate.currency_pair == "USD/JPY"
+    ).order_by(FxRate.date).first()
+    return fx_fallback.rate if fx_fallback else 150.0
 
 
 def execute_transaction(

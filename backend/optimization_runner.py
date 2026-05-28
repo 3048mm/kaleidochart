@@ -428,7 +428,18 @@ def main():
     
     # Setup storage
     db_path = os.path.join(project_root, 'data', 'optimization_trials.db')
-    storage = f"sqlite:///{db_path}"
+    
+    # 1. Ensure directories exist
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        
+    # 2. Use RDBStorage with high timeout to prevent "database is locked" errors
+    from optuna.storages import RDBStorage
+    storage = RDBStorage(
+        url=f"sqlite:///{db_path}",
+        engine_kwargs={
+            "connect_args": {"timeout": 60.0} # Extend timeout from default 5s to 60s
+        }
+    )
     study_name = f"opt_strategy_{args.strategy}_multi_period"
     
     print("=" * 60)

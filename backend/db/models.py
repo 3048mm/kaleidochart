@@ -212,5 +212,18 @@ class PipelineMeta(Base):
     last_completed_at = Column(DateTime, nullable=False) # Start time of the last successful pipeline run (UTC)
     last_spy_date = Column(Date, nullable=False)          # SPY's latest date at completion (YYYY-MM-DD)
 
+class FxRate(Base):
+    """Stores historical exchange rates (e.g. USD/JPY for currency conversion)"""
+    __tablename__ = 'fx_rates'
+    
+    id = Column(Integer, primary_key=True)
+    currency_pair = Column(String(10), nullable=False, index=True)  # e.g., "USD/JPY"
+    date = Column(Date, nullable=False, index=True)
+    rate = Column(Float, nullable=False)
+    
+    __table_args__ = (
+        UniqueConstraint('currency_pair', 'date', name='uq_fx_rates_pair_date'),
+    )
+
 
 

@@ -15,11 +15,18 @@
 | `sort_column` | **ソート基準カラム**: Top-Nを抽出する際に基準とするカラム名（例: `rs21_rank`, `gain_1d_pct`等）。 |
 | `sort_ascending` | **昇順ソート**: `true` の場合は小さい順、`false` (デフォルト) の場合は大きい順でTop-Nを取得します。 |
 
-> **汎用プレフィックス（自動バインディング）について**:
+> **汎用プレフィックス（自動バインディング）および特殊汎用フィルタについて**:
 > 本システムでは、パラメータ名（キー名）の先頭に特定のプレフィックスを付けることで、Python側のコード変更なしに汎用的なフィルタリングを適用できます。
 > * `min_〇〇` : カラム `〇〇` に対して `>=` 評価を行います。
 > * `max_〇〇` : カラム `〇〇` に対して `<=` 評価を行います。
 > * `is_〇〇`, `has_〇〇`, `bool_〇〇` または設定値が boolean 型 : 完全一致 (`==`) 評価を行います。
+> * `close_gt_〇〇` : `close` (終値) が任意の移動平均線 `〇〇` を上回っているか (`close > 〇〇`) の判定を行います。
+>   * 例: `close_gt_ema21 = true` (終値 > EMA21)
+>   * 例: `close_gt_ema50 = true` (終値 > EMA50)
+>   * 例: `close_gt_ema63 = true` (終値 > EMA63)
+>   * 例: `close_gt_sma50 = true` (終値 > SMA50)
+>   * 例: `close_gt_sma200 = true` (終値 > SMA200)
+>   * (※ `ema21` のようにアンダースコアがない記述も、内部で自動的に `ema_21` に正規化されて処理されます)
 
 ### 1.1 価格・トレンド関連
 | 変数名 | DB 参照元 (Table.Column) | 計算論理・説明 |
@@ -29,7 +36,7 @@
 | `min_change_intraday_pct` | `daily_prices.open/close` | **当日中騰落率（下限）**: 当日始値に対する終値の上昇率(%)。旧 `1d_gain_pct`。 |
 | `min_dist_21ema_pct` | `indicators.ema_21`<br>`daily_prices.close` | **EMA21乖離率（下限）**: `(close - ema_21) / ema_21 * 100`。 |
 | `max_dist_21ema_pct` | 同上 | **EMA21乖離率（上限）**。 |
-| `close_gt_sma50` | `indicators.sma_50`<br>`daily_prices.close` | **SMA50上抜け**: `close > sma_50` の場合に真。 |
+| `close_gt_〇〇` | `indicators.〇〇`<br>`daily_prices.close` | **動的・移動平均線の上抜け**: `close > 〇〇` の場合に真。利用可能な移動平均の全主要バリエーションに対して動的に動作（例: `close_gt_ema21`, `close_gt_ema50`, `close_gt_ema63`, `close_gt_sma50`, `close_gt_sma200` 等）。 |
 | `trend_template_ok` | `indicators.trend_template_ok` | **トレンドテンプレート適合**: ミネルヴィニのトレンドテンプレート（SMA200の上昇、SMA50/150/200の位置等）を全合格しているか（1 or 0）。 |
 
 ### 1.2 ボラティリティ・出来高関連

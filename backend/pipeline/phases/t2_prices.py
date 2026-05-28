@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from sqlalchemy import func
 
-from db.models import DailyPrice
+from db.models import DailyPrice, FxRate
 from data_collection.fetcher import fetch_daily_data
 from pipeline.utils import sanitize_numeric, attach_market_cap
 
@@ -53,7 +53,7 @@ def sync_phase_t2_prices(db, sheet_data: List[Dict], symbol_id_map: Dict, initia
     logger.info(f"Target Reference Date (SPY): {spy_latest_date}")
     if not spy_latest_date: return None
     
-    real_items = [d for d in sheet_data if d['theme_type'] != 'virtual' and d['ticker'] != 'SPY']
+    real_items = [d for d in sheet_data if d['theme_type'] != 'virtual' and d['ticker'] != 'SPY' and d['ticker'] != 'JPY=X']
     latest_rows = db.query(DailyPrice.symbol_id, func.max(DailyPrice.date)).group_by(DailyPrice.symbol_id).all()
     sym_latest_map = {sid: ldt for sid, ldt in latest_rows}
     
@@ -87,7 +87,7 @@ def sync_phase_t2_prices(db, sheet_data: List[Dict], symbol_id_map: Dict, initia
                         close=sanitize_numeric(row, 'close'), 
                         volume=int(row['volume']) if sanitize_numeric(row, 'volume') is not None else 0,
                         market_cap=sanitize_numeric(row, 'market_cap')
-                    ) for _, row in df.iterrows() if row['date'] not in existing_dates
+                    ) for _, row in df.iterrows() if row['date'] not in existing_dates and row['date'] <= spy_latest_date
                 ]
                 if new_recs:
                     db.bulk_save_objects(new_recs)
@@ -95,3 +95,87 @@ def sync_phase_t2_prices(db, sheet_data: List[Dict], symbol_id_map: Dict, initia
                     logger.debug(f"[{ticker}] Updated +{len(new_recs)} rows.")
                     
     return spy_latest_date
+
+def sync_fx_rates(db, skip_fetch: bool = False, logger: Optional[logging.Logger] = None) -> bool:
+    """
+    為替レート (USD/JPY) を取得し、fx_rates テーブルを同期します。
+    """
+    if logger is None:
+        logger = logging.getLogger(__name__)
+        
+    logger.info("--- FX Rate Sync START ---")
+    try:
+        from datetime import date
+        
+        # 1. 取得開始日の算出（最後の為替レコードの翌日、なければ過去30日前から）
+        max_date = db.query(func.max(FxRate.date)).scalar()
+        if max_date:
+            start_date = (datetime.combine(max_date, datetime.min.time()) + timedelta(days=1)).date()
+        else:
+            start_date = (datetime.now() - timedelta(days=30)).date()
+            
+        logger.info(f"Target Sync Start Date for FX: {start_date}")
+
+        if skip_fetch:
+            # テストおよびスキップ用：ダミー為替データの登録
+            # start_date から今日までの日付に対してダミー値を挿入
+            today = date.today()
+            curr = start_date
+            count = 0
+            while curr <= today:
+                # 土日は為替データが休みの可能性もあるが、テストでは連続で入れる
+                exists = db.query(FxRate).filter(FxRate.currency_pair == "USD/JPY", FxRate.date == curr).first()
+                if not exists:
+                    rate_val = 155.0 + (curr.day % 5) * 0.2  # ダミーレート
+                    fx = FxRate(currency_pair="USD/JPY", date=curr, rate=rate_val)
+                    db.add(fx)
+                    count += 1
+                curr += timedelta(days=1)
+            db.commit()
+            logger.info(f"[Skip Fetch] Inserted {count} dummy fx rates.")
+            return True
+            
+        # 2. yfinance から JPY=X をフェッチ
+        start_str = start_date.strftime('%Y-%m-%d')
+        logger.info(f"Fetching JPY=X from {start_str}...")
+        df = fetch_daily_data("JPY=X", start_str)
+        
+        if df is not None and not df.empty:
+            count = 0
+            for _, row in df.iterrows():
+                row_date = row['date']
+                # date オブジェクトに変換
+                if isinstance(row_date, datetime):
+                    row_date = row_date.date()
+                elif isinstance(row_date, str):
+                    row_date = datetime.strptime(row_date, '%Y-%m-%d').date()
+                    
+                exists = db.query(FxRate).filter(
+                    FxRate.currency_pair == "USD/JPY",
+                    FxRate.date == row_date
+                ).first()
+                
+                if not exists:
+                    close_val = sanitize_numeric(row, 'close')
+                    if close_val is not None:
+                        fx = FxRate(
+                            currency_pair="USD/JPY",
+                            date=row_date,
+                            rate=close_val
+                        )
+                        db.add(fx)
+                        count += 1
+            if count > 0:
+                db.commit()
+                logger.info(f"FX Rates updated: +{count} rows of USD/JPY.")
+            else:
+                logger.info("FX Rates: No new rows to add.")
+        else:
+            logger.warning("No FX data fetched from yfinance.")
+            
+        return True
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error syncing FX rates: {e}")
+        return False
+
