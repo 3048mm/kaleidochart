@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Float, Date, DateTime, BigInteger, ForeignKey, UniqueConstraint, SmallInteger
+from sqlalchemy import Column, Integer, String, Float, Date, DateTime, BigInteger, ForeignKey, UniqueConstraint, SmallInteger, Index
 from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
@@ -21,6 +21,7 @@ class Symbol(Base):
     
     __table_args__ = (
         UniqueConstraint('ticker', 'exchange', name='uq_symbols_ticker_exchange'),
+        Index('ix_symbols_active_category', 'active', 'category'),
     )
     
     # Relationships
@@ -183,6 +184,7 @@ class RelativeRank(Base):
     
     __table_args__ = (
         UniqueConstraint('symbol_id', 'date', 'group_name', name='uq_relative_ranks_symbol_date_group'),
+        Index('ix_relative_ranks_date_group', 'date', 'group_name'),
     )
     
     symbol = relationship("Symbol", back_populates="relative_ranks")
