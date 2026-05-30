@@ -90,6 +90,12 @@ if __name__ == "__main__":
 
         # Load configuration
         config = load_config()
+        
+        # Apply logging level from config.toml dynamically
+        log_level_str = config.get("system", {}).get("log_level", "INFO").upper()
+        log_level = getattr(logging, log_level_str, logging.INFO)
+        logging.getLogger().setLevel(log_level)
+        
         db_path = get_active_db_path() or config["system"]["db_path"]
 
         from pipeline.orchestrator import run_pipeline

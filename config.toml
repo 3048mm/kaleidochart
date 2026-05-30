@@ -1,19 +1,12 @@
-# System Configuration
+# System database and environment configuration
 [system]
 db_path = "d:/My Documents/Programing/stocktool/data/stocktool.db"
-user_db_path = "d:/My Documents/Programing/stocktool/data/user_data_sandbox.db"
+user_db_path = "d:/My Documents/Programing/stocktool/data/user_data.db"
+# Logging level for data pipeline (DEBUG, INFO, WARNING, ERROR)
 log_level = "INFO"
 
 [data_collection]
-# Step 1 Target Symbols
+# Extra index, FX, or individual symbols to force-sync in addition to spreadsheet symbols
 symbols = ["SPY", "QQQ", "AAPL", "^VIX", "DX-Y.NYB", "GLD", "SLV", "GBTC", "IBIT", "ETHA", "JPY=X"]
-# Number of days to fetch initially
+# Number of days to fetch historically on initial sync
 initial_fetch_days = 2200
-# Sleep between ticker requests to avoid rate limits (seconds)
-sleep_seconds = 1.0
-
-[indicators]
-# Define moving average periods
-sma_periods = [5, 21, 50, 63, 200]
-ema_periods = [5, 21, 50, 63, 200]
-atr_period = 14
