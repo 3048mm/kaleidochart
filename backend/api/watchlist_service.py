@@ -275,9 +275,9 @@ def get_watchlist(db: Session, user_db: Session) -> dict:
                 max_gain_pct = (max_close - wl.entry_price) / wl.entry_price * 100
                 min_gain_pct = (min_close - wl.entry_price) / wl.entry_price * 100
 
-            rs_ranks = db.query(RelativeRank.percent_rank).filter(
+            rs_ranks = db.query(RelativeRank.rs_ratio_21).filter(
                 RelativeRank.symbol_id == wl.symbol_id,
-                RelativeRank.indicator_name == "rs_ratio_21",
+                RelativeRank.rs_ratio_21.isnot(None),
             ).order_by(RelativeRank.date.desc()).limit(30).all()
             rs_sparkline = [r[0] for r in reversed(rs_ranks)]
         else:

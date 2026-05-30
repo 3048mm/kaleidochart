@@ -222,17 +222,28 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
     t1 = time.time()
     rank_start = (sd - timedelta(days=10)).isoformat()
     query_ranks = (
-        f"SELECT symbol_id, indicator_name, date, percent_rank "
+        f"SELECT symbol_id, date, rs_ratio_14, rs_ratio_21, rs_ratio_63 "
         f"FROM relative_ranks "
-        f"WHERE date >= '{rank_start}' AND date <= '{buf_end}' "
-        f"AND indicator_name IN ('rs_ratio_14', 'rs_ratio_21', 'rs_ratio_63')"
+        f"WHERE date >= '{rank_start}' AND date <= '{buf_end}'"
     )
     chunks_ranks = []
     for chunk in pd.read_sql(query_ranks, engine, parse_dates=['date'], chunksize=100000):
         chunk['date'] = pd.to_datetime(chunk['date']).dt.date
         chunks_ranks.append(chunk)
-    df_ranks = pd.concat(chunks_ranks, ignore_index=True) if chunks_ranks else pd.DataFrame()
-    log(f"  Relative Ranks: {len(df_ranks)} rows loaded ({time.time()-t1:.1f}s)")
+    df_ranks_wide = pd.concat(chunks_ranks, ignore_index=True) if chunks_ranks else pd.DataFrame()
+    
+    # Melt wide relative_ranks back to narrow format to preserve 100% compatibility in memory!
+    if not df_ranks_wide.empty:
+        df_ranks = df_ranks_wide.melt(
+            id_vars=['symbol_id', 'date'],
+            value_vars=['rs_ratio_14', 'rs_ratio_21', 'rs_ratio_63'],
+            var_name='indicator_name',
+            value_name='percent_rank'
+        ).dropna(subset=['percent_rank'])
+    else:
+        df_ranks = pd.DataFrame(columns=['symbol_id', 'date', 'indicator_name', 'percent_rank'])
+        
+    log(f"  Relative Ranks (Melted): {len(df_ranks)} rows loaded ({time.time()-t1:.1f}s)")
 
     # Theme Constituents
     log("  Loading theme constituents...")

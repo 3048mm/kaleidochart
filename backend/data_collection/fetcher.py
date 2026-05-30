@@ -13,6 +13,9 @@ def _normalize_ticker(ticker: str) -> str:
     """
     if not ticker:
         return ticker
+    # DX-Y.NYB や指数系 (^VIXなど) は正規化を除外する
+    if "DX-Y.NYB" in ticker or ticker.startswith("^"):
+        return ticker
     # スラッシュやドットをハイフンに変換
     normalized = ticker.replace('/', '-').replace('.', '-')
     if normalized != ticker:

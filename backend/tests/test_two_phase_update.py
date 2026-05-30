@@ -124,8 +124,8 @@ def test_clear_pipeline_data_for_date(db_session):
         Indicator(symbol_id=10, date=target_date, sma_200=100.0),
         Indicator(symbol_id=10, date=other_date, sma_200=99.0),
         
-        RelativeRank(symbol_id=10, date=target_date, group_name="個別", indicator_name="relative_strength_spy", percent_rank=0.5),
-        RelativeRank(symbol_id=10, date=other_date, group_name="個別", indicator_name="relative_strength_spy", percent_rank=0.4),
+        RelativeRank(symbol_id=10, date=target_date, group_name="個別", relative_strength_spy=0.5),
+        RelativeRank(symbol_id=10, date=other_date, group_name="個別", relative_strength_spy=0.4),
         
         MarketSignal(date=target_date, market_phase="BULL", market_trend_score=80.0),
         MarketSignal(date=other_date, market_phase="CORRECTION", market_trend_score=70.0)

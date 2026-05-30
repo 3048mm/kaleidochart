@@ -165,11 +165,24 @@ class RelativeRank(Base):
     symbol_id = Column(Integer, ForeignKey('symbols.id'), nullable=False, index=True)
     date = Column(Date, nullable=False, index=True)
     group_name = Column(String, nullable=False)
-    indicator_name = Column(String, nullable=False)
-    percent_rank = Column(Float)  # 0.00 to 1.00
+    
+    # Ranks for different indicators (0.00 to 1.00)
+    relative_strength_spy = Column(Float)
+    rs_ratio_14 = Column(Float)
+    rs_ratio_21 = Column(Float)
+    rs_ratio_63 = Column(Float)
+    rs_momentum_14 = Column(Float)
+    rs_momentum_21 = Column(Float)
+    rs_momentum_63 = Column(Float)
+    rs_condition_14 = Column(Float)
+    rs_condition_21 = Column(Float)
+    rs_condition_63 = Column(Float)
+    rs_roc_ema_14 = Column(Float)
+    rs_roc_ema_21 = Column(Float)
+    rs_roc_ema_63 = Column(Float)
     
     __table_args__ = (
-        UniqueConstraint('symbol_id', 'date', 'group_name', 'indicator_name', name='uq_relative_ranks_symbol_date_group_ind'),
+        UniqueConstraint('symbol_id', 'date', 'group_name', name='uq_relative_ranks_symbol_date_group'),
     )
     
     symbol = relationship("Symbol", back_populates="relative_ranks")

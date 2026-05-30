@@ -44,29 +44,35 @@ def sync_phase_t4_ranks(db, spy_latest_date: Optional[date], logger: logging.Log
     db.execute(text("PRAGMA synchronous = OFF;"))
     db.execute(text("PRAGMA temp_store = MEMORY;"))
     
+    # Build single query to insert all indicators at once (wide format)
+    rank_sql_parts = []
+    for ind in indicators_to_rank:
+        rank_sql_parts.append(f"PERCENT_RANK() OVER(PARTITION BY s.category ORDER BY i.{ind} ASC) AS {ind}")
+    
+    cols_joined = ", ".join(indicators_to_rank)
+    ranks_joined = ", ".join(rank_sql_parts)
+    
+    query_template = f"""
+        INSERT INTO relative_ranks (
+            symbol_id, date, group_name,
+            {cols_joined}
+        )
+        SELECT
+            i.symbol_id,
+            i.date,
+            s.category as group_name,
+            {ranks_joined}
+        FROM indicators i
+        JOIN symbols s ON i.symbol_id = s.id
+        WHERE i.date = :d
+    """
+    
     for i, d in enumerate(gap_dates):
         if i % 10 == 0 or i == total_dates - 1:
             logger.info(f"Phase 4 Progress: {i+1}/{total_dates} (Date: {d})")
             
         db.query(RelativeRank).filter(RelativeRank.date == d).delete()
-        for ind_col in indicators_to_rank:
-            query = f"""
-                INSERT INTO relative_ranks (symbol_id, date, group_name, indicator_name, percent_rank)
-                SELECT
-                    i.symbol_id,
-                    i.date,
-                    s.category as group_name,
-                    '{ind_col}' as indicator_name,
-                    PERCENT_RANK() OVER(
-                        PARTITION BY s.category 
-                        ORDER BY i.{ind_col} ASC
-                    ) as percent_rank
-                FROM indicators i
-                JOIN symbols s ON i.symbol_id = s.id
-                WHERE i.date = :d
-                  AND i.{ind_col} IS NOT NULL
-            """
-            db.execute(text(query), {"d": d})
+        db.execute(text(query_template), {"d": d})
         db.commit()
         
     logger.info("Phase 4 COMPLETE.")

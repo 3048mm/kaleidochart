@@ -59,8 +59,7 @@ def seed_data(db_session, user_db_session):
     for i in range(5):
         d = base_date + timedelta(days=i)
         rr = RelativeRank(symbol_id=1, date=d,
-                          group_name="個別", indicator_name="rs_ratio_21",
-                          percent_rank=0.5 + i * 0.05)
+                          group_name="個別", rs_ratio_21=0.5 + i * 0.05)
         db_session.add(rr)
 
     db_session.commit()

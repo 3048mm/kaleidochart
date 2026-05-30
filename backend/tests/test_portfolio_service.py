@@ -83,7 +83,7 @@ def seed_data(db_session, user_db_session):
     for i in range(5):
         d = date(2026, 5, 1 + i)
         rr = RelativeRank(symbol_id=1, date=d, group_name="個別",
-                          indicator_name="rs_ratio_21", percent_rank=0.8 + i * 0.02)
+                          rs_ratio_21=0.8 + i * 0.02)
         db_session.add(rr)
 
     db_session.commit()

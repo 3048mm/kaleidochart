@@ -31,7 +31,7 @@ def test_market_trend_score_bull():
         'momentum_ratio': [1.0]
     })
     
-    res = calculate_market_signals(df_spy, df_vix, df_metrics)
+    res = calculate_market_signals(df_spy, df_vix=df_vix, df_metrics=df_metrics)
     score = res.iloc[-1]['market_trend_score']
     
     # SPY(25) + Breadth(25) + Momentum(25) + VIX(25) = 100
@@ -64,7 +64,7 @@ def test_market_trend_score_bear():
         'momentum_ratio': [0.0]
     })
     
-    res = calculate_market_signals(df_spy, df_vix, df_metrics)
+    res = calculate_market_signals(df_spy, df_vix=df_vix, df_metrics=df_metrics)
     score = res.iloc[-1]['market_trend_score']
     
     # 全 MA 割れなら SPY=0, 他も0なので 0
@@ -98,7 +98,7 @@ def test_market_trend_score_neutral():
     
     # 計算ロジック上、EMA/SMAの期間が必要なので、
     # 実際はもっと長いデータが必要だが、まずは構造のテスト
-    res = calculate_market_signals(df_spy, df_vix, df_metrics)
+    res = calculate_market_signals(df_spy, df_vix=df_vix, df_metrics=df_metrics)
     score = res.iloc[-1]['market_trend_score']
     
     assert 10.0 <= score <= 90.0

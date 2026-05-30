@@ -8,7 +8,7 @@ log_level = "INFO"
 # Step 1 Target Symbols
 symbols = ["SPY", "QQQ", "AAPL", "^VIX", "DX-Y.NYB", "GLD", "SLV", "GBTC", "IBIT", "ETHA", "JPY=X"]
 # Number of days to fetch initially
-initial_fetch_days = 1826
+initial_fetch_days = 2200
 # Sleep between ticker requests to avoid rate limits (seconds)
 sleep_seconds = 1.0
 

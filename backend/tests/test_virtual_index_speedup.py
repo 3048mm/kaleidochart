@@ -357,7 +357,7 @@ def test_cascading_updates_on_hash_mismatch(db_session):
     # ダミーの指標データ (T3) と 相対ランク (T4)、市場概況 (T5) をあらかじめ入れておく
     base_date = date(2026, 5, 5)
     db_session.add(Indicator(symbol_id=101, date=base_date, sma_50=100.0, relative_strength_spy=1.2)) # T3 of theme
-    db_session.add(RelativeRank(symbol_id=101, date=base_date, group_name="テーマ", indicator_name="relative_strength_spy", percent_rank=0.85)) # T4 of theme
+    db_session.add(RelativeRank(symbol_id=101, date=base_date, group_name="テーマ", relative_strength_spy=0.85)) # T4 of theme
     # T5
     # T5 has no symbol_id, it is a single market score record per date
     from db.models import MarketSignal

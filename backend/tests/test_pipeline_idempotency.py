@@ -1,10 +1,11 @@
 import pytest
+import logging
 from datetime import date, datetime, timedelta
 import pandas as pd
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from db.models import Base, Symbol, DailyPrice, Indicator, MarketSignal
-from scripts.update_pipeline import sync_phase_t5_signals
+from pipeline.phases.t5_signals import sync_phase_t5_signals
 
 # In-memory SQLite for testing
 @pytest.fixture
@@ -65,7 +66,7 @@ def test_sync_phase_t5_backfills_null_score(db_session):
     db_session.commit()
     
     # 3. パイプライン実行
-    sync_phase_t5_signals(db_session)
+    sync_phase_t5_signals(db_session, logging.getLogger("test"))
     
     # 4. 検証
     signal = db_session.query(MarketSignal).filter(MarketSignal.date == test_date).first()

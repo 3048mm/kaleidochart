@@ -66,10 +66,9 @@ def test_rs_data_availability():
         
         if missing:
             print(f"\n[FAIL] Missing keys in API response: {missing}")
-            sys.exit(1)
+            assert False, f"Missing keys in API response: {missing}"
         else:
             print("\n[PASS] All keys found in API response.")
-            sys.exit(0)
             
     finally:
         db.close()
