@@ -549,7 +549,7 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', height: isMobile ? 'calc(100vh - 130px)' : '100%', boxSizing: 'border-box' }}>
-            <div style={{ padding: isMobile ? '10px' : '10px 20px', display: 'flex', flexDirection: isMobile ? 'column' : 'row', alignItems: isMobile ? 'flex-start' : 'center', gap: isMobile ? '8px' : '20px' }}>
+            <div style={{ padding: isMobile ? '10px' : '10px 20px', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: isMobile ? '8px' : '12px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between' }}>
                     <Link to="/" style={{ color: '#00ff88', textDecoration: 'none', fontSize: isMobile ? '13px' : '14px' }}>&larr; Dashboard</Link>
                     <a href={tradingViewUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#2962FF', textDecoration: 'none', fontSize: '12px' }}>
@@ -557,7 +557,7 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
                     </a>
                 </div>
                 
-                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: isMobile ? '6px' : '10px', width: '100%' }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: isMobile ? '6px' : '12px', width: '100%' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <WatchlistButton 
                             isActive={isTickerActive(selected.ticker)} 
@@ -571,69 +571,72 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
                         {selected.name && selected.name.includes('::') ? selected.name.split('::')[1] : selected.name} ({selected.category})
                     </span>
                     
-                    {themes.length > 0 && (
-                        <div style={{ 
-                            display: 'flex', 
-                            gap: '6px', 
-                            alignItems: 'center',
-                            overflowX: isMobile ? 'auto' : 'visible',
-                            whiteSpace: 'nowrap',
-                            maxWidth: isMobile ? '100%' : 'none',
-                            paddingBottom: isMobile ? '2px' : '0',
-                            WebkitOverflowScrolling: 'touch',
-                            scrollbarWidth: 'none', // hide scrollbar for Firefox
-                        }}>
-                            {!isMobile && <span style={{ fontSize: '11px', color: '#666', marginLeft: '6px' }}>Themes:</span>}
-                            {themes.map(t => {
-                                const hasDelim = t.name && t.name.includes('::');
-                                const themeGroup = hasDelim ? t.name.split('::')[0] : '';
-                                const themeName = hasDelim ? t.name.split('::')[1] : t.name;
-
-                                return (
-                                    <Link 
-                                        key={t.id} 
-                                        to={`/chart/${t.ticker}`} 
-                                        style={{ 
-                                            fontSize: '10px', 
-                                            color: '#00ff88', 
-                                            background: 'rgba(0, 255, 136, 0.08)', 
-                                            padding: hasDelim ? '2px 8px' : '4px 8px', 
-                                            borderRadius: '6px', 
-                                            textDecoration: 'none',
-                                            border: '1px solid rgba(0, 255, 136, 0.2)',
-                                            transition: 'all 0.2s',
-                                            display: 'inline-block',
-                                            flexShrink: 0
-                                        }}
-                                        onMouseEnter={e => {
-                                            e.currentTarget.style.background = 'rgba(0, 255, 136, 0.15)';
-                                            e.currentTarget.style.borderColor = 'rgba(0, 255, 136, 0.4)';
-                                        }}
-                                        onMouseLeave={e => {
-                                            e.currentTarget.style.background = 'rgba(0, 255, 136, 0.08)';
-                                            e.currentTarget.style.borderColor = 'rgba(0, 255, 136, 0.2)';
-                                        }}
-                                    >
-                                        {hasDelim ? (
-                                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', lineHeight: 1.1 }}>
-                                                <span style={{ fontSize: '7px', color: '#8b9cc8', fontWeight: 600, letterSpacing: '0.02em' }}>{themeGroup}</span>
-                                                <span style={{ fontSize: '9px', color: '#00ff88', fontWeight: 700 }}>{themeName}</span>
-                                            </div>
-                                        ) : (
-                                            <span style={{ fontSize: '9px', color: '#00ff88', fontWeight: 700 }}>{themeName}</span>
-                                        )}
-                                    </Link>
-                                );
-                            })}
-                        </div>
-                    )}
-                    
-                    {latest && latest.market_cap && !isMobile && (
-                        <span style={{ fontSize: '11px', color: '#aaa', marginLeft: 'auto', padding: '2px 8px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px' }}>
+                    {latest && latest.market_cap && (
+                        <span style={{ fontSize: '11px', color: '#aaa', padding: '2px 8px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px' }}>
                             Market Cap: <strong style={{ color: '#fff' }}>{formatMarketCap(latest.market_cap)}</strong>
                         </span>
                     )}
                 </div>
+
+                {themes.length > 0 && (
+                    <div style={{ 
+                        display: 'flex', 
+                        gap: '6px', 
+                        alignItems: 'center',
+                        overflowX: isMobile ? 'auto' : 'visible',
+                        whiteSpace: 'nowrap',
+                        maxWidth: '100%',
+                        paddingBottom: isMobile ? '2px' : '0',
+                        paddingLeft: isMobile ? '28px' : '32px',
+                        marginTop: isMobile ? '-2px' : '-4px',
+                        marginBottom: isMobile ? '2px' : '4px',
+                        WebkitOverflowScrolling: 'touch',
+                        scrollbarWidth: 'none', // hide scrollbar for Firefox
+                    }}>
+                        {!isMobile && <span style={{ fontSize: '11px', color: '#666' }}>Themes:</span>}
+                        {themes.map(t => {
+                            const hasDelim = t.name && t.name.includes('::');
+                            const themeGroup = hasDelim ? t.name.split('::')[0] : '';
+                            const themeName = hasDelim ? t.name.split('::')[1] : t.name;
+
+                            return (
+                                <Link 
+                                    key={t.id} 
+                                    to={`/chart/${t.ticker}`} 
+                                    style={{ 
+                                        fontSize: '10px', 
+                                        color: '#00ff88', 
+                                        background: 'rgba(0, 255, 136, 0.08)', 
+                                        padding: hasDelim ? '2px 8px' : '4px 8px', 
+                                        borderRadius: '6px', 
+                                        textDecoration: 'none',
+                                        border: '1px solid rgba(0, 255, 136, 0.2)',
+                                        transition: 'all 0.2s',
+                                        display: 'inline-block',
+                                        flexShrink: 0
+                                    }}
+                                    onMouseEnter={e => {
+                                        e.currentTarget.style.background = 'rgba(0, 255, 136, 0.15)';
+                                        e.currentTarget.style.borderColor = 'rgba(0, 255, 136, 0.4)';
+                                    }}
+                                    onMouseLeave={e => {
+                                        e.currentTarget.style.background = 'rgba(0, 255, 136, 0.08)';
+                                        e.currentTarget.style.borderColor = 'rgba(0, 255, 136, 0.2)';
+                                    }}
+                                >
+                                    {hasDelim ? (
+                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', lineHeight: 1.1 }}>
+                                            <span style={{ fontSize: '7px', color: '#8b9cc8', fontWeight: 600, letterSpacing: '0.02em' }}>{themeGroup}</span>
+                                            <span style={{ fontSize: '9px', color: '#00ff88', fontWeight: 700 }}>{themeName}</span>
+                                        </div>
+                                    ) : (
+                                        <span style={{ fontSize: '9px', color: '#00ff88', fontWeight: 700 }}>{themeName}</span>
+                                    )}
+                                </Link>
+                            );
+                        })}
+                    </div>
+                )}
             </div>
 
             <div style={{ padding: isMobile ? '0 10px' : '0 20px', display: 'flex', gap: '8px', marginBottom: '8px', overflowX: 'auto', whiteSpace: 'nowrap' }}>

@@ -25,6 +25,9 @@ interface ScreenerDashboardItem {
     ticker: string;
     name: string;
     change_pct: number;
+    theme_ticker?: string;
+    theme_name?: string;
+    theme_rs_ratio?: number;
 }
 
 interface ScreenerDashboardCategory {
@@ -201,6 +204,26 @@ export const ScreenerPage: React.FC = () => {
                                         <Link to={`/chart/${encodeURIComponent(item.ticker)}`} target="_blank" style={{ color: appConfig.colors.chartText, textDecoration: 'none', fontWeight: '500' }}>
                                             {item.ticker}
                                         </Link>
+                                        
+                                        {item.theme_name && (
+                                            <span 
+                                                title={`RSRatio %rrank: ${(item.theme_rs_ratio! * 100).toFixed(1)}%`}
+                                                style={{
+                                                    fontSize: '9px',
+                                                    color: activeTab === 'Rise' ? '#00ff88' : '#ff4444',
+                                                    background: activeTab === 'Rise' ? 'rgba(0, 255, 136, 0.06)' : 'rgba(255, 68, 68, 0.06)',
+                                                    border: activeTab === 'Rise' ? '1px solid rgba(0, 255, 136, 0.15)' : '1px solid rgba(255, 68, 68, 0.15)',
+                                                    padding: '1px 5px',
+                                                    borderRadius: '4px',
+                                                    marginLeft: '8px',
+                                                    cursor: 'help',
+                                                    fontWeight: 'normal',
+                                                    whiteSpace: 'nowrap'
+                                                }}
+                                            >
+                                                {item.theme_name}
+                                            </span>
+                                        )}
                                     </div>
                                     <div style={{
                                         padding: '2px 6px',

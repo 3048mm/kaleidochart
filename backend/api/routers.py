@@ -1241,12 +1241,66 @@ def get_screener_dashboard(
             DailyPrice, (Symbol.id == DailyPrice.symbol_id) & (Indicator.date == DailyPrice.date)
         ).filter(Symbol.active == True, Symbol.category.in_(["テーマ", "個別"]), Indicator.date == latest_date_result)
 
-    def fetch_top_8(query):
+    def fetch_top_8(query, is_rise=True):
         results = query.limit(8).all()
+        if not results:
+            return []
+            
+        # Get all mapped themes for these 8 stocks with RelativeRank on target date
+        stock_ids = [r.id for r in results]
+        
+        # We query the mapping and theme rank in one query
+        theme_ranks = db.query(
+            ThemeConstituent.symbol_id.label("stock_id"),
+            Symbol.ticker.label("theme_ticker"),
+            Symbol.name.label("theme_name"),
+            RelativeRank.rs_ratio_21.label("rs_ratio_21")
+        ).join(
+            Symbol, ThemeConstituent.theme_id == Symbol.id
+        ).join(
+            RelativeRank, (Symbol.id == RelativeRank.symbol_id) & (RelativeRank.date == latest_date_result)
+        ).filter(
+            ThemeConstituent.symbol_id.in_(stock_ids)
+        ).all()
+        
+        # Group theme ranks by stock_id
+        from collections import defaultdict
+        stock_themes = defaultdict(list)
+        for tr in theme_ranks:
+            stock_themes[tr.stock_id].append({
+                "ticker": tr.theme_ticker,
+                "name": tr.theme_name.split("::")[1] if "::" in tr.theme_name else tr.theme_name,
+                "rs_ratio": tr.rs_ratio_21 if tr.rs_ratio_21 is not None else 0.0
+            })
+            
         items = []
         for r in results:
             chg = r.change_1d_pct if r.change_1d_pct is not None else 0.0
-            items.append(schemas.ScreenerDashboardItem(id=r.id, ticker=r.ticker, name=r.name, change_pct=chg))
+            
+            # Find the strongest or weakest theme
+            themes_for_stock = stock_themes.get(r.id, [])
+            best_weakest_theme = None
+            if themes_for_stock:
+                if is_rise:
+                    # Rise: pick the one with max RSRatio
+                    best_weakest_theme = max(themes_for_stock, key=lambda x: x["rs_ratio"])
+                else:
+                    # Fall: pick the one with min RSRatio
+                    best_weakest_theme = min(themes_for_stock, key=lambda x: x["rs_ratio"])
+            
+            theme_ticker = best_weakest_theme["ticker"] if best_weakest_theme else None
+            theme_name = best_weakest_theme["name"] if best_weakest_theme else None
+            theme_rs = best_weakest_theme["rs_ratio"] if best_weakest_theme else None
+            
+            items.append(schemas.ScreenerDashboardItem(
+                id=r.id, 
+                ticker=r.ticker, 
+                name=r.name, 
+                change_pct=chg,
+                theme_ticker=theme_ticker,
+                theme_name=theme_name,
+                theme_rs_ratio=theme_rs
+            ))
         return items
 
     def _build_preset_query(preset_def: dict):
@@ -1350,7 +1404,7 @@ def get_screener_dashboard(
             rise_categories.append(schemas.ScreenerDashboardCategory(
                 id=p["id"], name=p["name"], subname=p.get("subname"),
                 subtitle=p.get("subtitle"),
-                group=p.get("group", "Check"), items=fetch_top_8(q)
+                group=p.get("group", "Check"), items=fetch_top_8(q, is_rise=True)
             ))
         except Exception as e:
             logger.error(f"Screener preset '{p.get('id')}' failed: {e}")
@@ -1361,7 +1415,7 @@ def get_screener_dashboard(
             fall_categories.append(schemas.ScreenerDashboardCategory(
                 id=p["id"], name=p["name"], subname=p.get("subname"),
                 subtitle=p.get("subtitle"),
-                group=p.get("group", "Warning"), items=fetch_top_8(q)
+                group=p.get("group", "Warning"), items=fetch_top_8(q, is_rise=False)
             ))
         except Exception as e:
             logger.error(f"Screener preset '{p.get('id')}' failed: {e}")
