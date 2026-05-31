@@ -598,6 +598,15 @@ def run_pipeline(config, db_path, logger: logging.Logger, rebuild_from: Optional
             sync_phase_t5_signals(db, logger)
             logger.info(f"T5: Signals completed in {time.time() - t_start:.2f}s")
 
+            # Hot/Cold Hybrid Data Architecture: Archive to Parquet master & Purge SQLite cache
+            try:
+                from pipeline.parquet_cache_manager import rotate_and_archive_to_parquet, purge_sqlite_cache_older_than_2_years
+                rotate_and_archive_to_parquet(db, db_path, logger)
+                purge_sqlite_cache_older_than_2_years(db, db_path, logger)
+            except Exception as pe:
+                logger.error(f"Failed to run Hot/Cold archiving & purging: {pe}")
+                # We do not crash the pipeline if archiving fails to keep daily updates robust
+
             # Save pipeline execution metadata to allow self-determining updates next run
             if spy_latest_date:
                 from pipeline.utils import update_pipeline_meta

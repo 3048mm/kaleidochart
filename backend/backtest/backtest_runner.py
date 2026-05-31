@@ -38,270 +38,121 @@ def load_config(config_path: str) -> dict:
 def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = False):
     """
     Preload all required data into pandas DataFrames.
-    Uses Parquet cache if available and not refreshing.
-
+    Loads ALL data from the Parquet Master full-history files and performs in-memory slicing.
+    SQLite connection is COMPLETELY bypassed.
+    
     Returns:
         Tuple of (df_symbols, df_prices, df_indicators, df_ranks, df_theme_constituents, trading_dates)
     """
     import sys
     import pathlib
+    import logging
+    from backend.db.database import get_active_db_path
+    from backend.pipeline.parquet_cache_manager import get_parquet_master_dir, get_pointer_file_path, get_latest_master_files, rotate_and_archive_to_parquet
+    
     def log(msg):
         print(msg)
         sys.stdout.flush()
 
-    cache_dir = pathlib.Path(__file__).parent / "cache"
-    cache_dir.mkdir(exist_ok=True)
-
-    # Cache filenames based on the date range
-    cache_suffix = f"{start_date.replace('-','')}_{end_date.replace('-','')}"
-    
-    # Intelligently check if we have a larger golden cache (20210326 to 20260326)
-    # that fully contains the requested range.
-    golden_suffix = "20210326_20260326"
-    golden_paths = {
-        'symbols': cache_dir / "symbols.parquet",
-        'prices': cache_dir / f"prices_{golden_suffix}.parquet",
-        'indicators': cache_dir / f"indicators_{golden_suffix}.parquet",
-        'ranks': cache_dir / f"ranks_{golden_suffix}.parquet",
-        'tc': cache_dir / "theme_constituents.parquet"
-    }
-    
-    use_golden = False
-    if not refresh_cache:
-        # If specific cache exists, use it.
-        # Otherwise, if golden cache exists and requested range is within it, use golden!
-        specific_paths = {
-            'symbols': cache_dir / "symbols.parquet",
-            'prices': cache_dir / f"prices_{cache_suffix}.parquet",
-            'indicators': cache_dir / f"indicators_{cache_suffix}.parquet",
-            'ranks': cache_dir / f"ranks_{cache_suffix}.parquet",
-            'tc': cache_dir / "theme_constituents.parquet"
-        }
-        if all(p.exists() for p in specific_paths.values()):
-            paths = specific_paths
-        elif all(p.exists() for p in golden_paths.values()):
-            # Verify if requested dates are within 2021-03-26 and 2026-03-26
-            try:
-                sd_req = dt_date.fromisoformat(start_date)
-                ed_req = dt_date.fromisoformat(end_date)
-                sd_gold = dt_date.fromisoformat("2021-03-26")
-                ed_gold = dt_date.fromisoformat("2026-03-26")
-                if sd_gold <= sd_req <= ed_gold and sd_gold <= ed_req <= ed_gold:
-                    use_golden = True
-                    paths = golden_paths
-                    log(f"  -> Golden cache ({golden_suffix}) fully covers requested range ({start_date} to {end_date}). Reusing golden cache!")
-            except Exception:
-                pass
-            if not use_golden:
-                paths = specific_paths
-        else:
-            paths = specific_paths
-    else:
-        paths = {
-            'symbols': cache_dir / "symbols.parquet",
-            'prices': cache_dir / f"prices_{cache_suffix}.parquet",
-            'indicators': cache_dir / f"indicators_{cache_suffix}.parquet",
-            'ranks': cache_dir / f"ranks_{cache_suffix}.parquet",
-            'tc': cache_dir / "theme_constituents.parquet"
-        }
-
-    if not refresh_cache and all(p.exists() for p in paths.values()):
-        log("Loading data from Parquet cache...")
-        t0 = time.time()
-        try:
-            log("  -> Reading symbols...")
-            df_symbols = pd.read_parquet(paths['symbols'])
-            log("  -> Reading prices...")
-            df_prices = pd.read_parquet(paths['prices'])
-            log("  -> Reading indicators...")
-            df_indicators = pd.read_parquet(paths['indicators'])
-            log("  -> Reading ranks...")
-            df_ranks = pd.read_parquet(paths['ranks'])
-            log("  -> Reading theme constituents...")
-            df_theme_constituents = pd.read_parquet(paths['tc'])
-
-            log("  -> Parsing dates into canonical format...")
-            # Convert dates safely
-            df_prices['date'] = pd.to_datetime(df_prices['date']).dt.date
-            df_indicators['date'] = pd.to_datetime(df_indicators['date']).dt.date
-            df_ranks['date'] = pd.to_datetime(df_ranks['date']).dt.date
-            
-            # Slice in-memory if we reused the golden cache
-            if use_golden:
-                sd = dt_date.fromisoformat(start_date)
-                ed = dt_date.fromisoformat(end_date)
-                log(f"  -> Slicing golden cache in-memory for requested range: {start_date} to {end_date}...")
-                df_prices = df_prices[(df_prices['date'] >= sd) & (df_prices['date'] <= ed)]
-                df_indicators = df_indicators[(df_indicators['date'] >= sd) & (df_indicators['date'] <= ed)]
-                df_ranks = df_ranks[(df_ranks['date'] >= sd) & (df_ranks['date'] <= ed)]
-            
-            log(f"  -> Date types after parse: prices={df_prices['date'].dtype}, ind={df_indicators['date'].dtype}, ranks={df_ranks['date'].dtype}")
-            if not df_ranks.empty:
-                log(f"  -> Sample rank date: {df_ranks['date'].iloc[0]} (Type: {type(df_ranks['date'].iloc[0])})")
-
-            log(f"  Cache loaded successfully in {time.time()-t0:.1f}s")
-
-            # Get unique sorted trading dates
-            sd = dt_date.fromisoformat(start_date)
-            ed = dt_date.fromisoformat(end_date)
-            trading_dates = sorted(
-                df_indicators[
-                    (df_indicators['date'] >= sd) & (df_indicators['date'] <= ed)
-                ]['date'].unique()
-            )
-            return df_symbols, df_prices, df_indicators, df_ranks, df_theme_constituents, trading_dates
-        except Exception as e:
-            log(f"  Warning: Failed to load cache ({e}). Falling back to DB.")
-
-    log("Loading data from SQLite DB into memory...")
     t0 = time.time()
-
-    sd = dt_date.fromisoformat(start_date)
-    ed = dt_date.fromisoformat(end_date)
-    # Buffer dates for lookback/exit simulation
-    buf_start = (sd - timedelta(days=30)).isoformat()
-    buf_end = (ed + timedelta(days=200)).isoformat()
-
-    # Symbols
-    log("  Loading symbols...")
-    df_symbols = pd.read_sql(
-        "SELECT id, ticker, name, category, active FROM symbols WHERE active = 1",
-        engine
-    )
-    log(f"  Symbols: {len(df_symbols)} loaded ({time.time()-t0:.1f}s)")
-
-    # Daily Prices (chunked to avoid segfaults/OOM)
-    log("  Loading daily prices...")
-    t1 = time.time()
-    query_prices = (
-        f"SELECT symbol_id, date, open, high, low, close, volume, market_cap "
-        f"FROM daily_prices WHERE date >= '{buf_start}' AND date <= '{buf_end}'"
-    )
-    chunks_prices = []
-    for chunk in pd.read_sql(query_prices, engine, parse_dates=['date'], chunksize=100000):
-        chunk['date'] = pd.to_datetime(chunk['date']).dt.date
-        chunks_prices.append(chunk)
-    df_prices = pd.concat(chunks_prices, ignore_index=True) if chunks_prices else pd.DataFrame()
-    log(f"  Daily Prices: {len(df_prices)} rows loaded ({time.time()-t1:.1f}s)")
-
-    # Indicators (chunked)
-    log("  Loading indicators...")
-    t1 = time.time()
-    query_ind = (
-        f"SELECT symbol_id, date, sma_50, sma_150, sma_200, ema_21, atr_14, "
-        f"adr_pct_21, dist_sma50_atr, vol_surge_21, rel_vol_vs_spy_21, "
-        f"rs_ratio_14, rs_ratio_21, rs_ratio_63, rs_momentum_21, "
-        f"rs_condition_21, trend_template_ok, td9, "
-        f"vcr, rs_blue_dot, rs_red_dot, up_down_vol_ratio_50, pct_from_52w_high, "
-        f"change_1d_pct, change_1w_pct, change_1m_pct "
-        f"FROM indicators WHERE date >= '{buf_start}' AND date <= '{buf_end}'"
-    )
-    chunks_ind = []
-    for chunk in pd.read_sql(query_ind, engine, parse_dates=['date'], chunksize=50000):
-        chunk['date'] = pd.to_datetime(chunk['date']).dt.date
-        chunks_ind.append(chunk)
-    df_indicators = pd.concat(chunks_ind, ignore_index=True) if chunks_ind else pd.DataFrame()
-    log(f"  Indicators: {len(df_indicators)} rows loaded ({time.time()-t1:.1f}s)")
-
-    # Backfill market_cap from latest known values in the entire DB if missing historically
-    if not df_prices.empty and 'market_cap' in df_prices.columns:
-        log("  Backfilling market_cap robustly from global latest values...")
+    
+    # 1. Determine active DB path & Parquet master directory
+    db_path = get_active_db_path()
+    if not db_path:
+        # Fallback to loading from config.toml
         try:
-            # Fetch the absolute latest market_cap for each symbol directly from the DB
-            mc_query = "SELECT symbol_id, market_cap FROM daily_prices WHERE market_cap IS NOT NULL AND date = (SELECT MAX(date) FROM daily_prices dp2 WHERE dp2.symbol_id = daily_prices.symbol_id AND dp2.market_cap IS NOT NULL)"
-            global_mc_df = pd.read_sql(mc_query, engine).drop_duplicates(subset=['symbol_id'], keep='last')
-            if not global_mc_df.empty:
-                global_mc_map = global_mc_df.set_index('symbol_id')['market_cap']
-                df_prices['market_cap'] = df_prices['market_cap'].fillna(df_prices['symbol_id'].map(global_mc_map))
-                log(f"  Backfilled market_cap using global DB values for {len(global_mc_map)} symbols.")
+            import tomllib
+            config_path = pathlib.Path(__file__).parents[2] / "config.toml"
+            with open(config_path, "rb") as f:
+                config = tomllib.load(f)
+                db_path = config.get("system", {}).get("db_path", "data/stocktool.db")
+        except Exception:
+            db_path = "data/stocktool.db"
+            
+    parquet_dir = get_parquet_master_dir(db_path)
+    pointer_file = get_pointer_file_path(parquet_dir)
+    
+    # 2. Get latest Parquet files pointer
+    latest_files = get_latest_master_files(pointer_file)
+    if not latest_files or refresh_cache:
+        log("  Master Parquet cache not found or refresh requested. Generating initial Parquet master from SQLite...")
+        try:
+            from backend.db import database
+            with database.get_db() as db:
+                rotate_and_archive_to_parquet(db, db_path, logging.getLogger())
+            latest_files = get_latest_master_files(pointer_file)
         except Exception as e:
-            log(f"  Warning: failed to globally backfill market_cap: {e}")
-
-    # Relative Ranks
-    log("  Loading relative ranks...")
-    t1 = time.time()
-    rank_start = (sd - timedelta(days=10)).isoformat()
-    query_ranks = (
-        f"SELECT symbol_id, date, rs_ratio_14, rs_ratio_21, rs_ratio_63 "
-        f"FROM relative_ranks "
-        f"WHERE date >= '{rank_start}' AND date <= '{buf_end}'"
-    )
-    chunks_ranks = []
-    for chunk in pd.read_sql(query_ranks, engine, parse_dates=['date'], chunksize=100000):
-        chunk['date'] = pd.to_datetime(chunk['date']).dt.date
-        chunks_ranks.append(chunk)
-    df_ranks_wide = pd.concat(chunks_ranks, ignore_index=True) if chunks_ranks else pd.DataFrame()
-    
-    # Melt wide relative_ranks back to narrow format to preserve 100% compatibility in memory!
-    if not df_ranks_wide.empty:
-        df_ranks = df_ranks_wide.melt(
-            id_vars=['symbol_id', 'date'],
-            value_vars=['rs_ratio_14', 'rs_ratio_21', 'rs_ratio_63'],
-            var_name='indicator_name',
-            value_name='percent_rank'
-        ).dropna(subset=['percent_rank'])
-    else:
-        df_ranks = pd.DataFrame(columns=['symbol_id', 'date', 'indicator_name', 'percent_rank'])
+            log(f"  Error: Failed to dynamically generate initial Parquet master: {e}")
+            
+    if not latest_files:
+        raise FileNotFoundError(f"Parquet master cache files not found at {parquet_dir}! Please run the pipeline once to generate it.")
         
-    log(f"  Relative Ranks (Melted): {len(df_ranks)} rows loaded ({time.time()-t1:.1f}s)")
-
-    # Theme Constituents
-    log("  Loading theme constituents...")
-    df_theme_constituents = pd.read_sql(
-        "SELECT theme_id, symbol_id FROM theme_constituents",
-        engine
-    )
-    log(f"  Theme Constituents: {len(df_theme_constituents)} rows loaded")
-
-    # Log memory usage
-    total_mem_mb = (
-        df_symbols.memory_usage(deep=True).sum() +
-        df_prices.memory_usage(deep=True).sum() +
-        df_indicators.memory_usage(deep=True).sum() +
-        df_ranks.memory_usage(deep=True).sum() +
-        df_theme_constituents.memory_usage(deep=True).sum()
-    ) / (1024 * 1024)
-    log(f"  Total Data Memory Usage: {total_mem_mb:.2f} MB")
-
-    # Get unique sorted trading dates within the backtest range
-    trading_dates = sorted(
-        df_indicators[
-            (df_indicators['date'] >= sd) & (df_indicators['date'] <= ed)
-        ]['date'].unique()
-    )
-    if trading_dates:
-        log(f"  Trading Dates: {len(trading_dates)} days ({trading_dates[0]} ~ {trading_dates[-1]})")
-    else:
-        log(f"  Trading Dates: 0 days")
-
-    elapsed = time.time() - t0
-    log(f"  Data loading completed in {elapsed:.1f}s")
+    log(f"Loading data from Parquet Master cache: {pathlib.Path(latest_files['prices']).name} ...")
     
-    # Save to Parquet cache
-    log("  Saving into Parquet cache...")
     try:
-        # We store as Timestamp for Parquet compatibility, then convert back to date on load
-        df_symbols.to_parquet(paths['symbols'])
+        # 3. Read Parquet full-history masters into memory
+        t_load = time.time()
+        df_symbols = pd.read_parquet(latest_files['symbols'])
+        df_prices = pd.read_parquet(latest_files['prices'])
+        df_indicators = pd.read_parquet(latest_files['indicators'])
+        df_ranks = pd.read_parquet(latest_files['ranks'])
+        df_theme_constituents = pd.read_parquet(latest_files['tc'])
+        log(f"  -> Parquet file loading completed in {time.time()-t_load:.2f}s")
         
-        # Prices/Indicators need Timestamp for to_parquet usually
-        p2 = df_prices.copy()
-        p2['date'] = pd.to_datetime(p2['date'])
-        p2.to_parquet(paths['prices'])
+        # Convert date column safely into canonical datetime.date object
+        df_prices['date'] = pd.to_datetime(df_prices['date']).dt.date
+        df_indicators['date'] = pd.to_datetime(df_indicators['date']).dt.date
+        df_ranks['date'] = pd.to_datetime(df_ranks['date']).dt.date
         
-        i2 = df_indicators.copy()
-        i2['date'] = pd.to_datetime(i2['date'])
-        i2.to_parquet(paths['indicators'])
+        # 4. In-memory slicing based on start_date and end_date
+        t_slice = time.time()
+        sd = dt_date.fromisoformat(start_date)
+        ed = dt_date.fromisoformat(end_date)
         
-        r2 = df_ranks.copy()
-        r2['date'] = pd.to_datetime(r2['date'])
-        r2.to_parquet(paths['ranks'])
+        # Slice in-memory
+        df_prices = df_prices[(df_prices['date'] >= sd) & (df_prices['date'] <= ed)]
+        df_indicators = df_indicators[(df_indicators['date'] >= sd) & (df_indicators['date'] <= ed)]
+        df_ranks = df_ranks[(df_ranks['date'] >= sd) & (df_ranks['date'] <= ed)]
         
-        df_theme_constituents.to_parquet(paths['tc'])
-        log("  Cache saved successfully.\n")
+        # Ensure df_ranks wide percent_ranks is properly melted to narrow format if it is still wide
+        # (Though parquet_cache_manager keeps relative_ranks narrow, we ensure 100% safety)
+        if not df_ranks.empty and 'indicator_name' not in df_ranks.columns:
+            df_ranks = df_ranks.melt(
+                id_vars=['symbol_id', 'date'],
+                value_vars=['rs_ratio_14', 'rs_ratio_21', 'rs_ratio_63'],
+                var_name='indicator_name',
+                value_name='percent_rank'
+            ).dropna(subset=['percent_rank'])
+            
+        log(f"  -> In-memory pandas slicing completed in {time.time()-t_slice:.3f}s")
+        
+        # Log memory usage metrics
+        total_mem_mb = (
+            df_symbols.memory_usage(deep=True).sum() +
+            df_prices.memory_usage(deep=True).sum() +
+            df_indicators.memory_usage(deep=True).sum() +
+            df_ranks.memory_usage(deep=True).sum() +
+            df_theme_constituents.memory_usage(deep=True).sum()
+        ) / (1024 * 1024)
+        log(f"  Total Data Memory Usage: {total_mem_mb:.2f} MB")
+        
+        # Get unique sorted trading dates
+        trading_dates = sorted(
+            df_indicators[
+                (df_indicators['date'] >= sd) & (df_indicators['date'] <= ed)
+            ]['date'].unique()
+        )
+        if trading_dates:
+            log(f"  Trading Dates: {len(trading_dates)} days ({trading_dates[0]} ~ {trading_dates[-1]})")
+        else:
+            log(f"  Trading Dates: 0 days")
+            
+        log(f"  Cache load & slicing completed in {time.time()-t0:.2f}s successfully.\n")
+        return df_symbols, df_prices, df_indicators, df_ranks, df_theme_constituents, trading_dates
+        
     except Exception as e:
-        log(f"  Warning: Failed to save cache ({e})")
-
-    return df_symbols, df_prices, df_indicators, df_ranks, df_theme_constituents, trading_dates
+        log(f"  Critical Error: Failed to preload Parquet cache: {e}")
+        raise e
 
 
 def run_single_strategy(strat_dict: dict, df_indicators, df_prices, df_ranks, df_symbols, df_theme_constituents, trading_dates, exit_rules, show_progress=True, fast_prune=False, prune_bounds=(1.0, 15.0, 5.0)):
