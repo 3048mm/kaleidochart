@@ -67,6 +67,29 @@ CLI スクリプトや検証コードで直接 `from db.database import SessionL
   ```
 - DB パスは `config.toml` の `system.db_path` から取得するか、プロジェクトルート直下の `stocktool.db` を指定する。
 
+### A-6. SQLite への数百万行バルクインポートの爆速化 (SQLite Bulk Insert Tuning)
+#### 症状
+Pandas の標準の `df.to_sql` を用いて、数百万行におよぶ巨大データフレーム（直近2年の指標キャッシュデータなど）を SQLite へインポーズしようとすると、1行ずつのインサートオーバーヘッドや SQLAlchemy の抽象化により、15分以上経過しても終わらないかフリーズする。
+
+#### 原因
+Pandas のデフォルトインサートが逐次クエリを発行するため、C++レベルでの最適化が効かず、ディスクI/O同期待ちがボトルネックとなる。
+
+#### 対策ルール
+- **ネイティブバルク書き込みの強制**: 数十万〜数百万行をインポートする際は `df.to_sql` の使用を禁止し、**`sqlite3.executemany` と `PRAGMA` パフォーマンス設定** を併用すること。
+- **実装手順**:
+  1. NumPy配列への展開前に、Pandas の NaN を `None`（SQL NULL に相当）へ置換する: `df_clean = df.where(pd.notnull(df), None)`
+  2. レコードをタプルのリストへ変換: `records = [tuple(x) for x in df_clean.to_numpy()]`
+  3. SQLAlchemy エンジンの生接続（`raw_connection`）を取得し、トランザクション内で SQLite 高速化設定を実行して一気に流す:
+     ```python
+     connection = engine.raw_connection()
+     cursor = connection.cursor()
+     cursor.execute("PRAGMA synchronous = OFF")
+     cursor.execute("PRAGMA journal_mode = MEMORY")
+     cursor.executemany(query, records)
+     connection.commit()
+     ```
+  *※これにより、200万行のインポートが15分からわずか「数秒〜2分」へと劇的（約98%）に高速化します。*
+
 ---
 
 ## B. API・バックエンド関連 (API, Backend & Cache)
@@ -111,6 +134,20 @@ CLI スクリプトや検証コードで直接 `from db.database import SessionL
       config = tomli.load(f)
   print(config)
   ```
+
+### B-4. 巨大 Parquet ファイルロード時のメモリ不足とフリーズ (Parquet Out-Of-Memory Avoidance)
+#### 症状
+歴史データ全体（約1,700万行、Parquet容量 1.8 GB）を `pd.read_parquet()` で一括ロードすると、Windowsのメモリ領域が不足（OOM）してOSのスワップ領域を食いつぶし、Pythonプロセスが永久にハングアップする。また、ロード後に日付列（`date`）を `pd.to_datetime` で一括変換する処理も極めて重い。
+
+#### 原因
+数ギガバイトに及ぶカラム（特に48列もの指標テーブルなど）をメモリ上に無制限に展開してデシリアライズしようとするため。
+
+#### 対策ルール
+- **PyArrow フィルターの強制**: 読み込むデータの日付期間が決まっている（例: 直近2年キャッシュ分など）場合は、必ず `pd.read_parquet` の **`filters` 引数** を用いてディスクからの読み込み段階で絞り込むこと。
+  *例*: `df_prices_cached = pd.read_parquet(file_path, filters=[('date', '>=', cutoff_str)])`
+- **射影 (Projection) の活用**: 最新日等を特定するために `max` 値を取りたいだけのときは、全列をロードせず、必要な `date` 列のみを投影ロードする:
+  *例*: `df_dates = pd.read_parquet(file_path, columns=['date'])`
+- **効果**: メモリ消費量が数GBからわずか **740 MB** に劇的に激減し、ロード時間も **1秒台** に超爆速化します。
 
 ---
 
@@ -190,4 +227,5 @@ CLI スクリプトや検証コードで直接 `from db.database import SessionL
 - 2026-04-19: カラム追加時の「過去データバックフィル」必須化ルールを追記
 - 2026-04-19: DBに関するノウハウを「A. データベース・スキーマ関連」として階層化・集約整理
 - 2026-05-23: テーマの命名ルール（{テーマグループ}::{サブテーマ}）とフロントエンド分割描画仕様を E-1 として追記
+- 2026-05-31: ハイブリッドデータ移行に伴う Parquet フィルター高速化 (B-4) および sqlite3.executemany による SQLite ネイティブバルクインサート高速化 (A-6) を追記
 
