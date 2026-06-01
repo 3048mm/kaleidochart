@@ -127,8 +127,20 @@ def rotate_and_archive_to_parquet(db, db_path: str, logger: logging.Logger) -> d
                     # Align column types to prevent concat failures (dates to string to avoid timezone/dt conflicts)
                     for col in key_columns:
                         if col in df_old.columns and col in df_sql.columns:
-                            df_old[col] = df_old[col].astype(str)
-                            df_sql[col] = df_sql[col].astype(str)
+                            if col == 'date':
+                                df_old[col] = df_old[col].astype(str)
+                                df_sql[col] = df_sql[col].astype(str)
+                            elif col in ('symbol_id', 'theme_id'):
+                                # Guarantee numerical IDs are cast to standard Int64 (nullable integer)
+                                df_old[col] = pd.to_numeric(df_old[col], errors='coerce').astype('Int64')
+                                df_sql[col] = pd.to_numeric(df_sql[col], errors='coerce').astype('Int64')
+                            else:
+                                try:
+                                    target_type = df_sql[col].dtype
+                                    df_old[col] = df_old[col].astype(target_type)
+                                except:
+                                    df_old[col] = df_old[col].astype(str)
+                                    df_sql[col] = df_sql[col].astype(str)
                     
                     df_merged = pd.concat([df_old, df_sql], ignore_index=True)
                     df_merged = df_merged.drop_duplicates(subset=key_columns, keep='last')

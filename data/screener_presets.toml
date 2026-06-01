@@ -43,13 +43,13 @@ id = "thema_momentum"
 name = "Theme Momentum"
 subname = "強いテーマに属する銘柄のモメンタム"
 group = "Check"
-special = "theme_rs_rank_21_gt_63"
+special = "theme_rs21_gt_63"
 use_hysteresis = false
 [rise.filters]
-min_change_1d_pct = 7.0
+min_change_1d_pct = 6.0
 min_vol_surge_21 = 2.8
 min_adr_pct_21 = 6.0
-max_dist_sma50_atr = 4.5
+max_dist_sma50_atr = 7.0
 min_market_cap = 5e6
 
 #min_change_1d_pct = 7.0
