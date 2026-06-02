@@ -55,6 +55,7 @@ class ChartDataPoint(BaseModel):
     rs_momentum_14: Optional[float] = None
     rs_momentum_21: Optional[float] = None
     rs_momentum_63: Optional[float] = None
+    rs_ema_5: Optional[float] = None
     rs_ema_14: Optional[float] = None
     rs_ema_21: Optional[float] = None
     rs_ema_63: Optional[float] = None
@@ -73,6 +74,7 @@ class ChartDataPoint(BaseModel):
     rs_blue_dot: Optional[int] = None
     rs_red_dot: Optional[int] = None
     vcr: Optional[float] = None
+    vol_accum_days_5: Optional[int] = None
     
     # Bollinger Bands (Calculated on the fly)
     bb_upper: Optional[float] = None
@@ -142,6 +144,7 @@ class ScreenerResultItem(DashboardPanelItem):
     rs_blue_dot: Optional[int] = None
     rs_red_dot: Optional[int] = None
     vcr: Optional[float] = None
+    vol_accum_days_5: Optional[int] = None
 
 class ScreenerDashboardItem(BaseModel):
     id: int
@@ -270,10 +273,12 @@ class ThemeDetailResponse(BaseModel):
     rs_condition_14: Optional[float] = None
     rs_condition_21: Optional[float] = None
     rs_condition_63: Optional[float] = None
+    rs_ema_5: Optional[float] = None
     rs_ema_14: Optional[float] = None
     rs_ema_21: Optional[float] = None
     rs_ema_63: Optional[float] = None
     adr_pct_21: Optional[float] = None
+    vol_accum_days_5: Optional[int] = None
     dist_sma50_atr: Optional[float] = None
     rs14_sparkline: List[float] = []
     rs21_sparkline: List[float] = []

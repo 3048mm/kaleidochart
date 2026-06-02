@@ -31,11 +31,15 @@ def calc_relative_strength(df: pd.DataFrame, df_spy: pd.DataFrame = None) -> pd.
     )
     rs = df['relative_strength_spy']
 
-    # RS Condition (n) = RS / SMA(RS, n)
+    # RS EMA 5 (Smoothing for rs_condition)
+    rs_ema_5 = calculate_ema_tv(rs, 5)
+    df['rs_ema_5'] = rs_ema_5
+
+    # RS Condition (n) = EMA5(RS) / SMA(RS, n)
     for n in [14, 21, 63]:
         rs_sma = rs.rolling(window=n, min_periods=max(1, n//2)).mean()
         df[f'rs_condition_{n}'] = np.where(
-            rs_sma.isna() | (rs_sma == 0), np.nan, rs / rs_sma
+            rs_sma.isna() | (rs_sma == 0), np.nan, rs_ema_5 / rs_sma
         )
 
     # RS-EMA, RS-Ratio and RS-Momentum (Refined JdK methodology)

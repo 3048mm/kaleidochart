@@ -61,4 +61,12 @@ def calc_volume_and_trends(df: pd.DataFrame) -> pd.DataFrame:
     else:
         df['trend_template_ok'] = None
 
+    # 13. Volume Accumulation Days (5-day)
+    # Count of days in the last 5 days where:
+    # 1) Close-to-Close change is positive (close.diff() > 0)
+    # 2) Volume is > 1.1x of its 21-day average volume
+    vol_sma_21 = volume.rolling(window=21, min_periods=1).mean()
+    is_accum = (close.diff() > 0) & (volume > vol_sma_21 * 1.1)
+    df['vol_accum_days_5'] = is_accum.astype(float).rolling(window=5, min_periods=1).sum().fillna(0).astype(int)
+
     return df

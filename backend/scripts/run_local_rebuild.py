@@ -103,11 +103,18 @@ def run_local_rebuild(category=None):
     def bulk_insert(df, table_name):
         if df.empty:
             return
-        cols = df.columns.tolist()
+        
+        # Drop auto-incrementing ID column for tables other than 'symbols' to prevent UNIQUE constraint failures.
+        # 'symbols' ID must be preserved because it is referenced as a foreign key by other tables.
+        df_to_insert = df.copy()
+        if 'id' in df_to_insert.columns and table_name != 'symbols':
+            df_to_insert = df_to_insert.drop(columns=['id'])
+            
+        cols = df_to_insert.columns.tolist()
         col_str = ", ".join([f'"{c}"' for c in cols])
         placeholders = ", ".join(["?"] * len(cols))
         query = f'INSERT INTO "{table_name}" ({col_str}) VALUES ({placeholders})'
-        df_clean = df.where(pd.notnull(df), None)
+        df_clean = df_to_insert.where(pd.notnull(df_to_insert), None)
         records = [tuple(x) for x in df_clean.to_numpy()]
         
         connection = engine_temp.raw_connection()
@@ -131,7 +138,7 @@ def run_local_rebuild(category=None):
         bulk_insert(df_tc, "theme_constituents")
         
         # Load only non-virtual prices (T2 price synthesis will recalculate virtual theme prices from scratch)
-        individual_ids = df_symbols[df_symbols['category'].isin(['個別', '市場'])]['id'].tolist()
+        individual_ids = df_symbols[df_symbols['category'].isin(['個別', '市場', '指標', 'セクタ'])]['id'].tolist()
         df_prices_ind = df_prices[df_prices['symbol_id'].isin(individual_ids)]
         logger.info(f"   Filtering only individual/index prices to import ({len(df_prices_ind)} out of {len(df_prices)})...")
         bulk_insert(df_prices_ind, "daily_prices")
@@ -170,7 +177,7 @@ def run_local_rebuild(category=None):
             categories=selected_categories, # Filter by category
             skip_fetch=True,   # skip internet download completely
             skip_sync=False,   # sync Google sheet symbols (to pick up new tags)
-            recalculate_all=False
+            recalculate_all=True
         )
     except Exception as pe:
         logger.error(f"❌ Pipeline calculation in Sandbox failed: {pe}")

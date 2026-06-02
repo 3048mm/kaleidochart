@@ -63,6 +63,11 @@ def run_production_restore():
     logger.info("2. Re-creating fresh SQLite database schemas from models...")
     try:
         init_db(prod_db_path)
+        if not file_deleted:
+            logger.info("  Active lock detected. Forcing DROP ALL tables to ensure schema matches latest models...")
+            from backend.db.models import Base
+            Base.metadata.drop_all(bind=db_module.engine)
+            Base.metadata.create_all(bind=db_module.engine)
         logger.info("  SQLite schema recreation completed successfully.")
     except Exception as e:
         logger.error(f"Failed to initialize database: {e}")
@@ -88,11 +93,15 @@ def run_production_restore():
         with db_module.get_db() as db:
             from backend.db.models import DailyPrice
             from sqlalchemy import func
-            max_date_str = db.query(func.max(DailyPrice.date)).scalar()
-            if max_date_str:
-                spy_date = datetime.strptime(max_date_str, "%Y-%m-%d").date()
+            max_date_val = db.query(func.max(DailyPrice.date)).scalar()
+            if max_date_val:
+                from datetime import date
+                if isinstance(max_date_val, str):
+                    spy_date = datetime.strptime(max_date_val, "%Y-%m-%d").date()
+                else:
+                    spy_date = max_date_val
                 update_pipeline_meta(db, datetime.utcnow(), spy_date)
-                logger.info(f"  Successfully restored pipeline metadata to last_spy_date={max_date_str}")
+                logger.info(f"  Successfully restored pipeline metadata to last_spy_date={spy_date}")
     except Exception as me:
         logger.warning(f"  Failed to restore pipeline metadata: {me}")
         

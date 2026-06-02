@@ -121,6 +121,7 @@ class Indicator(Base):
     rs_condition_14   = Column(Float)     # NEW: RS-Condition (RS / SMA14(RS))
     rs_condition_21   = Column(Float)     # NEW: RS-Condition (RS / SMA21(RS))
     rs_condition_63   = Column(Float)     # NEW: RS-Condition (RS / SMA63(RS))
+    rs_ema_5          = Column(Float)     # NEW: 5-day EMA of Relative Strength (for smoothing rs_condition)
     rs_ema_14         = Column(Float)     # NEW: EMA of Relative Strength (Smoothing for RRG)
     rs_ema_21         = Column(Float)     # NEW: EMA of Relative Strength (Smoothing for RRG)
     rs_ema_63         = Column(Float)     # NEW: EMA of Relative Strength (Smoothing for RRG)
@@ -138,6 +139,7 @@ class Indicator(Base):
     vol_surge_21     = Column(Float)     # NEW: Volume / SMA(Volume,21)
     rel_vol_vs_spy_21 = Column(Float)    # NEW: vol_surge_21 / SPY_vol_surge_21
     up_down_vol_ratio_50 = Column(Float) # NEW: Sum(Vol on Up days) / Sum(Vol on Down days)
+    vol_accum_days_5 = Column(Integer)   # NEW: 5-day volume accumulation days (Close > PrevClose and Vol > 1.1x SMA21)
     
     # --- Price Range from Highs ---
     pct_from_63d_high  = Column(Float)   # NEW: % below 63-day high (swing)

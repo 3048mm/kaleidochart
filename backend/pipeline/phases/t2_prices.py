@@ -17,7 +17,11 @@ def sync_phase_t2_prices(db, sheet_data: List[Dict], symbol_id_map: Dict, initia
         return None
         
     spy_sym_id = symbol_id_map.get(("SPY", spy_item['exchange']))
-    spy_max_date = db.query(func.max(DailyPrice.date)).filter(DailyPrice.symbol_id == spy_sym_id).scalar()
+    if not spy_sym_id:
+        from db.models import Symbol
+        spy_sym_id = db.query(Symbol.id).filter(Symbol.ticker == "SPY").scalar()
+        
+    spy_max_date = db.query(func.max(DailyPrice.date)).filter(DailyPrice.symbol_id == spy_sym_id).scalar() if spy_sym_id else None
     
     default_start = (datetime.now() - timedelta(days=initial_fetch_days)).strftime('%Y-%m-%d')
     spy_fetch_start = default_start

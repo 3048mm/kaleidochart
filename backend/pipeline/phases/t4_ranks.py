@@ -73,6 +73,10 @@ def sync_phase_t4_ranks(db, spy_latest_date: Optional[date], logger: logging.Log
             
         db.query(RelativeRank).filter(RelativeRank.date == d).delete()
         db.execute(text(query_template), {"d": d})
-        db.commit()
         
+        # Commit every 100 dates to reduce fsync write overhead
+        if (i + 1) % 100 == 0:
+            db.commit()
+            
+    db.commit()
     logger.info("Phase 4 COMPLETE.")

@@ -317,13 +317,20 @@ def restore_sqlite_cache_from_parquet(db, db_path: str, logger: logging.Logger):
     def bulk_insert_df_to_sqlite(df: pd.DataFrame, table_name: str):
         if df.empty:
             return
-        cols = df.columns.tolist()
+        
+        # Drop auto-incrementing ID column for tables other than 'symbols' to prevent UNIQUE constraint failures.
+        # 'symbols' ID must be preserved because it is referenced as a foreign key by other tables.
+        df_to_insert = df.copy()
+        if 'id' in df_to_insert.columns and table_name != 'symbols':
+            df_to_insert = df_to_insert.drop(columns=['id'])
+            
+        cols = df_to_insert.columns.tolist()
         col_str = ", ".join([f'"{c}"' for c in cols])
         placeholders = ", ".join(["?"] * len(cols))
         query = f'INSERT INTO "{table_name}" ({col_str}) VALUES ({placeholders})'
         
         # Replace NaN with None for SQL NULL compatibility
-        df_clean = df.where(pd.notnull(df), None)
+        df_clean = df_to_insert.where(pd.notnull(df_to_insert), None)
         records = [tuple(x) for x in df_clean.to_numpy()]
         
         # Access raw DBAPI connection for raw executemany and PRAGMA settings

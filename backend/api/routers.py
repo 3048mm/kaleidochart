@@ -75,7 +75,7 @@ _COLUMN_CATEGORIES = {
                       "change_intraday_pct", "dist_21ema_pct", "dist_sma50_pct",
                       "pct_from_63d_high", "pct_from_52w_high"],
     "Volume & Volatility": ["atr_14", "atr_pct_14", "adr_pct_21", "dist_sma50_atr",
-                            "td9", "vol_surge_21", "rel_vol_vs_spy_21", "up_down_vol_ratio_50", "vcr"],
+                            "td9", "vol_surge_21", "rel_vol_vs_spy_21", "up_down_vol_ratio_50", "vcr", "vol_accum_days_5"],
     "Momentum & RS": ["relative_strength_spy",
                       "rs_condition_14", "rs_condition_21", "rs_condition_63",
                       "rs_ema_14", "rs_ema_21", "rs_ema_63",
@@ -389,6 +389,7 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db)):
                 "rs_condition_14": ind.rs_condition_14,
                 "rs_condition_21": ind.rs_condition_21,
                 "rs_condition_63": ind.rs_condition_63,
+                "rs_ema_5": ind.rs_ema_5,
                 "rs_ema_14": ind.rs_ema_14,
                 "rs_ema_21": ind.rs_ema_21,
                 "rs_ema_63": ind.rs_ema_63,
@@ -408,6 +409,7 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db)):
                 "pct_from_52w_high": ind.pct_from_52w_high,
                 "rs_blue_dot": ind.rs_blue_dot, "rs_red_dot": ind.rs_red_dot,
                 "vcr": ind.vcr, "trend_template_ok": ind.trend_template_ok,
+                "vol_accum_days_5": ind.vol_accum_days_5,
                 "bb_upper": (ind.sma_21 + 2*ind.atr_14) if ind.sma_21 and ind.atr_14 else None,
                 "bb_lower": (ind.sma_21 - 2*ind.atr_14) if ind.sma_21 and ind.atr_14 else None,
             })
@@ -728,6 +730,7 @@ def _build_etf_feature(db: Session, sym: Symbol, dp: DailyPrice, target_date: st
             close=h.close,
             volume=int(round(h.volume)) if h.volume else 0,
             relative_strength_spy=i.relative_strength_spy if i else None,
+            rs_ema_5=i.rs_ema_5 if i else None,
             rs_ema_14=i.rs_ema_14 if i else None,
             rs_ema_21=i.rs_ema_21 if i else None,
             rs_ema_63=i.rs_ema_63 if i else None,
@@ -1704,7 +1707,8 @@ def get_screener(
             up_down_vol_ratio_50=ind.up_down_vol_ratio_50,
             rs_blue_dot=ind.rs_blue_dot,
             rs_red_dot=ind.rs_red_dot,
-            vcr=ind.vcr
+            vcr=ind.vcr,
+            vol_accum_days_5=ind.vol_accum_days_5
         ))
         
     out.sort(key=lambda x: x.rs_ratio_21_rank, reverse=True)

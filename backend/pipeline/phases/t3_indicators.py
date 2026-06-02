@@ -10,42 +10,44 @@ from pipeline.utils import sanitize_numeric
 from db.database import init_db, get_db
 
 def _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_virtual=False, spy_latest_date: Optional[date] = None):
-    """Worker function to calculate T3 for a single ticker in a separate process."""
+    """Worker function to calculate T3 for a single ticker in a separate process using direct sqlite3 connection (fast, no ORM)."""
     try:
-        from db.database import init_db, get_db
-        from db.models import DailyPrice, Indicator
+        import sqlite3
         import pandas as pd
         from datetime import date
         from indicators.calculate import calculate_indicators
         
-        init_db(db_path)
-        start_t = time.time()
-        with get_db() as db:
-            fp_start = time.time()
-            prices_all = db.query(DailyPrice).filter(DailyPrice.symbol_id == sid).order_by(DailyPrice.date).all()
-            fp_end = time.time()
-            if not prices_all:
-                return ticker, sid, []
-                
-            df_price = pd.DataFrame([{'date': p.date, 'open': p.open, 'high': p.high, 'low': p.low, 'close': p.close, 'volume': p.volume} for p in prices_all])
+        conn = sqlite3.connect(db_path, timeout=60.0)
+        try:
+            query = "SELECT date, open, high, low, close, volume FROM daily_prices WHERE symbol_id = ? ORDER BY date"
+            df_price = pd.read_sql_query(query, conn, params=(sid,))
+        finally:
+            conn.close()
             
-            calc_start = time.time()
-            df_ind = calculate_indicators(df_price, spy_df if ticker != "SPY" else None)
-            calc_end = time.time()
+        if df_price.empty:
+            return ticker, sid, []
             
-            # SPYの最終日を上限としてインジケーターを計算・保存する
-            if spy_latest_date:
-                delta_df = df_ind[(df_ind['date'] > (t3_max if t3_max else date(2000, 1, 1))) & (df_ind['date'] <= spy_latest_date)]
-            else:
-                delta_df = df_ind[(df_ind['date'] > (t3_max if t3_max else date(2000, 1, 1)))]
+        # sqlite3 returns date as string, parse to date object
+        df_price['date'] = pd.to_datetime(df_price['date']).dt.date
+        
+        df_ind = calculate_indicators(df_price, spy_df if ticker != "SPY" else None)
+        
+        if spy_latest_date:
+            delta_df = df_ind[(df_ind['date'] > (t3_max if t3_max else date(2000, 1, 1))) & (df_ind['date'] <= spy_latest_date)]
+        else:
+            delta_df = df_ind[(df_ind['date'] > (t3_max if t3_max else date(2000, 1, 1)))]
             
-            if delta_df.empty:
-                return ticker, sid, []
+        if delta_df.empty:
+            return ticker, sid, []
             
-            return ticker, sid, delta_df.to_dict('records')
-            
+        return ticker, sid, delta_df.to_dict('records')
+        
     except Exception as e:
         return ticker, sid, e
+
+def _calculate_t3_worker_wrapper(args):
+    """Wrapper function to unpack arguments for multiprocessing Pool."""
+    return _calculate_t3_worker(*args)
 
 def sync_phase_t3_indicators(db, sheet_data: List[Dict], symbol_id_map: Dict, spy_latest_date: Optional[date], skip_fetch: bool, db_path: str, logger: logging.Logger):
     """Phase 3: Indicators (T3) - Per-ticker catch-up using T2 price data with Parallel Processing."""
@@ -79,41 +81,64 @@ def sync_phase_t3_indicators(db, sheet_data: List[Dict], symbol_id_map: Dict, sp
         return
 
     num_workers = min(4, multiprocessing.cpu_count() // 2)
+    if num_workers < 1: num_workers = 1
     logger.info(f"Phase 3: Spawning {num_workers} parallel workers for {len(tasks)} tickers.")
     
+    # Prepare arguments for multiprocessing
+    pool_args = [(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_virt, spy_latest_date) for sid, ticker, t3_max, is_virt in tasks]
+    
     update_count = 0
-    # Run sequentially to avoid Windows multiprocessing hangs
     completed = 0
     indicator_cols = [c.name for c in Indicator.__table__.columns if c.name not in ('id', 'symbol_id', 'date')]
-    for sid, ticker, t3_max, is_virt in tasks:
-        try:
-            # spy_latest_date をワーカーに引き渡す
-            res_ticker, res_sid, records = _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_virt, spy_latest_date)
-            if isinstance(records, Exception):
-                logger.error(f"[{ticker}] Worker exception: {records}")
-                continue
-                
-            if records:
-                t3_recs = []
-                for row in records:
-                    kwargs = {'symbol_id': sid, 'date': row['date']}
-                    for col in indicator_cols:
-                        val = row.get(col)
-                        if col in ('td9', 'trend_template_ok', 'rs_blue_dot', 'rs_red_dot'):
-                            kwargs[col] = int(val) if val is not None else None
-                        else:
-                            kwargs[col] = val
-                    t3_recs.append(Indicator(**kwargs))
+    
+    # Use multiprocessing Pool to run in parallel
+    pending_recs = []
+    chunk_size = 50  # Write to DB every 50 tickers to minimize commit/fsync overhead
+    
+    with multiprocessing.Pool(processes=num_workers) as pool:
+        results = pool.imap_unordered(_calculate_t3_worker_wrapper, pool_args)
+        
+        for res_ticker, res_sid, records in results:
+            try:
+                if isinstance(records, Exception):
+                    logger.error(f"[{res_ticker}] Worker exception: {records}")
+                    continue
                     
-                db.bulk_save_objects(t3_recs)
-                db.commit()
-                update_count += 1
-            
-            completed += 1
-            if completed % 10 == 0:
-                logger.info(f"Phase 3 Progress: {completed}/{len(tasks)}")
+                if records:
+                    for row in records:
+                        kwargs = {'symbol_id': res_sid, 'date': row['date']}
+                        for col in indicator_cols:
+                            val = row.get(col)
+                            if col in ('td9', 'trend_template_ok', 'rs_blue_dot', 'rs_red_dot'):
+                                kwargs[col] = int(val) if val is not None else None
+                            else:
+                                kwargs[col] = val
+                        pending_recs.append(Indicator(**kwargs))
+                    update_count += 1
                 
-        except Exception as e:
-            logger.error(f"[{ticker}] Worker exception: {str(e)}")
-            db.rollback()
+                completed += 1
+                if completed % chunk_size == 0:
+                    if pending_recs:
+                        db.bulk_save_objects(pending_recs)
+                        db.commit()
+                        db.expunge_all()  # Clear SQLAlchemy identity map to free memory
+                        pending_recs.clear()
+                    logger.info(f"Phase 3 Progress: {completed}/{len(tasks)}")
+                    
+            except Exception as e:
+                logger.error(f"[{res_ticker}] Parent db insert exception: {str(e)}")
+                db.rollback()
+                pending_recs.clear()
+                
+        # Commit any remaining records
+        if pending_recs:
+            try:
+                db.bulk_save_objects(pending_recs)
+                db.commit()
+                db.expunge_all()
+                pending_recs.clear()
+            except Exception as e:
+                logger.error(f"Failed to commit final batch: {e}")
+                db.rollback()
+                
     logger.info(f"Phase 3 COMPLETE: Updated {update_count} tickers.")
