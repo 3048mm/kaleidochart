@@ -7,7 +7,7 @@ from db.models import DailyPrice, FxRate
 from data_collection.fetcher import fetch_daily_data
 from pipeline.utils import sanitize_numeric, attach_market_cap
 
-def sync_phase_t2_prices(db, sheet_data: List[Dict], symbol_id_map: Dict, initial_fetch_days: int, skip_fetch: bool, logger: logging.Logger) -> Optional[datetime]:
+def sync_phase_t2_prices(db, sheet_data: List[Dict], symbol_id_map: Dict, index_start_date: str, default_start_date: str, skip_fetch: bool, logger: logging.Logger) -> Optional[datetime]:
     """Phase 2: Prices (T2) - Sync prices from yfinance led by SPY."""
     logger.info("--- Phase 2: Price data sync START ---")
     
@@ -23,8 +23,7 @@ def sync_phase_t2_prices(db, sheet_data: List[Dict], symbol_id_map: Dict, initia
         
     spy_max_date = db.query(func.max(DailyPrice.date)).filter(DailyPrice.symbol_id == spy_sym_id).scalar() if spy_sym_id else None
     
-    default_start = (datetime.now() - timedelta(days=initial_fetch_days)).strftime('%Y-%m-%d')
-    spy_fetch_start = default_start
+    spy_fetch_start = index_start_date
     if spy_max_date:
         spy_fetch_start = (datetime.combine(spy_max_date, datetime.min.time()) + timedelta(days=1)).strftime('%Y-%m-%d')
         
@@ -66,14 +65,17 @@ def sync_phase_t2_prices(db, sheet_data: List[Dict], symbol_id_map: Dict, initia
         sid = symbol_id_map.get((it['ticker'], it['exchange']))
         current_max = sym_latest_map.get(sid)
         if not current_max or current_max < spy_latest_date:
-            update_needed.append((it['ticker'], sid, current_max))
+            update_needed.append((it['ticker'], sid, current_max, it.get('category', '')))
             
     logger.info(f"Found {len(update_needed)} tickers needing price update.")
     total_needed = len(update_needed)
     
     if not skip_fetch and update_needed:
-        for i, (ticker, sid, current_max) in enumerate(update_needed):
-            f_start = default_start
+        for i, (ticker, sid, current_max, category) in enumerate(update_needed):
+            is_index = (category == 'レバレッジ') or (category == 'Market')
+            base_start = index_start_date if is_index else default_start_date
+            
+            f_start = base_start
             if current_max: f_start = (datetime.combine(current_max, datetime.min.time()) + timedelta(days=1)).strftime('%Y-%m-%d')
             
             progress_str = f"[{i+1}/{total_needed}]"

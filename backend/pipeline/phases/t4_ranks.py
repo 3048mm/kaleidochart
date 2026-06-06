@@ -5,7 +5,7 @@ from sqlalchemy import func, text
 
 from db.models import RelativeRank, Indicator
 
-def sync_phase_t4_ranks(db, spy_latest_date: Optional[date], logger: logging.Logger):
+def sync_phase_t4_ranks(db, spy_latest_date: Optional[date], logger: logging.Logger, default_start_date: Optional[date] = None):
     """Phase 4: Relative Ranks (T4) - Idempotent catch-up."""
     logger.info("--- Phase 4: Relative Rank calculation START ---")
     
@@ -15,10 +15,14 @@ def sync_phase_t4_ranks(db, spy_latest_date: Optional[date], logger: logging.Log
     if not t3_max: 
         return
         
+    min_allowed_date = default_start_date if default_start_date else date(2018, 4, 1)
+    
     # t4_max が存在する場合でも、フライングデータ（為替など）により
-    # 他の一般銘柄のデータが揃う前に t4_max が進んでしまう問題を回避するため、
+    # 他の一般銘柄 of データが揃う前に t4_max が進んでしまう問題を回避するため、
     # 常に 7 日前まで遡って再計算を行う。
-    start_date = (t4_max - timedelta(days=7)) if t4_max else date(2000, 1, 1)
+    start_date = (t4_max - timedelta(days=7)) if t4_max else min_allowed_date
+    if start_date < min_allowed_date:
+        start_date = min_allowed_date
     
     # SPY最新日 (spy_latest_date) を上限として計算対象の日付を制限する
     query = db.query(Indicator.date).distinct().filter(Indicator.date >= start_date)
