@@ -132,7 +132,8 @@ def run_scenario_test(
     market_weights: Dict[str, float] = None,
     use_vxv_vix: bool = False,
     scaling_ratio: float = 1.7,
-    monte_carlo_mode: bool = False
+    monte_carlo_mode: bool = False,
+    monte_carlo_seed: int = None
 ) -> Dict[str, Any]:
     """
     Executes the full portfolio-level scenario simulation.
@@ -210,6 +211,12 @@ def run_scenario_test(
     daily_metrics = {row['date']: row.to_dict() for _, row in daily_metrics_df.iterrows()}
 
     # 2. Initialize Components
+    mc_rng = None
+    if monte_carlo_mode:
+        import random
+        seed_val = monte_carlo_seed if monte_carlo_seed is not None else int(time.time() * 1000) % 100000
+        mc_rng = random.Random(seed_val)
+
     config_dict = load_scenario_config(config_path)
     strategies = config_dict.get('strategies', {})
     
@@ -384,9 +391,8 @@ def run_scenario_test(
                     continue
                     
                 # --- MONTE CARLO STRESS TEST ---
-                if monte_carlo_mode:
-                    import random
-                    if random.random() < 0.5:
+                if monte_carlo_mode and mc_rng is not None:
+                    if mc_rng.random() < 0.5:
                         # 50% probability to skip buy today (Chaos load)
                         # Cash rolls over to next days, allowing other candidate catches
                         continue
@@ -435,10 +441,13 @@ def run_scenario_test(
         'profit_target_pct': profit_target_pct,
     }
     
+    # Use final total equity if available, else fallback to capital
+    final_cap = portfolio.equity_curve[-1]['total_equity'] if portfolio.equity_curve else portfolio.capital
+    
     summary = reporter.generate_summary(
         trade_history=portfolio.trade_history,
         initial_capital=initial_capital,
-        final_capital=portfolio.capital,
+        final_capital=final_cap,
         start_date=start_date_obj,
         end_date=end_date_obj,
         spy_prices=spy_prices,

@@ -12,19 +12,39 @@ set PYTHONIOENCODING=utf-8
 set PYTHONUTF8=1
 
 :: Prompt for strategy
-set /p STRATEGY="Enter strategy name to optimize (default: B_theme_momentum): "
-if "%STRATEGY%"=="" set STRATEGY=B_theme_momentum
+set /p STRATEGIES="Enter strategy names separated by comma [default A,B,D]: "
+if "%STRATEGIES%"=="" set STRATEGIES=A,B,D
+
+:: Remove spaces from input
+set STRATEGIES=%STRATEGIES: =%
 
 :: Prompt for trials
-set /p TRIALS="Enter number of trials to run (default: 100): "
+set /p TRIALS="Enter number of trials to run per strategy [default 100]: "
 if "%TRIALS%"=="" set TRIALS=100
 
 echo.
-echo Starting optimization for strategy: %STRATEGY% with %TRIALS% trials...
-echo (You can cancel anytime by pressing Ctrl+C. Progress is saved automatically.)
+echo =========================================================
+echo  Target strategies: %STRATEGIES%
+echo  Trials per strategy: %TRIALS%
+echo  You can cancel anytime by pressing Ctrl+C. Progress is saved automatically.
+echo =========================================================
 echo.
 
-.\venv\Scripts\python.exe backend\optimization_runner.py --strategy %STRATEGY% --trials %TRIALS%
+:: Loop through strategy names
+for %%s in (%STRATEGIES%) do (
+    echo.
+    echo ---------------------------------------------------------
+    echo  [Start] Optimizing Strategy: %%s
+    echo ---------------------------------------------------------
+    .\venv\Scripts\python.exe backend\optimization_runner.py --strategy %%s --trials %TRIALS%
+    if errorlevel 1 (
+        echo [Warning] Error occurred while running strategy %%s
+    )
+)
 
+echo.
+echo =========================================================
+echo  Optimization process completed.
+echo =========================================================
 echo.
 pause

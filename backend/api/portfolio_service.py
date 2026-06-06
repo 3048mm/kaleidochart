@@ -8,7 +8,15 @@ from sqlalchemy import desc
 
 from db.models import Symbol, DailyPrice, Indicator, MarketSignal, FxRate
 from db.models_user import Portfolio, PortfolioPosition, PositionHistory, TotalPortfolio, Transaction
-from api.portfolio_logic import calc_max_investment, calc_stop_loss_price, calc_pnl, check_alert_status, calculate_recommended_cash
+from api.portfolio_logic import (
+    calc_max_investment,
+    calc_stop_loss_price,
+    calc_pnl,
+    check_alert_status,
+    calculate_recommended_cash,
+    determine_vxv_vix_ema_regime,
+)
+
 
 
 # --- Helpers ---
@@ -404,6 +412,14 @@ def get_history(db: Session, user_db: Session, portfolio_id: int) -> list[dict]:
 
     return result
 
+def get_vxv_vix_regime_info(db: Session, max_positions_limit: int = 8) -> dict:
+    """Helper to query VXV/VIX ratios from database and run regime calculation."""
+    records = db.query(MarketSignal).order_by(desc(MarketSignal.date)).limit(50).all()
+    ratios = [r.vxv_vix_ratio for r in records if r.vxv_vix_ratio is not None]
+    ratios.reverse()
+    return determine_vxv_vix_ema_regime(ratios, max_positions_limit)
+
+
 # ============================================================
 # 2-5: Portfolio Summary (Risk Dashboard Data)
 # ============================================================
@@ -417,12 +433,28 @@ def get_portfolio_summary(db: Session, user_db: Session, portfolio_id: int) -> d
         portfolio_id=portfolio_id
     ).all()
 
+    # Determine dynamic max positions and target cash ratio based on VXV/VIX EMA
+    regime_info = get_vxv_vix_regime_info(db, pf.max_positions)
+    dynamic_max_positions = regime_info["dynamic_max_positions"]
+    target_cash_ratio = regime_info["target_cash_ratio"]
+
+    # Calculate standard sizing from risk parameters
     sizing = calc_max_investment(
         total_capital=pf.total_capital,
         risk_pct=pf.risk_pct,
         stop_loss_pct=pf.default_stop_loss_pct,
         stop_loss_method="fixed_pct",
     )
+    
+    risk_max_investment = sizing["max_investment"]
+    
+    # Calculate weight-based limit under the current regime
+    if dynamic_max_positions > 0:
+        weight_max_investment = (pf.total_capital * (1.0 - target_cash_ratio)) / dynamic_max_positions
+        recommended_max_investment = min(risk_max_investment, weight_max_investment)
+    else:
+        # BEAR phase (dynamic_max_positions == 0), no new buying recommended
+        recommended_max_investment = 0.0
 
     invested_total = 0.0
     market_value_total = 0.0
@@ -442,15 +474,23 @@ def get_portfolio_summary(db: Session, user_db: Session, portfolio_id: int) -> d
         "total_capital": pf.total_capital,
         "risk_pct": pf.risk_pct,
         "risk_amount": sizing["risk_amount"],
-        "max_investment": sizing["max_investment"],
+        "max_investment": round(recommended_max_investment, 2),  # Reflects the dynamic logic
+        "risk_max_investment": round(risk_max_investment, 2),   # Keep risk-only sizing as reference
         "stop_loss_method": pf.stop_loss_method,
         "default_stop_loss_pct": pf.default_stop_loss_pct,
         "max_positions": pf.max_positions,
+        "dynamic_max_positions": dynamic_max_positions,
         "open_positions": len(positions),
         "invested_total": round(invested_total, 2),
         "market_value_total": round(market_value_total, 2),
         "unrealized_pnl": round(unrealized_pnl, 2),
+        "market_regime": regime_info["regime"],
+        "vxv_vix_ema5": regime_info["ema5"],
+        "vxv_vix_ema21": regime_info["ema21"],
+        "target_cash_ratio": target_cash_ratio,
+        "tighten_stop_loss": regime_info["tighten_stop_loss"],
     }
+
 
 # ============================================================
 # 2-6: Analytics (Sector distribution, performance stats)
@@ -610,7 +650,35 @@ def get_total_portfolio_summary(db: Session, user_db: Session) -> dict:
         phase = "UNKNOWN"
         score = 50.0
 
-    recommended_cash = calculate_recommended_cash(phase, score)
+    # Dynamic cash recommendation based on VXV/VIX EMA regime (fallback to original if UNKNOWN)
+    regime_info = get_vxv_vix_regime_info(db, 8)
+    if regime_info["regime"] != "UNKNOWN":
+        regime = regime_info["regime"]
+        if regime == "BULL":
+            min_pct = 0
+            max_pct = 20
+        elif regime == "BOTTOM":
+            min_pct = 50
+            max_pct = 70
+        elif regime == "OVERHEAT":
+            min_pct = 30
+            max_pct = 50
+        elif regime == "BEAR":
+            min_pct = 70
+            max_pct = 100
+        else:
+            min_pct = 50
+            max_pct = 100
+        recommended_cash = {
+            "phase": f"VIX EMA: {regime}",
+            "trend_score": score,
+            "recommended_min_pct": min_pct,
+            "recommended_max_pct": max_pct,
+            "message": f"Based on VXV/VIX EMA {regime} phase, recommended cash is {min_pct}%-{max_pct}%."
+        }
+    else:
+        recommended_cash = calculate_recommended_cash(phase, score)
+
 
     # Fetch latest USD/JPY from FxRate
     latest_fx = db.query(FxRate).filter_by(currency_pair="USD/JPY").order_by(desc(FxRate.date)).first()

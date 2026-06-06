@@ -33,6 +33,12 @@ interface Summary {
     stop_loss_method: string; default_stop_loss_pct: number;
     max_positions: number; open_positions: number;
     invested_total: number; market_value_total: number; unrealized_pnl: number;
+    dynamic_max_positions?: number;
+    market_regime?: string;
+    vxv_vix_ema5?: number;
+    vxv_vix_ema21?: number;
+    target_cash_ratio?: number;
+    tighten_stop_loss?: boolean;
 }
 
 interface PortfolioDetail {
@@ -206,8 +212,8 @@ export const PortfolioDetailPage: React.FC = () => {
             {[
                 { label: 'Capital (総資金)', value: fmtCur(summary.total_capital) },
                 { label: 'Risk Amount (リスク額)', value: fmtCur(summary.risk_amount), sub: `${summary.risk_pct}%` },
-                { label: 'Max/Position (最大投資額)', value: fmtCur(summary.max_investment) },
-                { label: 'Positions (保有数)', value: `${summary.open_positions} / ${summary.max_positions}` },
+                { label: 'Max/Position (推奨投資額)', value: fmtCur(summary.max_investment), sub: summary.market_regime ? `VIX EMA: ${summary.market_regime}` : undefined },
+                { label: 'Positions (保有数)', value: `${summary.open_positions} / ${summary.dynamic_max_positions ?? summary.max_positions}`, sub: summary.dynamic_max_positions !== undefined && summary.dynamic_max_positions !== summary.max_positions ? `Config limit: ${summary.max_positions}` : undefined },
                 { label: 'Invested (投資済額)', value: fmtCur(summary.invested_total) },
                 { label: 'Market Value (評価額)', value: fmtCur(summary.market_value_total) },
                 { label: 'Unrealized P&L (含み損益)', value: fmtCur(summary.unrealized_pnl), color: pctColor(summary.unrealized_pnl) },
@@ -215,7 +221,7 @@ export const PortfolioDetailPage: React.FC = () => {
                 <div key={i} style={{ background: 'rgba(15,23,42,0.6)', border: '1px solid rgba(99,120,180,0.18)', borderRadius: '10px', padding: '14px 16px' }}>
                     <div style={{ fontSize: '10px', color: '#475685', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{c.label}</div>
                     <div style={{ fontSize: '16px', fontWeight: 700, marginTop: '4px', color: c.color || '#e8edf7', fontVariantNumeric: 'tabular-nums' }}>{c.value}</div>
-                    {c.sub && <div style={{ fontSize: '11px', color: '#8b9cc8' }}>{c.sub}</div>}
+                    {c.sub && <div style={{ fontSize: '11px', color: '#8b9cc8', marginTop: '2px' }}>{c.sub}</div>}
                 </div>
             ))}
         </div>
@@ -232,6 +238,44 @@ export const PortfolioDetailPage: React.FC = () => {
             {summaryCards}
 
             {/* Tabs */}
+            {/* VIX EMA Market Regime Badge */}
+            {summary?.market_regime === 'OVERHEAT' && (
+                <div style={{ marginBottom: '12px', padding: '10px 16px', background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '16px' }}>🔥</span>
+                    <span style={{ color: '#f59e0b', fontWeight: 600, fontSize: '13px' }}>
+                        Market Phase: OVERHEAT (過熱状態)
+                    </span>
+                    <span style={{ color: '#8b9cc8', fontSize: '12px' }}>— 推奨アクション: 新規買付制限（最大4枠）, 既存ポジションのストップロスを買値に引き上げて利益保護を徹底してください。</span>
+                </div>
+            )}
+            {summary?.market_regime === 'BEAR' && (
+                <div style={{ marginBottom: '12px', padding: '10px 16px', background: 'rgba(244,63,94,0.08)', border: '1px solid rgba(244,63,94,0.25)', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '16px' }}>🐻</span>
+                    <span style={{ color: '#f43f5e', fontWeight: 600, fontSize: '13px' }}>
+                        Market Phase: BEAR (弱気相場)
+                    </span>
+                    <span style={{ color: '#8b9cc8', fontSize: '12px' }}>— 推奨アクション: 新規買付停止（0枠）, キャッシュ比率引き上げ（推奨 70%以上）でディフェンシブに。</span>
+                </div>
+            )}
+            {summary?.market_regime === 'BOTTOM' && (
+                <div style={{ marginBottom: '12px', padding: '10px 16px', background: 'rgba(34,211,160,0.08)', border: '1px solid rgba(34,211,160,0.25)', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '16px' }}>💎</span>
+                    <span style={{ color: '#22d3a0', fontWeight: 600, fontSize: '13px' }}>
+                        Market Phase: BOTTOM (大底シグナル)
+                    </span>
+                    <span style={{ color: '#8b9cc8', fontSize: '12px' }}>— 推奨アクション: 打診買い開始（最大2枠）, キャッシュ50%を維持しつつ段階的に優良株を仕込んでください。</span>
+                </div>
+            )}
+            {summary?.market_regime === 'BULL' && (
+                <div style={{ marginBottom: '12px', padding: '10px 16px', background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.25)', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '16px' }}>🐂</span>
+                    <span style={{ color: '#3b82f6', fontWeight: 600, fontSize: '13px' }}>
+                        Market Phase: BULL (強気トレンド)
+                    </span>
+                    <span style={{ color: '#8b9cc8', fontSize: '12px' }}>— 推奨アクション: 通常運転（フルサイズ許容）, アクティブにポジションを積み上げて利益を最大化します。</span>
+                </div>
+            )}
+
             {/* Alert badge */}
             {positions.some(p => p.stop_loss_alert) && (
                 <div style={{ marginBottom: '12px', padding: '10px 16px', background: 'rgba(244,63,94,0.1)', border: '1px solid rgba(244,63,94,0.3)', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>

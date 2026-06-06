@@ -106,6 +106,52 @@ min_market_cap = 5e6
 #------------------------------
 
 [[rise]]
+id = "check_vcp"
+name = "VCP"
+subtitle = "ボラリティ収縮"
+group = "Check"
+[rise.filters]
+#trend_template_ok = 1           # ミネルヴィニのトレンドテンプレート適合
+#max_vcr = 0.7                   # 収縮度合い（0.5に近いほどタイト）
+#max_adr_pct_21 = 1.5            # 21日平均の値幅が3.5%以内（静かな動き）
+#max_pct_from_52w_high = 0.0     # 52週高値から10%以内の位置
+#min_up_down_vol_ratio_50 = 1.5  # 出来高比率（買い集め傾向）
+#min_market_cap = 1e9            # 時価総額300Mドル以上
+# [backtest results]
+# alpha 1.242
+# avg_gain 1.416
+# avg_spy_gain 0.174
+# expectancy 1.416
+# max_drawdown -3.043625573556292
+# port_cagr 71.0
+# port_vs_spy 63.63
+# spy_cagr 7.37
+# total_trades 1338
+# win_rate 52.167414050822124
+#------------------------------
+trend_template_ok = 1 
+max_vcr = 0.65 
+max_adr_pct_21 = 1.5 
+max_pct_from_52w_high = 5.0 
+min_up_down_vol_ratio_50 = 1.5 
+min_market_cap = 1e9 
+close_gt_ema63 = true
+# [backtest results]
+# alpha 1.447
+# avg_gain 1.622
+# avg_spy_gain 0.175
+# expectancy 1.622
+# max_drawdown -4.622023926056705
+# port_cagr 78.45
+# port_vs_spy 71.08
+# spy_cagr 7.37
+# total_trades 909
+# win_rate 54.12541254125413
+#------------------------------
+
+
+
+[[rise]]
 id = "momentum_breakout"
 name = "Momentum Breakout"
 subname = "出来高を伴った急騰銘柄"
@@ -229,26 +275,6 @@ trend_template_ok = 1
 # spy_cagr 7.37
 # total_trades 3409
 # win_rate 35.23027280727486
-
-
-[[rise]]
-id = "check_vcp"
-name = "VCP"
-subtitle = "ボラリティ収縮パターン"
-group = "Check"
-[rise.filters]
-max_vcr = 0.6 
-max_adr_pct_21 = 2.0 
-max_pct_from_52w_high = 5.0 
-min_up_down_vol_ratio_50 = 1.0
-min_market_cap = 1e9
-trend_template_ok = 1 
-# [backtest results]
-# port_cagr 53.98
-# port_vs_spy 46.6
-# spy_cagr 7.37
-# total_trades 3118
-# win_rate 40.85952533675433
 
 
 

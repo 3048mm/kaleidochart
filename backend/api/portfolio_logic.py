@@ -5,6 +5,8 @@ PnL computation, and alert status checking.
 Separated from the API layer for testability.
 """
 from datetime import date
+import pandas as pd
+
 
 
 def calc_max_investment(
@@ -201,3 +203,67 @@ def calculate_recommended_cash(market_phase: str, trend_score: float) -> dict:
         "recommended_max_pct": max_pct,
         "message": f"Based on {phase_upper} phase, recommended cash is {min_pct}%-{max_pct}%."
     }
+
+
+def determine_vxv_vix_ema_regime(vxv_vix_history: list[float], max_positions_limit: int = 8) -> dict:
+    """
+    Calculate EMA5 and EMA21 of VXV/VIX ratio and determine the market regime.
+    
+    Args:
+        vxv_vix_history: List of VXV/VIX ratios ordered from oldest to newest.
+        max_positions_limit: The maximum positions setting of the portfolio.
+        
+    Returns:
+        dict containing:
+            - regime: 'BOTTOM', 'OVERHEAT', 'BULL', 'BEAR', or 'UNKNOWN'
+            - ema5: float or None
+            - ema21: float or None
+            - dynamic_max_positions: int
+            - target_cash_ratio: float
+            - tighten_stop_loss: bool
+    """
+    if len(vxv_vix_history) < 21:
+        return {
+            "regime": "UNKNOWN",
+            "ema5": None,
+            "ema21": None,
+            "dynamic_max_positions": max_positions_limit,
+            "target_cash_ratio": 0.0,
+            "tighten_stop_loss": False,
+        }
+    
+    series = pd.Series(vxv_vix_history)
+    # EMA calculation matching backtest (span=5 and span=21, adjust=False)
+    ema5 = float(series.ewm(span=5, adjust=False).mean().iloc[-1])
+    ema21 = float(series.ewm(span=21, adjust=False).mean().iloc[-1])
+    
+    if ema5 < 1.00:
+        regime = "BOTTOM"
+        dynamic_max_positions = min(2, max_positions_limit)
+        target_cash_ratio = 0.50
+        tighten_stop_loss = False
+    elif ema5 > 1.20:
+        regime = "OVERHEAT"
+        dynamic_max_positions = min(4, max_positions_limit)
+        target_cash_ratio = 0.30
+        tighten_stop_loss = True
+    elif ema5 > ema21:
+        regime = "BULL"
+        dynamic_max_positions = max_positions_limit
+        target_cash_ratio = 0.00
+        tighten_stop_loss = False
+    else:
+        regime = "BEAR"
+        dynamic_max_positions = 0
+        target_cash_ratio = 0.70
+        tighten_stop_loss = False
+        
+    return {
+        "regime": regime,
+        "ema5": round(ema5, 4),
+        "ema21": round(ema21, 4),
+        "dynamic_max_positions": dynamic_max_positions,
+        "target_cash_ratio": target_cash_ratio,
+        "tighten_stop_loss": tighten_stop_loss,
+    }
+

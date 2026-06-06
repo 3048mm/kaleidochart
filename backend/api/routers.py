@@ -295,11 +295,125 @@ def get_symbols(db: Session = Depends(get_api_db)):
     T1: Get all registered active symbols
     """
     symbols = db.query(Symbol).filter(Symbol.active == 1).order_by(Symbol.category, Symbol.ticker).all()
-    return symbols
+    
+    # 仮想シンボルを追加
+    virtual_vxv_vix = Symbol(
+        id=99999,
+        ticker="^VXV_VIX",
+        name="VXV/VIX Ratio",
+        category="市場指標",
+        active=1,
+        tags=""
+    )
+    virtual_mkt_trend = Symbol(
+        id=99998,
+        ticker="^MKT_TREND",
+        name="Market Trend Score",
+        category="市場指標",
+        active=1,
+        tags=""
+    )
+    return [virtual_vxv_vix, virtual_mkt_trend] + symbols
 
 @router.get("/chart/{symbol_id}")
 def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db)):
     """T2+T3: Get combined daily prices and indicators for rendering charts (High speed)"""
+    if symbol_id in (99998, 99999):
+        signals = db.query(MarketSignal).order_by(MarketSignal.date.asc()).all()
+        
+        # DataFrame を作成してインジケーターを動的計算する
+        import pandas as pd
+        import numpy as np
+        import json
+        from fastapi import Response
+        
+        raw_points = []
+        for s in signals:
+            if symbol_id == 99999:
+                val = float(s.vxv_vix_ratio) if s.vxv_vix_ratio is not None else None
+            else:
+                val = float(s.market_trend_score) if s.market_trend_score is not None else None
+                
+            if val is not None:
+                raw_points.append({
+                    "date": s.date,
+                    "close": val
+                })
+                
+        chart_data = []
+        ticker = "^VXV_VIX" if symbol_id == 99999 else "^MKT_TREND"
+        name = "VXV/VIX Ratio" if symbol_id == 99999 else "Market Trend Score"
+        
+        if raw_points:
+            df = pd.DataFrame(raw_points)
+            df = df.sort_values("date").reset_index(drop=True)
+            
+            # 動的インジケーター計算
+            for p in [5, 21, 50, 63, 150, 200]:
+                df[f"sma_{p}"] = df["close"].rolling(window=p, min_periods=1).mean()
+                df[f"ema_{p}"] = df["close"].ewm(span=p, adjust=False, min_periods=1).mean()
+                
+            # ボリンジャーバンド
+            std_21 = df["close"].rolling(window=21, min_periods=1).std()
+            df["bb_upper"] = df["sma_21"] + 2 * std_21
+            df["bb_lower"] = df["sma_21"] - 2 * std_21
+            
+            # NaN の処理
+            df = df.replace({np.nan: None})
+            
+            for _, row in df.iterrows():
+                d_str = row["date"].strftime('%Y-%m-%d')
+                val = row["close"]
+                point = {
+                    "time": d_str,
+                    "open": val,
+                    "high": val,
+                    "low": val,
+                    "close": val,
+                    "volume": 0,
+                    "market_cap": None,
+                    "sma_5": row["sma_5"],
+                    "sma_21": row["sma_21"],
+                    "sma_50": row["sma_50"],
+                    "sma_63": row["sma_63"],
+                    "sma_150": row["sma_150"],
+                    "sma_200": row["sma_200"],
+                    "ema_5": row["ema_5"],
+                    "ema_21": row["ema_21"],
+                    "ema_50": row["ema_50"],
+                    "ema_63": row["ema_63"],
+                    "ema_200": row["ema_200"],
+                    "bb_upper": row["bb_upper"],
+                    "bb_lower": row["bb_lower"],
+                    "change_1d_pct": None,
+                    "change_1w_pct": None,
+                    "change_1m_pct": None,
+                    "adr_pct_21": None,
+                    "dist_sma50_atr": None,
+                    "relative_strength_spy": None
+                }
+                chart_data.append(point)
+                
+        # Custom encoder/cleaner to handle NaN/Inf
+        def clean_data(obj):
+            if isinstance(obj, float):
+                if obj != obj or obj == float('inf') or obj == float('-inf'):
+                    return None
+            return obj
+            
+        cleaned_data = {
+            "metadata": {"id": symbol_id, "ticker": ticker, "name": name, "category": "市場指標"},
+            "themes": [],
+            "data": [
+                {k: clean_data(v) for k, v in point.items()}
+                for point in chart_data
+            ]
+        }
+        return Response(
+            content=json.dumps(cleaned_data, allow_nan=False),
+            media_type="application/json"
+        )
+
     symbol = db.query(Symbol).filter(Symbol.id == symbol_id, Symbol.active == 1).first()
     if not symbol:
         raise HTTPException(status_code=404, detail="Symbol not found")

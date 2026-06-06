@@ -8,6 +8,25 @@ interface VxvVixRatioChartProps {
     height?: number;
 }
 
+// EMA (指数平滑移動平均) を動的に計算する関数
+const calculateEMA = (data: { time: string; value: number }[], period: number) => {
+    if (data.length === 0) return [];
+    const k = 2 / (period + 1);
+    const emaData: { time: string; value: number }[] = [];
+    
+    let ema = data[0].value;
+    emaData.push({ time: data[0].time, value: ema });
+    
+    for (let i = 1; i < data.length; i++) {
+        ema = data[i].value * k + ema * (1 - k);
+        emaData.push({
+            time: data[i].time,
+            value: Number(ema.toFixed(4)),
+        });
+    }
+    return emaData;
+};
+
 export const VxvVixRatioChart: React.FC<VxvVixRatioChartProps> = ({ data, height = 150 }) => {
     const chartContainerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
@@ -41,9 +60,22 @@ export const VxvVixRatioChart: React.FC<VxvVixRatioChartProps> = ({ data, height
             handleScale: false,
         });
 
+        // メインの VXV/VIX Ratio (青線)
         const lineSeries = chart.addLineSeries({
             color: '#2962FF',
             lineWidth: 2,
+        });
+
+        // VXV/VIX Ratio EMA5 (オレンジの細線)
+        const emaSeries = chart.addLineSeries({
+            color: '#ff9800',
+            lineWidth: 1.5,
+        });
+
+        // VXV/VIX Ratio EMA21 (紫の細線)
+        const emaSeries21 = chart.addLineSeries({
+            color: '#9c27b0',
+            lineWidth: 1.5,
         });
 
         // Add reference lines
@@ -73,6 +105,16 @@ export const VxvVixRatioChart: React.FC<VxvVixRatioChartProps> = ({ data, height
             }));
         
         lineSeries.setData(chartData);
+
+        // EMA の計算と適用
+        if (chartData.length > 0) {
+            const emaData5 = calculateEMA(chartData, 5);
+            emaSeries.setData(emaData5);
+
+            const emaData21 = calculateEMA(chartData, 21);
+            emaSeries21.setData(emaData21);
+        }
+
         chart.timeScale().fitContent();
 
         chartRef.current = chart;

@@ -159,6 +159,7 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
 
     const chartRef = useRef<IChartApi | null>(null);
     const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+    const lineSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const smaSeriesRefs = useRef<Record<string, ISeriesApi<"Line"> | null>>({});
     const emaSeriesRefs = useRef<Record<string, ISeriesApi<"Line"> | null>>({});
     const bbSeriesRefs = useRef<{ upper: ISeriesApi<"Line"> | null, lower: ISeriesApi<"Line"> | null }>({ upper: null, lower: null });
@@ -227,7 +228,10 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
                 if (!res.ok) throw new Error('Failed to fetch comparison data');
                 return res.json();
             })
-            .then(json => setCompareData(json))
+            .then(json => {
+                const resData = json as ChartResponse;
+                setCompareData(resData.data || []);
+            })
             .catch(err => {
                 console.error(err);
                 alert(`Error loading comparison: ${err.message}`);
@@ -266,19 +270,30 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
 
         chartRef.current = chart;
 
-        const candleSeries = chart.addCandlestickSeries({
-            upColor: '#00ff88',
-            downColor: '#ff4444',
-            borderVisible: false,
-            wickUpColor: '#00ff88',
-            wickDownColor: '#ff4444',
-        });
-        candleSeriesRef.current = candleSeries;
+        const isVirtualLineChart = selected.ticker === '^VXV_VIX' || selected.ticker === '^MKT_TREND';
+        if (isVirtualLineChart) {
+            const lineSeries = chart.addLineSeries({
+                color: '#2962FF',
+                lineWidth: 2,
+                title: selected.name || selected.ticker,
+            });
+            lineSeriesRef.current = lineSeries;
+        } else {
+            const candleSeries = chart.addCandlestickSeries({
+                upColor: '#00ff88',
+                downColor: '#ff4444',
+                borderVisible: false,
+                wickUpColor: '#00ff88',
+                wickDownColor: '#ff4444',
+            });
+            candleSeriesRef.current = candleSeries;
+        }
 
         return () => {
             chart.remove();
             chartRef.current = null;
             candleSeriesRef.current = null;
+            lineSeriesRef.current = null;
             smaSeriesRefs.current = {};
             emaSeriesRefs.current = {};
             bbSeriesRefs.current = { upper: null, lower: null };
@@ -292,16 +307,26 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
     useEffect(() => {
         const chart = chartRef.current;
         const candleSeries = candleSeriesRef.current;
-        if (!chart || !candleSeries || data.length === 0) return;
+        const lineSeries = lineSeriesRef.current;
+        if (!chart || data.length === 0) return;
+        if (!candleSeries && !lineSeries) return;
 
-        // --- Candle Data ---
-        candleSeries.setData(data.map(d => ({
-            time: d.time as any,
-            open: d.open,
-            high: d.high,
-            low: d.low,
-            close: d.close,
-        })));
+        const isVirtualLineChart = selected.ticker === '^VXV_VIX' || selected.ticker === '^MKT_TREND';
+        // --- Candle or Line Data ---
+        if (isVirtualLineChart && lineSeries) {
+            lineSeries.setData(data.map(d => ({
+                time: d.time as any,
+                value: d.close,
+            })));
+        } else if (candleSeries) {
+            candleSeries.setData(data.map(d => ({
+                time: d.time as any,
+                open: d.open,
+                high: d.high,
+                low: d.low,
+                close: d.close,
+            })));
+        }
 
         // --- Markers ---
         const markers: SeriesMarker<any>[] = [];
@@ -358,7 +383,12 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
             }
         });
         markers.sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
-        candleSeries.setMarkers(markers);
+        
+        if (isVirtualLineChart && lineSeries) {
+            lineSeries.setMarkers([]);
+        } else if (candleSeries) {
+            candleSeries.setMarkers(markers);
+        }
 
         // --- Indicators (SMAs/EMAs/BB) ---
         const updateLineSeries = (

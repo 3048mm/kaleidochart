@@ -39,7 +39,7 @@ class ScenarioPortfolio:
     def update_vxv_vix_state(self, ratio: Optional[float], h_type: str = "trend_follow"):
         """
         Updates the portfolio's allocation limit based on VXV/VIX Ratio hysteresis.
-        Supports both 'trend_follow' (Interpretation A) and 'contrarian' (Interpretation B).
+        Supports 'trend_follow', 'contrarian', and 'vxv_vix_ema' (4-regime model).
         """
         if ratio is None:
             ratio = 1.10
@@ -47,8 +47,42 @@ class ScenarioPortfolio:
         self.prev_vxv_vix_ratio = self.current_vxv_vix_ratio
         self.current_vxv_vix_ratio = ratio
         
+        # Track history for EMA calculation
+        if not hasattr(self, 'vxv_vix_history'):
+            self.vxv_vix_history = []
+        self.vxv_vix_history.append(ratio)
+        
         if not getattr(self, 'use_hysteresis', True):
             self.dynamic_max_positions = self.config.max_positions
+            return
+            
+        if h_type == "vxv_vix_ema":
+            # Warm up period: need 21 days of history
+            if len(self.vxv_vix_history) < 21:
+                self.dynamic_max_positions = self.config.max_positions
+                return
+                
+            series = pd.Series(self.vxv_vix_history)
+            ema5 = series.ewm(span=5, adjust=False).mean().iloc[-1]
+            ema21 = series.ewm(span=21, adjust=False).mean().iloc[-1]
+            
+            if ema5 < 1.00:
+                # BOTTOM (Deep Bear Panic - Start scaling in)
+                self.dynamic_max_positions = 2
+                self.config.neutral_cash_ratio = 0.50
+            elif ema5 > 1.20:
+                # OVERHEAT (Overbought - Protect profits)
+                self.dynamic_max_positions = 4
+                self.config.neutral_cash_ratio = 0.30
+                self.tighten_all_stop_losses()
+            elif ema5 > ema21:
+                # BULL (Stable Trend - Full size)
+                self.dynamic_max_positions = self.config.max_positions
+                self.config.neutral_cash_ratio = 0.00
+            else:
+                # BEAR (Weak/Correction - Cash out/Stay out)
+                self.dynamic_max_positions = 0
+                self.config.neutral_cash_ratio = 0.70
             return
             
         is_upward = ratio >= self.prev_vxv_vix_ratio
@@ -304,3 +338,15 @@ class ScenarioPortfolio:
                 
                 # Remove from active
                 self.active_positions = [p for p in self.active_positions if p['symbol_id'] != symbol_id]
+
+    def tighten_all_stop_losses(self):
+        """
+        過熱期 (OVERHEAT) に入った際、含み損ポジションは即損切り(買値に引き上げ)とし、
+        含み益ポジションは買値（ブレイクイーブン）に引き上げて元本を能動的に防衛する。
+        """
+        for pos in self.active_positions:
+            if 'entry_price' in pos:
+                # 既に部分利確等で買値以上に引き上げられていない場合のみ、買値（entry_price）に強制引き上げ
+                current_stop = pos.get('stop_price', 0.0)
+                if current_stop < pos['entry_price']:
+                    pos['stop_price'] = pos['entry_price']
