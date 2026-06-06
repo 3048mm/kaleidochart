@@ -12,7 +12,8 @@ SHEET_CONFIG = {
     "LeadingList": "指標",
     "SectorList": "セクタ",
     "ThemeList": "テーマ",
-    "StockList": "個別"
+    "StockList": "個別",
+    "LeverageList": "レバレッジ"
 }
 
 def fetch_symbols_from_sheet(credentials_path: str, spreadsheet_url: str) -> List[Dict[str, Any]]:

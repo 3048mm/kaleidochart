@@ -64,7 +64,7 @@ def sync_phase_t4_ranks(db, spy_latest_date: Optional[date], logger: logging.Log
             {ranks_joined}
         FROM indicators i
         JOIN symbols s ON i.symbol_id = s.id
-        WHERE i.date = :d
+        WHERE i.date = :d AND s.category != 'レバレッジ'
     """
     
     for i, d in enumerate(gap_dates):

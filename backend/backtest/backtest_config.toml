@@ -34,6 +34,8 @@ min_adr_pct_21 = 6.0
 max_dist_sma50_atr = 7.0 
 min_market_cap = 1e8 
 rs_rank_21_gt_63 = true
+min_avg_hits_per_day = 0.1
+min_hit_rate_pct = 1.0
 
 
 [[strategy]]
@@ -42,12 +44,13 @@ description = "強いテーマに属する銘柄のモメンタム"
 max_hits_per_day = 10
 sort_column = "rs21_rank"
 sort_ascending = false
-min_change_1d_pct = 6.0
+min_change_1d_pct = 7.0
 min_vol_surge_21 = 2.8
-min_adr_pct_21 = 6.0
+min_adr_pct_21 = 5.5
 max_dist_sma50_atr = 7.0
 min_market_cap = 5e6
 theme_rs21_gt_63 = true
+
 #min_rs_ratio_21_rank = 0.5
 #close_gt_ema63 = true
 
@@ -151,6 +154,8 @@ max_pct_from_52w_high = 0.0     # 52週高値から10%以内の位置
 min_up_down_vol_ratio_50 = 1.5  # 出来高比率（買い集め傾向）
 min_market_cap = 1e9            # 時価総額300Mドル以上
 close_gt_ema63 = true
+min_avg_hits_per_day = 0.05
+min_hit_rate_pct = 0.5
 
 [[strategy]]
 name = "F_elite_momentum97"

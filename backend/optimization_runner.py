@@ -292,11 +292,11 @@ def objective(trial: optuna.Trial, strategy_type: str, config, config_app, exit_
     # Parse optimization params from TOML and apply via Optuna trial
     param_defs = parse_optimization_params(config, strategy_type)
     apply_trial_params(trial, param_defs, strat)
-    # Extract prune bounds from config if available
+    # Extract prune bounds from config if available (allow strategy-specific overrides)
     prune_conf = config.get('optimization_pruning', {})
-    min_avg = prune_conf.get('min_avg_hits_per_day', 1.0)
-    max_avg = prune_conf.get('max_avg_hits_per_day', 15.0)
-    min_hit_rate = prune_conf.get('min_hit_rate_pct', 5.0)
+    min_avg = strat_base.get('min_avg_hits_per_day', prune_conf.get('min_avg_hits_per_day', 1.0))
+    max_avg = strat_base.get('max_avg_hits_per_day', prune_conf.get('max_avg_hits_per_day', 15.0))
+    min_hit_rate = strat_base.get('min_hit_rate_pct', prune_conf.get('min_hit_rate_pct', 5.0))
     prune_bounds = (min_avg, max_avg, min_hit_rate)
     
     total_score = 0.0
@@ -316,7 +316,7 @@ def objective(trial: optuna.Trial, strategy_type: str, config, config_app, exit_
         metrics, _ = run_single_strategy(
             strat, df_indicators, df_prices, df_ranks, df_symbols, df_theme_constituents, 
             trading_dates, exit_rules, show_progress=True, 
-            fast_prune=True, prune_bounds=prune_bounds
+            fast_prune=False, prune_bounds=prune_bounds
         )
         
         # --- Handle directional penalty branching ---
@@ -394,12 +394,13 @@ def objective(trial: optuna.Trial, strategy_type: str, config, config_app, exit_
         toml_params.append(f"{key} = {toml_val}")
     
     params_toml_str = "\n".join(toml_params)
-    trial.set_user_attr("params_toml", params_toml_str)
+    # Key renamed to 'z_params_toml' so it sorts to the very end of the list in Optuna Dashboard
+    trial.set_user_attr("z_params_toml", params_toml_str)
     # Also set as system attribute 'note' for Optuna Dashboard
     trial.set_system_attr("note", params_toml_str)
 
     # --- Trial Summary Log ---
-    print(f"  [Trial {trial.number}] Score: {avg_score:.2f} | Port vs SPY: {portfolio_vs_spy:+.2f}% | Trades: {total_trades} | WinRate: {trial.user_attrs['win_rate']:.1f}%", flush=True)
+    print(f"  [Trial {trial.number}] Score: {avg_score:.2f} | Port vs SPY: {portfolio_vs_spy:+.2f}% | MaxDD: {max_dd_overall:.1f}% | Trades: {total_trades} | WinRate: {trial.user_attrs['win_rate']:.1f}%", flush=True)
 
     return avg_score
 
