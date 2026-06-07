@@ -119,7 +119,10 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
         if not df_ranks.empty and 'indicator_name' not in df_ranks.columns:
             df_ranks = df_ranks.melt(
                 id_vars=['symbol_id', 'date'],
-                value_vars=['rs_ratio_14', 'rs_ratio_21', 'rs_ratio_63'],
+                value_vars=[
+                    'rs_ratio_14', 'rs_ratio_21', 'rs_ratio_63',
+                    'rs_condition_14', 'rs_condition_21', 'rs_condition_63'
+                ],
                 var_name='indicator_name',
                 value_name='percent_rank'
             ).dropna(subset=['percent_rank'])
@@ -155,7 +158,7 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
         raise e
 
 
-def run_single_strategy(strat_dict: dict, df_indicators, df_prices, df_ranks, df_symbols, df_theme_constituents, trading_dates, exit_rules, show_progress=True, fast_prune=False, prune_bounds=(1.0, 15.0, 5.0)):
+def run_single_strategy(strat_dict: dict, df_indicators, df_prices, df_ranks, df_symbols, df_theme_constituents, trading_dates, exit_rules, show_progress=True, fast_prune=False, prune_bounds=(1.0, 15.0, 5.0), consider_tax=0.0):
     """
     Run backtest for a single strategy.
     If fast_prune=True, it will pre-scan all signals and immediately return ("PRUNED", None) 
@@ -283,7 +286,7 @@ def run_single_strategy(strat_dict: dict, df_indicators, df_prices, df_ranks, df
                     t.spy_pnl_pct = None
 
     elapsed = time.time() - t0
-    metrics = calculate_metrics(trades, spy_period_return=spy_period_return)
+    metrics = calculate_metrics(trades, spy_period_return=spy_period_return, consider_tax=consider_tax)
     if show_progress:
         print(f"  Completed: {len(trades)} trades in {elapsed:.1f}s", flush=True)
     
@@ -339,11 +342,12 @@ def run_backtest(config: dict, strategy_filter: str = None, refresh_cache: bool 
     all_results = {}
     all_trades = {}
 
+    consider_tax = config.get('general', {}).get('consider_tax', 0.0)
     for strat in strategies:
         strat_name = strat.get('name', 'Strategy')
         metrics, trades = run_single_strategy(
             strat, df_indicators, df_prices, df_ranks, df_symbols, df_theme_constituents, 
-            trading_dates, exit_rules, show_progress=True
+            trading_dates, exit_rules, show_progress=True, consider_tax=consider_tax
         )
         all_results[strat_name] = metrics
         all_trades[strat_name] = trades

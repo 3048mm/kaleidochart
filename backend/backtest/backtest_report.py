@@ -11,7 +11,7 @@ from datetime import date
 from backend.backtest.backtest_simulator import TradeResult
 
 
-def calculate_metrics(trades: List[TradeResult], spy_period_return: float = 0.0) -> Dict[str, Any]:
+def calculate_metrics(trades: List[TradeResult], spy_period_return: float = 0.0, consider_tax: float = 0.0) -> Dict[str, Any]:
     """
     Calculate performance metrics from a list of trade results.
 
@@ -105,7 +105,10 @@ def calculate_metrics(trades: List[TradeResult], spy_period_return: float = 0.0)
     # Calculate Portfolio Compound Multiplier for this period
     strat_mult = 1.0
     for t in sorted_trades:
-        strat_mult *= (1.0 + (t.pnl_pct / 100.0) / avg_slots)
+        pnl = t.pnl_pct
+        if consider_tax > 0.0 and pnl > 0:
+            pnl = pnl * (1.0 - consider_tax)
+        strat_mult *= (1.0 + (pnl / 100.0) / avg_slots)
 
     return {
         'trades': total,

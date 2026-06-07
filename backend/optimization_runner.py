@@ -43,18 +43,16 @@ def get_cached_data(config_app, start_date, end_date):
     print("Data preload complete.", flush=True)
     return res
 
-def calculate_custom_score(metrics, total_trading_days):
-
+def calculate_custom_score(metrics, total_trading_days, max_allowed_dd: float = 20.0):
     """
     Calculate optimization score. Higher = Better.
     
     Primary metric: expectancy (avg gain per trade).
-    This avoids favoring strategies that simply generate more trades,
-    and instead finds parameters where each individual trade is most profitable.
     
     Penalties:
     - Less than 5 trades (too rare to be statistically meaningful)
     - More than 25 trades per day on average (too noisy / over-fitted)
+    - Threshold-based squared penalty for drawdowns exceeding max_allowed_dd
     """
     if not metrics:
         return -1000.0
@@ -80,9 +78,16 @@ def calculate_custom_score(metrics, total_trading_days):
         # マイナス期待値ならドローダウンが深いほどさらにマイナス
         return (expectancy * 10) - normalized_dd
 
-    # スコア計算: 基本は Expectancy × 100。
-    # Normalizeされたドローダウン規模に応じてスコアをマイルドに割り引く（1 + DDの平方根で割るなど）
-    score = (expectancy * 100.0) / (1.0 + (normalized_dd ** 0.5) * 0.5)
+    # --- しきい値付き2乗ペナルティ計算 ---
+    if normalized_dd <= max_allowed_dd:
+        # 閾値内ならマイルドな割引
+        penalty = 1.0 + (normalized_dd ** 0.5) * 0.1
+    else:
+        # 閾値を超えたら、超過分を2乗して急激にペナルティを増大させる
+        excess = normalized_dd - max_allowed_dd
+        penalty = 1.0 + (max_allowed_dd ** 0.5) * 0.1 + (excess ** 2) * 1.5
+        
+    score = (expectancy * 100.0) / penalty
     
     # 1日あたりの取引回数が多すぎる場合は期待値をさらに割り引く(10件まではノーペナルティ)
     if avg_trades_per_day > 10.0:
@@ -260,149 +265,159 @@ def enqueue_baseline_trial(study, config: dict, strategy_short: str) -> bool:
 # =============================================================
 
 def objective(trial: optuna.Trial, strategy_type: str, config, config_app, exit_rules: ExitRules, periods: list):
-    # Mapping for short codes (fallback to searching config if not in map)
-    full_names = {
-        'A': 'A_momentum_breakout',
-        'B': 'B_theme_momentum',
-        'C1': 'C1_rrg_leading_in',
-        'C2': 'C2_rrg_improving_in',
-        'D': 'D_ema21_pullback',
-        'E': 'E_vcp',
-        'F': 'F_elite_momentum97'
-    }
-    
-    # Try to find the actual name from the mapping or searching the strategy list
-    if strategy_type in full_names:
-        actual_name = full_names[strategy_type]
-    else:
-        # Search for a strategy that matches exactly or starts with "STRATEGY_"
-        strategies = config.get('strategy', [])
-        found = next((s['name'] for s in strategies if s['name'] == strategy_type or s['name'].startswith(strategy_type + "_")), None)
-        actual_name = found if found else strategy_type
-    
-    # Extract the base strategy configuration from the list in config['strategy']
-    strat_base = next((s for s in config.get('strategy', []) if s.get('name') == actual_name), None)
-    if not strat_base:
-        raise ValueError(f"Strategy '{actual_name}' not found in backtest config.")
+    import traceback
+    try:
+        # Mapping for short codes (fallback to searching config if not in map)
+        full_names = {
+            'A': 'A_momentum_breakout',
+            'B': 'B_theme_momentum',
+            'C1': 'C1_rrg_leading_in',
+            'C2': 'C2_rrg_improving_in',
+            'D': 'D_ema21_pullback',
+            'E': 'E_vcp',
+            'F': 'F_elite_momentum97'
+        }
         
-    # Copy strategy config to preserve baseline settings (like market_cap etc)
-    strat = strat_base.copy()
-    strat['name'] = f"{actual_name}_Trial_{trial.number}"
-
-    # Parse optimization params from TOML and apply via Optuna trial
-    param_defs = parse_optimization_params(config, strategy_type)
-    apply_trial_params(trial, param_defs, strat)
-    # Extract prune bounds from config if available (allow strategy-specific overrides)
-    prune_conf = config.get('optimization_pruning', {})
-    min_avg = strat_base.get('min_avg_hits_per_day', prune_conf.get('min_avg_hits_per_day', 1.0))
-    max_avg = strat_base.get('max_avg_hits_per_day', prune_conf.get('max_avg_hits_per_day', 15.0))
-    min_hit_rate = strat_base.get('min_hit_rate_pct', prune_conf.get('min_hit_rate_pct', 5.0))
-    prune_bounds = (min_avg, max_avg, min_hit_rate)
-    
-    total_score = 0.0
-    total_trades = 0
-    total_wins = 0
-    expectancy_sum = 0.0
-    avg_gain_sum = 0.0
-    avg_spy_gain_sum = 0.0
-    max_dd_overall = 0.0
-    periods_with_trades = 0
-    
-    overall_strat_mult = 1.0
-    overall_spy_mult = 1.0
-    
-    for start_date, end_date in periods:
-        df_symbols, df_prices, df_indicators, df_ranks, df_theme_constituents, trading_dates = get_cached_data(config_app, start_date, end_date)
-        metrics, _ = run_single_strategy(
-            strat, df_indicators, df_prices, df_ranks, df_symbols, df_theme_constituents, 
-            trading_dates, exit_rules, show_progress=True, 
-            fast_prune=False, prune_bounds=prune_bounds
-        )
-        
-        # --- Handle directional penalty branching ---
-        if isinstance(metrics, dict) and metrics.get('fast_pruned'):
-            penalty = calculate_prune_penalty(
-                metrics['avg_per_day'], 
-                metrics['hit_rate_pct'], 
-                prune_bounds
-            )
-            if penalty is not None:
-                # We return the heavy penalty immediately (skip remaining periods)
-                # so Optuna TPE learns the gradient.
-                return penalty
-            else:
-                # Fallback, theoretically shouldn't reach if bounds logic matched
-                raise optuna.TrialPruned()
-            
-        period_score = calculate_custom_score(metrics, len(trading_dates))
-        total_score += period_score
-        
-        if metrics:
-            total_trades += metrics.get('total_trades', 0)
-            total_wins += metrics.get('win_trades', 0)
-            max_dd_overall = min(max_dd_overall, metrics.get('max_drawdown_pct', 0.0))
-            if metrics.get('total_trades', 0) > 0:
-                expectancy_sum += metrics.get('expectancy', 0.0)
-                avg_gain_sum += metrics.get('avg_gain', 0.0)
-                avg_spy_gain_sum += metrics.get('avg_spy_gain', 0.0)
-                overall_strat_mult *= metrics.get('strat_multiplier', 1.0)
-                overall_spy_mult *= metrics.get('spy_multiplier', 1.0)
-                periods_with_trades += 1
-            
-    # Average score across periods
-    avg_score = total_score / len(periods)
-    
-    # Log aggregated metrics
-    trial.set_user_attr("total_trades", total_trades)
-    if total_trades > 0:
-        trial.set_user_attr("win_rate", (total_wins / total_trades) * 100)
-    else:
-        trial.set_user_attr("win_rate", 0.0)
-    
-    if periods_with_trades > 0:
-        avg_expectancy = expectancy_sum / periods_with_trades
-        avg_gain = avg_gain_sum / periods_with_trades
-        avg_spy = avg_spy_gain_sum / periods_with_trades
-        trial.set_user_attr("expectancy", round(avg_expectancy, 3))
-        trial.set_user_attr("avg_gain", round(avg_gain, 3))
-        trial.set_user_attr("avg_spy_gain", round(avg_spy, 3))
-        trial.set_user_attr("alpha", round(avg_gain - avg_spy, 3))
-    else:
-        trial.set_user_attr("expectancy", 0.0)
-        trial.set_user_attr("avg_gain", 0.0)
-        trial.set_user_attr("avg_spy_gain", 0.0)
-        trial.set_user_attr("alpha", 0.0)
-        
-    portfolio_cagr = (overall_strat_mult - 1.0) * 100.0
-    spy_bh_cagr = (overall_spy_mult - 1.0) * 100.0
-    portfolio_vs_spy = portfolio_cagr - spy_bh_cagr
-
-    trial.set_user_attr("max_drawdown", max_dd_overall)
-    trial.set_user_attr("port_cagr", round(portfolio_cagr, 2))
-    trial.set_user_attr("spy_cagr", round(spy_bh_cagr, 2))
-    trial.set_user_attr("port_vs_spy", round(portfolio_vs_spy, 2))
-
-    # Generate TOML format string for parameters (for easy copy-paste)
-    toml_params = []
-    for key, value in trial.params.items():
-        if isinstance(value, bool):
-            toml_val = "true" if value else "false"
-        elif isinstance(value, str):
-            toml_val = f'"{value}"'
+        # Try to find the actual name from the mapping or searching the strategy list
+        if strategy_type in full_names:
+            actual_name = full_names[strategy_type]
         else:
-            toml_val = value
-        toml_params.append(f"{key} = {toml_val}")
-    
-    params_toml_str = "\n".join(toml_params)
-    # Key renamed to 'z_params_toml' so it sorts to the very end of the list in Optuna Dashboard
-    trial.set_user_attr("z_params_toml", params_toml_str)
-    # Also set as system attribute 'note' for Optuna Dashboard
-    trial.set_system_attr("note", params_toml_str)
+            # Search for a strategy that matches exactly or starts with "STRATEGY_"
+            strategies = config.get('strategy', [])
+            found = next((s['name'] for s in strategies if s['name'] == strategy_type or s['name'].startswith(strategy_type + "_")), None)
+            actual_name = found if found else strategy_type
+        
+        # Extract the base strategy configuration from the list in config['strategy']
+        strat_base = next((s for s in config.get('strategy', []) if s.get('name') == actual_name), None)
+        if not strat_base:
+            raise ValueError(f"Strategy '{actual_name}' not found in backtest config.")
+            
+        # Copy strategy config to preserve baseline settings (like market_cap etc)
+        strat = strat_base.copy()
+        strat['name'] = f"{actual_name}_Trial_{trial.number}"
 
-    # --- Trial Summary Log ---
-    print(f"  [Trial {trial.number}] Score: {avg_score:.2f} | Port vs SPY: {portfolio_vs_spy:+.2f}% | MaxDD: {max_dd_overall:.1f}% | Trades: {total_trades} | WinRate: {trial.user_attrs['win_rate']:.1f}%", flush=True)
+        # Parse optimization params from TOML and apply via Optuna trial
+        param_defs = parse_optimization_params(config, strategy_type)
+        apply_trial_params(trial, param_defs, strat)
+        # Extract prune bounds from config if available (allow strategy-specific overrides)
+        prune_conf = config.get('optimization_pruning', {})
+        min_avg = strat_base.get('min_avg_hits_per_day', prune_conf.get('min_avg_hits_per_day', 1.0))
+        max_avg = strat_base.get('max_avg_hits_per_day', prune_conf.get('max_avg_hits_per_day', 15.0))
+        min_hit_rate = strat_base.get('min_hit_rate_pct', prune_conf.get('min_hit_rate_pct', 5.0))
+        prune_bounds = (min_avg, max_avg, min_hit_rate)
+        
+        # Extract tax and drawdown threshold options
+        max_allowed_dd = strat_base.get('max_allowed_dd', 20.0)
+        consider_tax = float(config.get('general', {}).get('consider_tax', 0.0))
+        
+        total_score = 0.0
+        total_trades = 0
+        total_wins = 0
+        expectancy_sum = 0.0
+        avg_gain_sum = 0.0
+        avg_spy_gain_sum = 0.0
+        max_dd_overall = 0.0
+        periods_with_trades = 0
+        
+        overall_strat_mult = 1.0
+        overall_spy_mult = 1.0
+        
+        for start_date, end_date in periods:
+            df_symbols, df_prices, df_indicators, df_ranks, df_theme_constituents, trading_dates = get_cached_data(config_app, start_date, end_date)
+            metrics, _ = run_single_strategy(
+                strat, df_indicators, df_prices, df_ranks, df_symbols, df_theme_constituents, 
+                trading_dates, exit_rules, show_progress=True, 
+                fast_prune=False, prune_bounds=prune_bounds, consider_tax=consider_tax
+            )
+            
+            # --- Handle directional penalty branching ---
+            if isinstance(metrics, dict) and metrics.get('fast_pruned'):
+                penalty = calculate_prune_penalty(
+                    metrics['avg_per_day'], 
+                    metrics['hit_rate_pct'], 
+                    prune_bounds
+                )
+                if penalty is not None:
+                    # We return the heavy penalty immediately (skip remaining periods)
+                    # so Optuna TPE learns the gradient.
+                    return penalty
+                else:
+                    # Fallback, theoretically shouldn't reach if bounds logic matched
+                    raise optuna.TrialPruned()
+                
+            period_score = calculate_custom_score(metrics, len(trading_dates), max_allowed_dd)
+            total_score += period_score
+            
+            if metrics:
+                total_trades += metrics.get('total_trades', 0)
+                total_wins += metrics.get('win_trades', 0)
+                max_dd_overall = min(max_dd_overall, metrics.get('max_drawdown_pct', 0.0))
+                if metrics.get('total_trades', 0) > 0:
+                    expectancy_sum += metrics.get('expectancy', 0.0)
+                    avg_gain_sum += metrics.get('avg_gain', 0.0)
+                    avg_spy_gain_sum += metrics.get('avg_spy_gain', 0.0)
+                    overall_strat_mult *= metrics.get('strat_multiplier', 1.0)
+                    overall_spy_mult *= metrics.get('spy_multiplier', 1.0)
+                    periods_with_trades += 1
+                
+        # Average score across periods
+        avg_score = total_score / len(periods)
+        
+        # Log aggregated metrics
+        trial.set_user_attr("total_trades", total_trades)
+        if total_trades > 0:
+            trial.set_user_attr("win_rate", (total_wins / total_trades) * 100)
+        else:
+            trial.set_user_attr("win_rate", 0.0)
+        
+        if periods_with_trades > 0:
+            avg_expectancy = expectancy_sum / periods_with_trades
+            avg_gain = avg_gain_sum / periods_with_trades
+            avg_spy = avg_spy_gain_sum / periods_with_trades
+            trial.set_user_attr("expectancy", round(avg_expectancy, 3))
+            trial.set_user_attr("avg_gain", round(avg_gain, 3))
+            trial.set_user_attr("avg_spy_gain", round(avg_spy, 3))
+            trial.set_user_attr("alpha", round(avg_gain - avg_spy, 3))
+        else:
+            trial.set_user_attr("expectancy", 0.0)
+            trial.set_user_attr("avg_gain", 0.0)
+            trial.set_user_attr("avg_spy_gain", 0.0)
+            trial.set_user_attr("alpha", 0.0)
+            
+        portfolio_cagr = (overall_strat_mult - 1.0) * 100.0
+        spy_bh_cagr = (overall_spy_mult - 1.0) * 100.0
+        portfolio_vs_spy = portfolio_cagr - spy_bh_cagr
 
-    return avg_score
+        trial.set_user_attr("max_drawdown", max_dd_overall)
+        trial.set_user_attr("port_cagr", round(portfolio_cagr, 2))
+        trial.set_user_attr("spy_cagr", round(spy_bh_cagr, 2))
+        trial.set_user_attr("port_vs_spy", round(portfolio_vs_spy, 2))
+
+        # Generate TOML format string for parameters (for easy copy-paste)
+        toml_params = []
+        for key, value in trial.params.items():
+            if isinstance(value, bool):
+                toml_val = "true" if value else "false"
+            elif isinstance(value, str):
+                toml_val = f'"{value}"'
+            else:
+                toml_val = value
+            toml_params.append(f"{key} = {toml_val}")
+        
+        params_toml_str = "\n".join(toml_params)
+        # Key renamed to 'z_params_toml' so it sorts to the very end of the list in Optuna Dashboard
+        trial.set_user_attr("z_params_toml", params_toml_str)
+        # Also set as system attribute 'note' for Optuna Dashboard
+        trial.set_system_attr("note", params_toml_str)
+
+        # --- Trial Summary Log ---
+        print(f"  [Trial {trial.number}] Score: {avg_score:.2f} | Port vs SPY: {portfolio_vs_spy:+.2f}% | MaxDD: {max_dd_overall:.1f}% | Trades: {total_trades} | WinRate: {trial.user_attrs['win_rate']:.1f}%", flush=True)
+
+        return avg_score
+    except Exception as e:
+        print(f"\n!!! EXCEPTION IN TRIAL {trial.number} !!!", flush=True)
+        traceback.print_exc()
+        raise e
 
 def main():
     parser = argparse.ArgumentParser(description="Optimize backtest parameters with Optuna")

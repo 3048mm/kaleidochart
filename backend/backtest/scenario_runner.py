@@ -133,7 +133,8 @@ def run_scenario_test(
     use_vxv_vix: bool = False,
     scaling_ratio: float = 1.7,
     monte_carlo_mode: bool = False,
-    monte_carlo_seed: int = None
+    monte_carlo_seed: int = None,
+    consider_tax: float = 0.0
 ) -> Dict[str, Any]:
     """
     Executes the full portfolio-level scenario simulation.
@@ -227,7 +228,8 @@ def run_scenario_test(
         initial_capital=initial_capital,
         max_positions=max_positions,
         stop_loss_pct=stop_loss_pct,
-    )
+        consider_tax=consider_tax,
+     )
     portfolio = ScenarioPortfolio(port_config)
     portfolio.use_hysteresis = any(strat_rules.get('_use_hysteresis', False) for strat_rules in strategies.values())
     

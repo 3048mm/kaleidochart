@@ -39,6 +39,37 @@ active_rise_ids = [
 # ───────────────────────────────────────────────────
 
 [[rise]]
+id = "momentum_breakout"
+name = "momentum_breakout"
+subname = "出来高を伴った急騰銘柄"
+group = "Check"
+special = "rs_rank_21_gt_63"
+use_hysteresis = false
+[rise.filters]
+min_change_1d_pct = 7.0
+min_change_intraday_pct = 7.0
+min_vol_surge_21 = 2.8
+min_adr_pct_21 = 6.0
+max_dist_sma50_atr = 6.5
+min_market_cap = 1e8
+#min_avg_hits_per_day = 0.1
+#min_hit_rate_pct = 1.0
+# [backtest results]
+# alpha 6.013
+# avg_gain 7.004
+# avg_spy_gain 0.991
+# expectancy 7.004
+# max_drawdown -16.086735522075042
+# port_cagr 743.25
+# port_vs_spy 711.27
+# spy_cagr 31.98
+# total_trades 843
+# win_rate 40.569395017793596
+#------------------------------
+
+
+
+[[rise]]
 id = "thema_momentum"
 name = "Theme Momentum"
 subname = "強いテーマに属する銘柄のモメンタム"
@@ -46,29 +77,25 @@ group = "Check"
 special = "theme_rs21_gt_63"
 use_hysteresis = false
 [rise.filters]
-min_change_1d_pct = 6.0
+min_change_1d_pct = 7.0
 min_vol_surge_21 = 2.8
 min_adr_pct_21 = 6.0
 max_dist_sma50_atr = 7.0
 min_market_cap = 5e6
-
-#min_change_1d_pct = 7.0
-#min_vol_surge_21 = 2.8000000000000003
-#min_adr_pct_21 = 5.5
-#max_dist_sma50_atr = 7.0
-#min_market_cap = 5e6
-#theme_rs21_gt_63 = true
-#  Expectancy:     2.943%
-#  Avg Gain/Trade: 2.943%
-#  Avg SPY Gain:   0.005%
-#  Alpha:          2.938%
-#  Max Drawdown:   -59.8%
-#  Win Rate:       34.9%
-#  Total Trades:   2452
-#  Port CAGR:      805.88%
-#  SPY B&H CAGR:   7.37%
-#  Port vs SPY:    798.50%
+# [backtest results]
+# alpha 2.956
+# avg_gain 2.979
+# avg_spy_gain 0.023
+# expectancy 2.979
+# max_drawdown -55.512558603726674
+# port_cagr 934.9
+# port_vs_spy 927.53
+# spy_cagr 7.37
+# total_trades 2547
+# win_rate 35.02159403219474
 #------------------------------
+
+
 #min_change_1d_pct = 7.0
 #min_vol_surge_21 = 2.8
 #min_adr_pct_21 = 6.0
@@ -86,24 +113,7 @@ min_market_cap = 5e6
 #  SPY B&H CAGR:   7.37%
 #  Port vs SPY:    906.61%
 #------------------------------
-#min_change_1d_pct = 8.0
-#min_vol_surge_21 = 3.0
-#min_adr_pct_21 = 6.0
-#max_dist_sma50_atr = 7.0
-#min_market_cap = 5000000.0
-#theme_rs_rank_14_gt_21 = true
-# [backtest results]
-#  Expectancy:     3.171%
-#  Avg Gain/Trade: 3.171%
-#  Avg SPY Gain:   -0.020%
-#  Alpha:          3.192%
-#  Max Drawdown:   -66.9%
-#  Win Rate:       35.0%
-#  Total Trades:   1774
-#  Port CAGR:      1169.26%
-#  SPY B&H CAGR:   7.37%
-#  Port vs SPY:    1161.89%
-#------------------------------
+
 
 [[rise]]
 id = "check_vcp"
@@ -151,26 +161,6 @@ close_gt_ema63 = true
 
 
 
-[[rise]]
-id = "momentum_breakout"
-name = "Momentum Breakout"
-subname = "出来高を伴った急騰銘柄"
-group = "Check"
-special = "rs_rank_21_gt_63"
-use_hysteresis = true
-[rise.filters]
-min_change_1d_pct = 8.0 
-min_change_intraday_pct = -8.0 
-min_vol_surge_21 = 2.8 
-min_adr_pct_21 = 6.0 
-max_dist_sma50_atr = 7.0 
-min_market_cap = 1e8 
-# [backtest results]
-# port_cagr 804.23
-# port_vs_spy 796.86
-# spy_cagr 7.37
-# total_trades 1749
-# win_rate 35.906232132647226
 
 [[rise]]
 id = "rrg_improving_in"

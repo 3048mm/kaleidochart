@@ -12,6 +12,8 @@ class PortfolioConfig:
     stop_loss_pct: float = -0.08      # -8% stop loss
     neutral_cash_ratio: float = 0.3   # 30% cash required in NEUTRAL
     bear_cash_ratio: float = 0.6      # 60% cash required in BEAR
+    consider_tax: float = 0.0         # tax rate (e.g. 0.2 for 20%)
+
 
 class ScenarioPortfolio:
     """
@@ -22,9 +24,11 @@ class ScenarioPortfolio:
         self.config = config
         self.initial_capital = config.initial_capital
         self.capital = self.initial_capital
+        self.tax = config.consider_tax
         self.active_positions: List[Dict[str, Any]] = []
         self.trade_history: List[Dict[str, Any]] = []
         self.equity_curve: List[Dict[str, Any]] = []
+
         
         # New: Tracking market score and direction for hysteresis-based dynamic allocation
         self.current_market_score = 50.0
@@ -280,6 +284,7 @@ class ScenarioPortfolio:
         Supports both partial exits (1/3 take profit) and full exits.
         """
         partial_ratio = 0.333
+        tax_rate = getattr(self, 'tax', 0.0)
         
         for exit_data in exits:
             symbol_id = exit_data['symbol_id']
@@ -297,8 +302,16 @@ class ScenarioPortfolio:
                 partial_amount = partial_shares * pos['entry_price']
                 exit_amount = partial_shares * exit_data['exit_price']
                 
+                # PnL for this partial exit
+                pnl_amount_partial = exit_amount - partial_amount
+                
                 # Update capital with cash from 1/3 sale
                 self.capital += exit_amount
+                
+                # Apply tax if profit
+                if tax_rate > 0.0 and pnl_amount_partial > 0:
+                    tax_pay = pnl_amount_partial * tax_rate
+                    self.capital -= tax_pay
                 
                 # Reduce the active position shares and initial cost amount
                 pos['shares'] -= partial_shares
@@ -311,6 +324,7 @@ class ScenarioPortfolio:
             else:
                 # Full Exit
                 exit_amount = pos['shares'] * exit_data['exit_price']
+                pnl_amount_full = exit_amount - pos['amount']
                 
                 if pos.get('partial_taken'):
                     # The raw pnl_pct returned by evaluate_exit_for_day is already the
@@ -323,6 +337,11 @@ class ScenarioPortfolio:
                 
                 # Update capital with cash from full sale
                 self.capital += exit_amount
+                
+                # Apply tax if profit on this final leg
+                if tax_rate > 0.0 and pnl_amount_full > 0:
+                    tax_pay = pnl_amount_full * tax_rate
+                    self.capital -= tax_pay
                 
                 # Record trade
                 trade_record = {
@@ -338,6 +357,7 @@ class ScenarioPortfolio:
                 
                 # Remove from active
                 self.active_positions = [p for p in self.active_positions if p['symbol_id'] != symbol_id]
+
 
     def tighten_all_stop_losses(self):
         """
