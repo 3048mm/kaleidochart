@@ -180,19 +180,22 @@ export const BacktestResultPage: React.FC = () => {
   const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
       const data = payload[0].payload;
-      const initialEquity = equityData.length > 0 ? equityData[0].equity : 1;
-      const totalReturn = ((data.equity - initialEquity) / initialEquity) * 100;
       
-      const initialSpy = (equityData.length > 0 && equityData[0].spy_equity) ? equityData[0].spy_equity : null;
+      // Find the first valid equity data point (simulation start date) to align return calculations
+      const startPoint = equityData.find(d => d.equity !== undefined && d.equity !== null);
+      const initialEquity = startPoint ? startPoint.equity : 1;
+      const totalReturn = (data.equity !== undefined && data.equity !== null) ? ((data.equity - initialEquity) / initialEquity) * 100 : 0;
+      
+      const initialSpy = startPoint ? startPoint.spy_equity : null;
       const spyReturn = (initialSpy && data.spy_equity) ? ((data.spy_equity - initialSpy) / initialSpy) * 100 : null;
 
-      const initialQqq = (equityData.length > 0 && equityData[0].qqq_equity) ? equityData[0].qqq_equity : null;
+      const initialQqq = startPoint ? startPoint.qqq_equity : null;
       const qqqReturn = (initialQqq && data.qqq_equity) ? ((data.qqq_equity - initialQqq) / initialQqq) * 100 : null;
 
-      const initialTqqq = (equityData.length > 0 && equityData[0].tqqq_equity) ? equityData[0].tqqq_equity : null;
+      const initialTqqq = startPoint ? startPoint.tqqq_equity : null;
       const tqqqReturn = (initialTqqq && data.tqqq_equity) ? ((data.tqqq_equity - initialTqqq) / initialTqqq) * 100 : null;
 
-      const initialSoxl = (equityData.length > 0 && equityData[0].soxl_equity) ? equityData[0].soxl_equity : null;
+      const initialSoxl = startPoint ? startPoint.soxl_equity : null;
       const soxlReturn = (initialSoxl && data.soxl_equity) ? ((data.soxl_equity - initialSoxl) / initialSoxl) * 100 : null;
 
       return (
@@ -208,7 +211,7 @@ export const BacktestResultPage: React.FC = () => {
             {data.date}
           </div>
           
-          {showEquity && (
+          {showEquity && data.equity !== undefined && data.equity !== null && (
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '20px', marginBottom: '4px' }}>
               <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>Strategy (純資産):</span>
               <span style={{ color: 'var(--accent-green)', fontWeight: 'bold', fontSize: '11px', fontVariantNumeric: 'tabular-nums' }}>
@@ -217,7 +220,7 @@ export const BacktestResultPage: React.FC = () => {
             </div>
           )}
           
-          {showCash && (
+          {showCash && data.cash !== undefined && data.cash !== null && (
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '20px', marginBottom: '4px' }}>
               <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>Cash (手元資金):</span>
               <span style={{ color: 'rgba(255,255,255,0.7)', fontWeight: 'bold', fontSize: '11px', fontVariantNumeric: 'tabular-nums' }}>
@@ -272,7 +275,7 @@ export const BacktestResultPage: React.FC = () => {
           )}
 
           <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '4px', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-            {showEquity && (
+            {showEquity && data.equity !== undefined && data.equity !== null && (
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: '20px' }}>
                 <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>Strategy Return:</span>
                 <span style={{ color: totalReturn >= 0 ? 'var(--accent-green)' : 'var(--accent-red)', fontWeight: 'bold', fontSize: '11px', fontVariantNumeric: 'tabular-nums' }}>

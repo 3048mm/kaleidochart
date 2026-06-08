@@ -314,7 +314,10 @@ S&P500（SPY）の動向や市場全体の統計から算出される、市場�
 
 *   **`GET /api/market_signal`**: 最新の T5 データ（市場フェーズや FTD）を取得。
 *   **`GET /api/dashboard_data`**: 指定日付の Dashboard 用データパック（各種 T3, T4）を一括取得。
-*   **`GET /api/chart_data/{ticker}`**: 指定銘柄のヒストリカルデータ群（OHLCV + 各種インジケータ）を取得。
+*   **`GET /api/chart/{symbol_id}`**: 指定銘柄のヒストリカルデータ群（OHLCV + 各種インジケータ）を取得。
+    - **クエリパラメータ**: `full_range: bool` (デフォルト: `false`)
+        - `false` の場合、高速アクセスのため SQLite データベースの直近2年分の一時キャッシュからデータを取得して返却する。
+        - `true` の場合、`data/parquet_master/` に格納されている Parquet Master キャッシュ（全期間履歴マスター）から `symbol_id` で直接高速フィルタリングし、2019年以前を含む全期間の時系列データを構築して返却する。
     - **レスポンス構造**: `ChartResponse` 型。`data` (時系列配列) に加え、`metadata` (銘柄基本情報) および `themes` (関連テーマ情報の配列) を含みます。
     - **テーマ解決ロジック**: `theme_constituents` テーブルによる直接の紐付けに加え、`symbols` テーブルの `tags` カラムに含まれるカンマ区切りのタグもテーマとして解決し、リンク可能な情報を返却します。
 *   **`GET /api/screener_data`**: スクリーナー用のカスタムフィルタ（「SMA50より上」「時価総額 10M以上」等）に合致する銘柄群と各指標値を返却。

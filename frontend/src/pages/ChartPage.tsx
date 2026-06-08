@@ -136,6 +136,9 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
     // State for hovering
     const [hoverData, setHoverData] = useState<ChartDataPoint | null>(null);
 
+    // State for full range (parquet master)
+    const [fullRange, setFullRange] = useState(false);
+
     // Compare symbol state
     const [compareTicker, setCompareTicker] = useState('');
     const [compareData, setCompareData] = useState<ChartDataPoint[]>([]);
@@ -182,7 +185,7 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
         setLoading(true);
         setError('');
         
-        fetch(`/api/chart/${selected.id}`)
+        fetch(`/api/chart/${selected.id}?full_range=${fullRange}`)
             .then(res => {
                 if (!res.ok) throw new Error('Failed to fetch data');
                 return res.json();
@@ -204,7 +207,7 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
             .then(json => setEarnings(json))
             .catch(err => console.error(err))
             .finally(() => setEarningsLoading(false));
-    }, [selected]);
+    }, [selected, fullRange]);
 
 
 
@@ -223,7 +226,7 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
         }
 
         setCompareLoading(true);
-        fetch(`/api/chart/${compSymbol.id}`)
+        fetch(`/api/chart/${compSymbol.id}?full_range=${fullRange}`)
             .then(res => {
                 if (!res.ok) throw new Error('Failed to fetch comparison data');
                 return res.json();
@@ -308,7 +311,7 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
         const chart = chartRef.current;
         const candleSeries = candleSeriesRef.current;
         const lineSeries = lineSeriesRef.current;
-        if (!chart || data.length === 0) return;
+        if (!chart || data.length === 0 || !selected) return;
         if (!candleSeries && !lineSeries) return;
 
         const isVirtualLineChart = selected.ticker === '^VXV_VIX' || selected.ticker === '^MKT_TREND';
@@ -697,6 +700,23 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
                     style={{ padding: '6px 12px', fontSize: '12px', borderRadius: '4px', flexShrink: 0 }}
                 >
                     Fundamentals
+                </button>
+
+                <button
+                    className={`toggle-btn ${fullRange ? 'active' : ''}`}
+                    onClick={() => setFullRange(!fullRange)}
+                    style={{ 
+                        padding: '6px 12px', 
+                        fontSize: '12px', 
+                        borderRadius: '4px', 
+                        flexShrink: 0,
+                        marginLeft: isMobile ? '0' : 'auto',
+                        borderColor: fullRange ? '#00ff88' : 'rgba(255,255,255,0.1)',
+                        color: fullRange ? '#00ff88' : '#aaa'
+                    }}
+                    title="Load all-time historical data from Parquet master cache"
+                >
+                    Full Range
                 </button>
             </div>
 

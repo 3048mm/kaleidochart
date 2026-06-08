@@ -316,7 +316,7 @@ def get_symbols(db: Session = Depends(get_api_db)):
     return [virtual_vxv_vix, virtual_mkt_trend] + symbols
 
 @router.get("/chart/{symbol_id}")
-def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db)):
+def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db), full_range: bool = Query(False)):
     """T2+T3: Get combined daily prices and indicators for rendering charts (High speed)"""
     if symbol_id in (99998, 99999):
         signals = db.query(MarketSignal).order_by(MarketSignal.date.asc()).all()
@@ -418,6 +418,208 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db)):
     if not symbol:
         raise HTTPException(status_code=404, detail="Symbol not found")
         
+    if full_range:
+        # Load data from Parquet Master cache
+        import pandas as pd
+        import numpy as np
+        from db.database import get_active_db_path
+        from pipeline.parquet_cache_manager import get_parquet_master_dir, get_pointer_file_path, get_latest_master_files
+        from fastapi.responses import JSONResponse
+
+        db_path = get_active_db_path()
+        if not db_path:
+            try:
+                import tomllib
+                config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "config.toml")
+                with open(config_path, "rb") as f:
+                    config = tomllib.load(f)
+                    db_path = config.get("system", {}).get("db_path", "data/stocktool.db")
+            except Exception:
+                db_path = "data/stocktool.db"
+        
+        parquet_dir = get_parquet_master_dir(db_path)
+        pointer_file = get_pointer_file_path(parquet_dir)
+        latest_files = get_latest_master_files(pointer_file)
+
+        if latest_files:
+            try:
+                df_p = pd.read_parquet(latest_files['prices'], filters=[('symbol_id', '==', symbol_id)])
+                if df_p.empty:
+                    return JSONResponse(content={"data": [], "themes": []})
+
+                df_p = df_p.sort_values("date").reset_index(drop=True)
+                df_p['date_str'] = pd.to_datetime(df_p['date']).dt.strftime('%Y-%m-%d')
+                
+                try:
+                    df_i = pd.read_parquet(latest_files['indicators'], filters=[('symbol_id', '==', symbol_id)])
+                    if not df_i.empty:
+                        df_i['date_str'] = pd.to_datetime(df_i['date']).dt.strftime('%Y-%m-%d')
+                        ind_cols = [c for c in df_i.columns if c not in ('id', 'symbol_id', 'date', 'date_str')]
+                        df_i_indexed = df_i.set_index('date_str')
+                        ind_map = df_i_indexed[ind_cols].to_dict(orient='index')
+                    else:
+                        ind_map = {}
+                except Exception as e:
+                    logger.error(f"Error reading parquet indicators: {e}")
+                    ind_map = {}
+
+                try:
+                    df_r = pd.read_parquet(latest_files['ranks'], filters=[('symbol_id', '==', symbol_id)])
+                    if not df_r.empty:
+                        df_r['date_str'] = pd.to_datetime(df_r['date']).dt.strftime('%Y-%m-%d')
+                        rank_indicators = [
+                            'rs_ratio_14', 'rs_ratio_21', 'rs_ratio_63',
+                            'rs_momentum_14', 'rs_momentum_21', 'rs_momentum_63',
+                            'rs_condition_14', 'rs_condition_21', 'rs_condition_63',
+                            'relative_strength_spy'
+                        ]
+                        df_r['is_kobetsu'] = df_r['group_name'] == '個別'
+                        df_r = df_r.sort_values('is_kobetsu', ascending=True)
+                        
+                        rank_map_nested = {}
+                        for _, row in df_r.iterrows():
+                            ds = row['date_str']
+                            if ds not in rank_map_nested:
+                                rank_map_nested[ds] = {}
+                            for ind_name in rank_indicators:
+                                val = row.get(ind_name)
+                                if val is not None and not pd.isna(val):
+                                    rank_map_nested[ds][ind_name] = float(val)
+                    else:
+                        rank_map_nested = {}
+                except Exception as e:
+                    logger.error(f"Error reading parquet ranks: {e}")
+                    rank_map_nested = {}
+
+                theme_meta = []
+                if symbol.tags:
+                    tag_list = [t.strip() for t in symbol.tags.split(',') if t.strip()]
+                    tag_themes = db.query(Symbol).filter(Symbol.ticker.in_(tag_list)).all()
+                    for t in tag_themes:
+                        theme_meta.append({"id": t.id, "ticker": t.ticker, "name": t.name})
+                
+                tc_themes = db.query(Symbol).join(ThemeConstituent, Symbol.id == ThemeConstituent.theme_id).filter(ThemeConstituent.symbol_id == symbol_id).all()
+                for t in tc_themes:
+                    if not any(tm['ticker'] == t.ticker for tm in theme_meta):
+                        theme_meta.append({"id": t.id, "ticker": t.ticker, "name": t.name})
+
+                chart_data = []
+                for _, p in df_p.iterrows():
+                    d_str = p['date_str']
+                    ind = ind_map.get(d_str, {})
+                    
+                    point = {
+                        "time": d_str, 
+                        "open": float(p['open']) if not pd.isna(p['open']) else None, 
+                        "high": float(p['high']) if not pd.isna(p['high']) else None, 
+                        "low": float(p['low']) if not pd.isna(p['low']) else None, 
+                        "close": float(p['close']) if not pd.isna(p['close']) else None, 
+                        "volume": float(p['volume']) if not pd.isna(p['volume']) else 0,
+                        "market_cap": float(p['market_cap']) if not pd.isna(p['market_cap']) else None
+                    }
+                    
+                    if ind:
+                        def val_or_none(k):
+                            v = ind.get(k)
+                            return float(v) if v is not None and not pd.isna(v) else None
+                        
+                        def bool_or_none(k):
+                            v = ind.get(k)
+                            if v is None or pd.isna(v):
+                                return None
+                            return bool(v)
+
+                        sma_21_val = val_or_none("sma_21")
+                        atr_14_val = val_or_none("atr_14")
+                        
+                        point.update({
+                            "sma_5": val_or_none("sma_5"),
+                            "sma_21": sma_21_val, 
+                            "sma_50": val_or_none("sma_50"), 
+                            "sma_63": val_or_none("sma_63"),
+                            "sma_150": val_or_none("sma_150"), 
+                            "sma_200": val_or_none("sma_200"),
+                            "ema_5": val_or_none("ema_5"), 
+                            "ema_21": val_or_none("ema_21"), 
+                            "ema_50": val_or_none("ema_50"),
+                            "ema_63": val_or_none("ema_63"), 
+                            "ema_150": val_or_none("ema_150"), 
+                            "ema_200": val_or_none("ema_200"),
+                            "td9": val_or_none("td9"), 
+                            "atr_14": atr_14_val, 
+                            "atr_pct_14": val_or_none("atr_pct_14"),
+                            "adr_pct_21": val_or_none("adr_pct_21"), 
+                            "dist_sma50_atr": val_or_none("dist_sma50_atr"),
+                            "change_1d_pct": val_or_none("change_1d_pct"),
+                            "change_1w_pct": val_or_none("change_1w_pct"),
+                            "change_1m_pct": val_or_none("change_1m_pct"),
+                            "relative_strength_spy": val_or_none("relative_strength_spy"),
+                            "rs_condition_14": val_or_none("rs_condition_14"),
+                            "rs_condition_21": val_or_none("rs_condition_21"),
+                            "rs_condition_63": val_or_none("rs_condition_63"),
+                            "rs_ema_5": val_or_none("rs_ema_5"),
+                            "rs_ema_14": val_or_none("rs_ema_14"),
+                            "rs_ema_21": val_or_none("rs_ema_21"),
+                            "rs_ema_63": val_or_none("rs_ema_63"),
+                            "rs_momentum_14": val_or_none("rs_momentum_14"),
+                            "rs_momentum_21": val_or_none("rs_momentum_21"),
+                            "rs_momentum_63": val_or_none("rs_momentum_63"),
+                            "rs_ratio_14": val_or_none("rs_ratio_14"),
+                            "rs_ratio_21": val_or_none("rs_ratio_21"),
+                            "rs_ratio_63": val_or_none("rs_ratio_63"),
+                            "rs_roc_ema_14": val_or_none("rs_roc_ema_14"),
+                            "rs_roc_ema_21": val_or_none("rs_roc_ema_21"),
+                            "rs_roc_ema_63": val_or_none("rs_roc_ema_63"),
+                            "vol_surge_21": val_or_none("vol_surge_21"),
+                            "rel_vol_vs_spy_21": val_or_none("rel_vol_vs_spy_21"),
+                            "up_down_vol_ratio_50": val_or_none("up_down_vol_ratio_50"),
+                            "pct_from_63d_high": val_or_none("pct_from_63d_high"),
+                            "pct_from_52w_high": val_or_none("pct_from_52w_high"),
+                            "rs_blue_dot": bool_or_none("rs_blue_dot"), 
+                            "rs_red_dot": bool_or_none("rs_red_dot"),
+                            "vcr": val_or_none("vcr"), 
+                            "trend_template_ok": bool_or_none("trend_template_ok"),
+                            "vol_accum_days_5": val_or_none("vol_accum_days_5"),
+                            "bb_upper": (sma_21_val + 2 * atr_14_val) if sma_21_val and atr_14_val else None,
+                            "bb_lower": (sma_21_val - 2 * atr_14_val) if sma_21_val and atr_14_val else None,
+                        })
+
+                        r_data = rank_map_nested.get(d_str, {})
+                        for r_name in rank_indicators:
+                            point[f"rank_{r_name}"] = r_data.get(r_name)
+                        
+                        point["rs_ratio"] = r_data.get("rs_ratio_21")
+
+                    chart_data.append(point)
+
+                import json
+                from fastapi import Response
+
+                def clean_data(obj):
+                    if isinstance(obj, float):
+                        if obj != obj or obj == float('inf') or obj == float('-inf'):
+                            return None
+                    return obj
+
+                cleaned_data = {
+                    "metadata": {"id": symbol.id, "ticker": symbol.ticker, "name": symbol.name, "category": symbol.category},
+                    "themes": theme_meta,
+                    "data": [
+                        {k: clean_data(v) for k, v in point.items()}
+                        for point in chart_data
+                    ]
+                }
+
+                return Response(
+                    content=json.dumps(cleaned_data, allow_nan=False),
+                    media_type="application/json"
+                )
+
+            except Exception as ex:
+                logger.error(f"Error building chart from Parquet: {ex}")
+                # Fallback to standard SQLite DB query
+                pass
+
     # Fetch all prices
     prices = db.query(DailyPrice).filter(DailyPrice.symbol_id == symbol_id).order_by(DailyPrice.date.asc()).all()
     if not prices:

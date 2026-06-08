@@ -16,7 +16,7 @@ def init_db(db_path: str):
     """
     Initializes the database engine and creates all tables if they don't exist.
     """
-    global engine, SessionLocal
+    global engine, SessionLocal, _active_db_path
     
     # Allow override via environment variable
     env_db_path = os.getenv("STOCKTOOL_DB_PATH")

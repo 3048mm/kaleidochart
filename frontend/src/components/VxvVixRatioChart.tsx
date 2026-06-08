@@ -69,13 +69,13 @@ export const VxvVixRatioChart: React.FC<VxvVixRatioChartProps> = ({ data, height
         // VXV/VIX Ratio EMA5 (オレンジの細線)
         const emaSeries = chart.addLineSeries({
             color: '#ff9800',
-            lineWidth: 1.5,
+            lineWidth: 1,
         });
 
         // VXV/VIX Ratio EMA21 (紫の細線)
         const emaSeries21 = chart.addLineSeries({
             color: '#9c27b0',
-            lineWidth: 1.5,
+            lineWidth: 1,
         });
 
         // Add reference lines
