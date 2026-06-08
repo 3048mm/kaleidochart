@@ -29,6 +29,8 @@ class TradeResult:
 @dataclass
 class ExitRules:
     """Fixed exit rules from config."""
+    exit_type: str = "fixed"
+    vxv_vix_threshold: float = 1.0
     stop_loss_pct: float = -8.0
     partial_take_profit_pct: float = 20.0
     partial_take_profit_sma50_atr: float = 8.0
@@ -37,12 +39,15 @@ class ExitRules:
     full_exit_sma50_atr: float = 11.0
     time_stop_days: int = 7
     failsafe_max_days: int = 120
+    vxv_vix_series: Dict[Any, float] = field(default_factory=dict)
 
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> 'ExitRules':
         exit_cfg = config.get('exit_rules', {})
         general_cfg = config.get('general', {})
         return cls(
+            exit_type=exit_cfg.get('exit_type', 'fixed'),
+            vxv_vix_threshold=exit_cfg.get('vxv_vix_threshold', 1.0),
             stop_loss_pct=exit_cfg.get('stop_loss_pct', -8.0),
             partial_take_profit_pct=exit_cfg.get('partial_take_profit_pct', 20.0),
             partial_take_profit_sma50_atr=exit_cfg.get('partial_take_profit_sma50_atr', 8.0),
@@ -116,6 +121,73 @@ def simulate_trade(
         if len(recent_highs) > exit_rules.time_stop_days:
             recent_highs.pop(0)
             recent_lows.pop(0)
+
+        # === Exit Rules type dispatch ===
+        if exit_rules.exit_type == "hold":
+            # Pure B&H: Only exit if failsafe is reached, or let it run to data_end (post-loop)
+            if day_count >= exit_rules.failsafe_max_days:
+                exit_pnl = gain_pct
+                if partial_taken:
+                    total_pnl = partial_exit_pnl * exit_rules.partial_ratio + exit_pnl * (1 - exit_rules.partial_ratio)
+                else:
+                    total_pnl = exit_pnl
+                return TradeResult(
+                    symbol_id=signal.symbol_id, ticker=signal.ticker,
+                    entry_date=entry_date, exit_date=current_date,
+                    entry_price=entry_price, exit_price=current_close,
+                    pnl_pct=total_pnl, holding_days=day_count,
+                    exit_reason='failsafe', partial_exit_pnl_pct=partial_exit_pnl,
+                )
+            continue
+
+        elif exit_rules.exit_type == "vxv_vix_ratio":
+            # Exit if VXV/VIX ratio < threshold
+            ratio = exit_rules.vxv_vix_series.get(current_date)
+            if ratio is not None and ratio < exit_rules.vxv_vix_threshold:
+                exit_pnl = gain_pct
+                if partial_taken:
+                    total_pnl = partial_exit_pnl * exit_rules.partial_ratio + exit_pnl * (1 - exit_rules.partial_ratio)
+                else:
+                    total_pnl = exit_pnl
+                return TradeResult(
+                    symbol_id=signal.symbol_id, ticker=signal.ticker,
+                    entry_date=entry_date, exit_date=current_date,
+                    entry_price=entry_price, exit_price=current_close,
+                    pnl_pct=total_pnl, holding_days=day_count,
+                    exit_reason='vxv_vix_exit', partial_exit_pnl_pct=partial_exit_pnl,
+                )
+            
+            # Still apply stop loss for protection
+            if current_close <= stop_price:
+                exit_pnl = (current_close - entry_price) / entry_price * 100.0
+                if partial_taken:
+                    total_pnl = partial_exit_pnl * exit_rules.partial_ratio + exit_pnl * (1 - exit_rules.partial_ratio)
+                    reason = 'partial_then_stop'
+                else:
+                    total_pnl = exit_pnl
+                    reason = 'stop_loss'
+                return TradeResult(
+                    symbol_id=signal.symbol_id, ticker=signal.ticker,
+                    entry_date=entry_date, exit_date=current_date,
+                    entry_price=entry_price, exit_price=current_close,
+                    pnl_pct=total_pnl, holding_days=day_count,
+                    exit_reason=reason, partial_exit_pnl_pct=partial_exit_pnl,
+                )
+                
+            if day_count >= exit_rules.failsafe_max_days:
+                exit_pnl = gain_pct
+                if partial_taken:
+                    total_pnl = partial_exit_pnl * exit_rules.partial_ratio + exit_pnl * (1 - exit_rules.partial_ratio)
+                else:
+                    total_pnl = exit_pnl
+                return TradeResult(
+                    symbol_id=signal.symbol_id, ticker=signal.ticker,
+                    entry_date=entry_date, exit_date=current_date,
+                    entry_price=entry_price, exit_price=current_close,
+                    pnl_pct=total_pnl, holding_days=day_count,
+                    exit_reason='failsafe', partial_exit_pnl_pct=partial_exit_pnl,
+                )
+            continue
 
         # === 1. Stop Loss Check ===
         if current_close <= stop_price:
@@ -321,6 +393,93 @@ class BacktestSimulator:
             exit_reason = None
             gain_pct = (close_price - entry_price) / entry_price * 100.0
             
+            # --- Exit Rules type dispatch ---
+            if rules.exit_type == "hold":
+                # Pure B&H: Only exit if failsafe is reached
+                if pos['holding_days'] >= rules.failsafe_max_days:
+                    exit_pnl = gain_pct
+                    if pos['partial_taken']:
+                        total_pnl = pos['partial_exit_pnl_pct'] * rules.partial_ratio + exit_pnl * (1 - rules.partial_ratio)
+                    else:
+                        total_pnl = exit_pnl
+                    exit_record = {
+                        'symbol_id': symbol_id,
+                        'exit_date': target_date,
+                        'exit_price': close_price,
+                        'reason': 'failsafe',
+                        'pnl_pct': total_pnl / 100.0,
+                        'is_partial': False
+                    }
+                    exits_triggered.append(exit_record)
+                    self.trades.append({**pos, **exit_record})
+                    continue
+                remaining_positions.append(pos)
+                continue
+
+            elif rules.exit_type == "vxv_vix_ratio":
+                # Exit if VXV/VIX ratio < threshold
+                curr_d = target_date.date() if hasattr(target_date, 'date') else target_date
+                ratio = rules.vxv_vix_series.get(curr_d)
+                if ratio is not None and ratio < rules.vxv_vix_threshold:
+                    exit_pnl = gain_pct
+                    if pos['partial_taken']:
+                        total_pnl = pos['partial_exit_pnl_pct'] * rules.partial_ratio + exit_pnl * (1 - rules.partial_ratio)
+                    else:
+                        total_pnl = exit_pnl
+                    exit_record = {
+                        'symbol_id': symbol_id,
+                        'exit_date': target_date,
+                        'exit_price': close_price,
+                        'reason': 'vxv_vix_exit',
+                        'pnl_pct': total_pnl / 100.0,
+                        'is_partial': False
+                    }
+                    exits_triggered.append(exit_record)
+                    self.trades.append({**pos, **exit_record})
+                    continue
+                
+                # Stop loss protection
+                if close_price <= pos['stop_price']:
+                    exit_pnl = gain_pct
+                    if pos['partial_taken']:
+                        total_pnl = pos['partial_exit_pnl_pct'] * rules.partial_ratio + exit_pnl * (1 - rules.partial_ratio)
+                        reason = 'partial_then_stop'
+                    else:
+                        total_pnl = exit_pnl
+                        reason = 'stop_loss'
+                    exit_record = {
+                        'symbol_id': symbol_id,
+                        'exit_date': target_date,
+                        'exit_price': close_price,
+                        'reason': reason,
+                        'pnl_pct': total_pnl / 100.0,
+                        'is_partial': False
+                    }
+                    exits_triggered.append(exit_record)
+                    self.trades.append({**pos, **exit_record})
+                    continue
+                
+                if pos['holding_days'] >= rules.failsafe_max_days:
+                    exit_pnl = gain_pct
+                    if pos['partial_taken']:
+                        total_pnl = pos['partial_exit_pnl_pct'] * rules.partial_ratio + exit_pnl * (1 - rules.partial_ratio)
+                    else:
+                        total_pnl = exit_pnl
+                    exit_record = {
+                        'symbol_id': symbol_id,
+                        'exit_date': target_date,
+                        'exit_price': close_price,
+                        'reason': 'failsafe',
+                        'pnl_pct': total_pnl / 100.0,
+                        'is_partial': False
+                    }
+                    exits_triggered.append(exit_record)
+                    self.trades.append({**pos, **exit_record})
+                    continue
+                
+                remaining_positions.append(pos)
+                continue
+
             # --- 1. Stop Loss Check ---
             if close_price <= pos['stop_price']:
                 exit_pnl = gain_pct

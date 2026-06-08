@@ -81,6 +81,8 @@
 
 | 変数名 | 関連 DB カラム | 説明 |
 | :--- | :--- | :--- |
+| `exit_type` | - | **手仕舞い戦略のタイプ**: `"fixed"` (従来の固定出口ルール)、`"hold"` (バイ・アンド・ホールド＝期間制限まで売却しない)、`"vxv_vix_ratio"` (VXV/VIX比率が閾値を下回った際に手仕舞いする)のいずれか。 |
+| `vxv_vix_threshold` | - | **VXV/VIX手仕舞い閾値**: `exit_type = "vxv_vix_ratio"` の場合に使用されるVXV/VIX比率の閾値（例: 1.0）。 |
 | `stop_loss_pct` | `daily_prices.close` | **固定損切り率**: エントリー価格からの下落率(%)。 |
 | `partial_take_profit_pct` | `daily_prices.close` | **部分利確開始ライン**: この利益率に達すると 1/3 等の売却を行う。 |
 | `partial_take_profit_sma50_atr`| `indicators.dist_sma50_atr` | **オーバーエクステンション利確**: 利益率に関わらず、SMA50からATRのN倍以上乖離した場合に部分利確。 |

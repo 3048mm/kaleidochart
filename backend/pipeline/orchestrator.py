@@ -595,7 +595,6 @@ def run_pipeline(config, db_path, logger: logging.Logger, rebuild_from: Optional
             
             logger.info("Starting T4: Ranks...")
             t_start = time.time()
-            from datetime import datetime
             default_start_str = config.get("data_collection", {}).get("default_start_date", "2018-04-01")
             default_start_val = datetime.strptime(default_start_str, "%Y-%m-%d").date()
             sync_phase_t4_ranks(db, spy_latest_date, logger, default_start_date=default_start_val)

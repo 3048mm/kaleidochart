@@ -339,6 +339,33 @@ def run_backtest(config: dict, strategy_filter: str = None, refresh_cache: bool 
     df_symbols, df_prices, df_indicators, df_ranks, df_theme_constituents, trading_dates = \
         preload_data(database.engine, start_date, end_date, refresh_cache=refresh_cache)
 
+    # Calculate VXV/VIX Ratio (using ^VIX3M and ^VIX)
+    vxv_vix_series = {}
+    vix_row = df_symbols[df_symbols['ticker'] == '^VIX']
+    vix3m_row = df_symbols[df_symbols['ticker'] == '^VIX3M']
+    if not vix_row.empty and not vix3m_row.empty:
+        vix_id = vix_row.iloc[0]['id']
+        vix3m_id = vix3m_row.iloc[0]['id']
+        
+        vix_prices = df_prices[df_prices['symbol_id'] == vix_id].set_index('date')['close']
+        vix3m_prices = df_prices[df_prices['symbol_id'] == vix3m_id].set_index('date')['close']
+        
+        # Merge prices on date and calculate ratio
+        merged_vix = pd.DataFrame({'vix': vix_prices, 'vix3m': vix3m_prices}).dropna()
+        if not merged_vix.empty:
+            merged_vix['ratio'] = merged_vix['vix3m'] / merged_vix['vix']
+            vxv_vix_series = merged_vix['ratio'].to_dict()
+            print(f"  Calculated VXV/VIX (VIX3M/VIX) ratio for {len(vxv_vix_series)} dates.")
+        else:
+            print("  Warning: No overlapping date records found between ^VIX and ^VIX3M.")
+    else:
+        missing = []
+        if vix_row.empty: missing.append("^VIX")
+        if vix3m_row.empty: missing.append("^VIX3M")
+        print(f"  Warning: VXV/VIX Ratio cannot be calculated because {', '.join(missing)} symbol is missing in database.")
+    
+    exit_rules.vxv_vix_series = vxv_vix_series
+
     all_results = {}
     all_trades = {}
 

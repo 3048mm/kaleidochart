@@ -183,14 +183,14 @@ def get_scenario_summary(name: str):
 def get_scenario_equity(name: str):
     """
     Returns daily equity curve points from scenario_equity_curve.csv.
-    Enriches with SPY equity comparison and MarketTrendScore history dynamically.
+    Enriches with SPY, QQQ, TQQQ, SOXL equity comparison and MarketTrendScore history dynamically.
     """
     scenario_path = resolve_scenario_path(name)
     csv_file = os.path.join(scenario_path, "scenario_equity_curve.csv")
     
     if not os.path.exists(csv_file):
         raise HTTPException(status_code=404, detail="scenario_equity_curve.csv not found in the scenario directory")
-        
+    
     points = []
     try:
         with open(csv_file, "r", encoding="utf-8") as f:
@@ -209,6 +209,9 @@ def get_scenario_equity(name: str):
         
         # Enriched DB queries
         spy_prices_dict = {}
+        qqq_prices_dict = {}
+        tqqq_prices_dict = {}
+        soxl_prices_dict = {}
         trend_scores_dict = {}
         
         try:
@@ -217,11 +220,10 @@ def get_scenario_equity(name: str):
             
             db = SessionLocal()
             if db:
-                # 1. Fetch SPY daily price history for backtest period
+                # 1. Fetch SPY
                 spy_sym = db.query(Symbol).filter(Symbol.ticker == "SPY").first()
                 if not spy_sym:
                     spy_sym = db.query(Symbol).filter(Symbol.ticker == "^GSPC").first()
-                    
                 if spy_sym:
                     spy_prices = db.query(DailyPrice).filter(
                         DailyPrice.symbol_id == spy_sym.id,
@@ -229,7 +231,34 @@ def get_scenario_equity(name: str):
                     ).all()
                     spy_prices_dict = {str(p.date): float(p.close) for p in spy_prices}
                     
-                # 2. Fetch Market Signal Trend Scores for backtest period
+                # 2. Fetch QQQ
+                qqq_sym = db.query(Symbol).filter(Symbol.ticker == "QQQ").first()
+                if qqq_sym:
+                    qqq_prices = db.query(DailyPrice).filter(
+                        DailyPrice.symbol_id == qqq_sym.id,
+                        DailyPrice.date.between(start_date_str, end_date_str)
+                    ).all()
+                    qqq_prices_dict = {str(p.date): float(p.close) for p in qqq_prices}
+                    
+                # 3. Fetch TQQQ
+                tqqq_sym = db.query(Symbol).filter(Symbol.ticker == "TQQQ").first()
+                if tqqq_sym:
+                    tqqq_prices = db.query(DailyPrice).filter(
+                        DailyPrice.symbol_id == tqqq_sym.id,
+                        DailyPrice.date.between(start_date_str, end_date_str)
+                    ).all()
+                    tqqq_prices_dict = {str(p.date): float(p.close) for p in tqqq_prices}
+
+                # 4. Fetch SOXL
+                soxl_sym = db.query(Symbol).filter(Symbol.ticker == "SOXL").first()
+                if soxl_sym:
+                    soxl_prices = db.query(DailyPrice).filter(
+                        DailyPrice.symbol_id == soxl_sym.id,
+                        DailyPrice.date.between(start_date_str, end_date_str)
+                    ).all()
+                    soxl_prices_dict = {str(p.date): float(p.close) for p in soxl_prices}
+
+                # 5. Fetch Market Signal Trend Scores
                 signals = db.query(MarketSignal).filter(
                     MarketSignal.date.between(start_date_str, end_date_str)
                 ).all()
@@ -239,15 +268,23 @@ def get_scenario_equity(name: str):
         except Exception as db_ex:
             print(f"Database query skipped during get_scenario_equity: {db_ex}")
             
-        # Determine baseline SPY price to align chart start
+        # Determine baseline prices to align chart start
         spy_start_price = None
+        qqq_start_price = None
+        tqqq_start_price = None
+        soxl_start_price = None
         for row in rows:
             d_val = row["date"]
-            if d_val in spy_prices_dict:
+            if d_val in spy_prices_dict and spy_start_price is None:
                 spy_start_price = spy_prices_dict[d_val]
-                break
+            if d_val in qqq_prices_dict and qqq_start_price is None:
+                qqq_start_price = qqq_prices_dict[d_val]
+            if d_val in tqqq_prices_dict and tqqq_start_price is None:
+                tqqq_start_price = tqqq_prices_dict[d_val]
+            if d_val in soxl_prices_dict and soxl_start_price is None:
+                soxl_start_price = soxl_prices_dict[d_val]
                 
-        # Parse CSV rows and attach scaled SPY equity and Trend Scores
+        # Parse CSV rows and attach scaled equities and Trend Scores
         for row in rows:
             equity_key = "total_equity" if "total_equity" in row else "equity"
             cash_key = "cash"
@@ -261,8 +298,22 @@ def get_scenario_equity(name: str):
                 # Scale SPY equity matching portfolio start balance
                 spy_equity_val = initial_equity
                 if spy_start_price and date_val in spy_prices_dict:
-                    spy_close_val = spy_prices_dict[date_val]
-                    spy_equity_val = (spy_close_val / spy_start_price) * initial_equity
+                    spy_equity_val = (spy_prices_dict[date_val] / spy_start_price) * initial_equity
+                    
+                # Scale QQQ
+                qqq_equity_val = None
+                if qqq_start_price and date_val in qqq_prices_dict:
+                    qqq_equity_val = (qqq_prices_dict[date_val] / qqq_start_price) * initial_equity
+                    
+                # Scale TQQQ
+                tqqq_equity_val = None
+                if tqqq_start_price and date_val in tqqq_prices_dict:
+                    tqqq_equity_val = (tqqq_prices_dict[date_val] / tqqq_start_price) * initial_equity
+                    
+                # Scale SOXL
+                soxl_equity_val = None
+                if soxl_start_price and date_val in soxl_prices_dict:
+                    soxl_equity_val = (soxl_prices_dict[date_val] / soxl_start_price) * initial_equity
                     
                 # Market Trend Score (0.0 to 100.0)
                 trend_score_val = trend_scores_dict.get(date_val, 0.0)
@@ -272,6 +323,9 @@ def get_scenario_equity(name: str):
                     equity=eq_val,
                     cash=cash_val,
                     spy_equity=spy_equity_val,
+                    qqq_equity=qqq_equity_val,
+                    tqqq_equity=tqqq_equity_val,
+                    soxl_equity=soxl_equity_val,
                     trend_score=trend_score_val
                 ))
         return points

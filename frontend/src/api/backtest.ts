@@ -25,6 +25,9 @@ export interface BacktestEquityPoint {
   equity: number;
   cash: number;
   spy_equity?: number;
+  qqq_equity?: number;
+  tqqq_equity?: number;
+  soxl_equity?: number;
   trend_score?: number;
 }
 

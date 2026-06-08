@@ -72,7 +72,7 @@ def sync_phase_t2_prices(db, sheet_data: List[Dict], symbol_id_map: Dict, index_
     
     if not skip_fetch and update_needed:
         for i, (ticker, sid, current_max, category) in enumerate(update_needed):
-            is_index = (category == 'レバレッジ') or (category == 'Market')
+            is_index = category in ('レバレッジ', '市場', 'Market', '指標')
             base_start = index_start_date if is_index else default_start_date
             
             f_start = base_start

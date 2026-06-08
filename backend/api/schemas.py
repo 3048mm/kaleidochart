@@ -470,6 +470,9 @@ class BacktestEquityPoint(BaseModel):
     equity: float
     cash: float
     spy_equity: Optional[float] = None
+    qqq_equity: Optional[float] = None
+    tqqq_equity: Optional[float] = None
+    soxl_equity: Optional[float] = None
     trend_score: Optional[float] = None
 
 class BacktestTradeLogItem(BaseModel):

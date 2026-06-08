@@ -33,6 +33,9 @@ export const BacktestResultPage: React.FC = () => {
   const [showEquity, setShowEquity] = useState<boolean>(true);
   const [showCash, setShowCash] = useState<boolean>(true);
   const [showSpy, setShowSpy] = useState<boolean>(true);
+  const [showQqq, setShowQqq] = useState<boolean>(false);
+  const [showTqqq, setShowTqqq] = useState<boolean>(false);
+  const [showSoxl, setShowSoxl] = useState<boolean>(false);
   const [showTrendScore, setShowTrendScore] = useState<boolean>(false);
 
   // Filters for Trade Logs
@@ -183,6 +186,15 @@ export const BacktestResultPage: React.FC = () => {
       const initialSpy = (equityData.length > 0 && equityData[0].spy_equity) ? equityData[0].spy_equity : null;
       const spyReturn = (initialSpy && data.spy_equity) ? ((data.spy_equity - initialSpy) / initialSpy) * 100 : null;
 
+      const initialQqq = (equityData.length > 0 && equityData[0].qqq_equity) ? equityData[0].qqq_equity : null;
+      const qqqReturn = (initialQqq && data.qqq_equity) ? ((data.qqq_equity - initialQqq) / initialQqq) * 100 : null;
+
+      const initialTqqq = (equityData.length > 0 && equityData[0].tqqq_equity) ? equityData[0].tqqq_equity : null;
+      const tqqqReturn = (initialTqqq && data.tqqq_equity) ? ((data.tqqq_equity - initialTqqq) / initialTqqq) * 100 : null;
+
+      const initialSoxl = (equityData.length > 0 && equityData[0].soxl_equity) ? equityData[0].soxl_equity : null;
+      const soxlReturn = (initialSoxl && data.soxl_equity) ? ((data.soxl_equity - initialSoxl) / initialSoxl) * 100 : null;
+
       return (
         <div style={{
           background: 'rgba(15, 23, 42, 0.95)',
@@ -223,6 +235,33 @@ export const BacktestResultPage: React.FC = () => {
             </div>
           )}
 
+          {showQqq && data.qqq_equity !== undefined && data.qqq_equity !== null && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '20px', marginBottom: '4px' }}>
+              <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>QQQ Benchmark:</span>
+              <span style={{ color: '#f97316', fontWeight: 'bold', fontSize: '11px', fontVariantNumeric: 'tabular-nums' }}>
+                ${data.qqq_equity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </div>
+          )}
+
+          {showTqqq && data.tqqq_equity !== undefined && data.tqqq_equity !== null && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '20px', marginBottom: '4px' }}>
+              <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>TQQQ Benchmark:</span>
+              <span style={{ color: '#ec4899', fontWeight: 'bold', fontSize: '11px', fontVariantNumeric: 'tabular-nums' }}>
+                ${data.tqqq_equity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </div>
+          )}
+
+          {showSoxl && data.soxl_equity !== undefined && data.soxl_equity !== null && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '20px', marginBottom: '4px' }}>
+              <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>SOXL Benchmark:</span>
+              <span style={{ color: '#a855f7', fontWeight: 'bold', fontSize: '11px', fontVariantNumeric: 'tabular-nums' }}>
+                ${data.soxl_equity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </div>
+          )}
+
           {showTrendScore && data.trend_score !== undefined && data.trend_score !== null && (
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '20px', marginBottom: '4px' }}>
               <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>Trend Score:</span>
@@ -232,9 +271,9 @@ export const BacktestResultPage: React.FC = () => {
             </div>
           )}
 
-          <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '4px', marginTop: '4px' }}>
+          <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '4px', marginTop: '4px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
             {showEquity && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '20px', marginBottom: '2px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '20px' }}>
                 <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>Strategy Return:</span>
                 <span style={{ color: totalReturn >= 0 ? 'var(--accent-green)' : 'var(--accent-red)', fontWeight: 'bold', fontSize: '11px', fontVariantNumeric: 'tabular-nums' }}>
                   {totalReturn >= 0 ? '+' : ''}{totalReturn.toFixed(2)}%
@@ -246,6 +285,30 @@ export const BacktestResultPage: React.FC = () => {
                 <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>SPY Return:</span>
                 <span style={{ color: spyReturn >= 0 ? '#3b82f6' : 'var(--accent-red)', fontWeight: 'bold', fontSize: '11px', fontVariantNumeric: 'tabular-nums' }}>
                   {spyReturn >= 0 ? '+' : ''}{spyReturn.toFixed(2)}%
+                </span>
+              </div>
+            )}
+            {showQqq && qqqReturn !== null && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '20px' }}>
+                <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>QQQ Return:</span>
+                <span style={{ color: qqqReturn >= 0 ? '#f97316' : 'var(--accent-red)', fontWeight: 'bold', fontSize: '11px', fontVariantNumeric: 'tabular-nums' }}>
+                  {qqqReturn >= 0 ? '+' : ''}{qqqReturn.toFixed(2)}%
+                </span>
+              </div>
+            )}
+            {showTqqq && tqqqReturn !== null && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '20px' }}>
+                <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>TQQQ Return:</span>
+                <span style={{ color: tqqqReturn >= 0 ? '#ec4899' : 'var(--accent-red)', fontWeight: 'bold', fontSize: '11px', fontVariantNumeric: 'tabular-nums' }}>
+                  {tqqqReturn >= 0 ? '+' : ''}{tqqqReturn.toFixed(2)}%
+                </span>
+              </div>
+            )}
+            {showSoxl && soxlReturn !== null && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '20px' }}>
+                <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>SOXL Return:</span>
+                <span style={{ color: soxlReturn >= 0 ? '#a855f7' : 'var(--accent-red)', fontWeight: 'bold', fontSize: '11px', fontVariantNumeric: 'tabular-nums' }}>
+                  {soxlReturn >= 0 ? '+' : ''}{soxlReturn.toFixed(2)}%
                 </span>
               </div>
             )}
@@ -442,6 +505,90 @@ export const BacktestResultPage: React.FC = () => {
                   SPY Benchmark
                 </button>
                 <button
+                  onClick={() => setShowQqq(!showQqq)}
+                  style={{
+                    background: showQqq ? 'rgba(249, 115, 22, 0.15)' : 'rgba(255, 255, 255, 0.02)',
+                    border: `1px solid ${showQqq ? '#f97316' : 'var(--border)'}`,
+                    color: showQqq ? '#f97316' : 'var(--text-muted)',
+                    padding: '5px 12px',
+                    borderRadius: '20px',
+                    fontSize: '11px',
+                    fontWeight: '600',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    outline: 'none'
+                  }}
+                >
+                  <span style={{ 
+                    width: '6px', 
+                    height: '6px', 
+                    borderRadius: '50%', 
+                    backgroundColor: showQqq ? '#f97316' : 'transparent',
+                    border: `1px solid ${showQqq ? 'transparent' : 'var(--text-muted)'}`,
+                    display: 'inline-block' 
+                  }} />
+                  QQQ Benchmark
+                </button>
+                <button
+                  onClick={() => setShowTqqq(!showTqqq)}
+                  style={{
+                    background: showTqqq ? 'rgba(236, 72, 153, 0.15)' : 'rgba(255, 255, 255, 0.02)',
+                    border: `1px solid ${showTqqq ? '#ec4899' : 'var(--border)'}`,
+                    color: showTqqq ? '#ec4899' : 'var(--text-muted)',
+                    padding: '5px 12px',
+                    borderRadius: '20px',
+                    fontSize: '11px',
+                    fontWeight: '600',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    outline: 'none'
+                  }}
+                >
+                  <span style={{ 
+                    width: '6px', 
+                    height: '6px', 
+                    borderRadius: '50%', 
+                    backgroundColor: showTqqq ? '#ec4899' : 'transparent',
+                    border: `1px solid ${showTqqq ? 'transparent' : 'var(--text-muted)'}`,
+                    display: 'inline-block' 
+                  }} />
+                  TQQQ Benchmark
+                </button>
+                <button
+                  onClick={() => setShowSoxl(!showSoxl)}
+                  style={{
+                    background: showSoxl ? 'rgba(168, 85, 247, 0.15)' : 'rgba(255, 255, 255, 0.02)',
+                    border: `1px solid ${showSoxl ? '#a855f7' : 'var(--border)'}`,
+                    color: showSoxl ? '#a855f7' : 'var(--text-muted)',
+                    padding: '5px 12px',
+                    borderRadius: '20px',
+                    fontSize: '11px',
+                    fontWeight: '600',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    outline: 'none'
+                  }}
+                >
+                  <span style={{ 
+                    width: '6px', 
+                    height: '6px', 
+                    borderRadius: '50%', 
+                    backgroundColor: showSoxl ? '#a855f7' : 'transparent',
+                    border: `1px solid ${showSoxl ? 'transparent' : 'var(--text-muted)'}`,
+                    display: 'inline-block' 
+                  }} />
+                  SOXL Benchmark
+                </button>
+                <button
                   onClick={() => setShowTrendScore(!showTrendScore)}
                   style={{
                     background: showTrendScore ? 'rgba(245, 158, 11, 0.15)' : 'rgba(255, 255, 255, 0.02)',
@@ -546,6 +693,42 @@ export const BacktestResultPage: React.FC = () => {
                         type="monotone" 
                         dataKey="spy_equity" 
                         stroke="#3b82f6" 
+                        strokeDasharray="3 3" 
+                        strokeWidth={1.5}
+                        dot={false}
+                      />
+                    )}
+                    {showQqq && (
+                      <Line 
+                        yAxisId="left"
+                        name="QQQ (Nasdaq 100 ベンチマーク)"
+                        type="monotone" 
+                        dataKey="qqq_equity" 
+                        stroke="#f97316" 
+                        strokeDasharray="3 3" 
+                        strokeWidth={1.5}
+                        dot={false}
+                      />
+                    )}
+                    {showTqqq && (
+                      <Line 
+                        yAxisId="left"
+                        name="TQQQ (Nasdaq 100 レバレッジ3倍)"
+                        type="monotone" 
+                        dataKey="tqqq_equity" 
+                        stroke="#ec4899" 
+                        strokeDasharray="3 3" 
+                        strokeWidth={1.5}
+                        dot={false}
+                      />
+                    )}
+                    {showSoxl && (
+                      <Line 
+                        yAxisId="left"
+                        name="SOXL (半導体レバレッジ3倍)"
+                        type="monotone" 
+                        dataKey="soxl_equity" 
+                        stroke="#a855f7" 
                         strokeDasharray="3 3" 
                         strokeWidth={1.5}
                         dot={false}
