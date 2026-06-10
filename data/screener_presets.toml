@@ -43,14 +43,14 @@ id = "momentum_breakout"
 name = "momentum_breakout"
 subname = "出来高を伴った急騰銘柄"
 group = "Check"
-special = "rs_rank_21_gt_63"
+special = "is_rs_ratio_rank_e21_gt_e63"
 use_hysteresis = false
 [rise.filters]
 min_change_1d_pct = 7.0
-min_change_intraday_pct = 7.0
+min_change_oc_pct = 7.0
 min_vol_surge_21 = 2.8
 min_adr_pct_21 = 6.0
-max_dist_sma50_atr = 6.5
+max_sma50_atr_mult = 6.5
 min_market_cap = 1e8
 #min_avg_hits_per_day = 0.1
 #min_hit_rate_pct = 1.0
@@ -74,13 +74,13 @@ id = "thema_momentum"
 name = "Theme Momentum"
 subname = "強いテーマに属する銘柄のモメンタム"
 group = "Check"
-special = "theme_rs21_gt_63"
+special = "is_theme_rs_ratio_e21_gt_e63"
 use_hysteresis = false
 [rise.filters]
 min_change_1d_pct = 7.0
 min_vol_surge_21 = 2.8
 min_adr_pct_21 = 6.0
-max_dist_sma50_atr = 7.0
+max_sma50_atr_mult = 7.0
 min_market_cap = 5e6
 # [backtest results]
 # alpha 2.956
@@ -121,10 +121,10 @@ name = "VCP"
 subtitle = "ボラリティ収縮"
 group = "Check"
 [rise.filters]
-#trend_template_ok = 1           # ミネルヴィニのトレンドテンプレート適合
+#is_trend_template = true           # ミネルヴィニのトレンドテンプレート適合
 #max_vcr = 0.7                   # 収縮度合い（0.5に近いほどタイト）
 #max_adr_pct_21 = 1.5            # 21日平均の値幅が3.5%以内（静かな動き）
-#max_pct_from_52w_high = 0.0     # 52週高値から10%以内の位置
+#max_dist_52w_high_pct = 0.0     # 52週高値から10%以内の位置
 #min_up_down_vol_ratio_50 = 1.5  # 出来高比率（買い集め傾向）
 #min_market_cap = 1e9            # 時価総額300Mドル以上
 # [backtest results]
@@ -139,13 +139,13 @@ group = "Check"
 # total_trades 1338
 # win_rate 52.167414050822124
 #------------------------------
-trend_template_ok = 1 
+is_trend_template = true 
 max_vcr = 0.65 
 max_adr_pct_21 = 1.5 
-max_pct_from_52w_high = 5.0 
+max_dist_52w_high_pct = 5.0 
 min_up_down_vol_ratio_50 = 1.5 
 min_market_cap = 1e9 
-close_gt_ema63 = true
+is_close_gt_ema63 = true
 # [backtest results]
 # alpha 1.447
 # avg_gain 1.622
@@ -172,7 +172,7 @@ use_hysteresis = false
 [rise.filters]
 min_vol_surge_21 = 1.6 
 min_adr_pct_21 = 3.5 
-max_dist_sma50_atr = 5.0 
+max_sma50_atr_mult = 5.0 
 min_market_cap = 1e8
 # [backtest results]
 # port_cagr 221.56
@@ -206,8 +206,8 @@ group = "Check"
 use_hysteresis = false
 [rise.filters]
 min_change_1d_pct = 4.0
-min_rel_vol_vs_spy_21 = 1.0
-max_dist_sma50_atr = 6.0
+min_vol_surge_rel_spy_21 = 1.0
+max_sma50_atr_mult = 6.0
 min_adr_pct_21 = 4.0
 min_market_cap = 1e9
 
@@ -220,11 +220,11 @@ subname = "出来高急増"
 group = "Check"
 [rise.filters]
 min_vol_surge_21 = 1.5
-min_rel_vol_vs_spy_21 = 1.2
+min_vol_surge_rel_spy_21 = 1.2
 min_change_1d_pct = 0.0
 min_adr_pct_21 = 4.0
 min_market_cap = 1e9
-max_dist_sma50_atr = 6.0
+max_sma50_atr_mult = 6.0
 
 
 [[rise]]
@@ -233,12 +233,12 @@ name = "21EMA Pullback"
 subtitle = "21EMA 押し目買い"
 group = "Check"
 [rise.filters]
-min_dist_21ema_pct = -4.0
-max_dist_21ema_pct = 0.5
-max_dist_sma50_atr = 2.0 
-min_rs_ratio_21_rank = 0.5 
+min_dist_ema21_pct = -4.0
+max_dist_ema21_pct = 0.5
+max_sma50_atr_mult = 2.0 
+min_rs_ratio_rank_e21 = 0.5 
 min_market_cap = 3e8
-trend_template_ok = 1
+is_trend_template = true
 max_vol_surge_21 = 0.8
 min_up_down_vol_ratio_50 = 1.5
 # [backtest results]
@@ -254,11 +254,11 @@ name = "Momentum 99"
 subtitle = "RS Rank Top1% & 上昇トレンド"
 group = "Check"
 [rise.filters]
-min_rs_ratio_21_rank = 0.99
+min_rs_ratio_rank_e21 = 0.99
 min_adr_pct_21 = 3.0
-max_dist_sma50_atr = 5.0
+max_sma50_atr_mult = 5.0
 min_market_cap = 3e8
-trend_template_ok = 1
+is_trend_template = true
 # [backtest results]
 # port_cagr 41.41
 # port_vs_spy 34.04
@@ -280,7 +280,7 @@ id = "climax_top"
 name = "Climax Top"
 subname = "クライマックストップ・過熱警戒"
 group = "Overhead sign"
-expression = "dist_sma50_atr > 3 or td9 == -9"
+expression = "sma50_atr_mult > 3 or td9 == -9"
 
 [[rise]]
 id = "dist_sma50_atr_8"
@@ -288,7 +288,7 @@ name = "SMA50/ATR%"
 subtitle = "> 8%"
 group = "Overhead sign"
 [rise.filters]
-min_dist_sma50_atr = 8.0
+min_sma50_atr_mult = 8.0
 
 [[rise]]
 id = "td9_overhead"
@@ -315,7 +315,7 @@ min_vol_surge_21 = 1.0
 id = "trend_breakdown"
 name = "Trend Breakdown"
 group = "Warning"
-expression = "trend_template_ok == 0 and rs_ratio_63 < -1.0 and sma_50 < sma_200"
+expression = "is_trend_template == false and rs_ratio_e63 < -1.0 and sma_50 < sma_200"
 
 [[fall]]
 id = "high_vol_dist"
@@ -333,7 +333,7 @@ max_change_1d_pct = -2.0
 id = "oversold_rebound"
 name = "Oversold Rebound"
 group = "Rebound sign"
-expression = "td9 == 9 and rs_ratio_14 < 0.2"
+expression = "td9 == 9 and rs_ratio_e14 < 0.2"
 
 [[fall]]
 id = "td9_rebound"

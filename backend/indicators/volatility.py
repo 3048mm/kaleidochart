@@ -21,7 +21,7 @@ def _td9_kernel(close_values, compare_values):
 
 def calc_volatility(df: pd.DataFrame) -> pd.DataFrame:
     """Calculate Volatility Indicators (ATR, ADR, VCR, TD9, SMA50 Distance).
-    Requires 'sma_50' column to be present for dist_sma50_atr.
+    Requires 'sma_50' column to be present for sma50_atr_mult.
     """
     close = df['close']
     high = df['high']
@@ -45,13 +45,13 @@ def calc_volatility(df: pd.DataFrame) -> pd.DataFrame:
 
     # 5. Distance from SMA50 in ATR multiples
     if 'sma_50' in df.columns:
-        df['dist_sma50_atr'] = np.where(
+        df['sma50_atr_mult'] = np.where(
             df['atr_pct_14'].isna() | (df['atr_pct_14'] == 0) | df['sma_50'].isna() | (df['sma_50'] == 0),
             np.nan,
             ((close / df['sma_50'] * 100) - 100) / df['atr_pct_14']
         )
     else:
-        df['dist_sma50_atr'] = np.nan
+        df['sma50_atr_mult'] = np.nan
 
     # 6. TD Sequential (TD9)
     close_vals = close.values

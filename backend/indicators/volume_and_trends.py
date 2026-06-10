@@ -19,20 +19,20 @@ def calc_volume_and_trends(df: pd.DataFrame) -> pd.DataFrame:
         spy_vol_surge = np.where(
             spy_vol_sma_21 == 0, np.nan, df['spy_volume'] / spy_vol_sma_21
         )
-        df['rel_vol_vs_spy_21'] = np.where(
+        df['vol_surge_rel_spy_21'] = np.where(
             (spy_vol_surge == 0) | (pd.isna(spy_vol_surge)), np.nan,
             df['vol_surge_21'] / spy_vol_surge
         )
     else:
         df['vol_surge_21'] = np.nan
-        df['rel_vol_vs_spy_21'] = np.nan
+        df['vol_surge_rel_spy_21'] = np.nan
 
     # 8. % from N-day Highs
     max_63d  = high.rolling(window=63,  min_periods=1).max()
     max_252d = high.rolling(window=252, min_periods=1).max()
 
-    df['pct_from_63d_high']  = np.where(max_63d  == 0, np.nan, (close - max_63d)  / max_63d  * 100)
-    df['pct_from_52w_high']  = np.where(max_252d == 0, np.nan, (close - max_252d) / max_252d * 100)
+    df['dist_63d_high_pct']  = np.where(max_63d  == 0, np.nan, (close - max_63d)  / max_63d  * 100)
+    df['dist_52w_high_pct']  = np.where(max_252d == 0, np.nan, (close - max_252d) / max_252d * 100)
 
     # 9. Up/Down Volume Ratio (50-day)
     close_change = close.diff()
@@ -53,13 +53,13 @@ def calc_volume_and_trends(df: pd.DataFrame) -> pd.DataFrame:
         cond4 = df['sma_200'] >= sma200_20d_ago
         cond5 = close >= (max_252d * 0.70)  # within 30% of 52w high
 
-        df['trend_template_ok'] = np.where(
+        df['is_trend_template'] = np.where(
             sma200_20d_ago.isna(), 
             None,
             np.where(cond1 & cond2 & cond3 & cond4 & cond5, 1, 0)
         )
     else:
-        df['trend_template_ok'] = None
+        df['is_trend_template'] = None
 
     # 13. Volume Accumulation Days (5-day)
     # Count of days in the last 5 days where:

@@ -35,12 +35,22 @@ def sync_phase_t4_ranks(db, spy_latest_date: Optional[date], logger: logging.Log
     total_dates = len(gap_dates)
     logger.info(f"Phase 4: Processing relative ranks for {total_dates} dates.")
     
+    # indicators テーブルの計算元カラム → relative_ranks テーブルのランクカラムのマッピング
+    # (indicator_col, rank_col) の順
     indicators_to_rank = [
-        'relative_strength_spy', 
-        'rs_ratio_14', 'rs_ratio_21', 'rs_ratio_63', 
-        'rs_momentum_14', 'rs_momentum_21', 'rs_momentum_63', 
-        'rs_condition_14', 'rs_condition_21', 'rs_condition_63',
-        'rs_roc_ema_14', 'rs_roc_ema_21', 'rs_roc_ema_63'
+        ('rs_value',       'rs_value_rank'),
+        ('rs_ratio_e14',   'rs_ratio_rank_e14'),
+        ('rs_ratio_e21',   'rs_ratio_rank_e21'),
+        ('rs_ratio_e63',   'rs_ratio_rank_e63'),
+        ('rs_momentum_e14','rs_momentum_rank_e14'),
+        ('rs_momentum_e21','rs_momentum_rank_e21'),
+        ('rs_momentum_e63','rs_momentum_rank_e63'),
+        ('rs_trend_s14',   'rs_trend_rank_s14'),
+        ('rs_trend_s21',   'rs_trend_rank_s21'),
+        ('rs_trend_s63',   'rs_trend_rank_s63'),
+        ('rs_roc_ema_14',  'rs_roc_ema_rank_e14'),
+        ('rs_roc_ema_21',  'rs_roc_ema_rank_e21'),
+        ('rs_roc_ema_63',  'rs_roc_ema_rank_e63'),
     ]
     
     # Optimize for massive DML on SATA HDD:
@@ -50,16 +60,17 @@ def sync_phase_t4_ranks(db, spy_latest_date: Optional[date], logger: logging.Log
     
     # Build single query to insert all indicators at once (wide format)
     rank_sql_parts = []
-    for ind in indicators_to_rank:
-        rank_sql_parts.append(f"PERCENT_RANK() OVER(PARTITION BY s.category ORDER BY i.{ind} ASC) AS {ind}")
+    for ind_col, rank_col in indicators_to_rank:
+        rank_sql_parts.append(f"PERCENT_RANK() OVER(PARTITION BY s.category ORDER BY i.{ind_col} ASC) AS {rank_col}")
     
-    cols_joined = ", ".join(indicators_to_rank)
+    rank_cols_joined = ", ".join(r for _, r in indicators_to_rank)
     ranks_joined = ", ".join(rank_sql_parts)
+
     
     query_template = f"""
         INSERT INTO relative_ranks (
             symbol_id, date, group_name,
-            {cols_joined}
+            {rank_cols_joined}
         )
         SELECT
             i.symbol_id,

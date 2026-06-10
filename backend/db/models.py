@@ -107,53 +107,53 @@ class Indicator(Base):
     td9              = Column(Integer)   # -9 to +9
     atr_14           = Column(Float)     # ATR raw value
     atr_pct_14       = Column(Float)     # ATR% = ATR/Close*100
-    adr_pct_21       = Column(Float)     # NEW: Average Daily Range %
-    change_1d_pct    = Column(Float)     # NEW: Daily Change % (Close-to-Close)
-    change_1w_pct    = Column(Float)     # NEW: Weekly Change % (5-day)
-    change_1m_pct    = Column(Float)     # NEW: Monthly Change % (20-day)
-    dist_sma50_atr   = Column(Float)     # NEW: (Close - SMA50) / ATR14
+    adr_pct_21       = Column(Float)     # Average Daily Range %
+    change_1d_pct    = Column(Float)     # Daily Change % (Close-to-Close)
+    change_1w_pct    = Column(Float)     # Weekly Change % (5-day)
+    change_1m_pct    = Column(Float)     # Monthly Change % (20-day)
+    sma50_atr_mult   = Column(Float)     # (Close% from SMA50) / ATR% = ATR-multiple distance from SMA50
     
     # --- Fundamentals & Size ---
     # market_cap moved to DailyPrice
     
     # --- Relative Strength (vs SPY) ---
-    relative_strength_spy = Column(Float)
-    rs_condition_14   = Column(Float)     # NEW: RS-Condition (RS / SMA14(RS))
-    rs_condition_21   = Column(Float)     # NEW: RS-Condition (RS / SMA21(RS))
-    rs_condition_63   = Column(Float)     # NEW: RS-Condition (RS / SMA63(RS))
-    rs_ema_5          = Column(Float)     # NEW: 5-day EMA of Relative Strength (for smoothing rs_condition)
-    rs_ema_14         = Column(Float)     # NEW: EMA of Relative Strength (Smoothing for RRG)
-    rs_ema_21         = Column(Float)     # NEW: EMA of Relative Strength (Smoothing for RRG)
-    rs_ema_63         = Column(Float)     # NEW: EMA of Relative Strength (Smoothing for RRG)
-    rs_momentum_14   = Column(Float)     # NEW: RRG RS-Momentum (Z-score of smoothed RS-Ratio)
-    rs_momentum_21   = Column(Float)     # NEW: RRG RS-Momentum (Z-score of smoothed RS-Ratio)
-    rs_momentum_63   = Column(Float)     # NEW: RRG RS-Momentum (Z-score of smoothed RS-Ratio)
-    rs_ratio_14      = Column(Float)     # NEW: RS-Ratio (Z-score of smoothed RS over 14 days)
-    rs_ratio_21      = Column(Float)     # NEW: RS-Ratio (Z-score of smoothed RS over 21 days)
-    rs_ratio_63      = Column(Float)     # NEW: RS-Ratio (Z-score of smoothed RS over 63 days)
-    rs_roc_ema_14    = Column(Float)     # NEW: EMA of the 14-day ROC of RS-Ratio
-    rs_roc_ema_21    = Column(Float)     # NEW: EMA of the 14-day ROC of RS-Ratio (smoothed by 21)
-    rs_roc_ema_63    = Column(Float)     # NEW: EMA of the 14-day ROC of RS-Ratio (smoothed by 63)
+    rs_value          = Column(Float)     # Raw RS: close / spy_close
+    rs_trend_s14      = Column(Float)     # RS Trend: rs_value_e5 / SMA(rs_value, 14)
+    rs_trend_s21      = Column(Float)     # RS Trend: rs_value_e5 / SMA(rs_value, 21)
+    rs_trend_s63      = Column(Float)     # RS Trend: rs_value_e5 / SMA(rs_value, 63)
+    rs_value_e5       = Column(Float)     # 5-day EMA of rs_value (smoothing for rs_trend)
+    rs_value_e14      = Column(Float)     # 14-day EMA of rs_value (RRG pre-processing)
+    rs_value_e21      = Column(Float)     # 21-day EMA of rs_value (RRG pre-processing)
+    rs_value_e63      = Column(Float)     # 63-day EMA of rs_value (RRG pre-processing)
+    rs_momentum_e14  = Column(Float)     # RRG RS-Momentum (Z-score of smoothed RS-Ratio, EMA-14)
+    rs_momentum_e21  = Column(Float)     # RRG RS-Momentum (Z-score of smoothed RS-Ratio, EMA-21)
+    rs_momentum_e63  = Column(Float)     # RRG RS-Momentum (Z-score of smoothed RS-Ratio, EMA-63)
+    rs_ratio_e14     = Column(Float)     # RS-Ratio: Z-score of rs_value_e14 (RRG X-axis, 14d)
+    rs_ratio_e21     = Column(Float)     # RS-Ratio: Z-score of rs_value_e21 (RRG X-axis, 21d)
+    rs_ratio_e63     = Column(Float)     # RS-Ratio: Z-score of rs_value_e63 (RRG X-axis, 63d)
+    rs_roc_ema_14    = Column(Float)     # EMA of the 14-day ROC of rs_ratio_e14 (intermediate)
+    rs_roc_ema_21    = Column(Float)     # EMA of the 14-day ROC of rs_ratio_e21 (intermediate)
+    rs_roc_ema_63    = Column(Float)     # EMA of the 14-day ROC of rs_ratio_e63 (intermediate)
     
     # --- Volume ---
-    vol_surge_21     = Column(Float)     # NEW: Volume / SMA(Volume,21)
-    rel_vol_vs_spy_21 = Column(Float)    # NEW: vol_surge_21 / SPY_vol_surge_21
-    up_down_vol_ratio_50 = Column(Float) # NEW: Sum(Vol on Up days) / Sum(Vol on Down days)
-    vol_accum_days_5 = Column(Integer)   # NEW: 5-day volume accumulation days (Close > PrevClose and Vol > 1.1x SMA21)
+    vol_surge_21          = Column(Float)    # Volume / SMA(Volume, 21)
+    vol_surge_rel_spy_21  = Column(Float)    # vol_surge_21 / SPY_vol_surge_21
+    up_down_vol_ratio_50  = Column(Float)    # Sum(Vol on Up days) / Sum(Vol on Down days, 50d)
+    vol_accum_days_5      = Column(Integer)  # Accumulation days in last 5d (Close>Prev & Vol>1.1x SMA21)
     
     # --- Price Range from Highs ---
-    pct_from_63d_high  = Column(Float)   # NEW: % below 63-day high (swing)
-    pct_from_52w_high  = Column(Float)   # NEW: % below 52-week / 252-day high (long)
+    dist_63d_high_pct  = Column(Float)   # % below 63-day high (swing)
+    dist_52w_high_pct  = Column(Float)   # % below 52-week / 252-day high (long)
     
     # --- RS Leading Signals ---
-    rs_blue_dot        = Column(SmallInteger) # NEW: 1 if RS at 252d high AND price is NOT at 252d high
-    rs_red_dot         = Column(SmallInteger) # NEW: 1 if RS at 252d low AND price is NOT at 252d low
+    is_rs_blue_dot     = Column(SmallInteger) # 1 if RS at 252d high AND price is NOT at 252d high
+    is_rs_red_dot      = Column(SmallInteger) # 1 if RS at 252d low AND price is NOT at 252d low
 
     # --- Volatility Contraction ---
-    vcr                = Column(Float)        # NEW: Volatility Contraction Ratio = ATR(10) / ATR(50)
+    vcr                = Column(Float)        # Volatility Contraction Ratio = ATR(10) / ATR(50)
 
     # --- Trend Quality ---
-    trend_template_ok  = Column(SmallInteger)  # NEW: 1 if all Trend Template conditions met
+    is_trend_template  = Column(SmallInteger)  # 1 if all Minervini Trend Template conditions met
     
     __table_args__ = (
         UniqueConstraint('symbol_id', 'date', name='uq_indicators_symbol_date'),
@@ -169,20 +169,20 @@ class RelativeRank(Base):
     date = Column(Date, nullable=False, index=True)
     group_name = Column(String, nullable=False)
     
-    # Ranks for different indicators (0.00 to 1.00)
-    relative_strength_spy = Column(Float)
-    rs_ratio_14 = Column(Float)
-    rs_ratio_21 = Column(Float)
-    rs_ratio_63 = Column(Float)
-    rs_momentum_14 = Column(Float)
-    rs_momentum_21 = Column(Float)
-    rs_momentum_63 = Column(Float)
-    rs_condition_14 = Column(Float)
-    rs_condition_21 = Column(Float)
-    rs_condition_63 = Column(Float)
-    rs_roc_ema_14 = Column(Float)
-    rs_roc_ema_21 = Column(Float)
-    rs_roc_ema_63 = Column(Float)
+    # Percentile ranks (0.00 to 1.00) within the group
+    rs_value_rank        = Column(Float)  # rank of rs_value
+    rs_ratio_rank_e14    = Column(Float)  # rank of rs_ratio_e14
+    rs_ratio_rank_e21    = Column(Float)  # rank of rs_ratio_e21
+    rs_ratio_rank_e63    = Column(Float)  # rank of rs_ratio_e63
+    rs_momentum_rank_e14 = Column(Float)  # rank of rs_momentum_e14
+    rs_momentum_rank_e21 = Column(Float)  # rank of rs_momentum_e21
+    rs_momentum_rank_e63 = Column(Float)  # rank of rs_momentum_e63
+    rs_trend_rank_s14    = Column(Float)  # rank of rs_trend_s14
+    rs_trend_rank_s21    = Column(Float)  # rank of rs_trend_s21
+    rs_trend_rank_s63    = Column(Float)  # rank of rs_trend_s63
+    rs_roc_ema_rank_e14  = Column(Float)  # rank of rs_roc_ema_14
+    rs_roc_ema_rank_e21  = Column(Float)  # rank of rs_roc_ema_21
+    rs_roc_ema_rank_e63  = Column(Float)  # rank of rs_roc_ema_63
     
     __table_args__ = (
         UniqueConstraint('symbol_id', 'date', 'group_name', name='uq_relative_ranks_symbol_date_group'),

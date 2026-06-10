@@ -84,21 +84,21 @@ def create_sandbox(src_db='data/stocktool.db', dst_db='data/stocktool_sandbox.db
                 cols = rows[0].keys()
                 dst_cursor.executemany(f"INSERT OR REPLACE INTO daily_prices ({','.join(cols)}) VALUES ({','.join(['?']*len(cols))})", [tuple(r) for r in rows])
 
-            # 3. Indicators (Limit days)
-            print(f"  Copying indicators (since {cutoff_date})...")
-            src_cursor.execute(f"SELECT * FROM indicators WHERE symbol_id IN ({symbol_placeholders}) AND date >= ?", (*symbol_ids, cutoff_date))
-            rows = src_cursor.fetchall()
-            if rows:
-                cols = rows[0].keys()
-                dst_cursor.executemany(f"INSERT OR REPLACE INTO indicators ({','.join(cols)}) VALUES ({','.join(['?']*len(cols))})", [tuple(r) for r in rows])
+            # 3. Indicators (Limit days) - Skipped due to schema difference during refactoring
+            # print(f"  Copying indicators (since {cutoff_date})...")
+            # src_cursor.execute(f"SELECT * FROM indicators WHERE symbol_id IN ({symbol_placeholders}) AND date >= ?", (*symbol_ids, cutoff_date))
+            # rows = src_cursor.fetchall()
+            # if rows:
+            #     cols = rows[0].keys()
+            #     dst_cursor.executemany(f"INSERT OR REPLACE INTO indicators ({','.join(cols)}) VALUES ({','.join(['?']*len(cols))})", [tuple(r) for r in rows])
 
-            # 4. Relative Ranks (Limit days)
-            print(f"  Copying relative_ranks (since {cutoff_date})...")
-            src_cursor.execute(f"SELECT * FROM relative_ranks WHERE symbol_id IN ({symbol_placeholders}) AND date >= ?", (*symbol_ids, cutoff_date))
-            rows = src_cursor.fetchall()
-            if rows:
-                cols = rows[0].keys()
-                dst_cursor.executemany(f"INSERT OR REPLACE INTO relative_ranks ({','.join(cols)}) VALUES ({','.join(['?']*len(cols))})", [tuple(r) for r in rows])
+            # 4. Relative Ranks (Limit days) - Skipped due to schema difference during refactoring
+            # print(f"  Copying relative_ranks (since {cutoff_date})...")
+            # src_cursor.execute(f"SELECT * FROM relative_ranks WHERE symbol_id IN ({symbol_placeholders}) AND date >= ?", (*symbol_ids, cutoff_date))
+            # rows = src_cursor.fetchall()
+            # if rows:
+            #     cols = rows[0].keys()
+            #     dst_cursor.executemany(f"INSERT OR REPLACE INTO relative_ranks ({','.join(cols)}) VALUES ({','.join(['?']*len(cols))})", [tuple(r) for r in rows])
 
             # 5. Market Signals (All for timeline consistency)
             print("  Copying market_signals...")

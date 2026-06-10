@@ -46,33 +46,33 @@ class ChartDataPoint(BaseModel):
     change_1d_pct: Optional[float] = None
     change_1w_pct: Optional[float] = None
     change_1m_pct: Optional[float] = None
-    dist_sma50_atr: Optional[float] = None
+    sma50_atr_mult: Optional[float] = None
     
-    relative_strength_spy: Optional[float] = None
-    rs_condition_14: Optional[float] = None
-    rs_condition_21: Optional[float] = None
-    rs_condition_63: Optional[float] = None
-    rs_momentum_14: Optional[float] = None
-    rs_momentum_21: Optional[float] = None
-    rs_momentum_63: Optional[float] = None
-    rs_ema_5: Optional[float] = None
-    rs_ema_14: Optional[float] = None
-    rs_ema_21: Optional[float] = None
-    rs_ema_63: Optional[float] = None
-    rs_ratio_14: Optional[float] = None
-    rs_ratio_21: Optional[float] = None
-    rs_ratio_63: Optional[float] = None
+    rs_value: Optional[float] = None
+    rs_trend_s14: Optional[float] = None
+    rs_trend_s21: Optional[float] = None
+    rs_trend_s63: Optional[float] = None
+    rs_momentum_e14: Optional[float] = None
+    rs_momentum_e21: Optional[float] = None
+    rs_momentum_e63: Optional[float] = None
+    rs_value_e5: Optional[float] = None
+    rs_value_e14: Optional[float] = None
+    rs_value_e21: Optional[float] = None
+    rs_value_e63: Optional[float] = None
+    rs_ratio_e14: Optional[float] = None
+    rs_ratio_e21: Optional[float] = None
+    rs_ratio_e63: Optional[float] = None
     
     vol_surge_21: Optional[float] = None
-    rel_vol_vs_spy_21: Optional[float] = None
-    pct_from_63d_high: Optional[float] = None
-    pct_from_52w_high: Optional[float] = None
-    trend_template_ok: Optional[int] = None
+    vol_surge_rel_spy_21: Optional[float] = None
+    dist_63d_high_pct: Optional[float] = None
+    dist_52w_high_pct: Optional[float] = None
+    is_trend_template: Optional[int] = None
     market_cap: Optional[float] = None
     
     up_down_vol_ratio_50: Optional[float] = None
-    rs_blue_dot: Optional[int] = None
-    rs_red_dot: Optional[int] = None
+    is_rs_blue_dot: Optional[int] = None
+    is_rs_red_dot: Optional[int] = None
     vcr: Optional[float] = None
     vol_accum_days_5: Optional[int] = None
     
@@ -81,15 +81,15 @@ class ChartDataPoint(BaseModel):
     bb_lower: Optional[float] = None
     
     # Optional Relative Ranks
-    rank_rs_ratio_14: Optional[float] = None
-    rank_rs_ratio_21: Optional[float] = None
-    rank_rs_ratio_63: Optional[float] = None
-    rank_rs_momentum_14: Optional[float] = None
-    rank_rs_momentum_21: Optional[float] = None
-    rank_rs_momentum_63: Optional[float] = None
-    rank_rs_condition_14: Optional[float] = None
-    rank_rs_condition_21: Optional[float] = None
-    rank_rs_condition_63: Optional[float] = None
+    rs_ratio_rank_e14: Optional[float] = None
+    rs_ratio_rank_e21: Optional[float] = None
+    rs_ratio_rank_e63: Optional[float] = None
+    rs_momentum_rank_e14: Optional[float] = None
+    rs_momentum_rank_e21: Optional[float] = None
+    rs_momentum_rank_e63: Optional[float] = None
+    rs_trend_rank_s14: Optional[float] = None
+    rs_trend_rank_s21: Optional[float] = None
+    rs_trend_rank_s63: Optional[float] = None
 
 class ChartSymbolMeta(BaseModel):
     id: int
@@ -125,24 +125,24 @@ class DashboardPanelItem(BaseModel):
     dist_21ema_pct: float = 0.0
     sparkline: List[float] = [] # Array of normalized logic values for the SVG chart
     intensity_score: float = 0.0 # 0 to 1 scaling factor 
-    rs_ratio_21_rank: float = 0.0
-    rs_ratio_63_rank: float = 0.0
-    rs_ratio_14_rank: float = 0.0
-    rs_momentum_21_rank: float = 0.0
-    rs_momentum_63_rank: float = 0.0
-    rs_ratio_21: Optional[float] = None
-    rs_ratio_63: Optional[float] = None
-    rs_momentum_21: Optional[float] = None
+    rs_ratio_rank_e21: float = 0.0
+    rs_ratio_rank_e63: float = 0.0
+    rs_ratio_rank_e14: float = 0.0
+    rs_momentum_rank_e21: float = 0.0
+    rs_momentum_rank_e63: float = 0.0
+    rs_ratio_e21: Optional[float] = None
+    rs_ratio_e63: Optional[float] = None
+    rs_momentum_e21: Optional[float] = None
 
 class ScreenerResultItem(DashboardPanelItem):
     vol_surge_21: Optional[float] = None
     adr_pct_21: Optional[float] = None
-    dist_sma50_atr: Optional[float] = None
-    trend_template_ok: Optional[int] = None
+    sma50_atr_mult: Optional[float] = None
+    is_trend_template: Optional[int] = None
     market_cap: Optional[float] = None
     up_down_vol_ratio_50: Optional[float] = None
-    rs_blue_dot: Optional[int] = None
-    rs_red_dot: Optional[int] = None
+    is_rs_blue_dot: Optional[int] = None
+    is_rs_red_dot: Optional[int] = None
     vcr: Optional[float] = None
     vol_accum_days_5: Optional[int] = None
 
@@ -192,15 +192,15 @@ class EtfFeatureItem(BaseModel):
     dist_sma21_pct: float
     dist_sma63_pct: float
     sma21_sma63_pct: float
-    rs_ratio_14: Optional[float] = None
-    rs_ratio_21: Optional[float] = None
-    rs_ratio_63: Optional[float] = None
+    rs_ratio_e14: Optional[float] = None
+    rs_ratio_e21: Optional[float] = None
+    rs_ratio_e63: Optional[float] = None
     rs14_sparkline: List[float] = []
     rs21_sparkline: List[float] = []
     rs63_sparkline: List[float] = []
-    rank_rs_ratio_14: Optional[float] = None
-    rank_rs_ratio_21: Optional[float] = None
-    rank_rs_ratio_63: Optional[float] = None
+    rs_ratio_rank_e14: Optional[float] = None
+    rs_ratio_rank_e21: Optional[float] = None
+    rs_ratio_rank_e63: Optional[float] = None
     chart_data: List[ChartDataPoint] = []
 
 class RankingResponse(BaseModel):
@@ -237,16 +237,16 @@ class ThemeConstituentItem(BaseModel):
     change_1d_pct: float = 0.0
     change_1w_pct: float = 0.0
     change_1m_pct: float = 0.0
-    rs_ratio_14: Optional[float] = None
-    rs_ratio_21: Optional[float] = None
-    rs_ratio_63: Optional[float] = None
-    rs_momentum_21: Optional[float] = None
-    rank_rs_ratio_14: Optional[float] = None
-    rank_rs_ratio_21: Optional[float] = None
-    rank_rs_ratio_63: Optional[float] = None
-    rank_rs_momentum_21: Optional[float] = None
-    rank_rs_momentum_63: Optional[float] = None
-    rs_sparkline: List[float] = []  # rs_ratio_21 history for minimap
+    rs_ratio_e14: Optional[float] = None
+    rs_ratio_e21: Optional[float] = None
+    rs_ratio_e63: Optional[float] = None
+    rs_momentum_e21: Optional[float] = None
+    rs_ratio_rank_e14: Optional[float] = None
+    rs_ratio_rank_e21: Optional[float] = None
+    rs_ratio_rank_e63: Optional[float] = None
+    rs_momentum_rank_e21: Optional[float] = None
+    rs_momentum_rank_e63: Optional[float] = None
+    rs_sparkline: List[float] = []  # rs_ratio_e21 history for minimap
     chart_data: List[ChartDataPoint] = []  # For RRG usage
 
 class ThemeDetailResponse(BaseModel):
@@ -261,38 +261,38 @@ class ThemeDetailResponse(BaseModel):
     dist_sma21_pct: float = 0.0
     dist_sma63_pct: float = 0.0
     sma21_sma63_pct: float = 0.0
-    rs_ratio_14: Optional[float] = None
-    rs_ratio_21: Optional[float] = None
-    rs_ratio_63: Optional[float] = None
+    rs_ratio_e14: Optional[float] = None
+    rs_ratio_e21: Optional[float] = None
+    rs_ratio_e63: Optional[float] = None
     rs_roc_ema_14: Optional[float] = None
     rs_roc_ema_21: Optional[float] = None
     rs_roc_ema_63: Optional[float] = None
-    rs_momentum_14: Optional[float] = None
-    rs_momentum_21: Optional[float] = None
-    rs_momentum_63: Optional[float] = None
-    rs_condition_14: Optional[float] = None
-    rs_condition_21: Optional[float] = None
-    rs_condition_63: Optional[float] = None
-    rs_ema_5: Optional[float] = None
-    rs_ema_14: Optional[float] = None
-    rs_ema_21: Optional[float] = None
-    rs_ema_63: Optional[float] = None
+    rs_momentum_e14: Optional[float] = None
+    rs_momentum_e21: Optional[float] = None
+    rs_momentum_e63: Optional[float] = None
+    rs_trend_s14: Optional[float] = None
+    rs_trend_s21: Optional[float] = None
+    rs_trend_s63: Optional[float] = None
+    rs_value_e5: Optional[float] = None
+    rs_value_e14: Optional[float] = None
+    rs_value_e21: Optional[float] = None
+    rs_value_e63: Optional[float] = None
     adr_pct_21: Optional[float] = None
     vol_accum_days_5: Optional[int] = None
-    dist_sma50_atr: Optional[float] = None
+    sma50_atr_mult: Optional[float] = None
     rs14_sparkline: List[float] = []
     rs21_sparkline: List[float] = []
     rs63_sparkline: List[float] = []
     # Ranks for the theme ETF itself
-    rank_rs_ratio_14: Optional[float] = None
-    rank_rs_ratio_21: Optional[float] = None
-    rank_rs_ratio_63: Optional[float] = None
-    rank_rs_momentum_14: Optional[float] = None
-    rank_rs_momentum_21: Optional[float] = None
-    rank_rs_momentum_63: Optional[float] = None
-    rank_rs_condition_14: Optional[float] = None
-    rank_rs_condition_21: Optional[float] = None
-    rank_rs_condition_63: Optional[float] = None
+    rs_ratio_rank_e14: Optional[float] = None
+    rs_ratio_rank_e21: Optional[float] = None
+    rs_ratio_rank_e63: Optional[float] = None
+    rs_momentum_rank_e14: Optional[float] = None
+    rs_momentum_rank_e21: Optional[float] = None
+    rs_momentum_rank_e63: Optional[float] = None
+    rs_trend_rank_s14: Optional[float] = None
+    rs_trend_rank_s21: Optional[float] = None
+    rs_trend_rank_s63: Optional[float] = None
     chart_data: List[ChartDataPoint] = []  # 6-month OHLCV for MiniChart
     constituents: List[ThemeConstituentItem] = []
 

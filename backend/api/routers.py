@@ -62,8 +62,8 @@ _INDICATOR_COLUMN_TYPES["market_cap"] = "float"
 
 # --- Virtual (computed) columns ---
 _VIRTUAL_COLUMNS = {
-    "change_intraday_pct": lambda: (DailyPrice.close - DailyPrice.open) / DailyPrice.open * 100,
-    "dist_21ema_pct": lambda: (DailyPrice.close - Indicator.ema_21) / Indicator.ema_21 * 100,
+    "change_oc_pct":  lambda: (DailyPrice.close - DailyPrice.open) / DailyPrice.open * 100,
+    "dist_ema21_pct": lambda: (DailyPrice.close - Indicator.ema_21) / Indicator.ema_21 * 100,
     "dist_sma50_pct": lambda: (DailyPrice.close - Indicator.sma_50) / Indicator.sma_50 * 100,
 }
 
@@ -71,17 +71,17 @@ _VIRTUAL_COLUMNS = {
 _COLUMN_CATEGORIES = {
     "Price & Trend": ["sma_5", "sma_21", "sma_50", "sma_63", "sma_150", "sma_200",
                       "ema_5", "ema_21", "ema_50", "ema_63", "ema_150", "ema_200",
-                      "trend_template_ok", "change_1d_pct", "change_1w_pct", "change_1m_pct",
-                      "change_intraday_pct", "dist_21ema_pct", "dist_sma50_pct",
-                      "pct_from_63d_high", "pct_from_52w_high"],
-    "Volume & Volatility": ["atr_14", "atr_pct_14", "adr_pct_21", "dist_sma50_atr",
-                            "td9", "vol_surge_21", "rel_vol_vs_spy_21", "up_down_vol_ratio_50", "vcr", "vol_accum_days_5"],
-    "Momentum & RS": ["relative_strength_spy",
-                      "rs_condition_14", "rs_condition_21", "rs_condition_63",
-                      "rs_ema_14", "rs_ema_21", "rs_ema_63",
-                      "rs_momentum_14", "rs_momentum_21", "rs_momentum_63",
-                      "rs_ratio_14", "rs_ratio_21", "rs_ratio_63",
-                      "rs_blue_dot", "rs_red_dot"],
+                      "is_trend_template", "change_1d_pct", "change_1w_pct", "change_1m_pct",
+                      "change_oc_pct", "dist_ema21_pct", "dist_sma50_pct",
+                      "dist_63d_high_pct", "dist_52w_high_pct"],
+    "Volume & Volatility": ["atr_14", "atr_pct_14", "adr_pct_21", "sma50_atr_mult",
+                            "td9", "vol_surge_21", "vol_surge_rel_spy_21", "up_down_vol_ratio_50", "vcr", "vol_accum_days_5"],
+    "Momentum & RS": ["rs_value",
+                      "rs_trend_s14", "rs_trend_s21", "rs_trend_s63",
+                      "rs_value_e14", "rs_value_e21", "rs_value_e63",
+                      "rs_momentum_e14", "rs_momentum_e21", "rs_momentum_e63",
+                      "rs_ratio_e14", "rs_ratio_e21", "rs_ratio_e63",
+                      "is_rs_blue_dot", "is_rs_red_dot"],
     "Fundamentals": ["market_cap"],
 }
 _COL_TO_CATEGORY = {}
@@ -277,13 +277,13 @@ def get_screener_meta(db: Session = Depends(get_api_db)):
         label = vc_name.replace("_", " ").title()
         virtual.append(schemas.ScreenerColumnMeta(name=vc_name, label=label, category=cat, type="float", step=0.1))
 
-    # T4 rank indicator names (Wide schema columns)
+    # T4 rank indicator names (relative_ranks テーブルのランクカラム名)
     rank_names = [
-        'relative_strength_spy',
-        'rs_ratio_14', 'rs_ratio_21', 'rs_ratio_63',
-        'rs_momentum_14', 'rs_momentum_21', 'rs_momentum_63',
-        'rs_condition_14', 'rs_condition_21', 'rs_condition_63',
-        'rs_roc_ema_14', 'rs_roc_ema_21', 'rs_roc_ema_63'
+        'rs_value_rank',
+        'rs_ratio_rank_e14', 'rs_ratio_rank_e21', 'rs_ratio_rank_e63',
+        'rs_momentum_rank_e14', 'rs_momentum_rank_e21', 'rs_momentum_rank_e63',
+        'rs_trend_rank_s14', 'rs_trend_rank_s21', 'rs_trend_rank_s63',
+        'rs_roc_ema_rank_e14', 'rs_roc_ema_rank_e21', 'rs_roc_ema_rank_e63',
     ]
 
     return schemas.ScreenerMetaResponse(columns=columns, rank_indicators=rank_names, virtual_columns=virtual)
@@ -468,10 +468,10 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db), full_range
                     if not df_r.empty:
                         df_r['date_str'] = pd.to_datetime(df_r['date']).dt.strftime('%Y-%m-%d')
                         rank_indicators = [
-                            'rs_ratio_14', 'rs_ratio_21', 'rs_ratio_63',
-                            'rs_momentum_14', 'rs_momentum_21', 'rs_momentum_63',
-                            'rs_condition_14', 'rs_condition_21', 'rs_condition_63',
-                            'relative_strength_spy'
+                            'rs_ratio_rank_e14', 'rs_ratio_rank_e21', 'rs_ratio_rank_e63',
+                            'rs_momentum_rank_e14', 'rs_momentum_rank_e21', 'rs_momentum_rank_e63',
+                            'rs_trend_rank_s14', 'rs_trend_rank_s21', 'rs_trend_rank_s63',
+                            'rs_value_rank'
                         ]
                         df_r['is_kobetsu'] = df_r['group_name'] == '個別'
                         df_r = df_r.sort_values('is_kobetsu', ascending=True)
@@ -549,36 +549,36 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db), full_range
                             "atr_14": atr_14_val, 
                             "atr_pct_14": val_or_none("atr_pct_14"),
                             "adr_pct_21": val_or_none("adr_pct_21"), 
-                            "dist_sma50_atr": val_or_none("dist_sma50_atr"),
+                            "sma50_atr_mult": val_or_none("sma50_atr_mult"),
                             "change_1d_pct": val_or_none("change_1d_pct"),
                             "change_1w_pct": val_or_none("change_1w_pct"),
                             "change_1m_pct": val_or_none("change_1m_pct"),
-                            "relative_strength_spy": val_or_none("relative_strength_spy"),
-                            "rs_condition_14": val_or_none("rs_condition_14"),
-                            "rs_condition_21": val_or_none("rs_condition_21"),
-                            "rs_condition_63": val_or_none("rs_condition_63"),
-                            "rs_ema_5": val_or_none("rs_ema_5"),
-                            "rs_ema_14": val_or_none("rs_ema_14"),
-                            "rs_ema_21": val_or_none("rs_ema_21"),
-                            "rs_ema_63": val_or_none("rs_ema_63"),
-                            "rs_momentum_14": val_or_none("rs_momentum_14"),
-                            "rs_momentum_21": val_or_none("rs_momentum_21"),
-                            "rs_momentum_63": val_or_none("rs_momentum_63"),
-                            "rs_ratio_14": val_or_none("rs_ratio_14"),
-                            "rs_ratio_21": val_or_none("rs_ratio_21"),
-                            "rs_ratio_63": val_or_none("rs_ratio_63"),
+                            "rs_value": val_or_none("rs_value"),
+                            "rs_trend_s14": val_or_none("rs_trend_s14"),
+                            "rs_trend_s21": val_or_none("rs_trend_s21"),
+                            "rs_trend_s63": val_or_none("rs_trend_s63"),
+                            "rs_value_e5": val_or_none("rs_value_e5"),
+                            "rs_value_e14": val_or_none("rs_value_e14"),
+                            "rs_value_e21": val_or_none("rs_value_e21"),
+                            "rs_value_e63": val_or_none("rs_value_e63"),
+                            "rs_momentum_e14": val_or_none("rs_momentum_e14"),
+                            "rs_momentum_e21": val_or_none("rs_momentum_e21"),
+                            "rs_momentum_e63": val_or_none("rs_momentum_e63"),
+                            "rs_ratio_e14": val_or_none("rs_ratio_e14"),
+                            "rs_ratio_e21": val_or_none("rs_ratio_e21"),
+                            "rs_ratio_e63": val_or_none("rs_ratio_e63"),
                             "rs_roc_ema_14": val_or_none("rs_roc_ema_14"),
                             "rs_roc_ema_21": val_or_none("rs_roc_ema_21"),
                             "rs_roc_ema_63": val_or_none("rs_roc_ema_63"),
                             "vol_surge_21": val_or_none("vol_surge_21"),
-                            "rel_vol_vs_spy_21": val_or_none("rel_vol_vs_spy_21"),
+                            "vol_surge_rel_spy_21": val_or_none("vol_surge_rel_spy_21"),
                             "up_down_vol_ratio_50": val_or_none("up_down_vol_ratio_50"),
-                            "pct_from_63d_high": val_or_none("pct_from_63d_high"),
-                            "pct_from_52w_high": val_or_none("pct_from_52w_high"),
-                            "rs_blue_dot": bool_or_none("rs_blue_dot"), 
-                            "rs_red_dot": bool_or_none("rs_red_dot"),
+                            "dist_63d_high_pct": val_or_none("dist_63d_high_pct"),
+                            "dist_52w_high_pct": val_or_none("dist_52w_high_pct"),
+                            "is_rs_blue_dot": bool_or_none("is_rs_blue_dot"), 
+                            "is_rs_red_dot": bool_or_none("is_rs_red_dot"),
                             "vcr": val_or_none("vcr"), 
-                            "trend_template_ok": bool_or_none("trend_template_ok"),
+                            "is_trend_template": bool_or_none("is_trend_template"),
                             "vol_accum_days_5": val_or_none("vol_accum_days_5"),
                             "bb_upper": (sma_21_val + 2 * atr_14_val) if sma_21_val and atr_14_val else None,
                             "bb_lower": (sma_21_val - 2 * atr_14_val) if sma_21_val and atr_14_val else None,
@@ -586,9 +586,9 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db), full_range
 
                         r_data = rank_map_nested.get(d_str, {})
                         for r_name in rank_indicators:
-                            point[f"rank_{r_name}"] = r_data.get(r_name)
+                            point[r_name] = r_data.get(r_name)
                         
-                        point["rs_ratio"] = r_data.get("rs_ratio_21")
+                        point["rs_ratio"] = r_data.get("rs_ratio_rank_e21")
 
                     chart_data.append(point)
 
@@ -649,10 +649,10 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db), full_range
     # Organize ranks by date and indicator. 
     # If multiple groups exist for a symbol, prioritize '個別' or just take the latest found.
     rank_indicators = [
-        'rs_ratio_14', 'rs_ratio_21', 'rs_ratio_63',
-        'rs_momentum_14', 'rs_momentum_21', 'rs_momentum_63',
-        'rs_condition_14', 'rs_condition_21', 'rs_condition_63',
-        'relative_strength_spy'
+        'rs_ratio_rank_e14', 'rs_ratio_rank_e21', 'rs_ratio_rank_e63',
+        'rs_momentum_rank_e14', 'rs_momentum_rank_e21', 'rs_momentum_rank_e63',
+        'rs_trend_rank_s14', 'rs_trend_rank_s21', 'rs_trend_rank_s63',
+        'rs_value_rank'
     ]
     rank_map_nested = {}
     for r in ranks:
@@ -697,34 +697,34 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db), full_range
                 "ema_5": ind.ema_5, "ema_21": ind.ema_21, "ema_50": ind.ema_50,
                 "ema_63": ind.ema_63, "ema_150": ind.ema_150, "ema_200": ind.ema_200,
                 "td9": ind.td9, "atr_14": ind.atr_14, "atr_pct_14": ind.atr_pct_14,
-                "adr_pct_21": ind.adr_pct_21, "dist_sma50_atr": ind.dist_sma50_atr,
+                "adr_pct_21": ind.adr_pct_21, "sma50_atr_mult": ind.sma50_atr_mult,
                 "change_1d_pct": ind.change_1d_pct,
                 "change_1w_pct": ind.change_1w_pct,
                 "change_1m_pct": ind.change_1m_pct,
-                "relative_strength_spy": ind.relative_strength_spy,
-                "rs_condition_14": ind.rs_condition_14,
-                "rs_condition_21": ind.rs_condition_21,
-                "rs_condition_63": ind.rs_condition_63,
-                "rs_ema_5": ind.rs_ema_5,
-                "rs_ema_14": ind.rs_ema_14,
-                "rs_ema_21": ind.rs_ema_21,
-                "rs_ema_63": ind.rs_ema_63,
-                "rs_momentum_14": ind.rs_momentum_14,
-                "rs_momentum_21": ind.rs_momentum_21,
-                "rs_momentum_63": ind.rs_momentum_63,
-                "rs_ratio_14": ind.rs_ratio_14,
-                "rs_ratio_21": ind.rs_ratio_21,
-                "rs_ratio_63": ind.rs_ratio_63,
+                "rs_value": ind.rs_value,
+                "rs_trend_s14": ind.rs_trend_s14,
+                "rs_trend_s21": ind.rs_trend_s21,
+                "rs_trend_s63": ind.rs_trend_s63,
+                "rs_value_e5": ind.rs_value_e5,
+                "rs_value_e14": ind.rs_value_e14,
+                "rs_value_e21": ind.rs_value_e21,
+                "rs_value_e63": ind.rs_value_e63,
+                "rs_momentum_e14": ind.rs_momentum_e14,
+                "rs_momentum_e21": ind.rs_momentum_e21,
+                "rs_momentum_e63": ind.rs_momentum_e63,
+                "rs_ratio_e14": ind.rs_ratio_e14,
+                "rs_ratio_e21": ind.rs_ratio_e21,
+                "rs_ratio_e63": ind.rs_ratio_e63,
                 "rs_roc_ema_14": ind.rs_roc_ema_14,
                 "rs_roc_ema_21": ind.rs_roc_ema_21,
                 "rs_roc_ema_63": ind.rs_roc_ema_63,
                 "vol_surge_21": ind.vol_surge_21,
-                "rel_vol_vs_spy_21": ind.rel_vol_vs_spy_21,
+                "vol_surge_rel_spy_21": ind.vol_surge_rel_spy_21,
                 "up_down_vol_ratio_50": ind.up_down_vol_ratio_50,
-                "pct_from_63d_high": ind.pct_from_63d_high,
-                "pct_from_52w_high": ind.pct_from_52w_high,
-                "rs_blue_dot": ind.rs_blue_dot, "rs_red_dot": ind.rs_red_dot,
-                "vcr": ind.vcr, "trend_template_ok": ind.trend_template_ok,
+                "dist_63d_high_pct": ind.dist_63d_high_pct,
+                "dist_52w_high_pct": ind.dist_52w_high_pct,
+                "is_rs_blue_dot": ind.is_rs_blue_dot, "is_rs_red_dot": ind.is_rs_red_dot,
+                "vcr": ind.vcr, "is_trend_template": ind.is_trend_template,
                 "vol_accum_days_5": ind.vol_accum_days_5,
                 "bb_upper": (ind.sma_21 + 2*ind.atr_14) if ind.sma_21 and ind.atr_14 else None,
                 "bb_lower": (ind.sma_21 - 2*ind.atr_14) if ind.sma_21 and ind.atr_14 else None,
@@ -732,10 +732,10 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db), full_range
             # Include all ranks for RRG minimaps
             r_data = rank_map_nested.get(d_str, {})
             for r_name in rank_indicators:
-                point[f"rank_{r_name}"] = r_data.get(r_name)
+                point[r_name] = r_data.get(r_name)
             
             # Include legacy key for RsLineChart
-            point["rs_ratio"] = r_data.get("rs_ratio_21")
+            point["rs_ratio"] = r_data.get("rs_ratio_rank_e21")
         
         chart_data.append(point)
 
@@ -802,11 +802,11 @@ def get_rankings(db: Session = Depends(get_api_db), limit: int = 20, asc: bool =
     
     # We return grouped by indicator
     rank_indicators = [
-        'relative_strength_spy', 
-        'rs_ratio_14', 'rs_ratio_21', 'rs_ratio_63', 
-        'rs_momentum_14', 'rs_momentum_21', 'rs_momentum_63', 
-        'rs_condition_14', 'rs_condition_21', 'rs_condition_63',
-        'rs_roc_ema_14', 'rs_roc_ema_21', 'rs_roc_ema_63'
+        'rs_value_rank',
+        'rs_ratio_rank_e14', 'rs_ratio_rank_e21', 'rs_ratio_rank_e63',
+        'rs_momentum_rank_e14', 'rs_momentum_rank_e21', 'rs_momentum_rank_e63',
+        'rs_trend_rank_s14', 'rs_trend_rank_s21', 'rs_trend_rank_s63',
+        'rs_roc_ema_rank_e14', 'rs_roc_ema_rank_e21', 'rs_roc_ema_rank_e63',
     ]
     
     resp = []
@@ -848,7 +848,7 @@ def get_rankings(db: Session = Depends(get_api_db), limit: int = 20, asc: bool =
 # --- Helper functions for dashboard & group pages ---
 
 def _get_sparkline_data(db: Session, sym_id: int, target_date: str, period: int = 21):
-    col_attr = getattr(RelativeRank, f"rs_ratio_{period}", None)
+    col_attr = getattr(RelativeRank, f"rs_ratio_rank_e{period}", None)
     if col_attr is None:
         return [0.5] * 5
     ranks = db.query(col_attr).filter(
@@ -914,14 +914,14 @@ def _build_panel_item(db: Session, sym: Symbol, dp: DailyPrice, rank_val_21: flo
         dist_21ema_pct=dist_21ema_pct,
         sparkline=sparkline if sparkline else [],
         intensity_score=float(rank_val_21 or 0.0),
-        rs_ratio_21_rank=float(rank_val_21 or 0.0),
-        rs_ratio_63_rank=float(rank_val_63 or 0.0),
-        rs_ratio_14_rank=float(rank_val_14 or 0.0),
-        rs_momentum_21_rank=float(rank_val_mom or 0.0),
-        rs_momentum_63_rank=float(rank_val_mom63 or 0.0),
-        rs_ratio_21=ind.rs_ratio_21 if ind else None,
-        rs_ratio_63=ind.rs_ratio_63 if ind else None,
-        rs_momentum_21=ind.rs_momentum_21 if ind else None
+        rs_ratio_rank_e21=float(rank_val_21 or 0.0),
+        rs_ratio_rank_e63=float(rank_val_63 or 0.0),
+        rs_ratio_rank_e14=float(rank_val_14 or 0.0),
+        rs_momentum_rank_e21=float(rank_val_mom or 0.0),
+        rs_momentum_rank_e63=float(rank_val_mom63 or 0.0),
+        rs_ratio_e21=ind.rs_ratio_e21 if ind else None,
+        rs_ratio_e63=ind.rs_ratio_e63 if ind else None,
+        rs_momentum_e21=ind.rs_momentum_e21 if ind else None
     )
 
 def _build_leading_item(db: Session, sym: Symbol, dp: DailyPrice, target_date: str):
@@ -1045,20 +1045,20 @@ def _build_etf_feature(db: Session, sym: Symbol, dp: DailyPrice, target_date: st
             low=h.low or 0.0,
             close=h.close,
             volume=int(round(h.volume)) if h.volume else 0,
-            relative_strength_spy=i.relative_strength_spy if i else None,
-            rs_ema_5=i.rs_ema_5 if i else None,
-            rs_ema_14=i.rs_ema_14 if i else None,
-            rs_ema_21=i.rs_ema_21 if i else None,
-            rs_ema_63=i.rs_ema_63 if i else None,
-            rs_ratio_14=i.rs_ratio_14 if i else None,
-            rs_ratio_21=i.rs_ratio_21 if i else None,
-            rs_ratio_63=i.rs_ratio_63 if i else None,
-            rs_momentum_14=i.rs_momentum_14 if i else None,
-            rs_momentum_21=i.rs_momentum_21 if i else None,
-            rs_momentum_63=i.rs_momentum_63 if i else None,
-            rs_condition_14=i.rs_condition_14 if i else None,
-            rs_condition_21=i.rs_condition_21 if i else None,
-            rs_condition_63=i.rs_condition_63 if i else None,
+            rs_value=i.rs_value if i else None,
+            rs_value_e5=i.rs_value_e5 if i else None,
+            rs_value_e14=i.rs_value_e14 if i else None,
+            rs_value_e21=i.rs_value_e21 if i else None,
+            rs_value_e63=i.rs_value_e63 if i else None,
+            rs_ratio_e14=i.rs_ratio_e14 if i else None,
+            rs_ratio_e21=i.rs_ratio_e21 if i else None,
+            rs_ratio_e63=i.rs_ratio_e63 if i else None,
+            rs_momentum_e14=i.rs_momentum_e14 if i else None,
+            rs_momentum_e21=i.rs_momentum_e21 if i else None,
+            rs_momentum_e63=i.rs_momentum_e63 if i else None,
+            rs_trend_s14=i.rs_trend_s14 if i else None,
+            rs_trend_s21=i.rs_trend_s21 if i else None,
+            rs_trend_s63=i.rs_trend_s63 if i else None,
         ))
     
     return schemas.EtfFeatureItem(
@@ -1067,15 +1067,15 @@ def _build_etf_feature(db: Session, sym: Symbol, dp: DailyPrice, target_date: st
         change_1m_pct=float(change_1m_pct or 0.0), change_1y_pct=float(change_1y_pct or 0.0),
         dist_sma5_pct=float(dist_sma5_pct or 0.0), dist_sma21_pct=float(dist_sma21_pct or 0.0),
         dist_sma63_pct=float(dist_sma63_pct or 0.0), sma21_sma63_pct=float(sma21_sma63_pct or 0.0),
-        rs_ratio_14=ind.rs_ratio_14 if ind else None,
-        rs_ratio_21=ind.rs_ratio_21 if ind else None,
-        rs_ratio_63=ind.rs_ratio_63 if ind else None,
+        rs_ratio_e14=ind.rs_ratio_e14 if ind else None,
+        rs_ratio_e21=ind.rs_ratio_e21 if ind else None,
+        rs_ratio_e63=ind.rs_ratio_e63 if ind else None,
         rs14_sparkline=rs14_spark,
         rs21_sparkline=rs21_spark,
         rs63_sparkline=rs63_spark,
-        rank_rs_ratio_14=get_rank(sym.id, 'rs_ratio_14', target_date),
-        rank_rs_ratio_21=get_rank(sym.id, 'rs_ratio_21', target_date),
-        rank_rs_ratio_63=get_rank(sym.id, 'rs_ratio_63', target_date),
+        rs_ratio_rank_e14=get_rank(sym.id, 'rs_ratio_rank_e14', target_date),
+        rs_ratio_rank_e21=get_rank(sym.id, 'rs_ratio_rank_e21', target_date),
+        rs_ratio_rank_e63=get_rank(sym.id, 'rs_ratio_rank_e63', target_date),
         chart_data=chart_data
     )
 

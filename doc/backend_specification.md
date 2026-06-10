@@ -100,7 +100,7 @@ T2の価格データを元に算出される各種テクニカル・モメンタ
 | `rs_roc_ema_n` | FLOAT | RS-Ratioの14日間変化率(ROC)の平滑化。 | `calculate_ema_tv(ROC(rs_ratio_n + 100), n)` |
 | `rs_momentum_n` | FLOAT | RS-Ratioの勢い (14, 21, 63)。RRGのY軸（Momentum）に相当。ただしオフセット100が無いので 0センター | `(rs_roc_ema_n - mean(rs_roc_ema_n, n)) / std(rs_roc_ema_n, n)` |
 | `vol_surge_21` | FLOAT | 出来高急増倍率。 | `volume / mean(volume, 21)` |
-| `rel_vol_vs_spy_21` | FLOAT | SPYに対する出来高の相対的な強さ。 | `vol_surge_21 / spy_vol_surge_21` |
+| `vol_surge_21` | FLOAT | SPYに対する出来高の相対的な強さ。 | `vol_surge_21 / spy_vol_surge_21` |
 | `pct_from_52w_high` | FLOAT | 52週（252日）高値からの下落率(%)。 | `(close - max(high, 252)) / max(high, 252) * 100` |
 | `up_down_vol_ratio_50` | FLOAT | 50日間の上昇日出来高合計÷下落日出来高合計。機関投資家のAccumulationの強さを示す。1.5以上＝買い集め優勢。 | `sum(volume where close > prev_close, 50) / sum(volume where close < prev_close, 50)` |
 | `rs_blue_dot` | SMALLINT | RS新高値先行フラグ（1:点灯, 0:非点灯）。RSが株価に先行して52週新高値を更新した場合に点灯。 | `(relative_strength_spy >= max(RS, 252)) AND (close < max(close, 252))` |
