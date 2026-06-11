@@ -323,7 +323,7 @@ export const WatchlistPage: React.FC = () => {
                                 <table className="screener-table" style={{ width: 'max-content', minWidth: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                                     <thead style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
                                         <tr style={{ color: '#888', textAlign: 'left' }}>
-                                            <th style={{ padding: '12px 10px', width: '30px' }}>
+                                            <th style={{ padding: '12px 0', width: '50px', minWidth: '50px', maxWidth: '50px', textAlign: 'center', position: 'sticky', left: 0, background: '#0d1117', zIndex: 3 }}>
                                                 <input 
                                                     type="checkbox" 
                                                     checked={selectedTickers.size === watchlist.active.length && watchlist.active.length > 0}
@@ -331,17 +331,17 @@ export const WatchlistPage: React.FC = () => {
                                                     style={{ cursor: 'pointer' }}
                                                 />
                                             </th>
-                                            <th style={headerStyle} onClick={() => handleSort('ticker')}>Ticker {renderSortIcon('ticker')}</th>
+                                            <th className="watchlist-ticker-cell" style={{ ...headerStyle, position: 'sticky', left: '50px', background: '#0d1117', zIndex: 3, borderRight: '1px solid rgba(255,255,255,0.1)' }} onClick={() => handleSort('ticker')}>Ticker {renderSortIcon('ticker')}</th>
                                             <th style={{ padding: '12px 10px', textAlign: 'right' }}>Entry Price</th>
                                             <th style={{ padding: '12px 10px', textAlign: 'right' }}>Latest</th>
                                             <th style={{ ...headerStyle, textAlign: 'right' }} onClick={() => handleSort('gain_pct')}>Gain% {renderSortIcon('gain_pct')}</th>
-                                            <th style={{ ...headerStyle, textAlign: 'right' }} onClick={() => handleSort('max_gain_pct')}>Max Gain {renderSortIcon('max_gain_pct')}</th>
-                                            <th style={{ ...headerStyle, textAlign: 'right' }} onClick={() => handleSort('min_gain_pct')}>Min Gain {renderSortIcon('min_gain_pct')}</th>
-                                            <th style={{ padding: '12px 10px', textAlign: 'right' }}>ADR%(21)</th>
-                                            <th style={{ ...headerStyle, textAlign: 'right' }} onClick={() => handleSort('latest_dist_sma50_atr')}>50dATR {renderSortIcon('latest_dist_sma50_atr')}</th>
-                                            <th style={{ padding: '12px 10px', textAlign: 'center', width: '80px' }}>RS21 (30D)</th>
+                                            <th className="hide-on-mobile" style={{ ...headerStyle, textAlign: 'right' }} onClick={() => handleSort('max_gain_pct')}>Max Gain {renderSortIcon('max_gain_pct')}</th>
+                                            <th className="hide-on-mobile" style={{ ...headerStyle, textAlign: 'right' }} onClick={() => handleSort('min_gain_pct')}>Min Gain {renderSortIcon('min_gain_pct')}</th>
+                                            <th className="hide-on-mobile" style={{ padding: '12px 10px', textAlign: 'right' }}>ADR%(21)</th>
+                                            <th className="hide-on-mobile" style={{ ...headerStyle, textAlign: 'right' }} onClick={() => handleSort('latest_dist_sma50_atr')}>50dATR {renderSortIcon('latest_dist_sma50_atr')}</th>
+                                            <th className="hide-on-mobile" style={{ padding: '12px 10px', textAlign: 'center', width: '80px' }}>RSR21% (30d)</th>
                                             <th style={headerStyle} onClick={() => handleSort('next_earnings_date')}>Earnings {renderSortIcon('next_earnings_date')}</th>
-                                            <th style={headerStyle} onClick={() => handleSort('entry_date')}>Entry Date {renderSortIcon('entry_date')}</th>
+                                            <th className="hide-on-mobile" style={headerStyle} onClick={() => handleSort('entry_date')}>Entry Date {renderSortIcon('entry_date')}</th>
                                             <th style={{ padding: '12px 10px', textAlign: 'center' }}>Actions</th>
                                         </tr>
                                     </thead>
@@ -354,7 +354,7 @@ export const WatchlistPage: React.FC = () => {
                                                     background: selectedTickers.has(item.ticker) ? 'rgba(41, 98, 255, 0.08)' : 'transparent'
                                                 }}
                                             >
-                                                <td style={{ padding: '12px 10px' }}>
+                                                <td style={{ padding: '12px 0', width: '50px', minWidth: '50px', maxWidth: '50px', textAlign: 'center', position: 'sticky', left: 0, background: selectedTickers.has(item.ticker) ? 'rgba(41, 98, 255, 0.15)' : '#0d1117', zIndex: 1 }}>
                                                     <input 
                                                         type="checkbox" 
                                                         checked={selectedTickers.has(item.ticker)}
@@ -362,30 +362,30 @@ export const WatchlistPage: React.FC = () => {
                                                         style={{ cursor: 'pointer' }}
                                                     />
                                                 </td>
-                                                <td style={{ padding: '12px 10px' }}>
+                                                <td className="watchlist-ticker-cell" style={{ padding: '12px 10px', position: 'sticky', left: '50px', background: selectedTickers.has(item.ticker) ? 'rgba(41, 98, 255, 0.15)' : '#0d1117', zIndex: 1, borderRight: '1px solid rgba(255,255,255,0.1)' }}>
                                                     <Link to={`/chart/${item.ticker}`} style={{ color: '#fff', textDecoration: 'none', fontWeight: 600 }}>
                                                         {item.ticker}
                                                     </Link>
-                                                    <div style={{ fontSize: '11px', color: '#666' }}>{item.name}</div>
+                                                    <div className="watchlist-name-text" title={item.name}>{item.name}</div>
                                                 </td>
                                                 <td style={{ padding: '12px 10px', textAlign: 'right' }}>{item.entry_price.toFixed(2)}</td>
                                                 <td style={{ padding: '12px 10px', textAlign: 'right' }}>{item.latest_close.toFixed(2)}</td>
                                                 <td style={{ padding: '12px 10px', textAlign: 'right', fontWeight: 700, color: getPctColor(item.gain_pct) }}>
                                                     {formatPct(item.gain_pct)}
                                                 </td>
-                                                <td style={{ padding: '12px 10px', textAlign: 'right', color: appConfig.colors.good }}>{formatPct(item.max_gain_pct)}</td>
-                                                <td style={{ padding: '12px 10px', textAlign: 'right', color: appConfig.colors.bad }}>{formatPct(item.min_gain_pct)}</td>
-                                                <td style={{ padding: '12px 10px', textAlign: 'right', color: '#ccc' }}>{item.latest_adr_pct.toFixed(2)}</td>
-                                                <td style={{ padding: '12px 10px', textAlign: 'right', color: item.latest_dist_sma50_atr >= 8 ? '#ffff00' : '#ccc' }}>
+                                                <td className="hide-on-mobile" style={{ padding: '12px 10px', textAlign: 'right', color: appConfig.colors.good }}>{formatPct(item.max_gain_pct)}</td>
+                                                <td className="hide-on-mobile" style={{ padding: '12px 10px', textAlign: 'right', color: appConfig.colors.bad }}>{formatPct(item.min_gain_pct)}</td>
+                                                <td className="hide-on-mobile" style={{ padding: '12px 10px', textAlign: 'right', color: '#ccc' }}>{item.latest_adr_pct.toFixed(2)}</td>
+                                                <td className="hide-on-mobile" style={{ padding: '12px 10px', textAlign: 'right', color: item.latest_dist_sma50_atr >= 8 ? '#ffff00' : '#ccc' }}>
                                                     {item.latest_dist_sma50_atr.toFixed(1)}
                                                 </td>
-                                                <td style={{ padding: '12px 10px', textAlign: 'center' }}>
+                                                <td className="hide-on-mobile" style={{ padding: '12px 10px', textAlign: 'center' }}>
                                                     <Sparkline data={item.rs_sparkline} width={70} height={28} color={item.gain_pct >= 0 ? appConfig.colors.good : appConfig.colors.bad} fixedRange={true} />
                                                 </td>
                                                 <td style={{ padding: '12px 10px', whiteSpace: 'nowrap' }}>
                                                     {renderEarningsDate(item)}
                                                 </td>
-                                                <td style={{ padding: '12px 10px' }}>
+                                                <td className="hide-on-mobile" style={{ padding: '12px 10px' }}>
                                                     <input 
                                                         type="date" 
                                                         defaultValue={item.entry_date} 
@@ -465,11 +465,11 @@ export const WatchlistPage: React.FC = () => {
                                     <table className="screener-table" style={{ width: 'max-content', minWidth: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                                         <thead style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
                                             <tr style={{ color: '#888', textAlign: 'left' }}>
-                                                <th style={headerStyle} onClick={() => handleSort('ticker')}>Ticker {renderSortIcon('ticker')}</th>
-                                                <th style={headerStyle} onClick={() => handleSort('entry_date')}>Entry Date {renderSortIcon('entry_date')}</th>
+                                                <th className="watchlist-ticker-cell" style={{ ...headerStyle, position: 'sticky', left: 0, background: '#0d1117', zIndex: 3, borderRight: '1px solid rgba(255,255,255,0.1)' }} onClick={() => handleSort('ticker')}>Ticker {renderSortIcon('ticker')}</th>
+                                                <th className="hide-on-mobile" style={headerStyle} onClick={() => handleSort('entry_date')}>Entry Date {renderSortIcon('entry_date')}</th>
                                                 <th style={headerStyle} onClick={() => handleSort('removed_at')}>Removed Date {renderSortIcon('removed_at')}</th>
-                                                <th style={{ padding: '12px 10px', textAlign: 'right' }}>Entry Price</th>
-                                                <th style={{ padding: '12px 10px', textAlign: 'right' }}>Removed Price</th>
+                                                <th className="hide-on-mobile" style={{ padding: '12px 10px', textAlign: 'right' }}>Entry Price</th>
+                                                <th className="hide-on-mobile" style={{ padding: '12px 10px', textAlign: 'right' }}>Removed Price</th>
                                                 <th style={{ ...headerStyle, textAlign: 'right' }} onClick={() => handleSort('result_pct')}>Result% {renderSortIcon('result_pct')}</th>
                                                 <th style={{ padding: '12px 10px', textAlign: 'center' }}>Actions</th>
                                             </tr>
@@ -479,14 +479,14 @@ export const WatchlistPage: React.FC = () => {
                                                 const resultPct = item.removed_price ? ((item.removed_price - item.entry_price) / item.entry_price) * 100 : 0;
                                                 return (
                                                     <tr key={item.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                                                        <td style={{ padding: '12px 10px' }}>
+                                                        <td className="watchlist-ticker-cell" style={{ padding: '12px 10px', position: 'sticky', left: 0, background: '#0d1117', zIndex: 1, borderRight: '1px solid rgba(255,255,255,0.1)' }}>
                                                             <div style={{ color: '#aaa', fontWeight: 600 }}>{item.ticker}</div>
-                                                            <div style={{ fontSize: '11px', color: '#555' }}>{item.name}</div>
+                                                            <div className="watchlist-name-text" style={{ color: '#555' }} title={item.name}>{item.name}</div>
                                                         </td>
-                                                        <td style={{ padding: '12px 10px', color: '#888' }}>{item.entry_date}</td>
+                                                        <td className="hide-on-mobile" style={{ padding: '12px 10px', color: '#888' }}>{item.entry_date}</td>
                                                         <td style={{ padding: '12px 10px', color: '#888' }}>{item.removed_at?.split('T')[0]}</td>
-                                                        <td style={{ padding: '12px 10px', textAlign: 'right', color: '#888' }}>{item.entry_price.toFixed(2)}</td>
-                                                        <td style={{ padding: '12px 10px', textAlign: 'right', color: '#888' }}>{item.removed_price?.toFixed(2)}</td>
+                                                        <td className="hide-on-mobile" style={{ padding: '12px 10px', textAlign: 'right', color: '#888' }}>{item.entry_price.toFixed(2)}</td>
+                                                        <td className="hide-on-mobile" style={{ padding: '12px 10px', textAlign: 'right', color: '#888' }}>{item.removed_price?.toFixed(2)}</td>
                                                         <td style={{ padding: '12px 10px', textAlign: 'right', fontWeight: 600, color: getPctColor(resultPct) }}>
                                                             {formatPct(resultPct)}
                                                         </td>

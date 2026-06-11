@@ -51,7 +51,7 @@ def seed_data(db_session, user_db_session):
                         volume=1000000)
         ind = Indicator(symbol_id=1, date=d,
                         ema_21=151.0 + i, adr_pct_21=2.5,
-                        dist_sma50_atr=3.0)
+                        sma50_atr_mult=3.0)
         db_session.add(dp)
         db_session.add(ind)
 
@@ -59,7 +59,7 @@ def seed_data(db_session, user_db_session):
     for i in range(5):
         d = base_date + timedelta(days=i)
         rr = RelativeRank(symbol_id=1, date=d,
-                          group_name="個別", rs_ratio_21=0.5 + i * 0.05)
+                          group_name="個別", rs_ratio_rank_e21=0.5 + i * 0.05)
         db_session.add(rr)
 
     db_session.commit()

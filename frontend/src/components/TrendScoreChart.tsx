@@ -66,11 +66,11 @@ export const TrendScoreChart: React.FC<TrendScoreChartProps> = ({ data, height =
         // Add reference line at 50
         areaSeries.createPriceLine({
             price: 50,
-            color: 'rgba(255, 255, 255, 0.3)',
+            color: 'rgba(255, 255, 255, 0.15)', // Make line subtler
             lineWidth: 1,
             lineStyle: 1,
             axisLabelVisible: true,
-            title: 'Neutral',
+            title: '', // Remove title to prevent overlapping the graph line
         });
 
         const chartData = data.map(item => ({
@@ -168,6 +168,14 @@ export const TrendScoreChart: React.FC<TrendScoreChartProps> = ({ data, height =
                 pointerEvents: 'none', zIndex: 10, transform: 'translateY(-50%)'
             }}>
                 DD
+            </div>
+            {/* Neutral line label overlay */}
+            <div style={{ 
+                position: 'absolute', left: '12px', top: '50%', 
+                color: 'rgba(255, 255, 255, 0.4)', fontSize: '10px', fontWeight: 'bold', 
+                pointerEvents: 'none', zIndex: 10, transform: 'translateY(-50%)'
+            }}>
+                Neutral (50)
             </div>
             <div style={{ 
                 position: 'absolute', left: '12px', bottom: '10%', 

@@ -275,9 +275,9 @@ def get_watchlist(db: Session, user_db: Session) -> dict:
                 max_gain_pct = (max_close - wl.entry_price) / wl.entry_price * 100
                 min_gain_pct = (min_close - wl.entry_price) / wl.entry_price * 100
 
-            rs_ranks = db.query(RelativeRank.rs_ratio_21).filter(
+            rs_ranks = db.query(RelativeRank.rs_ratio_rank_e21).filter(
                 RelativeRank.symbol_id == wl.symbol_id,
-                RelativeRank.rs_ratio_21.isnot(None),
+                RelativeRank.rs_ratio_rank_e21.isnot(None),
             ).order_by(RelativeRank.date.desc()).limit(30).all()
             rs_sparkline = [r[0] for r in reversed(rs_ranks)]
         else:
@@ -299,7 +299,7 @@ def get_watchlist(db: Session, user_db: Session) -> dict:
             "max_gain_pct": round(max_gain_pct, 2),
             "min_gain_pct": round(min_gain_pct, 2),
             "latest_adr_pct": latest_ind.adr_pct_21 if latest_ind and latest_ind.adr_pct_21 else 0.0,
-            "latest_dist_sma50_atr": latest_ind.dist_sma50_atr if latest_ind and latest_ind.dist_sma50_atr else 0.0,
+            "latest_dist_sma50_atr": latest_ind.sma50_atr_mult if latest_ind and latest_ind.sma50_atr_mult else 0.0,
             "rs_sparkline": rs_sparkline,
             "next_earnings_date": sym.next_earnings_date if sym else None,
             "status": wl.status,

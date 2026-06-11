@@ -32,29 +32,30 @@ export interface ChartDataPoint {
     atr_14?: number | null
     atr_pct_14?: number | null
     adr_pct_21?: number | null
-    dist_sma50_atr?: number | null
-    relative_strength_spy?: number | null
-    rs_condition_14?: number | null
-    rs_condition_21?: number | null
-    rs_condition_63?: number | null
-    rs_ema_14?: number | null
-    rs_ema_21?: number | null
-    rs_ema_63?: number | null
-    rs_momentum_14?: number | null
-    rs_momentum_21?: number | null
-    rs_momentum_63?: number | null
-    rs_ratio_14?: number | null
-    rs_ratio_21?: number | null
-    rs_ratio_63?: number | null
+    sma50_atr_mult?: number | null
+    rs_value?: number | null
+    rs_trend_s14?: number | null
+    rs_trend_s21?: number | null
+    rs_trend_s63?: number | null
+    rs_value_e5?: number | null
+    rs_value_e14?: number | null
+    rs_value_e21?: number | null
+    rs_value_e63?: number | null
+    rs_momentum_e14?: number | null
+    rs_momentum_e21?: number | null
+    rs_momentum_e63?: number | null
+    rs_ratio_e14?: number | null
+    rs_ratio_e21?: number | null
+    rs_ratio_e63?: number | null
     vol_surge_21?: number | null
-    rel_vol_vs_spy_21?: number | null
-    pct_from_63d_high?: number | null
-    pct_from_52w_high?: number | null
-    trend_template_ok?: number | null
+    vol_surge_rel_spy_21?: number | null
+    dist_63d_high_pct?: number | null
+    dist_52w_high_pct?: number | null
+    is_trend_template?: number | null
     market_cap?: number | null
     up_down_vol_ratio_50?: number | null
-    rs_blue_dot?: number | null
-    rs_red_dot?: number | null
+    is_rs_blue_dot?: number | null
+    is_rs_red_dot?: number | null
     vcr?: number | null
 
     // Bollinger Bands (Calculated on the fly)
@@ -62,15 +63,15 @@ export interface ChartDataPoint {
     bb_lower?: number | null
 
     // Relative Ranks
-    rank_rs_ratio_14?: number | null
-    rank_rs_ratio_21?: number | null
-    rank_rs_ratio_63?: number | null
-    rank_rs_momentum_14?: number | null
-    rank_rs_momentum_21?: number | null
-    rank_rs_momentum_63?: number | null
-    rank_rs_condition_14?: number | null
-    rank_rs_condition_21?: number | null
-    rank_rs_condition_63?: number | null
+    rs_ratio_rank_e14?: number | null
+    rs_ratio_rank_e21?: number | null
+    rs_ratio_rank_e63?: number | null
+    rs_momentum_rank_e14?: number | null
+    rs_momentum_rank_e21?: number | null
+    rs_momentum_rank_e63?: number | null
+    rs_trend_rank_s14?: number | null
+    rs_trend_rank_s21?: number | null
+    rs_trend_rank_s63?: number | null
 }
 
 export interface ChartSymbolMeta {

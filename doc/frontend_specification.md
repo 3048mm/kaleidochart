@@ -39,7 +39,7 @@
         - **SPY Detailed Panel**: SPYの主要な乖離率や直近トレンド。
         - **Leading Indicators**: TLT, VIX, USOなど主要な先行指標の一覧。
     *   **Markets**: `category='市場'` のインデックス銘柄一覧（SPY等）。
-    *   **Sectors & Themes**: `category='セクタ'` や `category='テーマ'`（独自作成の仮想指数含む）の銘柄。`rs_ratio_21` 値を元に Top / Weak（上位/下位）でソート表示。
+    *   **Sectors & Themes**: `category='セクタ'` や `category='テーマ'`（独自作成の仮想指数含む）の銘柄。`rs_ratio_e21` を元に Top / Weak（上位/下位）でソート表示。
         - **テーマリンク**: 各行をクリックすることで、その詳細（所属銘柄の一覧）を表示する「グループ詳細画面」へ遷移。
 
 *   **表内要素（共通）**:
@@ -77,8 +77,8 @@
     *   **RSビュー (Relative Rotation Graph & RS Line Chart)**:
     *   「RS View」タブに切り替えると、JS Custom RRG（相対回転グラフ）と、TradingViewベースのRSラインチャートが表示される。
     *   **RSラインチャート (上部)**:
-        *   `relative_strength_spy` をメインシリーズとして表示。
-        *   `rs_ema_14`, `rs_ema_21`, `rs_ema_63` をオーバーレイ表示（デフォルトON）。
+        *   `rs_value` をメインシリーズとして表示。
+        *   `rs_value_e14`, `rs_value_e21`, `rs_value_e63` をオーバーレイ表示（デフォルトON）。
         *   市場に対する相対的な強さの時系列推移を可視化。
     *   **RRGチャート (下部)**:
         *   X軸に `RS-Ratio`、Y軸に `RS-Momentum` を取った散布図の軌跡（Trail）を描画。Quadrant（象限）により、Leading(先導), Weakening(弱体化), Lagging(出遅れ), Improving(改善) を視覚化。

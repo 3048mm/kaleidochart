@@ -390,7 +390,9 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db), full_range
                     "change_1m_pct": None,
                     "adr_pct_21": None,
                     "dist_sma50_atr": None,
-                    "relative_strength_spy": None
+                    "sma50_atr_mult": None,
+                    "relative_strength_spy": None,
+                    "rs_value": None
                 }
                 chart_data.append(point)
                 
@@ -418,7 +420,7 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db), full_range
     if not symbol:
         raise HTTPException(status_code=404, detail="Symbol not found")
         
-    if full_range:
+    if full_range is True:
         # Load data from Parquet Master cache
         import pandas as pd
         import numpy as np
@@ -550,6 +552,26 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db), full_range
                             "atr_pct_14": val_or_none("atr_pct_14"),
                             "adr_pct_21": val_or_none("adr_pct_21"), 
                             "sma50_atr_mult": val_or_none("sma50_atr_mult"),
+                            "dist_sma50_atr": val_or_none("sma50_atr_mult"), # Legacy compat
+                            "relative_strength_spy": val_or_none("rs_value"), # Legacy compat
+                            "rs_condition_14": val_or_none("rs_trend_s14"), # Legacy compat
+                            "rs_condition_21": val_or_none("rs_trend_s21"), # Legacy compat
+                            "rs_condition_63": val_or_none("rs_trend_s63"), # Legacy compat
+                            "rs_ema_14": val_or_none("rs_value_e14"), # Legacy compat
+                            "rs_ema_21": val_or_none("rs_value_e21"), # Legacy compat
+                            "rs_ema_63": val_or_none("rs_value_e63"), # Legacy compat
+                            "rs_momentum_14": val_or_none("rs_momentum_e14"), # Legacy compat
+                            "rs_momentum_21": val_or_none("rs_momentum_e21"), # Legacy compat
+                            "rs_momentum_63": val_or_none("rs_momentum_e63"), # Legacy compat
+                            "rs_ratio_14": val_or_none("rs_ratio_e14"), # Legacy compat
+                            "rs_ratio_21": val_or_none("rs_ratio_e21"), # Legacy compat
+                            "rs_ratio_63": val_or_none("rs_ratio_e63"), # Legacy compat
+                            "rel_vol_vs_spy_21": val_or_none("vol_surge_rel_spy_21"), # Legacy compat
+                            "pct_from_63d_high": val_or_none("dist_63d_high_pct"), # Legacy compat
+                            "pct_from_52w_high": val_or_none("dist_52w_high_pct"), # Legacy compat
+                            "rs_blue_dot": val_or_none("is_rs_blue_dot"), # Legacy compat
+                            "rs_red_dot": val_or_none("is_rs_red_dot"), # Legacy compat
+                            "trend_template_ok": val_or_none("is_trend_template"), # Legacy compat
                             "change_1d_pct": val_or_none("change_1d_pct"),
                             "change_1w_pct": val_or_none("change_1w_pct"),
                             "change_1m_pct": val_or_none("change_1m_pct"),
@@ -587,6 +609,17 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db), full_range
                         r_data = rank_map_nested.get(d_str, {})
                         for r_name in rank_indicators:
                             point[r_name] = r_data.get(r_name)
+                        
+                        # Include legacy rank keys for compatibility
+                        point["rank_rs_ratio_14"] = r_data.get("rs_ratio_rank_e14")
+                        point["rank_rs_ratio_21"] = r_data.get("rs_ratio_rank_e21")
+                        point["rank_rs_ratio_63"] = r_data.get("rs_ratio_rank_e63")
+                        point["rank_rs_momentum_14"] = r_data.get("rs_momentum_rank_e14")
+                        point["rank_rs_momentum_21"] = r_data.get("rs_momentum_rank_e21")
+                        point["rank_rs_momentum_63"] = r_data.get("rs_momentum_rank_e63")
+                        point["rank_rs_condition_14"] = r_data.get("rs_trend_rank_s14")
+                        point["rank_rs_condition_21"] = r_data.get("rs_trend_rank_s21")
+                        point["rank_rs_condition_63"] = r_data.get("rs_trend_rank_s63")
                         
                         point["rs_ratio"] = r_data.get("rs_ratio_rank_e21")
 
@@ -698,33 +731,52 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db), full_range
                 "ema_63": ind.ema_63, "ema_150": ind.ema_150, "ema_200": ind.ema_200,
                 "td9": ind.td9, "atr_14": ind.atr_14, "atr_pct_14": ind.atr_pct_14,
                 "adr_pct_21": ind.adr_pct_21, "sma50_atr_mult": ind.sma50_atr_mult,
+                "dist_sma50_atr": ind.sma50_atr_mult, # Legacy compat
                 "change_1d_pct": ind.change_1d_pct,
                 "change_1w_pct": ind.change_1w_pct,
                 "change_1m_pct": ind.change_1m_pct,
                 "rs_value": ind.rs_value,
+                "relative_strength_spy": ind.rs_value, # Legacy compat
                 "rs_trend_s14": ind.rs_trend_s14,
+                "rs_condition_14": ind.rs_trend_s14, # Legacy compat
                 "rs_trend_s21": ind.rs_trend_s21,
+                "rs_condition_21": ind.rs_trend_s21, # Legacy compat
                 "rs_trend_s63": ind.rs_trend_s63,
+                "rs_condition_63": ind.rs_trend_s63, # Legacy compat
                 "rs_value_e5": ind.rs_value_e5,
                 "rs_value_e14": ind.rs_value_e14,
+                "rs_ema_14": ind.rs_value_e14, # Legacy compat
                 "rs_value_e21": ind.rs_value_e21,
+                "rs_ema_21": ind.rs_value_e21, # Legacy compat
                 "rs_value_e63": ind.rs_value_e63,
+                "rs_ema_63": ind.rs_value_e63, # Legacy compat
                 "rs_momentum_e14": ind.rs_momentum_e14,
+                "rs_momentum_14": ind.rs_momentum_e14, # Legacy compat
                 "rs_momentum_e21": ind.rs_momentum_e21,
+                "rs_momentum_21": ind.rs_momentum_e21, # Legacy compat
                 "rs_momentum_e63": ind.rs_momentum_e63,
+                "rs_momentum_63": ind.rs_momentum_e63, # Legacy compat
                 "rs_ratio_e14": ind.rs_ratio_e14,
+                "rs_ratio_14": ind.rs_ratio_e14, # Legacy compat
                 "rs_ratio_e21": ind.rs_ratio_e21,
+                "rs_ratio_21": ind.rs_ratio_e21, # Legacy compat
                 "rs_ratio_e63": ind.rs_ratio_e63,
+                "rs_ratio_63": ind.rs_ratio_e63, # Legacy compat
                 "rs_roc_ema_14": ind.rs_roc_ema_14,
                 "rs_roc_ema_21": ind.rs_roc_ema_21,
                 "rs_roc_ema_63": ind.rs_roc_ema_63,
                 "vol_surge_21": ind.vol_surge_21,
                 "vol_surge_rel_spy_21": ind.vol_surge_rel_spy_21,
+                "rel_vol_vs_spy_21": ind.vol_surge_rel_spy_21, # Legacy compat
                 "up_down_vol_ratio_50": ind.up_down_vol_ratio_50,
                 "dist_63d_high_pct": ind.dist_63d_high_pct,
+                "pct_from_63d_high": ind.dist_63d_high_pct, # Legacy compat
                 "dist_52w_high_pct": ind.dist_52w_high_pct,
+                "pct_from_52w_high": ind.dist_52w_high_pct, # Legacy compat
                 "is_rs_blue_dot": ind.is_rs_blue_dot, "is_rs_red_dot": ind.is_rs_red_dot,
+                "rs_blue_dot": ind.is_rs_blue_dot, "rs_red_dot": ind.is_rs_red_dot, # Legacy compat
                 "vcr": ind.vcr, "is_trend_template": ind.is_trend_template,
+                "trend_template_ok": ind.is_trend_template, # Legacy compat
                 "vol_accum_days_5": ind.vol_accum_days_5,
                 "bb_upper": (ind.sma_21 + 2*ind.atr_14) if ind.sma_21 and ind.atr_14 else None,
                 "bb_lower": (ind.sma_21 - 2*ind.atr_14) if ind.sma_21 and ind.atr_14 else None,
@@ -733,6 +785,17 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db), full_range
             r_data = rank_map_nested.get(d_str, {})
             for r_name in rank_indicators:
                 point[r_name] = r_data.get(r_name)
+            
+            # Include legacy rank keys for compatibility
+            point["rank_rs_ratio_14"] = r_data.get("rs_ratio_rank_e14")
+            point["rank_rs_ratio_21"] = r_data.get("rs_ratio_rank_e21")
+            point["rank_rs_ratio_63"] = r_data.get("rs_ratio_rank_e63")
+            point["rank_rs_momentum_14"] = r_data.get("rs_momentum_rank_e14")
+            point["rank_rs_momentum_21"] = r_data.get("rs_momentum_rank_e21")
+            point["rank_rs_momentum_63"] = r_data.get("rs_momentum_rank_e63")
+            point["rank_rs_condition_14"] = r_data.get("rs_trend_rank_s14")
+            point["rank_rs_condition_21"] = r_data.get("rs_trend_rank_s21")
+            point["rank_rs_condition_63"] = r_data.get("rs_trend_rank_s63")
             
             # Include legacy key for RsLineChart
             point["rs_ratio"] = r_data.get("rs_ratio_rank_e21")
@@ -921,7 +984,17 @@ def _build_panel_item(db: Session, sym: Symbol, dp: DailyPrice, rank_val_21: flo
         rs_momentum_rank_e63=float(rank_val_mom63 or 0.0),
         rs_ratio_e21=ind.rs_ratio_e21 if ind else None,
         rs_ratio_e63=ind.rs_ratio_e63 if ind else None,
-        rs_momentum_e21=ind.rs_momentum_e21 if ind else None
+        rs_momentum_e21=ind.rs_momentum_e21 if ind else None,
+        
+        # Legacy fields for frontend compatibility
+        rs_ratio_21_rank=float(rank_val_21 or 0.0),
+        rs_ratio_63_rank=float(rank_val_63 or 0.0),
+        rs_ratio_14_rank=float(rank_val_14 or 0.0),
+        rs_momentum_21_rank=float(rank_val_mom or 0.0),
+        rs_momentum_63_rank=float(rank_val_mom63 or 0.0),
+        rs_ratio_21=ind.rs_ratio_e21 if ind else None,
+        rs_ratio_63=ind.rs_ratio_e63 if ind else None,
+        rs_momentum_21=ind.rs_momentum_e21 if ind else None
     )
 
 def _build_leading_item(db: Session, sym: Symbol, dp: DailyPrice, target_date: str):
@@ -1076,7 +1149,15 @@ def _build_etf_feature(db: Session, sym: Symbol, dp: DailyPrice, target_date: st
         rs_ratio_rank_e14=get_rank(sym.id, 'rs_ratio_rank_e14', target_date),
         rs_ratio_rank_e21=get_rank(sym.id, 'rs_ratio_rank_e21', target_date),
         rs_ratio_rank_e63=get_rank(sym.id, 'rs_ratio_rank_e63', target_date),
-        chart_data=chart_data
+        chart_data=chart_data,
+        
+        # Legacy fields for frontend compatibility
+        rs_ratio_14=ind.rs_ratio_e14 if ind else None,
+        rs_ratio_21=ind.rs_ratio_e21 if ind else None,
+        rs_ratio_63=ind.rs_ratio_e63 if ind else None,
+        rank_rs_ratio_14=get_rank(sym.id, 'rs_ratio_rank_e14', target_date),
+        rank_rs_ratio_21=get_rank(sym.id, 'rs_ratio_rank_e21', target_date),
+        rank_rs_ratio_63=get_rank(sym.id, 'rs_ratio_rank_e63', target_date)
     )
 
 @router.get("/available_dates", response_model=schemas.AvailableDatesResponse)
@@ -1160,15 +1241,15 @@ def get_dashboard(
     # Get Relative Ranks for target date (highly optimized single query!)
     ranks = db.query(
         RelativeRank.symbol_id, 
-        RelativeRank.rs_ratio_14, 
-        RelativeRank.rs_ratio_21, 
-        RelativeRank.rs_ratio_63
+        RelativeRank.rs_ratio_rank_e14, 
+        RelativeRank.rs_ratio_rank_e21, 
+        RelativeRank.rs_ratio_rank_e63
     ).filter(
         RelativeRank.date == target_date
     ).all()
-    rank_14_dict = {r.symbol_id: r.rs_ratio_14 for r in ranks if r.rs_ratio_14 is not None}
-    rank_21_dict = {r.symbol_id: r.rs_ratio_21 for r in ranks if r.rs_ratio_21 is not None}
-    rank_63_dict = {r.symbol_id: r.rs_ratio_63 for r in ranks if r.rs_ratio_63 is not None}
+    rank_14_dict = {r.symbol_id: r.rs_ratio_rank_e14 for r in ranks if r.rs_ratio_rank_e14 is not None}
+    rank_21_dict = {r.symbol_id: r.rs_ratio_rank_e21 for r in ranks if r.rs_ratio_rank_e21 is not None}
+    rank_63_dict = {r.symbol_id: r.rs_ratio_rank_e63 for r in ranks if r.rs_ratio_rank_e63 is not None}
 
     for sym_id, s in sym_dict.items():
         if sym_id not in price_dict:
@@ -1288,19 +1369,32 @@ def get_theme_detail(
             low=h.low or 0.0,
             close=h.close,
             volume=int(round(h.volume)) if h.volume else 0,
-            relative_strength_spy=i.relative_strength_spy if i else None,
-            rs_ema_14=i.rs_ema_14 if i else None,
-            rs_ema_21=i.rs_ema_21 if i else None,
-            rs_ema_63=i.rs_ema_63 if i else None,
-            rs_ratio_14=i.rs_ratio_14 if i else None,
-            rs_ratio_21=i.rs_ratio_21 if i else None,
-            rs_ratio_63=i.rs_ratio_63 if i else None,
-            rs_momentum_14=i.rs_momentum_14 if i else None,
-            rs_momentum_21=i.rs_momentum_21 if i else None,
-            rs_momentum_63=i.rs_momentum_63 if i else None,
-            rs_condition_14=i.rs_condition_14 if i else None,
-            rs_condition_21=i.rs_condition_21 if i else None,
-            rs_condition_63=i.rs_condition_63 if i else None,
+            relative_strength_spy=i.rs_value if i else None,
+            rs_value=i.rs_value if i else None,
+            rs_ema_14=i.rs_value_e14 if i else None,
+            rs_value_e14=i.rs_value_e14 if i else None,
+            rs_ema_21=i.rs_value_e21 if i else None,
+            rs_value_e21=i.rs_value_e21 if i else None,
+            rs_ema_63=i.rs_value_e63 if i else None,
+            rs_value_e63=i.rs_value_e63 if i else None,
+            rs_ratio_14=i.rs_ratio_e14 if i else None,
+            rs_ratio_e14=i.rs_ratio_e14 if i else None,
+            rs_ratio_21=i.rs_ratio_e21 if i else None,
+            rs_ratio_e21=i.rs_ratio_e21 if i else None,
+            rs_ratio_63=i.rs_ratio_e63 if i else None,
+            rs_ratio_e63=i.rs_ratio_e63 if i else None,
+            rs_momentum_14=i.rs_momentum_e14 if i else None,
+            rs_momentum_e14=i.rs_momentum_e14 if i else None,
+            rs_momentum_21=i.rs_momentum_e21 if i else None,
+            rs_momentum_e21=i.rs_momentum_e21 if i else None,
+            rs_momentum_63=i.rs_momentum_e63 if i else None,
+            rs_momentum_e63=i.rs_momentum_e63 if i else None,
+            rs_condition_14=i.rs_trend_s14 if i else None,
+            rs_trend_s14=i.rs_trend_s14 if i else None,
+            rs_condition_21=i.rs_trend_s21 if i else None,
+            rs_trend_s21=i.rs_trend_s21 if i else None,
+            rs_condition_63=i.rs_trend_s63 if i else None,
+            rs_trend_s63=i.rs_trend_s63 if i else None,
         ))
 
     # Get constituent stocks
@@ -1337,10 +1431,10 @@ def get_theme_detail(
             Indicator.symbol_id == c_id,
             Indicator.date == c_dp.date
         ).first()
-        c_rs14 = c_ind.rs_ratio_14 if c_ind else None
-        c_rs21 = c_ind.rs_ratio_21 if c_ind else None
-        c_rs63 = c_ind.rs_ratio_63 if c_ind else None
-        c_rsmom21 = c_ind.rs_momentum_21 if c_ind else None
+        c_rs14 = c_ind.rs_ratio_e14 if c_ind else None
+        c_rs21 = c_ind.rs_ratio_e21 if c_ind else None
+        c_rs63 = c_ind.rs_ratio_e63 if c_ind else None
+        c_rsmom21 = c_ind.rs_momentum_e21 if c_ind else None
         c_rs_spark = _get_sparkline_data(db, c_id, str(c_dp.date), 21)
 
         # short history for RRG
@@ -1360,32 +1454,45 @@ def get_theme_detail(
             c_chart_data.append(schemas.ChartDataPoint(
                 time=ds, open=h.open or 0.0, high=h.high or 0.0, low=h.low or 0.0, close=h.close,
                 volume=int(round(h.volume)) if h.volume else 0, 
-                relative_strength_spy=i.relative_strength_spy if i else None,
-                rs_ema_14=i.rs_ema_14 if i else None,
-                rs_ema_21=i.rs_ema_21 if i else None,
-                rs_ema_63=i.rs_ema_63 if i else None,
-                rs_ratio_14=i.rs_ratio_14 if i else None, rs_ratio_21=i.rs_ratio_21 if i else None,
-                rs_ratio_63=i.rs_ratio_63 if i else None, rs_momentum_14=i.rs_momentum_14 if i else None,
-                rs_momentum_21=i.rs_momentum_21 if i else None, rs_momentum_63=i.rs_momentum_63 if i else None,
+                relative_strength_spy=i.rs_value if i else None,
+                rs_value=i.rs_value if i else None,
+                rs_ema_14=i.rs_value_e14 if i else None,
+                rs_value_e14=i.rs_value_e14 if i else None,
+                rs_ema_21=i.rs_value_e21 if i else None,
+                rs_value_e21=i.rs_value_e21 if i else None,
+                rs_ema_63=i.rs_value_e63 if i else None,
+                rs_value_e63=i.rs_value_e63 if i else None,
+                rs_ratio_14=i.rs_ratio_e14 if i else None,
+                rs_ratio_e14=i.rs_ratio_e14 if i else None,
+                rs_ratio_21=i.rs_ratio_e21 if i else None,
+                rs_ratio_e21=i.rs_ratio_e21 if i else None,
+                rs_ratio_63=i.rs_ratio_e63 if i else None,
+                rs_ratio_e63=i.rs_ratio_e63 if i else None,
+                rs_momentum_14=i.rs_momentum_e14 if i else None,
+                rs_momentum_e14=i.rs_momentum_e14 if i else None,
+                rs_momentum_21=i.rs_momentum_e21 if i else None,
+                rs_momentum_e21=i.rs_momentum_e21 if i else None,
+                rs_momentum_63=i.rs_momentum_e63 if i else None,
+                rs_momentum_e63=i.rs_momentum_e63 if i else None,
             ))
 
         # Fetch ranks for constituent (highly optimized single query!)
         r_row = db.query(
-            RelativeRank.rs_ratio_14, 
-            RelativeRank.rs_ratio_21, 
-            RelativeRank.rs_ratio_63, 
-            RelativeRank.rs_momentum_21, 
-            RelativeRank.rs_momentum_63
+            RelativeRank.rs_ratio_rank_e14, 
+            RelativeRank.rs_ratio_rank_e21, 
+            RelativeRank.rs_ratio_rank_e63, 
+            RelativeRank.rs_momentum_rank_e21, 
+            RelativeRank.rs_momentum_rank_e63
         ).filter(
             RelativeRank.symbol_id == c_id, 
             RelativeRank.date == c_dp.date
         ).first()
         
-        rank_14 = (r_row.rs_ratio_14 or 0.0) if r_row else 0.0
-        rank_21 = (r_row.rs_ratio_21 or 0.0) if r_row else 0.0
-        rank_63 = (r_row.rs_ratio_63 or 0.0) if r_row else 0.0
-        rank_mom21 = (r_row.rs_momentum_21 or 0.0) if r_row else 0.0
-        rank_mom63 = (r_row.rs_momentum_63 or 0.0) if r_row else 0.0
+        rank_14 = (r_row.rs_ratio_rank_e14 or 0.0) if r_row else 0.0
+        rank_21 = (r_row.rs_ratio_rank_e21 or 0.0) if r_row else 0.0
+        rank_63 = (r_row.rs_ratio_rank_e63 or 0.0) if r_row else 0.0
+        rank_mom21 = (r_row.rs_momentum_rank_e21 or 0.0) if r_row else 0.0
+        rank_mom63 = (r_row.rs_momentum_rank_e63 or 0.0) if r_row else 0.0
 
         constituents.append(schemas.ThemeConstituentItem(
             id=c_id, ticker=c_sym.ticker, name=c_sym.name,
@@ -1396,12 +1503,21 @@ def get_theme_detail(
             rs_ratio_14=c_rs14,
             rs_ratio_21=c_rs21,
             rs_ratio_63=c_rs63,
+            rs_ratio_e14=c_rs14,
+            rs_ratio_e21=c_rs21,
+            rs_ratio_e63=c_rs63,
             rs_momentum_21=c_rsmom21,
+            rs_momentum_e21=c_rsmom21,
             rank_rs_ratio_14=rank_14,
             rank_rs_ratio_21=rank_21,
             rank_rs_ratio_63=rank_63,
+            rs_ratio_rank_e14=rank_14,
+            rs_ratio_rank_e21=rank_21,
+            rs_ratio_rank_e63=rank_63,
             rank_rs_momentum_21=rank_mom21,
             rank_rs_momentum_63=rank_mom63,
+            rs_momentum_rank_e21=rank_mom21,
+            rs_momentum_rank_e63=rank_mom63,
             rs_sparkline=c_rs_spark,
             chart_data=c_chart_data
         ))
@@ -1416,22 +1532,54 @@ def get_theme_detail(
         id=sym.id, ticker=sym.ticker, name=sym.name, close=dp.close,
         change_1d_pct=change_1d, change_1w_pct=change_1w, change_1m_pct=change_1m,
         dist_sma5_pct=dist_sma5, dist_sma21_pct=dist_sma21, dist_sma63_pct=dist_sma63,
-        sma21_sma63_pct=sma21_sma63, rs_ratio_14=ind.rs_ratio_14 if ind else None,
-        rs_ratio_21=ind.rs_ratio_21 if ind else None, rs_ratio_63=ind.rs_ratio_63 if ind else None,
-        rs_momentum_14=ind.rs_momentum_14 if ind else None, rs_momentum_21=ind.rs_momentum_21 if ind else None,
-        rs_momentum_63=ind.rs_momentum_63 if ind else None, rs_condition_14=ind.rs_condition_14 if ind else None,
-        rs_condition_21=ind.rs_condition_21 if ind else None, rs_condition_63=ind.rs_condition_63 if ind else None,
-        adr_pct_21=ind.adr_pct_21 if ind else None, dist_sma50_atr=ind.dist_sma50_atr if ind else None,
+        sma21_sma63_pct=sma21_sma63,
+        rs_ratio_14=ind.rs_ratio_e14 if ind else None,
+        rs_ratio_21=ind.rs_ratio_e21 if ind else None,
+        rs_ratio_63=ind.rs_ratio_e63 if ind else None,
+        rs_ratio_e14=ind.rs_ratio_e14 if ind else None,
+        rs_ratio_e21=ind.rs_ratio_e21 if ind else None,
+        rs_ratio_e63=ind.rs_ratio_e63 if ind else None,
+        rs_momentum_14=ind.rs_momentum_e14 if ind else None,
+        rs_momentum_21=ind.rs_momentum_e21 if ind else None,
+        rs_momentum_63=ind.rs_momentum_e63 if ind else None,
+        rs_momentum_e14=ind.rs_momentum_e14 if ind else None,
+        rs_momentum_e21=ind.rs_momentum_e21 if ind else None,
+        rs_momentum_e63=ind.rs_momentum_e63 if ind else None,
+        rs_condition_14=ind.rs_trend_s14 if ind else None,
+        rs_condition_21=ind.rs_trend_s21 if ind else None,
+        rs_condition_63=ind.rs_trend_s63 if ind else None,
+        rs_trend_s14=ind.rs_trend_s14 if ind else None,
+        rs_trend_s21=ind.rs_trend_s21 if ind else None,
+        rs_trend_s63=ind.rs_trend_s63 if ind else None,
+        rs_value_e5=ind.rs_value_e5 if ind else None,
+        rs_value_e14=ind.rs_value_e14 if ind else None,
+        rs_value_e21=ind.rs_value_e21 if ind else None,
+        rs_value_e63=ind.rs_value_e63 if ind else None,
+        rs_ema_14=ind.rs_value_e14 if ind else None,
+        rs_ema_21=ind.rs_value_e21 if ind else None,
+        rs_ema_63=ind.rs_value_e63 if ind else None,
+        adr_pct_21=ind.adr_pct_21 if ind else None,
+        sma50_atr_mult=ind.sma50_atr_mult if ind else None,
+        dist_sma50_atr=ind.sma50_atr_mult if ind else None,
         rs14_sparkline=rs14_spark, rs21_sparkline=rs21_spark, rs63_sparkline=rs63_spark,
-        rank_rs_ratio_14=theme_r.rs_ratio_14 if theme_r else None,
-        rank_rs_ratio_21=theme_r.rs_ratio_21 if theme_r else None,
-        rank_rs_ratio_63=theme_r.rs_ratio_63 if theme_r else None,
-        rank_rs_momentum_14=theme_r.rs_momentum_14 if theme_r else None,
-        rank_rs_momentum_21=theme_r.rs_momentum_21 if theme_r else None,
-        rank_rs_momentum_63=theme_r.rs_momentum_63 if theme_r else None,
-        rank_rs_condition_14=theme_r.rs_condition_14 if theme_r else None,
-        rank_rs_condition_21=theme_r.rs_condition_21 if theme_r else None,
-        rank_rs_condition_63=theme_r.rs_condition_63 if theme_r else None,
+        rank_rs_ratio_14=theme_r.rs_ratio_rank_e14 if theme_r else None,
+        rank_rs_ratio_21=theme_r.rs_ratio_rank_e21 if theme_r else None,
+        rank_rs_ratio_63=theme_r.rs_ratio_rank_e63 if theme_r else None,
+        rs_ratio_rank_e14=theme_r.rs_ratio_rank_e14 if theme_r else None,
+        rs_ratio_rank_e21=theme_r.rs_ratio_rank_e21 if theme_r else None,
+        rs_ratio_rank_e63=theme_r.rs_ratio_rank_e63 if theme_r else None,
+        rank_rs_momentum_14=theme_r.rs_momentum_rank_e14 if theme_r else None,
+        rank_rs_momentum_21=theme_r.rs_momentum_rank_e21 if theme_r else None,
+        rank_rs_momentum_63=theme_r.rs_momentum_rank_e63 if theme_r else None,
+        rs_momentum_rank_e14=theme_r.rs_momentum_rank_e14 if theme_r else None,
+        rs_momentum_rank_e21=theme_r.rs_momentum_rank_e21 if theme_r else None,
+        rs_momentum_rank_e63=theme_r.rs_momentum_rank_e63 if theme_r else None,
+        rank_rs_condition_14=theme_r.rs_trend_rank_s14 if theme_r else None,
+        rank_rs_condition_21=theme_r.rs_trend_rank_s21 if theme_r else None,
+        rank_rs_condition_63=theme_r.rs_trend_rank_s63 if theme_r else None,
+        rs_trend_rank_s14=theme_r.rs_trend_rank_s14 if theme_r else None,
+        rs_trend_rank_s21=theme_r.rs_trend_rank_s21 if theme_r else None,
+        rs_trend_rank_s63=theme_r.rs_trend_rank_s63 if theme_r else None,
         chart_data=chart_data, constituents=constituents,
     )
 
@@ -1495,20 +1643,20 @@ def get_group_data(
         # Fetch ranks for children (single optimized query!)
         c_ranks = db.query(
             RelativeRank.symbol_id, 
-            RelativeRank.rs_ratio_14, 
-            RelativeRank.rs_ratio_21, 
-            RelativeRank.rs_ratio_63, 
-            RelativeRank.rs_momentum_21, 
-            RelativeRank.rs_momentum_63
+            RelativeRank.rs_ratio_rank_e14, 
+            RelativeRank.rs_ratio_rank_e21, 
+            RelativeRank.rs_ratio_rank_e63, 
+            RelativeRank.rs_momentum_rank_e21, 
+            RelativeRank.rs_momentum_rank_e63
         ).filter(
             RelativeRank.date == target_date, 
             RelativeRank.symbol_id.in_(child_ids)
         ).all()
-        c_rank_14_dict = {r.symbol_id: r.rs_ratio_14 for r in c_ranks if r.rs_ratio_14 is not None}
-        c_rank_21_dict = {r.symbol_id: r.rs_ratio_21 for r in c_ranks if r.rs_ratio_21 is not None}
-        c_rank_63_dict = {r.symbol_id: r.rs_ratio_63 for r in c_ranks if r.rs_ratio_63 is not None}
-        c_rank_mom_dict = {r.symbol_id: r.rs_momentum_21 for r in c_ranks if r.rs_momentum_21 is not None}
-        c_rank_mom63_dict = {r.symbol_id: r.rs_momentum_63 for r in c_ranks if r.rs_momentum_63 is not None}
+        c_rank_14_dict = {r.symbol_id: r.rs_ratio_rank_e14 for r in c_ranks if r.rs_ratio_rank_e14 is not None}
+        c_rank_21_dict = {r.symbol_id: r.rs_ratio_rank_e21 for r in c_ranks if r.rs_ratio_rank_e21 is not None}
+        c_rank_63_dict = {r.symbol_id: r.rs_ratio_rank_e63 for r in c_ranks if r.rs_ratio_rank_e63 is not None}
+        c_rank_mom_dict = {r.symbol_id: r.rs_momentum_rank_e21 for r in c_ranks if r.rs_momentum_rank_e21 is not None}
+        c_rank_mom63_dict = {r.symbol_id: r.rs_momentum_rank_e63 for r in c_ranks if r.rs_momentum_rank_e63 is not None}
 
         c_symbols = db.query(Symbol).filter(Symbol.id.in_(child_ids)).all()
         for cs in c_symbols:
@@ -1573,7 +1721,7 @@ def get_screener_dashboard(
             ThemeConstituent.symbol_id.label("stock_id"),
             Symbol.ticker.label("theme_ticker"),
             Symbol.name.label("theme_name"),
-            RelativeRank.rs_ratio_21.label("rs_ratio_21")
+            RelativeRank.rs_ratio_rank_e21.label("rs_ratio_21")
         ).join(
             Symbol, ThemeConstituent.theme_id == Symbol.id
         ).join(
@@ -1638,33 +1786,33 @@ def get_screener_dashboard(
                 
                 if special == "rrg_leading_in":
                     q = q.filter(
-                        Indicator.rs_ratio_21 > 0, Indicator.rs_momentum_21 > 0,
-                        Indicator.rs_momentum_21 > IndPrev.rs_momentum_21,
-                        (Indicator.rs_ratio_21 * Indicator.rs_ratio_21 + Indicator.rs_momentum_21 * Indicator.rs_momentum_21) >= intensity_sq,
+                        Indicator.rs_ratio_e21 > 0, Indicator.rs_momentum_e21 > 0,
+                        Indicator.rs_momentum_e21 > IndPrev.rs_momentum_e21,
+                        (Indicator.rs_ratio_e21 * Indicator.rs_ratio_e21 + Indicator.rs_momentum_e21 * Indicator.rs_momentum_e21) >= intensity_sq,
                         or_(
-                            or_(IndPrev.rs_ratio_21 <= 0, IndPrev.rs_momentum_21 <= 0),
-                            (IndPrev.rs_ratio_21 * IndPrev.rs_ratio_21 + IndPrev.rs_momentum_21 * IndPrev.rs_momentum_21) < intensity_sq
+                            or_(IndPrev.rs_ratio_e21 <= 0, IndPrev.rs_momentum_e21 <= 0),
+                            (IndPrev.rs_ratio_e21 * IndPrev.rs_ratio_e21 + IndPrev.rs_momentum_e21 * IndPrev.rs_momentum_e21) < intensity_sq
                         )
                     )
                 elif special == "rrg_lagging_in":
                     q = q.filter(
-                        Indicator.rs_ratio_21 < 0, Indicator.rs_momentum_21 < 0,
-                        or_(IndPrev.rs_ratio_21 >= 0, IndPrev.rs_momentum_21 >= 0)
+                        Indicator.rs_ratio_e21 < 0, Indicator.rs_momentum_e21 < 0,
+                        or_(IndPrev.rs_ratio_e21 >= 0, IndPrev.rs_momentum_e21 >= 0)
                     )
                 elif special == "rrg_improving_in":
                     q = q.filter(
-                        Indicator.rs_ratio_21 < 0, Indicator.rs_momentum_21 > 0,
-                        Indicator.rs_momentum_21 > IndPrev.rs_momentum_21,
-                        (Indicator.rs_ratio_21 * Indicator.rs_ratio_21 + Indicator.rs_momentum_21 * Indicator.rs_momentum_21) >= intensity_sq,
+                        Indicator.rs_ratio_e21 < 0, Indicator.rs_momentum_e21 > 0,
+                        Indicator.rs_momentum_e21 > IndPrev.rs_momentum_e21,
+                        (Indicator.rs_ratio_e21 * Indicator.rs_ratio_e21 + Indicator.rs_momentum_e21 * Indicator.rs_momentum_e21) >= intensity_sq,
                         or_(
-                            and_(IndPrev.rs_ratio_21 < 0, IndPrev.rs_momentum_21 <= 0),
-                            and_(IndPrev.rs_ratio_21 < 0, (IndPrev.rs_ratio_21 * IndPrev.rs_ratio_21 + IndPrev.rs_momentum_21 * IndPrev.rs_momentum_21) < intensity_sq)
+                            and_(IndPrev.rs_ratio_e21 < 0, IndPrev.rs_momentum_e21 <= 0),
+                            and_(IndPrev.rs_ratio_e21 < 0, (IndPrev.rs_ratio_e21 * IndPrev.rs_ratio_e21 + IndPrev.rs_momentum_e21 * IndPrev.rs_momentum_e21) < intensity_sq)
                         )
                     )
             elif special == "theme_rs21_gt_63":
                 theme_momentum_subq = db.query(Indicator.symbol_id).filter(
                     Indicator.date == latest_date_result,
-                    Indicator.rs_ratio_21 > Indicator.rs_ratio_63
+                    Indicator.rs_ratio_e21 > Indicator.rs_ratio_e63
                 ).subquery()
                 stock_in_leading_themes_subq = db.query(ThemeConstituent.symbol_id).filter(
                     ThemeConstituent.theme_id.in_(theme_momentum_subq)
@@ -1681,7 +1829,7 @@ def get_screener_dashboard(
                     theme_momentum_subq = db.query(RelativeRank.symbol_id).filter(
                         RelativeRank.date == _rk_date,
                         RelativeRank.group_name == "テーマ",
-                        RelativeRank.rs_ratio_21 > RelativeRank.rs_ratio_63
+                        RelativeRank.rs_ratio_rank_e21 > RelativeRank.rs_ratio_rank_e63
                     ).subquery()
                     stock_in_leading_themes_subq = db.query(ThemeConstituent.symbol_id).filter(
                         ThemeConstituent.theme_id.in_(theme_momentum_subq)
@@ -1809,7 +1957,7 @@ def get_screener(
         if _rk_date:
             rank_subq = db.query(RelativeRank.symbol_id).filter(
                 RelativeRank.date == _rk_date,
-                RelativeRank.rs_ratio_21 > RelativeRank.rs_ratio_63
+                RelativeRank.rs_ratio_rank_e21 > RelativeRank.rs_ratio_rank_e63
             ).subquery()
             query = query.filter(Symbol.id.in_(rank_subq))
 
@@ -1829,7 +1977,7 @@ def get_screener(
     if theme_rs21_gt_63:
         theme_momentum_subq = db.query(Indicator.symbol_id).filter(
             Indicator.date == latest_date_result,
-            Indicator.rs_ratio_21 > Indicator.rs_ratio_63
+            Indicator.rs_ratio_e21 > Indicator.rs_ratio_e63
         ).subquery()
         stock_in_leading_themes_subq = db.query(ThemeConstituent.symbol_id).filter(
             ThemeConstituent.theme_id.in_(theme_momentum_subq.select())
@@ -1847,7 +1995,7 @@ def get_screener(
             theme_momentum_subq = db.query(RelativeRank.symbol_id).filter(
                 RelativeRank.date == _rk_date,
                 RelativeRank.group_name == "テーマ",
-                RelativeRank.rs_ratio_21 > RelativeRank.rs_ratio_63
+                RelativeRank.rs_ratio_rank_e21 > RelativeRank.rs_ratio_rank_e63
             ).subquery()
             stock_in_leading_themes_subq = db.query(ThemeConstituent.symbol_id).filter(
                 ThemeConstituent.theme_id.in_(theme_momentum_subq.select())
@@ -1863,14 +2011,14 @@ def get_screener(
         if _rk_date:
             rank_subq = db.query(RelativeRank.symbol_id).filter(
                 RelativeRank.date == _rk_date,
-                RelativeRank.rs_ratio_14 > RelativeRank.rs_ratio_21
+                RelativeRank.rs_ratio_rank_e14 > RelativeRank.rs_ratio_rank_e21
             ).subquery()
             query = query.filter(Symbol.id.in_(rank_subq))
 
     if theme_rs14_gt_21:
         theme_momentum_subq = db.query(Indicator.symbol_id).filter(
             Indicator.date == latest_date_result,
-            Indicator.rs_ratio_14 > Indicator.rs_ratio_21
+            Indicator.rs_ratio_e14 > Indicator.rs_ratio_e21
         ).subquery()
         stock_in_leading_themes_subq = db.query(ThemeConstituent.symbol_id).filter(
             ThemeConstituent.theme_id.in_(theme_momentum_subq.select())
@@ -1888,7 +2036,7 @@ def get_screener(
             theme_momentum_subq = db.query(RelativeRank.symbol_id).filter(
                 RelativeRank.date == _rk_date,
                 RelativeRank.group_name == "テーマ",
-                RelativeRank.rs_ratio_14 > RelativeRank.rs_ratio_21
+                RelativeRank.rs_ratio_rank_e14 > RelativeRank.rs_ratio_rank_e21
             ).subquery()
             stock_in_leading_themes_subq = db.query(ThemeConstituent.symbol_id).filter(
                 ThemeConstituent.theme_id.in_(theme_momentum_subq.select())
@@ -1910,31 +2058,31 @@ def get_screener(
         if rrg_leading_in:
             rrg_conds.append(
                 and_(
-                    Indicator.rs_ratio_21 > 0, Indicator.rs_momentum_21 > 0,
-                    Indicator.rs_momentum_21 > IndPrev.rs_momentum_21,
-                    (Indicator.rs_ratio_21 * Indicator.rs_ratio_21 + Indicator.rs_momentum_21 * Indicator.rs_momentum_21) >= intensity_sq,
+                    Indicator.rs_ratio_e21 > 0, Indicator.rs_momentum_e21 > 0,
+                    Indicator.rs_momentum_e21 > IndPrev.rs_momentum_e21,
+                    (Indicator.rs_ratio_e21 * Indicator.rs_ratio_e21 + Indicator.rs_momentum_e21 * Indicator.rs_momentum_e21) >= intensity_sq,
                     or_(
-                        or_(IndPrev.rs_ratio_21 <= 0, IndPrev.rs_momentum_21 <= 0),
-                        (IndPrev.rs_ratio_21 * IndPrev.rs_ratio_21 + IndPrev.rs_momentum_21 * IndPrev.rs_momentum_21) < intensity_sq
+                        or_(IndPrev.rs_ratio_e21 <= 0, IndPrev.rs_momentum_e21 <= 0),
+                        (IndPrev.rs_ratio_e21 * IndPrev.rs_ratio_e21 + IndPrev.rs_momentum_e21 * IndPrev.rs_momentum_e21) < intensity_sq
                     )
                 )
             )
         if rrg_lagging_in:
             rrg_conds.append(
                 and_(
-                    Indicator.rs_ratio_21 < 0, Indicator.rs_momentum_21 < 0,
-                    or_(IndPrev.rs_ratio_21 >= 0, IndPrev.rs_momentum_21 >= 0)
+                    Indicator.rs_ratio_e21 < 0, Indicator.rs_momentum_e21 < 0,
+                    or_(IndPrev.rs_ratio_e21 >= 0, IndPrev.rs_momentum_e21 >= 0)
                 )
             )
         if rrg_improving_in:
             rrg_conds.append(
                 and_(
-                    Indicator.rs_ratio_21 < 0, Indicator.rs_momentum_21 > 0,
-                    Indicator.rs_momentum_21 > IndPrev.rs_momentum_21,
-                    (Indicator.rs_ratio_21 * Indicator.rs_ratio_21 + Indicator.rs_momentum_21 * Indicator.rs_momentum_21) >= intensity_sq,
+                    Indicator.rs_ratio_e21 < 0, Indicator.rs_momentum_e21 > 0,
+                    Indicator.rs_momentum_e21 > IndPrev.rs_momentum_e21,
+                    (Indicator.rs_ratio_e21 * Indicator.rs_ratio_e21 + Indicator.rs_momentum_e21 * Indicator.rs_momentum_e21) >= intensity_sq,
                     or_(
-                        and_(IndPrev.rs_ratio_21 < 0, IndPrev.rs_momentum_21 <= 0),
-                        and_(IndPrev.rs_ratio_21 < 0, (IndPrev.rs_ratio_21 * IndPrev.rs_ratio_21 + IndPrev.rs_momentum_21 * IndPrev.rs_momentum_21) < intensity_sq)
+                        and_(IndPrev.rs_ratio_e21 < 0, IndPrev.rs_momentum_e21 <= 0),
+                        and_(IndPrev.rs_ratio_e21 < 0, (IndPrev.rs_ratio_e21 * IndPrev.rs_ratio_e21 + IndPrev.rs_momentum_e21 * IndPrev.rs_momentum_e21) < intensity_sq)
                     )
                 )
             )
@@ -1958,8 +2106,8 @@ def get_screener(
     ).all() if latest_rank_date else []
     
     # Map ranks
-    rank_map_21 = {r.symbol_id: r.rs_ratio_21 for r in ranks if r.rs_ratio_21 is not None}
-    rank_map_63 = {r.symbol_id: r.rs_ratio_63 for r in ranks if r.rs_ratio_63 is not None}
+    rank_map_21 = {r.symbol_id: r.rs_ratio_rank_e21 for r in ranks if r.rs_ratio_rank_e21 is not None}
+    rank_map_63 = {r.symbol_id: r.rs_ratio_rank_e63 for r in ranks if r.rs_ratio_rank_e63 is not None}
     
     # Sparkline data: Need the past 21 days for these symbols
     start_date_sparkline = latest_date_result - timedelta(days=40)
@@ -2011,18 +2159,27 @@ def get_screener(
             dist_21ema_pct=d_21ema,
             rs_ratio_21_rank=rank_map_21.get(sym.id, 0.0),
             rs_ratio_63_rank=rank_map_63.get(sym.id, 0.0),
-            rs_ratio_21=ind.rs_ratio_21,
-            rs_ratio_63=ind.rs_ratio_63,
-            rs_momentum_21=ind.rs_momentum_21,
+            rs_ratio_rank_e21=rank_map_21.get(sym.id, 0.0),
+            rs_ratio_rank_e63=rank_map_63.get(sym.id, 0.0),
+            rs_ratio_21=ind.rs_ratio_e21,
+            rs_ratio_63=ind.rs_ratio_e63,
+            rs_ratio_e21=ind.rs_ratio_e21,
+            rs_ratio_e63=ind.rs_ratio_e63,
+            rs_momentum_21=ind.rs_momentum_e21,
+            rs_momentum_e21=ind.rs_momentum_e21,
             sparkline=sparkline_data,
             vol_surge_21=ind.vol_surge_21,
             adr_pct_21=ind.adr_pct_21,
-            dist_sma50_atr=ind.dist_sma50_atr,
-            trend_template_ok=ind.trend_template_ok,
+            sma50_atr_mult=ind.sma50_atr_mult,
+            dist_sma50_atr=ind.sma50_atr_mult,
+            is_trend_template=ind.is_trend_template,
+            trend_template_ok=ind.is_trend_template,
             market_cap=dp.market_cap,
             up_down_vol_ratio_50=ind.up_down_vol_ratio_50,
-            rs_blue_dot=ind.rs_blue_dot,
-            rs_red_dot=ind.rs_red_dot,
+            is_rs_blue_dot=ind.is_rs_blue_dot,
+            rs_blue_dot=ind.is_rs_blue_dot,
+            is_rs_red_dot=ind.is_rs_red_dot,
+            rs_red_dot=ind.is_rs_red_dot,
             vcr=ind.vcr,
             vol_accum_days_5=ind.vol_accum_days_5
         ))

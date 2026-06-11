@@ -65,7 +65,7 @@ def seed_data(db_session, user_db_session):
         ind = Indicator(symbol_id=1, date=d,
                         ema_21=181.0 + i, sma_50=175.0, atr_14=3.5,
                         atr_pct_14=1.9, adr_pct_21=2.1,
-                        dist_sma50_atr=2.3)
+                        sma50_atr_mult=2.3)
         db_session.add(dp)
         db_session.add(ind)
 
@@ -75,7 +75,7 @@ def seed_data(db_session, user_db_session):
                          volume=30_000_000)
     ind_msft = Indicator(symbol_id=2, date=date(2026, 5, 1),
                          ema_21=418.0, sma_50=410.0, atr_14=5.0,
-                         atr_pct_14=1.2, adr_pct_21=1.8, dist_sma50_atr=2.4)
+                         atr_pct_14=1.2, adr_pct_21=1.8, sma50_atr_mult=2.4)
     db_session.add(dp_msft)
     db_session.add(ind_msft)
 
@@ -83,7 +83,7 @@ def seed_data(db_session, user_db_session):
     for i in range(5):
         d = date(2026, 5, 1 + i)
         rr = RelativeRank(symbol_id=1, date=d, group_name="個別",
-                          rs_ratio_21=0.8 + i * 0.02)
+                          rs_ratio_rank_e21=0.8 + i * 0.02)
         db_session.add(rr)
 
     db_session.commit()

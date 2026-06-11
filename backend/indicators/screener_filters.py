@@ -46,7 +46,7 @@ def filter_theme_rs21_gt_63(
         left_on='symbol_id', right_on='id', how='inner'
     )
     leading_themes = theme_ind[
-        theme_ind['rs_ratio_21'] > theme_ind['rs_ratio_63']
+        theme_ind['rs_ratio_e21'] > theme_ind['rs_ratio_e63']
     ]['symbol_id'].values
 
     # Leading テーマに属する個別銘柄を抽出
@@ -80,19 +80,19 @@ def filter_rrg_leading_in(
     Returns:
         pd.Series[bool]: True = 通過
     """
-    if 'prev_rs_ratio_21' not in merged.columns:
+    if 'prev_rs_ratio_e21' not in merged.columns:
         return pd.Series(True, index=merged.index)
 
     # Intensity 計算
-    intensity = np.sqrt(merged['rs_ratio_21']**2 + merged['rs_momentum_21']**2)
-    prev_intensity = np.sqrt(merged['prev_rs_ratio_21']**2 + merged['prev_rs_momentum_21']**2)
+    intensity = np.sqrt(merged['rs_ratio_e21']**2 + merged['rs_momentum_e21']**2)
+    prev_intensity = np.sqrt(merged['prev_rs_ratio_e21']**2 + merged['prev_rs_momentum_e21']**2)
 
     mask = (
-        (merged['rs_ratio_21'] > 0) & (merged['rs_momentum_21'] > 0) &       # Leading 象限
-        (merged['rs_momentum_21'] > merged['prev_rs_momentum_21']) &           # 加速
+        (merged['rs_ratio_e21'] > 0) & (merged['rs_momentum_e21'] > 0) &       # Leading 象限
+        (merged['rs_momentum_e21'] > merged['prev_rs_momentum_e21']) &           # 加速
         (intensity >= intensity_threshold) &                                     # Intensity (当日)
         (
-            ((merged['prev_rs_ratio_21'] <= 0) | (merged['prev_rs_momentum_21'] <= 0)) |  # 前日非Leading
+            ((merged['prev_rs_ratio_e21'] <= 0) | (merged['prev_rs_momentum_e21'] <= 0)) |  # 前日非Leading
             (prev_intensity < intensity_threshold)                                          # 前日低Intensity
         )
     )
@@ -117,19 +117,19 @@ def filter_rrg_improving_in(
     Returns:
         pd.Series[bool]: True = 通過
     """
-    if 'prev_rs_ratio_21' not in merged.columns:
+    if 'prev_rs_ratio_e21' not in merged.columns:
         return pd.Series(True, index=merged.index)
 
-    intensity = np.sqrt(merged['rs_ratio_21']**2 + merged['rs_momentum_21']**2)
-    prev_intensity = np.sqrt(merged['prev_rs_ratio_21']**2 + merged['prev_rs_momentum_21']**2)
+    intensity = np.sqrt(merged['rs_ratio_e21']**2 + merged['rs_momentum_e21']**2)
+    prev_intensity = np.sqrt(merged['prev_rs_ratio_e21']**2 + merged['prev_rs_momentum_e21']**2)
 
     mask = (
-        (merged['rs_ratio_21'] < 0) & (merged['rs_momentum_21'] > 0) &       # Improving 象限
-        (merged['rs_momentum_21'] > merged['prev_rs_momentum_21']) &           # 加速
+        (merged['rs_ratio_e21'] < 0) & (merged['rs_momentum_e21'] > 0) &       # Improving 象限
+        (merged['rs_momentum_e21'] > merged['prev_rs_momentum_e21']) &           # 加速
         (intensity >= intensity_threshold) &                                     # Intensity (当日)
         (
-            ((merged['prev_rs_ratio_21'] < 0) & (merged['prev_rs_momentum_21'] <= 0)) |  # 前日 Lagging
-            ((prev_intensity < intensity_threshold) & (merged['prev_rs_ratio_21'] < 0))   # 前日低Intensity+左半面
+            ((merged['prev_rs_ratio_e21'] < 0) & (merged['prev_rs_momentum_e21'] <= 0)) |  # 前日 Lagging
+            ((prev_intensity < intensity_threshold) & (merged['prev_rs_ratio_e21'] < 0))   # 前日低Intensity+左半面
         )
     )
     return mask
@@ -148,12 +148,12 @@ def filter_rrg_lagging_in(merged: pd.DataFrame) -> pd.Series:
     Returns:
         pd.Series[bool]: True = 通過
     """
-    if 'prev_rs_ratio_21' not in merged.columns:
+    if 'prev_rs_ratio_e21' not in merged.columns:
         return pd.Series(True, index=merged.index)
 
     mask = (
-        (merged['rs_ratio_21'] < 0) & (merged['rs_momentum_21'] < 0) &       # Lagging 象限
-        ((merged['prev_rs_ratio_21'] >= 0) | (merged['prev_rs_momentum_21'] >= 0))  # 前日非Lagging
+        (merged['rs_ratio_e21'] < 0) & (merged['rs_momentum_e21'] < 0) &       # Lagging 象限
+        ((merged['prev_rs_ratio_e21'] >= 0) | (merged['prev_rs_momentum_e21'] >= 0))  # 前日非Lagging
     )
     return mask
 
@@ -217,7 +217,7 @@ def filter_theme_rs14_gt_21(
         left_on='symbol_id', right_on='id', how='inner'
     )
     leading_themes = theme_ind[
-        theme_ind['rs_ratio_14'] > theme_ind['rs_ratio_21']
+        theme_ind['rs_ratio_e14'] > theme_ind['rs_ratio_e21']
     ]['symbol_id'].values
 
     # Leading テーマに属する個別銘柄を抽出

@@ -30,6 +30,7 @@ export default function App() {
         '指標': true,
         'セクタ': true,
         'テーマ': true,
+        'レバレッジ': true,
         '個別': false,
     })
     

@@ -29,28 +29,28 @@ def base_data():
     # Indicators: RRG値のメイン
     ind_data = [
         # 1: Leading Success (Prev: Improving, Today: Leading + Accel + Intense)
-        {"symbol_id": 1, "date": prev_date,   "rs_ratio_21": -0.1, "rs_momentum_21": 0.6, "ema_21": 90},
-        {"symbol_id": 1, "date": target_date, "rs_ratio_21": 0.3,  "rs_momentum_21": 0.7, "ema_21": 90},
+        {"symbol_id": 1, "date": prev_date,   "rs_ratio_e21": -0.1, "rs_momentum_e21": 0.6, "ema_21": 90},
+        {"symbol_id": 1, "date": target_date, "rs_ratio_e21": 0.3,  "rs_momentum_e21": 0.7, "ema_21": 90},
         
         # 2: Low Intensity (Prev: Improving, Today: Leading + Accel + BUT LOW INTENSITY 0.2 < 0.5)
-        {"symbol_id": 2, "date": prev_date,   "rs_ratio_21": -0.1, "rs_momentum_21": 0.1, "ema_21": 90},
-        {"symbol_id": 2, "date": target_date, "rs_ratio_21": 0.1,  "rs_momentum_21": 0.15, "ema_21": 90}, # dist = sqrt(0.1^2 + 0.15^2) = 0.18
+        {"symbol_id": 2, "date": prev_date,   "rs_ratio_e21": -0.1, "rs_momentum_e21": 0.1, "ema_21": 90},
+        {"symbol_id": 2, "date": target_date, "rs_ratio_e21": 0.1,  "rs_momentum_e21": 0.15, "ema_21": 90}, # dist = sqrt(0.1^2 + 0.15^2) = 0.18
         
         # 3: Decelerating (Prev: Improving, Today: Leading + Intense BUT MOMENTUM FALLING)
-        {"symbol_id": 3, "date": prev_date,   "rs_ratio_21": -0.1, "rs_momentum_21": 1.0, "ema_21": 90},
-        {"symbol_id": 3, "date": target_date, "rs_ratio_21": 0.5,  "rs_momentum_21": 0.9, "ema_21": 90},
+        {"symbol_id": 3, "date": prev_date,   "rs_ratio_e21": -0.1, "rs_momentum_e21": 1.0, "ema_21": 90},
+        {"symbol_id": 3, "date": target_date, "rs_ratio_e21": 0.5,  "rs_momentum_e21": 0.9, "ema_21": 90},
         
         # 4: Improving Success (Prev: Lagging, Today: Improving + Accel + Intense)
-        {"symbol_id": 4, "date": prev_date,   "rs_ratio_21": -0.5, "rs_momentum_21": -0.1, "ema_21": 90},
-        {"symbol_id": 4, "date": target_date, "rs_ratio_21": -0.3, "rs_momentum_21": 0.6, "ema_21": 90},
+        {"symbol_id": 4, "date": prev_date,   "rs_ratio_e21": -0.5, "rs_momentum_e21": -0.1, "ema_21": 90},
+        {"symbol_id": 4, "date": target_date, "rs_ratio_e21": -0.3, "rs_momentum_e21": 0.6, "ema_21": 90},
         
         # 5: Falling from Leading (Prev: Leading, Today: Improving) -> SHOULD BE REJECTED for improving_in
-        {"symbol_id": 5, "date": prev_date,   "rs_ratio_21": 0.5,  "rs_momentum_21": 0.6, "ema_21": 90},
-        {"symbol_id": 5, "date": target_date, "rs_ratio_21": -0.1, "rs_momentum_21": 0.7, "ema_21": 90},
+        {"symbol_id": 5, "date": prev_date,   "rs_ratio_e21": 0.5,  "rs_momentum_e21": 0.6, "ema_21": 90},
+        {"symbol_id": 5, "date": target_date, "rs_ratio_e21": -0.1, "rs_momentum_e21": 0.7, "ema_21": 90},
     ]
     df_ind = pd.DataFrame(ind_data)
     # 欠損カラム補完
-    for col in ['change_1d_pct', 'change_1w_pct', 'change_1m_pct', 'dist_sma50_atr', 'vol_surge_21', 'rel_vol_vs_spy_21', 'rs_condition_21', 'trend_template_ok']:
+    for col in ['change_1d_pct', 'change_1w_pct', 'change_1m_pct', 'sma50_atr_mult', 'vol_surge_21', 'rel_vol_vs_spy_21', 'rs_trend_s21', 'is_trend_template']:
         df_ind[col] = 1.0
         
     df_ranks = pd.DataFrame(columns=["symbol_id", "date", "indicator_name", "percent_rank"])

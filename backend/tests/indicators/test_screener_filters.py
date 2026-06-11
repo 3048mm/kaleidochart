@@ -54,13 +54,13 @@ def _make_ind_row(symbol_id, d, **overrides):
     row = {
         "symbol_id": symbol_id, "date": d,
         "ema_21": 95.0, "sma_50": 90.0, "sma_200": 85.0,
-        "atr_14": 2.0, "dist_sma50_atr": 3.0,
+        "atr_14": 2.0, "sma50_atr_mult": 3.0,
         "change_1d_pct": 2.0, "change_1w_pct": 5.0, "change_1m_pct": 10.0,
         "change_intraday_pct": 1.0,
         "vol_surge_21": 1.5, "rel_vol_vs_spy_21": 1.0,
         "adr_pct_21": 5.0, "market_cap": 1e9,
-        "rs_ratio_21": 0.5, "rs_momentum_21": 0.3,
-        "rs_ratio_63": 0.2,
+        "rs_ratio_e21": 0.5, "rs_momentum_e21": 0.3,
+        "rs_ratio_e63": 0.2,
         "rs_condition_21": 1.0,
         "trend_template_ok": 1,
         "up_down_vol_ratio_50": 1.3,
@@ -103,12 +103,12 @@ class TestRsRank21Gt63:
         ])
         # Rank data: Stock1 rs21 > rs63, Stock2 rs21 < rs63, Stock3 rs21 == rs63
         df_ranks = pd.DataFrame([
-            {"symbol_id": 1, "date": td, "indicator_name": "rs_ratio_21", "percent_rank": 0.8},
-            {"symbol_id": 1, "date": td, "indicator_name": "rs_ratio_63", "percent_rank": 0.5},
-            {"symbol_id": 2, "date": td, "indicator_name": "rs_ratio_21", "percent_rank": 0.3},
-            {"symbol_id": 2, "date": td, "indicator_name": "rs_ratio_63", "percent_rank": 0.7},
-            {"symbol_id": 3, "date": td, "indicator_name": "rs_ratio_21", "percent_rank": 0.5},
-            {"symbol_id": 3, "date": td, "indicator_name": "rs_ratio_63", "percent_rank": 0.5},
+            {"symbol_id": 1, "date": td, "indicator_name": "rs_ratio_rank_e21", "percent_rank": 0.8},
+            {"symbol_id": 1, "date": td, "indicator_name": "rs_ratio_rank_e63", "percent_rank": 0.5},
+            {"symbol_id": 2, "date": td, "indicator_name": "rs_ratio_rank_e21", "percent_rank": 0.3},
+            {"symbol_id": 2, "date": td, "indicator_name": "rs_ratio_rank_e63", "percent_rank": 0.7},
+            {"symbol_id": 3, "date": td, "indicator_name": "rs_ratio_rank_e21", "percent_rank": 0.5},
+            {"symbol_id": 3, "date": td, "indicator_name": "rs_ratio_rank_e63", "percent_rank": 0.5},
         ])
 
         strategy = {
@@ -144,8 +144,8 @@ class TestThemeRs21Gt63:
             _make_ind_row(1,  td),  # Stock in THM1
             _make_ind_row(2,  td),  # Stock in THM2
             _make_ind_row(3,  td),  # Stock in no theme
-            _make_ind_row(10, td, rs_ratio_21=0.8, rs_ratio_63=0.3),  # THM1: leading
-            _make_ind_row(11, td, rs_ratio_21=0.2, rs_ratio_63=0.7),  # THM2: lagging
+            _make_ind_row(10, td, rs_ratio_e21=0.8, rs_ratio_e63=0.3),  # THM1: leading
+            _make_ind_row(11, td, rs_ratio_e21=0.2, rs_ratio_e63=0.7),  # THM2: lagging
         ])
         df_price = pd.DataFrame([
             _make_price_row(1, td),
@@ -204,10 +204,10 @@ class TestThemeRsRank21Gt63:
         ])
         # Rank data: THM1 (10) rs21(0.8) > rs63(0.3), THM2 (11) rs21(0.2) < rs63(0.7)
         df_ranks = pd.DataFrame([
-            {"symbol_id": 10, "date": td, "indicator_name": "rs_ratio_21", "percent_rank": 0.8},
-            {"symbol_id": 10, "date": td, "indicator_name": "rs_ratio_63", "percent_rank": 0.3},
-            {"symbol_id": 11, "date": td, "indicator_name": "rs_ratio_21", "percent_rank": 0.2},
-            {"symbol_id": 11, "date": td, "indicator_name": "rs_ratio_63", "percent_rank": 0.7},
+            {"symbol_id": 10, "date": td, "indicator_name": "rs_ratio_rank_e21", "percent_rank": 0.8},
+            {"symbol_id": 10, "date": td, "indicator_name": "rs_ratio_rank_e63", "percent_rank": 0.3},
+            {"symbol_id": 11, "date": td, "indicator_name": "rs_ratio_rank_e21", "percent_rank": 0.2},
+            {"symbol_id": 11, "date": td, "indicator_name": "rs_ratio_rank_e63", "percent_rank": 0.7},
         ])
         # Theme constituents: Stock1 -> THM1, Stock2 -> THM2
         df_theme_const = pd.DataFrame([
@@ -242,11 +242,11 @@ class TestRrgLeadingIn:
         td, prev = dates["target"], dates["prev"]
         df_ind = pd.DataFrame([
             # Stock1: Improving → Leading (passes: accel + intensity OK)
-            _make_ind_row(1, prev, rs_ratio_21=-0.1, rs_momentum_21=0.6),
-            _make_ind_row(1, td,   rs_ratio_21=0.3,  rs_momentum_21=0.7),
+            _make_ind_row(1, prev, rs_ratio_e21=-0.1, rs_momentum_e21=0.6),
+            _make_ind_row(1, td,   rs_ratio_e21=0.3,  rs_momentum_e21=0.7),
             # Stock2: Already Leading → Leading (should fail: was already leading)
-            _make_ind_row(2, prev, rs_ratio_21=0.4,  rs_momentum_21=0.5),
-            _make_ind_row(2, td,   rs_ratio_21=0.5,  rs_momentum_21=0.6),
+            _make_ind_row(2, prev, rs_ratio_e21=0.4,  rs_momentum_e21=0.5),
+            _make_ind_row(2, td,   rs_ratio_e21=0.5,  rs_momentum_e21=0.6),
         ])
         df_price = pd.DataFrame([
             _make_price_row(1, prev), _make_price_row(1, td),
@@ -269,7 +269,7 @@ class TestRrgLeadingIn:
         """前日データが無い場合、RRGフィルタはスキップされる（既存動作）"""
         td = dates["target"]
         df_ind = pd.DataFrame([
-            _make_ind_row(1, td, rs_ratio_21=0.3, rs_momentum_21=0.7),
+            _make_ind_row(1, td, rs_ratio_e21=0.3, rs_momentum_e21=0.7),
         ])
         df_price = pd.DataFrame([_make_price_row(1, td)])
         strategy = {
@@ -299,11 +299,11 @@ class TestRrgImprovingIn:
         td, prev = dates["target"], dates["prev"]
         df_ind = pd.DataFrame([
             # Stock1: Lagging → Improving (passes: rs_ratio<0, rs_mom>0, accel, intensity)
-            _make_ind_row(1, prev, rs_ratio_21=-0.5, rs_momentum_21=-0.1),
-            _make_ind_row(1, td,   rs_ratio_21=-0.3, rs_momentum_21=0.6),
+            _make_ind_row(1, prev, rs_ratio_e21=-0.5, rs_momentum_e21=-0.1),
+            _make_ind_row(1, td,   rs_ratio_e21=-0.3, rs_momentum_e21=0.6),
             # Stock2: Leading → Improving (should fail: was Leading, not Lagging)
-            _make_ind_row(2, prev, rs_ratio_21=0.5,  rs_momentum_21=0.6),
-            _make_ind_row(2, td,   rs_ratio_21=-0.1, rs_momentum_21=0.7),
+            _make_ind_row(2, prev, rs_ratio_e21=0.5,  rs_momentum_e21=0.6),
+            _make_ind_row(2, td,   rs_ratio_e21=-0.1, rs_momentum_e21=0.7),
         ])
         df_price = pd.DataFrame([
             _make_price_row(1, prev), _make_price_row(1, td),
@@ -335,11 +335,11 @@ class TestRrgLaggingIn:
         td, prev = dates["target"], dates["prev"]
         df_ind = pd.DataFrame([
             # Stock1: Weakening → Lagging (passes: prev ratio>=0, today ratio<0 & mom<0)
-            _make_ind_row(1, prev, rs_ratio_21=0.1,  rs_momentum_21=-0.2),
-            _make_ind_row(1, td,   rs_ratio_21=-0.3, rs_momentum_21=-0.5),
+            _make_ind_row(1, prev, rs_ratio_e21=0.1,  rs_momentum_e21=-0.2),
+            _make_ind_row(1, td,   rs_ratio_e21=-0.3, rs_momentum_e21=-0.5),
             # Stock2: Already Lagging → Lagging (should fail: was already lagging)
-            _make_ind_row(2, prev, rs_ratio_21=-0.4, rs_momentum_21=-0.3),
-            _make_ind_row(2, td,   rs_ratio_21=-0.5, rs_momentum_21=-0.6),
+            _make_ind_row(2, prev, rs_ratio_e21=-0.4, rs_momentum_e21=-0.3),
+            _make_ind_row(2, td,   rs_ratio_e21=-0.5, rs_momentum_e21=-0.6),
         ])
         df_price = pd.DataFrame([
             _make_price_row(1, prev), _make_price_row(1, td),
@@ -361,7 +361,7 @@ class TestRrgLaggingIn:
         """前日データが無い場合、RRGフィルタはスキップされる（既存動作）"""
         td = dates["target"]
         df_ind = pd.DataFrame([
-            _make_ind_row(1, td, rs_ratio_21=-0.3, rs_momentum_21=-0.5),
+            _make_ind_row(1, td, rs_ratio_e21=-0.3, rs_momentum_e21=-0.5),
         ])
         df_price = pd.DataFrame([_make_price_row(1, td)])
         strategy = {

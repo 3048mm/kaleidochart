@@ -50,10 +50,10 @@ export const VxvVixRatioChart: React.FC<VxvVixRatioChartProps> = ({ data, height
             },
             rightPriceScale: {
                 borderColor: appConfig.colors.glassBorder,
-                autoScale: true,
+                autoScale: false, // Turn off autoscale for stable fixed range
                 scaleMargins: {
-                    top: 0.1,
-                    bottom: 0.1,
+                    top: 0.05,
+                    bottom: 0.05,
                 },
             },
             handleScroll: false,
@@ -64,6 +64,16 @@ export const VxvVixRatioChart: React.FC<VxvVixRatioChartProps> = ({ data, height
         const lineSeries = chart.addLineSeries({
             color: '#2962FF',
             lineWidth: 2,
+        });
+
+        // Price range fixed to 0.80 - 1.30 for stable layout and absolute level visualization
+        lineSeries.applyOptions({
+            autoscaleInfoProvider: () => ({
+                priceRange: {
+                    minValue: 0.80,
+                    maxValue: 1.30,
+                },
+            }),
         });
 
         // VXV/VIX Ratio EMA5 (オレンジの細線)
@@ -78,23 +88,23 @@ export const VxvVixRatioChart: React.FC<VxvVixRatioChartProps> = ({ data, height
             lineWidth: 1,
         });
 
-        // Add reference lines
+        // Add reference lines (remove titles to prevent overlap)
         lineSeries.createPriceLine({
             price: 1.0,
-            color: appConfig.colors.bad,
+            color: 'rgba(244, 63, 94, 0.3)', // Subtler bad (red) color for line
             lineWidth: 1,
             lineStyle: 1,
             axisLabelVisible: true,
-            title: 'Bottom (1.0)',
+            title: '',
         });
 
         lineSeries.createPriceLine({
             price: 1.2,
-            color: '#ffcc00',
+            color: 'rgba(255, 204, 0, 0.3)', // Subtler yellow color for line
             lineWidth: 1,
             lineStyle: 1,
             axisLabelVisible: true,
-            title: 'Overheated (1.2)',
+            title: '',
         });
 
         const chartData = data
@@ -135,5 +145,27 @@ export const VxvVixRatioChart: React.FC<VxvVixRatioChartProps> = ({ data, height
         };
     }, [data, height]);
 
-    return <div ref={chartContainerRef} style={{ width: '100%', height: `${height}px` }} />;
+    return (
+        <div style={{ position: 'relative', width: '100%', height: `${height}px` }}>
+            <div ref={chartContainerRef} style={{ width: '100%', height: '100%' }} />
+            
+            {/* Overheated Line Label Overlay (at 1.2 price which is 20% from top in 0.80-1.30 range) */}
+            <div style={{ 
+                position: 'absolute', left: '12px', top: '20%', 
+                color: '#ffcc00', opacity: 0.7, fontSize: '10px', fontWeight: 'bold', 
+                pointerEvents: 'none', zIndex: 10, transform: 'translateY(-50%)'
+            }}>
+                Overheated (1.2)
+            </div>
+            
+            {/* Bottom Line Label Overlay (at 1.0 price which is 60% from top in 0.80-1.30 range) */}
+            <div style={{ 
+                position: 'absolute', left: '12px', top: '60%', 
+                color: appConfig.colors.bad, opacity: 0.7, fontSize: '10px', fontWeight: 'bold', 
+                pointerEvents: 'none', zIndex: 10, transform: 'translateY(-50%)'
+            }}>
+                Bottom (1.0)
+            </div>
+        </div>
+    );
 };

@@ -120,8 +120,8 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
             df_ranks = df_ranks.melt(
                 id_vars=['symbol_id', 'date'],
                 value_vars=[
-                    'rs_ratio_14', 'rs_ratio_21', 'rs_ratio_63',
-                    'rs_condition_14', 'rs_condition_21', 'rs_condition_63'
+                    'rs_ratio_rank_e14', 'rs_ratio_rank_e21', 'rs_ratio_rank_e63',
+                    'rs_trend_rank_s14', 'rs_trend_rank_s21', 'rs_trend_rank_s63'
                 ],
                 var_name='indicator_name',
                 value_name='percent_rank'

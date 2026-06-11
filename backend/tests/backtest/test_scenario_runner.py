@@ -34,12 +34,12 @@ def mock_scenario_data():
     indicators = pd.DataFrame({
         'date': dates.tolist() * 3,
         'symbol_id': [1]*10 + [2]*10 + [3]*10,
-        'rs_ratio_21': [105.0]*30,
-        'rs_momentum_21': [100.0]*30,
+        'rs_ratio_e21': [105.0]*30,
+        'rs_momentum_e21': [100.0]*30,
         'ema_21': [95.0]*30,
         'sma_50': [90.0]*30,
         'atr_14': [2.0]*30,
-        'dist_sma50_atr': [5.0]*30
+        'sma50_atr_mult': [5.0]*30
     })
     
     return prices, symbols, indicators

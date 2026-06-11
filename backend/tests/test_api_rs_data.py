@@ -17,7 +17,7 @@ def test_rs_data_availability():
     symbol_id = res[0]
     
     cursor.execute("""
-        SELECT date, rs_ratio_14, rs_momentum_14, rs_condition_14
+        SELECT date, rs_ratio_e14, rs_momentum_e14, rs_trend_s14
         FROM indicators 
         WHERE symbol_id = ? 
         ORDER BY date DESC LIMIT 1
@@ -28,7 +28,7 @@ def test_rs_data_availability():
         return
     
     latest_date, db_ratio, db_mom, db_cond = db_row
-    print(f"DB Latest ({latest_date}): rs_ratio_14={db_ratio}, rs_momentum_14={db_mom}, rs_condition_14={db_cond}")
+    print(f"DB Latest ({latest_date}): rs_ratio_e14={db_ratio}, rs_momentum_e14={db_mom}, rs_trend_s14={db_cond}")
     conn.close()
     
     # 2. Call API (assuming the server is NOT running, we might need to use TestClient or mock)
@@ -56,7 +56,7 @@ def test_rs_data_availability():
         last_point = content['data'][-1]
         print(f"API Latest Date: {last_point['time']}")
         
-        keys_to_check = ['rs_ratio_14', 'rs_momentum_14', 'rs_condition_14', 'change_1d_pct']
+        keys_to_check = ['rs_ratio_e14', 'rs_momentum_e14', 'rs_trend_s14', 'change_1d_pct']
         missing = []
         for key in keys_to_check:
             val = last_point.get(key)

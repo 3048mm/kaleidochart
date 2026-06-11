@@ -91,22 +91,23 @@ T2の価格データを元に算出される各種テクニカル・モメンタ
 | `change_1d_pct` | FLOAT | 1日騰落率(%)。前日終値を基準とした1日の変化率。 | `(close - prev_close) / prev_close * 100` |
 | `change_1w_pct` | FLOAT | 1週騰落率(%)。5営業日前（1週間）の終値を基準とした変化率。 | `(close - close_5d_ago) / close_5d_ago * 100` |
 | `change_1m_pct` | FLOAT | 1月騰落率(%)。20営業日前（1か月）の終値を基準とした変化率。 | `(close - close_20d_ago) / close_20d_ago * 100` |
-| `dist_sma50_atr` | FLOAT | SMA50からの距離をATRで正規化した値。 | `((close / sma_50 * 100) - 100) / atr_pct_14` |
+| `sma50_atr_mult` | FLOAT | SMA50からの距離をATRで正規化した値。 | `((close / sma_50 * 100) - 100) / atr_pct_14` |
 | `td9` | INT | Tom DeMark Sequential。過熱感の判定に使用。 | 4日前の終値との比較による 1〜9 のカウントアップ/ダウン |
-| `relative_strength_spy` | FLOAT | SPYに対する単純相対強度。 | `close / spy_close` |
-| `rs_condition_n` | FLOAT | RSのトレンド強度 (14, 21, 63)。 | `RS / SMA(RS, n)` |
-| `rs_ema_n` | FLOAT | RSの平滑化 (14, 21, 63)。RRG計算の前処理に使用。 | `calculate_ema_tv(relative_strength_spy, n)` |
-| `rs_ratio_n` | FLOAT | RSの正規化スコア (14, 21, 63)。RRGのX軸（Ratio）に相当。ただしオフセット100が無いので 0センター | `(rs_ema_n - mean(rs_ema_n, n)) / std(rs_ema_n, n)` |
-| `rs_roc_ema_n` | FLOAT | RS-Ratioの14日間変化率(ROC)の平滑化。 | `calculate_ema_tv(ROC(rs_ratio_n + 100), n)` |
-| `rs_momentum_n` | FLOAT | RS-Ratioの勢い (14, 21, 63)。RRGのY軸（Momentum）に相当。ただしオフセット100が無いので 0センター | `(rs_roc_ema_n - mean(rs_roc_ema_n, n)) / std(rs_roc_ema_n, n)` |
+| `rs_value` | FLOAT | SPYに対する単純相対強度。 | `close / spy_close` |
+| `rs_trend_sN` | FLOAT | RSのトレンド強度 (s14, s21, s63)。 | `rs_value_e5 / SMA(rs_value, n)` |
+| `rs_value_eN` | FLOAT | RSの平滑化 (e14, e21, e63)。RRG計算の前処理に使用。 | `calculate_ema_tv(rs_value, n)` |
+| `rs_ratio_eN` | FLOAT | RSの正規化スコア (e14, e21, e63)。RRGのX軸（Ratio）に相当。ただしオフセット100が無いので 0センター | `(rs_value_eN - mean(rs_value_eN, n)) / std(rs_value_eN, n)` |
+| `rs_roc_ema_N` | FLOAT | RS-Ratioの14日間変化率(ROC)の平滑化 (14, 21, 63)。 | `calculate_ema_tv(ROC(rs_ratio_eN + 100), n)` |
+| `rs_momentum_eN` | FLOAT | RS-Ratioの勢い (e14, e21, e63)。RRGのY軸（Momentum）に相当。ただしオフセット100が無いので 0センター | `(rs_roc_ema_N - mean(rs_roc_ema_N, n)) / std(rs_roc_ema_N, n)` |
 | `vol_surge_21` | FLOAT | 出来高急増倍率。 | `volume / mean(volume, 21)` |
-| `vol_surge_21` | FLOAT | SPYに対する出来高の相対的な強さ。 | `vol_surge_21 / spy_vol_surge_21` |
-| `pct_from_52w_high` | FLOAT | 52週（252日）高値からの下落率(%)。 | `(close - max(high, 252)) / max(high, 252) * 100` |
+| `vol_surge_rel_spy_21` | FLOAT | SPYに対する出来高の相対的な強さ。 | `vol_surge_21 / spy_vol_surge_21` |
+| `dist_52w_high_pct` | FLOAT | 52週（252日）高値からの下落率(%)。 | `(close - max(high, 252)) / max(high, 252) * 100` |
+| `dist_63d_high_pct` | FLOAT | 63日高値からの下落率(%)。 | `(close - max(high, 63)) / max(high, 63) * 100` |
 | `up_down_vol_ratio_50` | FLOAT | 50日間の上昇日出来高合計÷下落日出来高合計。機関投資家のAccumulationの強さを示す。1.5以上＝買い集め優勢。 | `sum(volume where close > prev_close, 50) / sum(volume where close < prev_close, 50)` |
-| `rs_blue_dot` | SMALLINT | RS新高値先行フラグ（1:点灯, 0:非点灯）。RSが株価に先行して52週新高値を更新した場合に点灯。 | `(relative_strength_spy >= max(RS, 252)) AND (close < max(close, 252))` |
-| `rs_red_dot` | SMALLINT | RS新安値先行フラグ（1:点灯, 0:非点灯）。RSが株価に先行して52週新安値を更新した場合に点灯。 | `(relative_strength_spy <= min(RS, 252)) AND (close > min(close, 252))` |
+| `is_rs_blue_dot` | SMALLINT | RS新高値先行フラグ（1:点灯, 0:非点灯）。RSが株価に先行して52週新高値を更新した場合に点灯。 | `(rs_value >= max(RS, 252)) AND (close < max(close, 252))` |
+| `is_rs_red_dot` | SMALLINT | RS新安値先行フラグ（1:点灯, 0:非点灯）。RSが株価に先行して52週新安値を更新した場合に点灯。 | `(rs_value <= min(RS, 252)) AND (close > min(close, 252))` |
 | `vcr` | FLOAT | Volatility Contraction Ratio。VCP（ベース形成）のスクイーズ度合いを定量化。0.5未満＝極度の収縮。 | `ATR(10) / ATR(50)` （True Rangeの単純移動平均として算出） |
-| `trend_template_ok` | SMALLINT | ミネルヴィニのトレンドテンプレート適合フラグ（1:適合, 0:不適合）。 | 右記5条件: ①close>sma50, ②sma50>sma150, ③sma150>sma200, ④sma200上昇中(20日前比), ⑤52週高値から30%以内 |
+| `is_trend_template` | SMALLINT | ミネルヴィニのトレンドテンプレート適合フラグ（1:適合, 0:不適合）。 | 右記5条件: ①close>sma50, ②sma50>sma150, ③sma150>sma200, ④sma200上昇中(20日前比), ⑤52週高値から30%以内 |
 
 ### 3.5 T4: 相対評価データ (`relative_ranks`)
 
@@ -119,7 +120,7 @@ T2の価格データを元に算出される各種テクニカル・モメンタ
 | `symbol_id` | INTEGER | `symbols.id` への外部キー。 | |
 | `date` | DATE | 評価日。 | |
 | `group_name` | STRING | 比較対象のグループ（`個別`, `テーマ` などの種類ごと）。 | |
-| `indicator_name` | STRING | ランク付けの対象指標名。<br>現在、以下の T3 指標が対象：<br> - `relative_strength_spy`<br> - `rs_ratio_14 / 21 / 63`<br> - `rs_momentum_14 / 21 / 63`<br> - `rs_condition_14 / 21 / 63` | |
+| `indicator_name` | STRING | ランク付けの対象指標名。<br>現在、以下の T3 指標が対象：<br> - `rs_value`<br> - `rs_ratio_e14 / e21 / e63`<br> - `rs_momentum_e14 / e21 / e63`<br> - `rs_trend_s14 / s21 / s63` | |
 | `percent_rank` | FLOAT | そのグループ内でのパーセンタイル順位 (0.00 〜 1.00)。 | `group.rank(pct=True)`。1.0が最強。 |
 
 ### 3.6 T5: マーケットシグナル (`market_signals`)
@@ -350,8 +351,8 @@ S&P500（SPY）の動向や市場全体の統計から算出される、市場�
 *   `max_gain_pct`: entry_date～最新日の `daily_prices.close` の最大値から算出
 *   `min_gain_pct`: entry_date～最新日の `daily_prices.close` の最小値から算出
 *   `latest_adr_pct`: T3 最新日の adr_pct_21
-*   `latest_dist_sma50_atr`: T3 最新日の dist_sma50_atr
-*   `rs_sparkline`: T4 の rs_ratio_21 ランク直近30日分
+*   `latest_dist_sma50_atr`: T3 最新日の sma50_atr_mult
+*   `rs_sparkline`: T4 の rs_ratio_rank_e21 直近30日分
 
 ### 5.3 ポートフォリオ API
 
@@ -397,8 +398,8 @@ failsafe_max_days = 120
 
 [[strategy]]
 name = "F_elite_momentum97"
-min_rs_ratio_21_rank = 0.97
-trend_template_ok = 1
+min_rs_ratio_rank_e21 = 0.97
+is_trend_template = true
 min_market_cap = 3e8
 ```
 
@@ -437,9 +438,9 @@ min_market_cap = 3e8
 バックテスト時のメモリ（RAM）消費を最小限に抑え、最適化時のOOM（Out of Memory）を防ぐため、DB内の全カラムではなく**戦略評価に必須なカラムのみ**を選択的に抽出・キャッシュしています。
 
 **1. `indicators` テーブル**
-*   **抽出対象**: `symbol_id`, `date`, `sma_50`, `ema_21`, `atr_14`, `adr_pct_21`, `dist_sma50_atr`, `vol_surge_21`, `rel_vol_vs_spy_21`, `rs_ratio_21`, `rs_ratio_63`, `rs_momentum_21`, `rs_condition_21`, `trend_template_ok`, `market_cap`, `td9`
-*   **除外対象**: `sma_5/21/63/150/200` 等の別期間MA群、14日/63日の RS momentum/condition、`atr_pct_14`, `pct_from_52w_high` 等（現状の戦略で直接使用しないもの）。※除外されているものは必要になったタイミングで `backtest_runner.py` に追記します。
-*   **特記事項 (`market_cap`)**: 時価総額は過去の履歴が存在しないケースが多いため、切り取った期間内での穴埋めではなく「DB全期間の中から最新の `market_cap` を取得し、過去の日付にグローバル・バックフィル（適用）」する特殊処理を施しています。
+*   **抽出対象**: `symbol_id`, `date`, `sma_50`, `ema_21`, `atr_14`, `adr_pct_21`, `sma50_atr_mult`, `vol_surge_21`, `vol_surge_rel_spy_21`, `rs_ratio_e21`, `rs_ratio_e63`, `rs_momentum_e21`, `rs_trend_s21`, `is_trend_template`, `market_cap`, `td9`
+*   **除外対象**: `sma_5/21/63/150/200` 等の別期間MA群、14日/63日の RS momentum/condition、`atr_pct_14`, `dist_52w_high_pct` 等（現状の戦略で直接使用しないもの）。※除外されているものは必要になったタイミングで `backtest_runner.py` に追記します。
+*   **特記事項 (`market_cap`)**: 時価総額は過去の履歴が存在しないケースが多いため、切り取った期間内での穴埋めではなく「DB全期間の中から最新 of `market_cap` を取得し、過去の日付にグローバル・バックフィル（適用）」する特殊処理を施しています。
 
 **2. `symbols` テーブル**
 *   **抽出対象**: `id`, `ticker`, `name`, `category`, `active`
@@ -447,7 +448,7 @@ min_market_cap = 3e8
 
 **3. その他テーブル**
 *   **`daily_prices`**: PK (`id`) 以外を全て抽出。
-*   **`relative_ranks`**: 対象指標名が `rs_ratio_21` および `rs_ratio_63` のレコードのみに絞り、`symbol_id`, `indicator_name`, `date`, `percent_rank` のみを抽出（`group_name`, `id` を除外）。
+*   **`relative_ranks`**: 対象指標名が `rs_ratio_e21` および `rs_ratio_e63` のレコードのみに絞り、`symbol_id`, `indicator_name`, `date`, `percent_rank` のみを抽出（`group_name`, `id` を除外）。
 *   **`market_signals`, `fundamental_data`**: 現状のバックテストエンジンでは利用していないため、完全に除外。
 
 ### 6.8 実行方法
@@ -496,20 +497,20 @@ python backend/backtest/backtest_runner.py --refresh-cache
 # backtest_config.toml 内に追加
 
 [optimization.D]
-min_dist_21ema_pct   = { type = "float", min = -4.0, max = -1.0, step = 0.5 }
-max_dist_21ema_pct   = { type = "float", min = 0.5,  max = 4.0,  step = 0.5 }
-max_dist_sma50_atr   = { type = "float", min = 2.0,  max = 6.0,  step = 0.5 }
-min_rs_ratio_21_rank = { type = "float", min = 0.70, max = 0.95, step = 0.05 }
+min_dist_ema21_pct   = { type = "float", min = -4.0, max = -1.0, step = 0.5 }
+max_dist_ema21_pct   = { type = "float", min = 0.5,  max = 4.0,  step = 0.5 }
+max_sma50_atr_mult   = { type = "float", min = 2.0,  max = 6.0,  step = 0.5 }
+min_rs_ratio_rank_e21 = { type = "float", min = 0.70, max = 0.95, step = 0.05 }
 min_market_cap       = { type = "categorical", choices = [1e8, 3e8, 5e8, 1e9] }
-trend_template_ok    = { type = "categorical", choices = [1] }
+is_trend_template    = { type = "categorical", choices = [true] }
 
 [optimization.B]
 min_change_1d_pct   = { type = "float", min = 1.0, max = 5.0, step = 0.5 }
 min_vol_surge_21     = { type = "float", min = 0.5, max = 2.0, step = 0.1 }
 min_adr_pct_21       = { type = "float", min = 2.0, max = 6.0, step = 0.5 }
-max_dist_sma50_atr   = { type = "float", min = 3.0, max = 8.0, step = 0.5 }
+max_sma50_atr_mult   = { type = "float", min = 3.0, max = 8.0, step = 0.5 }
 min_market_cap       = { type = "categorical", choices = [1e7, 5e7, 1e8, 3e8, 5e8, 1e9] }
-theme_rs21_gt_63     = { type = "categorical", choices = [true, false] }
+is_theme_rs_ratio_e21_gt_e63 = { type = "categorical", choices = [true, false] }
 ```
 
 **パース仕様:**

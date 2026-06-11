@@ -13,7 +13,7 @@ if project_root not in sys.path:
 DB_PATH = os.path.join(project_root, "data", "stocktool.db")
 
 CRITICAL_COLUMNS = [
-    'sma_200', 'ema_21', 'relative_strength_spy', 'rs_ratio_21', 'rs_momentum_21'
+    'sma_200', 'ema_21', 'rs_value', 'rs_ratio_e21', 'rs_momentum_e21'
 ]
 
 def get_connection():
@@ -83,13 +83,13 @@ def check_symbol_health(ticker: str = None, all_active: bool = False, check_null
             exclude_cols = []
             if t == 'SPY':
                 # SPY自身に対する相対強度は計算対象外のためNULLが正常
-                exclude_cols.extend(['relative_strength_spy', 'rs_ratio_21', 'rs_momentum_21'])
+                exclude_cols.extend(['rs_value', 'rs_ratio_e21', 'rs_momentum_e21'])
             
             # データ期間が短い新規株はウォームアップ期間中のためNULLを許容
             if t2_count < 75:
-                exclude_cols.append('rs_momentum_21')
+                exclude_cols.append('rs_momentum_e21')
             if t2_count < 30:
-                exclude_cols.append('rs_ratio_21')
+                exclude_cols.append('rs_ratio_e21')
             if t2_count < 21:
                 exclude_cols.append('ema_21')
                 

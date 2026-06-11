@@ -41,7 +41,7 @@ export const RsLineChart: React.FC<RsLineChartProps> = ({ data, height }) => {
 
         chartRef.current = chart;
 
-        const filteredData = data.filter(d => d.relative_strength_spy != null);
+        const filteredData = data.filter(d => d.rs_value != null);
         if (filteredData.length === 0) {
             chart.remove();
             return;
@@ -61,7 +61,7 @@ export const RsLineChart: React.FC<RsLineChartProps> = ({ data, height }) => {
 
         const rsData = filteredData.map(d => ({
             time: d.time as any,
-            value: d.relative_strength_spy as number,
+            value: d.rs_value as number,
         }));
         rsSeries.setData(rsData);
 
@@ -77,9 +77,9 @@ export const RsLineChart: React.FC<RsLineChartProps> = ({ data, height }) => {
                 minMove: 0.0001,
             },
         });
-        ema14Series.setData(data.filter(d => d.rs_ema_14 != null).map(d => ({
+        ema14Series.setData(data.filter(d => d.rs_value_e14 != null).map(d => ({
             time: d.time as any,
-            value: d.rs_ema_14 as number,
+            value: d.rs_value_e14 as number,
         })));
 
         const ema21Series = chart.addLineSeries({
@@ -93,9 +93,9 @@ export const RsLineChart: React.FC<RsLineChartProps> = ({ data, height }) => {
                 minMove: 0.0001,
             },
         });
-        ema21Series.setData(data.filter(d => d.rs_ema_21 != null).map(d => ({
+        ema21Series.setData(data.filter(d => d.rs_value_e21 != null).map(d => ({
             time: d.time as any,
-            value: d.rs_ema_21 as number,
+            value: d.rs_value_e21 as number,
         })));
 
         const ema63Series = chart.addLineSeries({
@@ -109,9 +109,9 @@ export const RsLineChart: React.FC<RsLineChartProps> = ({ data, height }) => {
                 minMove: 0.0001,
             },
         });
-        ema63Series.setData(data.filter(d => d.rs_ema_63 != null).map(d => ({
+        ema63Series.setData(data.filter(d => d.rs_value_e63 != null).map(d => ({
             time: d.time as any,
-            value: d.rs_ema_63 as number,
+            value: d.rs_value_e63 as number,
         })));
 
         // Set default visible range to last 6 months (exact replica from ChartPage logic)

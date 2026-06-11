@@ -160,9 +160,9 @@ export const SymbolDataTable: React.FC<SymbolDataTableProps> = ({ data }) => {
                                 <td style={{ padding: '6px 8px', textAlign: 'right' }}>{formatN(d.atr_pct_14, 2)}%</td>
                                 <td style={{ 
                                     padding: '6px 8px', textAlign: 'right',
-                                    fontWeight: (d.dist_sma50_atr || 0) >= 8 ? 'bold' : 'normal',
-                                    color: (d.dist_sma50_atr || 0) >= 10 ? '#ff0000' : (d.dist_sma50_atr || 0) >= 8 ? '#ffff00' : '#aaa'
-                                }}>{formatN(d.dist_sma50_atr, 1)}</td>
+                                    fontWeight: (d.sma50_atr_mult || 0) >= 8 ? 'bold' : 'normal',
+                                    color: (d.sma50_atr_mult || 0) >= 10 ? '#ff0000' : (d.sma50_atr_mult || 0) >= 8 ? '#ffff00' : '#aaa'
+                                }}>{formatN(d.sma50_atr_mult, 1)}</td>
                                 <td style={{ 
                                     padding: '6px 8px', textAlign: 'right',
                                     color: getVcrColor(d.vcr)
@@ -183,41 +183,41 @@ export const SymbolDataTable: React.FC<SymbolDataTableProps> = ({ data }) => {
                                 <td style={{ padding: '6px 8px', textAlign: 'right' }}>{formatN(d.ema_200)}</td>
                                 
                                 {/* Raw RS */}
-                                <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: '#ffb74d' }}>{formatN(d.relative_strength_spy, 4)}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: '#ffb74d' }}>{formatN(d.rs_value, 4)}</td>
 
                                 {/* RS EMA (Smoothed) */}
-                                <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: '#888' }}>{formatN(d.rs_ema_14, 4)}</td>
-                                <td style={{ padding: '6px 8px', textAlign: 'right', color: '#888' }}>{formatN(d.rs_ema_21, 4)}</td>
-                                <td style={{ padding: '6px 8px', textAlign: 'right', color: '#888' }}>{formatN(d.rs_ema_63, 4)}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: '#888' }}>{formatN(d.rs_value_e14, 4)}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', color: '#888' }}>{formatN(d.rs_value_e21, 4)}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', color: '#888' }}>{formatN(d.rs_value_e63, 4)}</td>
 
                                 {/* RS Ratio */}
-                                <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: getChgColor(d.rs_ratio_14) }}>{formatN(d.rs_ratio_14)}</td>
-                                <td style={{ padding: '6px 8px', textAlign: 'right', color: getChgColor(d.rs_ratio_21) }}>{formatN(d.rs_ratio_21)}</td>
-                                <td style={{ padding: '6px 8px', textAlign: 'right', color: getChgColor(d.rs_ratio_63) }}>{formatN(d.rs_ratio_63)}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: getChgColor(d.rs_ratio_e14) }}>{formatN(d.rs_ratio_e14)}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', color: getChgColor(d.rs_ratio_e21) }}>{formatN(d.rs_ratio_e21)}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', color: getChgColor(d.rs_ratio_e63) }}>{formatN(d.rs_ratio_e63)}</td>
 
                                 {/* RS Momentum */}
-                                <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: getChgColor(d.rs_momentum_14) }}>{formatN(d.rs_momentum_14)}</td>
-                                <td style={{ padding: '6px 8px', textAlign: 'right', color: getChgColor(d.rs_momentum_21) }}>{formatN(d.rs_momentum_21)}</td>
-                                <td style={{ padding: '6px 8px', textAlign: 'right', color: getChgColor(d.rs_momentum_63) }}>{formatN(d.rs_momentum_63)}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: getChgColor(d.rs_momentum_e14) }}>{formatN(d.rs_momentum_e14)}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', color: getChgColor(d.rs_momentum_e21) }}>{formatN(d.rs_momentum_e21)}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', color: getChgColor(d.rs_momentum_e63) }}>{formatN(d.rs_momentum_e63)}</td>
 
                                 {/* RS Condition */}
-                                <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: getConditionColor(d.rs_condition_14) }}>{formatN(d.rs_condition_14, 2)}</td>
-                                <td style={{ padding: '6px 8px', textAlign: 'right', color: getConditionColor(d.rs_condition_21) }}>{formatN(d.rs_condition_21, 2)}</td>
-                                <td style={{ padding: '6px 8px', textAlign: 'right', color: getConditionColor(d.rs_condition_63) }}>{formatN(d.rs_condition_63, 2)}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: getConditionColor(d.rs_trend_s14) }}>{formatN(d.rs_trend_s14, 2)}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', color: getConditionColor(d.rs_trend_s21) }}>{formatN(d.rs_trend_s21, 2)}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', color: getConditionColor(d.rs_trend_s63) }}>{formatN(d.rs_trend_s63, 2)}</td>
                                 <td style={{ 
                                     padding: '6px 8px', textAlign: 'center', 
-                                    background: d.rs_blue_dot === 1 ? 'rgba(0, 255, 136, 0.15)' : 'transparent',
+                                    background: d.is_rs_blue_dot === 1 ? 'rgba(0, 255, 136, 0.15)' : 'transparent',
                                     color: '#00ff88', fontSize: '14px'
-                                }}>{d.rs_blue_dot === 1 ? '●' : ''}</td>
+                                }}>{d.is_rs_blue_dot === 1 ? '●' : ''}</td>
                                 <td style={{ 
                                     padding: '6px 8px', textAlign: 'center', 
-                                    background: d.rs_red_dot === 1 ? 'rgba(255, 68, 68, 0.15)' : 'transparent',
+                                    background: d.is_rs_red_dot === 1 ? 'rgba(255, 68, 68, 0.15)' : 'transparent',
                                     color: '#ff4444', fontSize: '14px'
-                                }}>{d.rs_red_dot === 1 ? '●' : ''}</td>
+                                }}>{d.is_rs_red_dot === 1 ? '●' : ''}</td>
 
                                 {/* Volume */}
                                 <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: (d.vol_surge_21 || 0) > 2 ? appConfig.colors.good : 'inherit' }}>{formatN(d.vol_surge_21, 2)}</td>
-                                <td style={{ padding: '6px 8px', textAlign: 'right', color: (d.rel_vol_vs_spy_21 || 0) > 1.2 ? appConfig.colors.good : 'inherit' }}>{formatN(d.rel_vol_vs_spy_21, 2)}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', color: (d.vol_surge_rel_spy_21 || 0) > 1.2 ? appConfig.colors.good : 'inherit' }}>{formatN(d.vol_surge_rel_spy_21, 2)}</td>
                                 <td style={{ 
                                     padding: '6px 8px', textAlign: 'right', 
                                     color: (d.up_down_vol_ratio_50 || 0) > 1.5 ? appConfig.colors.good : (d.up_down_vol_ratio_50 || 0) < 0.7 ? appConfig.colors.bad : 'inherit'

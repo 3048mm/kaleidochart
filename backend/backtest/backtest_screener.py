@@ -221,34 +221,34 @@ def apply_filters_to_df(
 
         if ranks_day is not None:
             if needs_rs14:
-                r14 = ranks_day[ranks_day['indicator_name'] == 'rs_ratio_14'][['symbol_id', 'percent_rank']].rename(
+                r14 = ranks_day[ranks_day['indicator_name'] == 'rs_ratio_rank_e14'][['symbol_id', 'percent_rank']].rename(
                     columns={'percent_rank': 'rs14_rank'}
                 )
                 merged = merged.merge(r14, on='symbol_id', how='left').reset_index(drop=True)
                 
-                c14 = ranks_day[ranks_day['indicator_name'] == 'rs_condition_14'][['symbol_id', 'percent_rank']].rename(
+                c14 = ranks_day[ranks_day['indicator_name'] == 'rs_trend_rank_s14'][['symbol_id', 'percent_rank']].rename(
                     columns={'percent_rank': 'rs_condition_14_rank'}
                 )
                 merged = merged.merge(c14, on='symbol_id', how='left').reset_index(drop=True)
 
             if needs_rs21:
-                r21 = ranks_day[ranks_day['indicator_name'] == 'rs_ratio_21'][['symbol_id', 'percent_rank']].rename(
+                r21 = ranks_day[ranks_day['indicator_name'] == 'rs_ratio_rank_e21'][['symbol_id', 'percent_rank']].rename(
                     columns={'percent_rank': 'rs21_rank'}
                 )
                 merged = merged.merge(r21, on='symbol_id', how='left').reset_index(drop=True)
                 
-                c21 = ranks_day[ranks_day['indicator_name'] == 'rs_condition_21'][['symbol_id', 'percent_rank']].rename(
+                c21 = ranks_day[ranks_day['indicator_name'] == 'rs_trend_rank_s21'][['symbol_id', 'percent_rank']].rename(
                     columns={'percent_rank': 'rs_condition_21_rank'}
                 )
                 merged = merged.merge(c21, on='symbol_id', how='left').reset_index(drop=True)
 
             if needs_rs63:
-                r63 = ranks_day[ranks_day['indicator_name'] == 'rs_ratio_63'][['symbol_id', 'percent_rank']].rename(
+                r63 = ranks_day[ranks_day['indicator_name'] == 'rs_ratio_rank_e63'][['symbol_id', 'percent_rank']].rename(
                     columns={'percent_rank': 'rs63_rank'}
                 )
                 merged = merged.merge(r63, on='symbol_id', how='left').reset_index(drop=True)
                 
-                c63 = ranks_day[ranks_day['indicator_name'] == 'rs_condition_63'][['symbol_id', 'percent_rank']].rename(
+                c63 = ranks_day[ranks_day['indicator_name'] == 'rs_trend_rank_s63'][['symbol_id', 'percent_rank']].rename(
                     columns={'percent_rank': 'rs_condition_63_rank'}
                 )
                 merged = merged.merge(c63, on='symbol_id', how='left').reset_index(drop=True)
@@ -281,8 +281,8 @@ def apply_filters_to_df(
             ind_prev_all = df_ind[df_ind['date'] == prev_date]
             
         if ind_prev_all is not None:
-            ind_prev = ind_prev_all[['symbol_id', 'rs_ratio_21', 'rs_momentum_21']].rename(
-                columns={'rs_ratio_21': 'prev_rs_ratio_21', 'rs_momentum_21': 'prev_rs_momentum_21'}
+            ind_prev = ind_prev_all[['symbol_id', 'rs_ratio_e21', 'rs_momentum_e21']].rename(
+                columns={'rs_ratio_e21': 'prev_rs_ratio_e21', 'rs_momentum_e21': 'prev_rs_momentum_e21'}
             )
             merged = merged.merge(ind_prev, on='symbol_id', how='left').reset_index(drop=True)
 
@@ -454,11 +454,11 @@ def apply_filters_to_df(
 
     # RRG
     intensity_threshold = strategy.get('rrg_intensity_threshold', 0.0)
-    if strategy.get('rrg_leading_in') and 'prev_rs_ratio_21' in merged.columns:
+    if strategy.get('rrg_leading_in') and 'prev_rs_ratio_e21' in merged.columns:
         mask &= filter_rrg_leading_in(merged, intensity_threshold)
-    if strategy.get('rrg_lagging_in') and 'prev_rs_ratio_21' in merged.columns:
+    if strategy.get('rrg_lagging_in') and 'prev_rs_ratio_e21' in merged.columns:
         mask &= filter_rrg_lagging_in(merged)
-    if strategy.get('rrg_improving_in') and 'prev_rs_ratio_21' in merged.columns:
+    if strategy.get('rrg_improving_in') and 'prev_rs_ratio_e21' in merged.columns:
         mask &= filter_rrg_improving_in(merged, intensity_threshold)
 
     # 3. Expression Filter

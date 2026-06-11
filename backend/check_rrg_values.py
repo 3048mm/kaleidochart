@@ -34,12 +34,12 @@ def check_rrg_transition_strict():
     ).filter(
         Symbol.active == True,
         Indicator.date == latest_date,
-        Indicator.rs_ratio_21 > 0,
-        Indicator.rs_momentum_21 > 0,
-        or_(IndPrev.rs_ratio_21 <= 0, IndPrev.rs_momentum_21 <= 0),
+        Indicator.rs_ratio_e21 > 0,
+        Indicator.rs_momentum_e21 > 0,
+        or_(IndPrev.rs_ratio_e21 <= 0, IndPrev.rs_momentum_e21 <= 0),
         Indicator.vol_surge_21 >= 1.0,
         Indicator.adr_pct_21 >= 4.0,
-        Indicator.dist_sma50_atr <= 6.0,
+        Indicator.sma50_atr_mult <= 6.0,
         Indicator.market_cap >= 1_000_000_000
     )
     
@@ -58,9 +58,9 @@ def check_rrg_transition_strict():
     ).filter(
         Symbol.active == True,
         Indicator.date == latest_date,
-        Indicator.rs_ratio_21 < 0,
-        Indicator.rs_momentum_21 < 0,
-        or_(IndPrev.rs_ratio_21 >= 0, IndPrev.rs_momentum_21 >= 0),
+        Indicator.rs_ratio_e21 < 0,
+        Indicator.rs_momentum_e21 < 0,
+        or_(IndPrev.rs_ratio_e21 >= 0, IndPrev.rs_momentum_e21 >= 0),
         ((DailyPrice.close - DailyPrice.open) / DailyPrice.open * 100) < -2.0,
         Indicator.vol_surge_21 >= 1.0
     )

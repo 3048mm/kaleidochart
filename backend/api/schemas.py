@@ -76,6 +76,39 @@ class ChartDataPoint(BaseModel):
     vcr: Optional[float] = None
     vol_accum_days_5: Optional[int] = None
     
+    # Legacy fields for frontend backward compatibility
+    dist_sma50_atr: Optional[float] = None
+    relative_strength_spy: Optional[float] = None
+    rs_ema_14: Optional[float] = None
+    rs_ema_21: Optional[float] = None
+    rs_ema_63: Optional[float] = None
+    rs_ratio_14: Optional[float] = None
+    rs_ratio_21: Optional[float] = None
+    rs_ratio_63: Optional[float] = None
+    rs_momentum_14: Optional[float] = None
+    rs_momentum_21: Optional[float] = None
+    rs_momentum_63: Optional[float] = None
+    rs_condition_14: Optional[float] = None
+    rs_condition_21: Optional[float] = None
+    rs_condition_63: Optional[float] = None
+    rel_vol_vs_spy_21: Optional[float] = None
+    pct_from_63d_high: Optional[float] = None
+    pct_from_52w_high: Optional[float] = None
+    trend_template_ok: Optional[int] = None
+    rs_blue_dot: Optional[int] = None
+    rs_red_dot: Optional[int] = None
+    
+    # Legacy Relative Ranks for backward compatibility
+    rank_rs_ratio_14: Optional[float] = None
+    rank_rs_ratio_21: Optional[float] = None
+    rank_rs_ratio_63: Optional[float] = None
+    rank_rs_momentum_14: Optional[float] = None
+    rank_rs_momentum_21: Optional[float] = None
+    rank_rs_momentum_63: Optional[float] = None
+    rank_rs_condition_14: Optional[float] = None
+    rank_rs_condition_21: Optional[float] = None
+    rank_rs_condition_63: Optional[float] = None
+    
     # Bollinger Bands (Calculated on the fly)
     bb_upper: Optional[float] = None
     bb_lower: Optional[float] = None
@@ -133,6 +166,16 @@ class DashboardPanelItem(BaseModel):
     rs_ratio_e21: Optional[float] = None
     rs_ratio_e63: Optional[float] = None
     rs_momentum_e21: Optional[float] = None
+    
+    # Legacy fields for frontend compatibility
+    rs_ratio_21_rank: float = 0.0
+    rs_ratio_63_rank: float = 0.0
+    rs_ratio_14_rank: float = 0.0
+    rs_momentum_21_rank: float = 0.0
+    rs_momentum_63_rank: float = 0.0
+    rs_ratio_21: Optional[float] = None
+    rs_ratio_63: Optional[float] = None
+    rs_momentum_21: Optional[float] = None
 
 class ScreenerResultItem(DashboardPanelItem):
     vol_surge_21: Optional[float] = None
@@ -145,6 +188,12 @@ class ScreenerResultItem(DashboardPanelItem):
     is_rs_red_dot: Optional[int] = None
     vcr: Optional[float] = None
     vol_accum_days_5: Optional[int] = None
+
+    # Legacy fields for frontend compatibility
+    dist_sma50_atr: Optional[float] = None
+    trend_template_ok: Optional[int] = None
+    rs_blue_dot: Optional[int] = None
+    rs_red_dot: Optional[int] = None
 
 class ScreenerDashboardItem(BaseModel):
     id: int
@@ -203,6 +252,14 @@ class EtfFeatureItem(BaseModel):
     rs_ratio_rank_e63: Optional[float] = None
     chart_data: List[ChartDataPoint] = []
 
+    # Legacy fields for frontend compatibility
+    rs_ratio_14: Optional[float] = None
+    rs_ratio_21: Optional[float] = None
+    rs_ratio_63: Optional[float] = None
+    rank_rs_ratio_14: Optional[float] = None
+    rank_rs_ratio_21: Optional[float] = None
+    rank_rs_ratio_63: Optional[float] = None
+
 class RankingResponse(BaseModel):
     indicator_name: str
     items: List[RankingItem]
@@ -248,6 +305,17 @@ class ThemeConstituentItem(BaseModel):
     rs_momentum_rank_e63: Optional[float] = None
     rs_sparkline: List[float] = []  # rs_ratio_e21 history for minimap
     chart_data: List[ChartDataPoint] = []  # For RRG usage
+
+    # Legacy fields for frontend compatibility
+    rs_ratio_14: Optional[float] = None
+    rs_ratio_21: Optional[float] = None
+    rs_ratio_63: Optional[float] = None
+    rs_momentum_21: Optional[float] = None
+    rank_rs_ratio_14: Optional[float] = None
+    rank_rs_ratio_21: Optional[float] = None
+    rank_rs_ratio_63: Optional[float] = None
+    rank_rs_momentum_21: Optional[float] = None
+    rank_rs_momentum_63: Optional[float] = None
 
 class ThemeDetailResponse(BaseModel):
     id: int
@@ -295,6 +363,30 @@ class ThemeDetailResponse(BaseModel):
     rs_trend_rank_s63: Optional[float] = None
     chart_data: List[ChartDataPoint] = []  # 6-month OHLCV for MiniChart
     constituents: List[ThemeConstituentItem] = []
+
+    # Legacy fields for frontend compatibility
+    rs_ratio_14: Optional[float] = None
+    rs_ratio_21: Optional[float] = None
+    rs_ratio_63: Optional[float] = None
+    rs_momentum_14: Optional[float] = None
+    rs_momentum_21: Optional[float] = None
+    rs_momentum_63: Optional[float] = None
+    rs_condition_14: Optional[float] = None
+    rs_condition_21: Optional[float] = None
+    rs_condition_63: Optional[float] = None
+    rs_ema_14: Optional[float] = None
+    rs_ema_21: Optional[float] = None
+    rs_ema_63: Optional[float] = None
+    dist_sma50_atr: Optional[float] = None
+    rank_rs_ratio_14: Optional[float] = None
+    rank_rs_ratio_21: Optional[float] = None
+    rank_rs_ratio_63: Optional[float] = None
+    rank_rs_momentum_14: Optional[float] = None
+    rank_rs_momentum_21: Optional[float] = None
+    rank_rs_momentum_63: Optional[float] = None
+    rank_rs_condition_14: Optional[float] = None
+    rank_rs_condition_21: Optional[float] = None
+    rank_rs_condition_63: Optional[float] = None
 
 class GroupDataResponse(BaseModel):
     ticker: str

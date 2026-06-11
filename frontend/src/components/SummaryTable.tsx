@@ -78,7 +78,7 @@ export const SummaryTable: React.FC<SummaryTableProps> = ({
     const HeaderItem = ({ label, column, style }: { label: string, column: SortKey, style: React.CSSProperties }) => (
         <div 
             onClick={() => handleSort(column)} 
-            style={{ ...style, cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'center', justifyContent: style.textAlign === 'right' ? 'flex-end' : (style.textAlign === 'center' ? 'center' : 'flex-start') }}
+            style={{ ...style, flexShrink: 0, cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'center', justifyContent: style.textAlign === 'right' ? 'flex-end' : (style.textAlign === 'center' ? 'center' : 'flex-start') }}
         >
             {label} <SortIcon column={column} />
         </div>
@@ -86,22 +86,35 @@ export const SummaryTable: React.FC<SummaryTableProps> = ({
 
     return (
         <div className="dashboard-list" style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch', width: '100%', maxWidth: '100%' }}>
-            <div style={{ minWidth: '590px' }}>
+            <div style={{ minWidth: '680px' }}>
                 {/* Header Row */}
                 <div style={{
                     display: 'flex', fontSize: '11px', color: '#aaa', paddingBottom: '8px', borderBottom: `1px solid ${appConfig.colors.glassBorder}`, marginBottom: '8px',
                     gap: '8px'
                 }}>
-                    <HeaderItem label="Name" column="ticker" style={{ flex: '1', minWidth: '80px' }} />
+                    <HeaderItem 
+                        label="Name" 
+                        column="ticker" 
+                        style={{ 
+                            flex: '1', 
+                            minWidth: '80px', 
+                            position: 'sticky', 
+                            left: 0, 
+                            background: '#0d1117', // Match --bg-surface background color
+                            zIndex: 2,
+                            paddingLeft: '4px',
+                            borderRight: '1px solid rgba(255, 255, 255, 0.1)'
+                        }} 
+                    />
                     <HeaderItem label="Close" column="close" style={{ width: '52px', textAlign: 'right', paddingRight: '5px' }} />
                     <HeaderItem label="1D%" column="change_pct" style={{ width: '50px', textAlign: 'center' }} />
                     <HeaderItem label="1W%" column="change_1w_pct" style={{ width: '50px', textAlign: 'center' }} />
                     <HeaderItem label="1M%" column="change_1m_pct" style={{ width: '50px', textAlign: 'center' }} />
-                    <HeaderItem label="21E%" column="dist_21ema_pct" style={{ width: '50px', textAlign: 'right', paddingRight: '5px' }} />
-                    <div style={{ width: '60px', textAlign: 'center' }}>RS21 (30D)</div>
-                    <HeaderItem label="RS14" column="rs_ratio_14_rank" style={{ width: '32px', textAlign: 'right' }} />
-                    <HeaderItem label="RS21" column="rs_ratio_21_rank" style={{ width: '32px', textAlign: 'right' }} />
-                    <HeaderItem label="RS63" column="rs_ratio_63_rank" style={{ width: '32px', textAlign: 'right' }} />
+                    <HeaderItem label="E21%" column="dist_21ema_pct" style={{ width: '50px', textAlign: 'right', paddingRight: '5px' }} />
+                    <div style={{ width: '60px', textAlign: 'center', flexShrink: 0 }}>RSR21% (30d)</div>
+                    <HeaderItem label="RSR14%" column="rs_ratio_14_rank" style={{ width: '56px', textAlign: 'right' }} />
+                    <HeaderItem label="RSR21%" column="rs_ratio_21_rank" style={{ width: '56px', textAlign: 'right' }} />
+                    <HeaderItem label="RSR63%" column="rs_ratio_63_rank" style={{ width: '56px', textAlign: 'right' }} />
                 </div>
 
                 {sortedItems.map(item => {
@@ -121,7 +134,19 @@ export const SummaryTable: React.FC<SummaryTableProps> = ({
                             gap: '8px',
                         }}>
                             {/* 1. Name */}
-                            <div style={{ flex: '1', minWidth: '80px', display: 'flex', flexDirection: 'column' }}>
+                            <div style={{ 
+                                flex: '1', 
+                                minWidth: '80px', 
+                                flexShrink: 0, 
+                                display: 'flex', 
+                                flexDirection: 'column',
+                                position: 'sticky',
+                                left: 0,
+                                background: '#0d1117', // Match --bg-surface background color
+                                zIndex: 1,
+                                paddingLeft: '4px',
+                                borderRight: '1px solid rgba(255, 255, 255, 0.1)'
+                            }}>
                                 <Link to={linkTo ? linkTo(item) : `/chart/${encodeURIComponent(item.ticker)}`} style={{ color: appConfig.colors.chartText, textDecoration: 'none', fontWeight: 'bold', fontSize: '13px' }}>
                                     {item.ticker}
                                 </Link>
@@ -140,7 +165,7 @@ export const SummaryTable: React.FC<SummaryTableProps> = ({
                             </div>
 
                             {/* 2. Close */}
-                            <div style={{ width: '52px', textAlign: 'right', paddingRight: '5px', fontSize: '12px', fontVariantNumeric: 'tabular-nums' }}>
+                            <div style={{ width: '52px', flexShrink: 0, textAlign: 'right', paddingRight: '5px', fontSize: '12px', fontVariantNumeric: 'tabular-nums' }}>
                                 {(item.close || 0).toFixed(2)}
                             </div>
 
@@ -187,7 +212,7 @@ export const SummaryTable: React.FC<SummaryTableProps> = ({
 
                             {/* 8. RS Score (14, 21, 63) */}
                             <div style={{
-                                width: '32px',
+                                width: '56px',
                                 textAlign: 'right',
                                 fontSize: '11px',
                                 fontVariantNumeric: 'tabular-nums',
@@ -199,7 +224,7 @@ export const SummaryTable: React.FC<SummaryTableProps> = ({
                                 {((item.rs_ratio_14_rank || 0) * 100).toFixed(0)}
                             </div>
                             <div style={{
-                                width: '32px',
+                                width: '56px',
                                 textAlign: 'right',
                                 fontSize: '11px',
                                 fontVariantNumeric: 'tabular-nums',
@@ -211,7 +236,7 @@ export const SummaryTable: React.FC<SummaryTableProps> = ({
                                 {((item.rs_ratio_21_rank || 0) * 100).toFixed(0)}
                             </div>
                             <div style={{
-                                width: '32px',
+                                width: '56px',
                                 textAlign: 'right',
                                 fontSize: '11px',
                                 fontVariantNumeric: 'tabular-nums',

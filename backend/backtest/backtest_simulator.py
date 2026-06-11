@@ -89,7 +89,7 @@ def simulate_trade(
 
     # Merge future prices with indicators
     future = future_prices.merge(
-        future_inds[['date', 'ema_21', 'sma_50', 'atr_14', 'dist_sma50_atr']],
+        future_inds[['date', 'ema_21', 'sma_50', 'atr_14', 'sma50_atr_mult']],
         on='date', how='left'
     )
 
@@ -109,7 +109,7 @@ def simulate_trade(
         current_low = row['low']
         current_date = row['date']
         current_ema21 = row.get('ema_21')
-        current_dist_sma50_atr = row.get('dist_sma50_atr')
+        current_dist_sma50_atr = row.get('sma50_atr_mult')
         current_atr = row.get('atr_14')
 
         day_count = i + 1  # 1-indexed trading days after entry
@@ -372,7 +372,7 @@ class BacktestSimulator:
             entry_price = float(pos['entry_price'])
             
             ema_21 = symbol_data.iloc[0].get('ema_21')
-            dist_sma50_atr = symbol_data.iloc[0].get('dist_sma50_atr')
+            dist_sma50_atr = symbol_data.iloc[0].get('sma50_atr_mult')
             atr = symbol_data.iloc[0].get('atr_14')
             
             # Initialize dynamic exit states for the position if not present

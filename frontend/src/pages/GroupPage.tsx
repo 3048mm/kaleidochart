@@ -146,11 +146,11 @@ export const GroupPage: React.FC = () => {
                                 <th style={{ padding: '8px', textAlign: 'center' }}>1D%</th>
                                 <th style={{ padding: '8px', textAlign: 'center' }}>1W%</th>
                                 <th style={{ padding: '8px', textAlign: 'center' }}>1M%</th>
-                                <th style={{ padding: '8px', textAlign: 'center' }}>RSRatio21</th>
-                                <th style={{ padding: '8px', textAlign: 'center' }}>RSRatio63</th>
-                                <th style={{ padding: '8px', textAlign: 'center' }}>RSMom21</th>
-                                <th style={{ padding: '8px', textAlign: 'center' }}>RSMom63</th>
-                                <th style={{ padding: '8px', textAlign: 'center', width: '80px' }}>RS21 (30d)</th>
+                                <th style={{ padding: '8px', textAlign: 'center' }}>RSR21%</th>
+                                <th style={{ padding: '8px', textAlign: 'center' }}>RSR63%</th>
+                                <th style={{ padding: '8px', textAlign: 'center' }}>RSM21%</th>
+                                <th style={{ padding: '8px', textAlign: 'center' }}>RSM63%</th>
+                                <th style={{ padding: '8px', textAlign: 'center', width: '80px' }}>RSR21% (30d)</th>
                             </tr>
                         </thead>
                         <tbody>

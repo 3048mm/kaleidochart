@@ -134,7 +134,7 @@ def test_api_get_watchlist_triggers_background_tasks(db_session):
     # Also add mock prices and indicators for target symbols to avoid errors during metrics calculation
     for sid in [2, 3]:
         dp = DailyPrice(symbol_id=sid, date=date(2026, 5, 24), open=100, high=105, low=95, close=102, volume=1000)
-        ind = Indicator(symbol_id=sid, date=date(2026, 5, 24), ema_21=101, adr_pct_21=2.5, dist_sma50_atr=3.0)
+        ind = Indicator(symbol_id=sid, date=date(2026, 5, 24), ema_21=101, adr_pct_21=2.5, sma50_atr_mult=3.0)
         db_session.add_all([dp, ind])
     db_session.commit()
     

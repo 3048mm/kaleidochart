@@ -79,7 +79,7 @@ python backend/optimization_runner.py --strategy F_elite_momentum97 --trials 500
 [optimization.D]
 # 変更前: min = 0.50, max = 0.90
 # 変更後: より厳しい範囲に絞り込み
-min_rs_ratio_21_rank = { type = "float", min = 0.70, max = 0.95, step = 0.05 }
+min_rs_ratio_rank_e21 = { type = "float", min = 0.70, max = 0.95, step = 0.05 }
 ```
 
 新しいフィルタ条件（例: 出来高急増 `min_vol_surge_21`）を最適化対象に追加する場合：

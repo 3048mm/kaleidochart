@@ -771,3 +771,36 @@ body {
 .toggle-btn.active:hover {
   background: #2563eb;
 }
+
+/* === Watchlist Page Ticker Column === */
+.watchlist-ticker-cell {
+  width: 240px;
+  min-width: 240px;
+  max-width: 240px;
+}
+
+.watchlist-name-text {
+  font-size: 11px;
+  color: #666;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+}
+
+/* Responsive Hide Utility for Watchlist */
+@media (max-width: 768px) {
+  .hide-on-mobile {
+    display: none !important;
+  }
+
+  .watchlist-ticker-cell {
+    width: 90px;
+    min-width: 90px;
+    max-width: 90px;
+  }
+  
+  .watchlist-name-text {
+    max-width: 70px;
+  }
+}

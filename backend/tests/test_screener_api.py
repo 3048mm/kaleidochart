@@ -65,24 +65,24 @@ def reset_db():
     # 1. Stocks data
     # AAPL (Rise candidate: +1.5%)
     dp1 = DailyPrice(symbol_id=1, date=d, open=180, high=185, low=178, close=183, volume=1000)
-    ind1 = Indicator(symbol_id=1, date=d, change_1d_pct=1.5, dist_sma50_atr=4.0)
+    ind1 = Indicator(symbol_id=1, date=d, change_1d_pct=1.5, sma50_atr_mult=4.0)
     
     # MSFT (Fall candidate: -3.0%)
     dp4 = DailyPrice(symbol_id=4, date=d, open=400, high=402, low=385, close=388, volume=1200)
-    ind4 = Indicator(symbol_id=4, date=d, change_1d_pct=-3.0, dist_sma50_atr=4.0, vol_surge_21=2.0)
+    ind4 = Indicator(symbol_id=4, date=d, change_1d_pct=-3.0, sma50_atr_mult=4.0, vol_surge_21=2.0)
     
     db.add_all([dp1, ind1, dp4, ind4])
 
     # 2. Themes data & RelativeRank (T4)
-    # THEME1 (Strong theme: rs_ratio_21 = 0.9)
+    # THEME1 (Strong theme: rs_ratio_rank_e21 = 0.9)
     dp2 = DailyPrice(symbol_id=2, date=d, open=100, high=105, low=98, close=102, volume=500)
-    ind2 = Indicator(symbol_id=2, date=d, change_1d_pct=2.0, dist_sma50_atr=1.0)
-    rr1 = RelativeRank(symbol_id=2, date=d, group_name="theme", rs_ratio_21=0.9)
+    ind2 = Indicator(symbol_id=2, date=d, change_1d_pct=2.0, sma50_atr_mult=1.0)
+    rr1 = RelativeRank(symbol_id=2, date=d, group_name="theme", rs_ratio_rank_e21=0.9)
     
-    # THEME2 (Weak theme: rs_ratio_21 = 0.3)
+    # THEME2 (Weak theme: rs_ratio_rank_e21 = 0.3)
     dp3 = DailyPrice(symbol_id=3, date=d, open=100, high=102, low=95, close=97, volume=300)
-    ind3 = Indicator(symbol_id=3, date=d, change_1d_pct=-1.5, dist_sma50_atr=1.0)
-    rr2 = RelativeRank(symbol_id=3, date=d, group_name="theme", rs_ratio_21=0.3)
+    ind3 = Indicator(symbol_id=3, date=d, change_1d_pct=-1.5, sma50_atr_mult=1.0)
+    rr2 = RelativeRank(symbol_id=3, date=d, group_name="theme", rs_ratio_rank_e21=0.3)
     
     db.add_all([dp2, ind2, rr1, dp3, ind3, rr2])
 
