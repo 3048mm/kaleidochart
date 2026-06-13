@@ -300,6 +300,7 @@ def get_watchlist(db: Session, user_db: Session) -> dict:
             "min_gain_pct": round(min_gain_pct, 2),
             "latest_adr_pct": latest_ind.adr_pct_21 if latest_ind and latest_ind.adr_pct_21 else 0.0,
             "latest_dist_sma50_atr": latest_ind.sma50_atr_mult if latest_ind and latest_ind.sma50_atr_mult else 0.0,
+            "latest_sma50_atr_mult": latest_ind.sma50_atr_mult if latest_ind and latest_ind.sma50_atr_mult else 0.0,
             "rs_sparkline": rs_sparkline,
             "next_earnings_date": sym.next_earnings_date if sym else None,
             "status": wl.status,
