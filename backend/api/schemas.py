@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
 from datetime import date, datetime
 
 class SymbolResponse(BaseModel):
@@ -432,6 +432,7 @@ class ScreenerMetaResponse(BaseModel):
     columns: List[ScreenerColumnMeta]
     rank_indicators: List[str]
     virtual_columns: List[ScreenerColumnMeta]
+    labels: Optional[Dict[str, str]] = None
 
 class AvailableDatesResponse(BaseModel):
     dates: List[str]

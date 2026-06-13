@@ -89,6 +89,74 @@ for _cat, _cols in _COLUMN_CATEGORIES.items():
     for _c in _cols:
         _COL_TO_CATEGORY[_c] = _cat
 
+_COLUMN_LABELS = {
+    # Price & Trend
+    "sma_5": "5 SMA",
+    "sma_21": "21 SMA",
+    "sma_50": "50 SMA",
+    "sma_63": "63 SMA",
+    "sma_150": "150 SMA",
+    "sma_200": "200 SMA",
+    "ema_5": "5 EMA",
+    "ema_21": "21 EMA",
+    "ema_50": "50 EMA",
+    "ema_63": "63 EMA",
+    "ema_150": "150 EMA",
+    "ema_200": "200 EMA",
+    "is_trend_template": "Trend Template",
+    "change_1d_pct": "1D Change %",
+    "change_1w_pct": "1W Change %",
+    "change_1m_pct": "1M Change %",
+    "change_oc_pct": "Open-to-Close %",
+    "dist_ema21_pct": "Dist 21EMA %",
+    "dist_sma50_pct": "Dist 50SMA %",
+    "dist_63d_high_pct": "Dist 63D High %",
+    "dist_52w_high_pct": "Dist 52W High %",
+    # Volume & Volatility
+    "atr_14": "14 ATR",
+    "atr_pct_14": "14 ATR %",
+    "adr_pct_21": "21 ADR %",
+    "sma50_atr_mult": "50/ATR",
+    "td9": "TD9",
+    "vol_surge_21": "21 Vol Surge",
+    "vol_surge_rel_spy_21": "Vol Surge vs SPY",
+    "up_down_vol_ratio_50": "U/D Vol Ratio",
+    "vcr": "VCR",
+    "vol_accum_days_5": "Accum Days (5D)",
+    # Momentum & RS
+    "rs_value": "RS Value",
+    "rs_trend_s14": "RS Trend 14",
+    "rs_trend_s21": "RS Trend 21",
+    "rs_trend_s63": "RS Trend 63",
+    "rs_value_e14": "RS Value e14",
+    "rs_value_e21": "RS Value e21",
+    "rs_value_e63": "RS Value e63",
+    "rs_momentum_e14": "RS Momentum e14",
+    "rs_momentum_e21": "RS Momentum e21",
+    "rs_momentum_e63": "RS Momentum e63",
+    "rs_ratio_e14": "RS Ratio e14",
+    "rs_ratio_e21": "RS Ratio e21",
+    "rs_ratio_e63": "RS Ratio e63",
+    "is_rs_blue_dot": "RS Blue Dot",
+    "is_rs_red_dot": "RS Red Dot",
+    # Fundamentals
+    "market_cap": "Market Cap",
+    # Ranks (Relative Rank indicator columns labels)
+    "rs_value_rank": "RS Value Rank",
+    "rs_ratio_rank_e14": "RSR14% Rank",
+    "rs_ratio_rank_e21": "RSR21% Rank",
+    "rs_ratio_rank_e63": "RSR63% Rank",
+    "rs_momentum_rank_e14": "RSM14% Rank",
+    "rs_momentum_rank_e21": "RSM21% Rank",
+    "rs_momentum_rank_e63": "RSM63% Rank",
+    "rs_trend_rank_s14": "RS Trend Rank 14",
+    "rs_trend_rank_s21": "RS Trend Rank 21",
+    "rs_trend_rank_s63": "RS Trend Rank 63",
+    "rs_roc_ema_rank_e14": "RS ROC Rank 14",
+    "rs_roc_ema_rank_e21": "RS ROC Rank 21",
+    "rs_roc_ema_rank_e63": "RS ROC Rank 63",
+}
+
 def _resolve_column(name: str):
     """Resolve a filter key to a SQLAlchemy column expression, or None."""
     if name in _INDICATOR_COLUMNS:
@@ -266,7 +334,7 @@ def get_screener_meta(db: Session = Depends(get_api_db)):
     columns = []
     for col_name, col_type in _INDICATOR_COLUMN_TYPES.items():
         cat = _COL_TO_CATEGORY.get(col_name, "Other")
-        label = col_name.replace("_", " ").title()
+        label = _COLUMN_LABELS.get(col_name, col_name.replace("_", " ").title())
         step = 1.0 if col_type == "int" else 0.1
         columns.append(schemas.ScreenerColumnMeta(name=col_name, label=label, category=cat, type=col_type, step=step))
 
@@ -274,10 +342,10 @@ def get_screener_meta(db: Session = Depends(get_api_db)):
     virtual = []
     for vc_name in _VIRTUAL_COLUMNS.keys():
         cat = _COL_TO_CATEGORY.get(vc_name, "Price & Trend")
-        label = vc_name.replace("_", " ").title()
+        label = _COLUMN_LABELS.get(vc_name, vc_name.replace("_", " ").title())
         virtual.append(schemas.ScreenerColumnMeta(name=vc_name, label=label, category=cat, type="float", step=0.1))
 
-    # T4 rank indicator names (relative_ranks テーブルのランクカラム名)
+    # T4 rank indicator names (relative_ranks テーブル of ランクカラム名)
     rank_names = [
         'rs_value_rank',
         'rs_ratio_rank_e14', 'rs_ratio_rank_e21', 'rs_ratio_rank_e63',
@@ -286,7 +354,12 @@ def get_screener_meta(db: Session = Depends(get_api_db)):
         'rs_roc_ema_rank_e14', 'rs_roc_ema_rank_e21', 'rs_roc_ema_rank_e63',
     ]
 
-    return schemas.ScreenerMetaResponse(columns=columns, rank_indicators=rank_names, virtual_columns=virtual)
+    return schemas.ScreenerMetaResponse(
+        columns=columns, 
+        rank_indicators=rank_names, 
+        virtual_columns=virtual,
+        labels=_COLUMN_LABELS
+    )
 
 
 @router.get("/symbols", response_model=List[schemas.SymbolResponse])

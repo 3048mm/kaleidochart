@@ -22,6 +22,7 @@ interface MetaResponse {
     columns: ColumnMeta[];
     rank_indicators: string[];
     virtual_columns: ColumnMeta[];
+    labels?: Record<string, string>;
 }
 
 // Hard-wired boolean filters that cannot be expressed as simple min/max
@@ -157,6 +158,10 @@ export const ScreenerResultPage: React.FC = () => {
     const [isFilterOpen, setIsFilterOpen] = useState(false);
     const { isTickerActive, toggleWatchlist } = useWatchlist();
 
+    const getLabel = (key: string, fallback: string) => {
+        return meta?.labels?.[key] || fallback;
+    };
+
 
     // Load available dates
     useEffect(() => {
@@ -282,42 +287,42 @@ export const ScreenerResultPage: React.FC = () => {
                         onClick={() => handleSort('change_pct')}
                         title="Sort by 1D%"
                     >
-                        1D% {sortKey === 'change_pct' ? (sortDesc ? '▼' : '▲') : ''}
+                        {getLabel('change_1d_pct', '1D%')} {sortKey === 'change_pct' ? (sortDesc ? '▼' : '▲') : ''}
                     </div>
-                    <div style={{ width: '50px', textAlign: 'right', paddingRight: '5px' }}>21E%</div>
+                    <div style={{ width: '50px', textAlign: 'right', paddingRight: '5px' }}>{getLabel('dist_ema21_pct', '21E%')}</div>
                     <div
                         style={{ width: '50px', textAlign: 'right', cursor: 'pointer', color: sortKey === 'vol_surge_21' ? '#fff' : '#aaa' }}
                         onClick={() => handleSort('vol_surge_21')}
                         title="Sort by Volume Surge"
                     >
-                        Vol SG {sortKey === 'vol_surge_21' ? (sortDesc ? '▼' : '▲') : ''}
+                        {getLabel('vol_surge_21', 'Vol SG')} {sortKey === 'vol_surge_21' ? (sortDesc ? '▼' : '▲') : ''}
                     </div>
-                    <div style={{ width: '36px', textAlign: 'right' }}>ADR%</div>
+                    <div style={{ width: '36px', textAlign: 'right' }}>{getLabel('adr_pct_21', 'ADR%')}</div>
                     <div
                         style={{ width: '36px', textAlign: 'right', cursor: 'pointer', color: sortKey === 'up_down_vol_ratio_50' ? '#fff' : '#aaa' }}
                         onClick={() => handleSort('up_down_vol_ratio_50')}
                         title="U/D Volume Ratio (50d)"
                     >
-                        U/D {sortKey === 'up_down_vol_ratio_50' ? (sortDesc ? '▼' : '▲') : ''}
+                        {getLabel('up_down_vol_ratio_50', 'U/D')} {sortKey === 'up_down_vol_ratio_50' ? (sortDesc ? '▼' : '▲') : ''}
                     </div>
                     <div
                         style={{ width: '36px', textAlign: 'right', cursor: 'pointer', color: sortKey === 'vcr' ? '#fff' : '#aaa' }}
                         onClick={() => handleSort('vcr')}
                         title="Volume Contraction Ratio"
                     >
-                        VCR {sortKey === 'vcr' ? (sortDesc ? '▼' : '▲') : ''}
+                        {getLabel('vcr', 'VCR')} {sortKey === 'vcr' ? (sortDesc ? '▼' : '▲') : ''}
                     </div>
                     <div style={{ width: '24px', textAlign: 'center' }} title="RS Leading Dots">RS.</div>
-                    <div style={{ width: '40px', textAlign: 'right' }}>50dATR</div>
+                    <div style={{ width: '40px', textAlign: 'right' }}>{getLabel('sma50_atr_mult', '50/ATR')}</div>
                     <div style={{ width: '60px', textAlign: 'center' }}>Price Trend</div>
                     <div
                         style={{ width: '32px', textAlign: 'right', cursor: 'pointer', color: sortKey === 'rs_ratio_rank_e21' ? '#fff' : '#aaa' }}
                         onClick={() => handleSort('rs_ratio_rank_e21')}
-                        title="Sort by RS21 Rank"
+                        title="Sort by RSR21% Rank"
                     >
-                        RS21 {sortKey === 'rs_ratio_rank_e21' ? (sortDesc ? '▼' : '▲') : ''}
+                        {getLabel('rs_ratio_rank_e21', 'RSR21')} {sortKey === 'rs_ratio_rank_e21' ? (sortDesc ? '▼' : '▲') : ''}
                     </div>
-                    <div style={{ width: '32px', textAlign: 'right' }}>RS63</div>
+                    <div style={{ width: '32px', textAlign: 'right' }}>{getLabel('rs_ratio_rank_e63', 'RSR63')}</div>
                 </div>
 
                 {sortedResults.map(item => {
@@ -473,9 +478,10 @@ export const ScreenerResultPage: React.FC = () => {
                             <div style={{ fontSize: '11px', color: appConfig.colors.accent, textTransform: 'uppercase', marginBottom: '8px', letterSpacing: '0.5px' }}>
                                 Special Conditions
                             </div>
-                            {BOOLEAN_FILTERS.map(bf => (
-                                <BoolFilterRow key={bf.id} label={bf.label} param={bf.param} searchParams={queryParams} onChange={handleFilterChange} />
-                            ))}
+                            {BOOLEAN_FILTERS.map(bf => {
+                                const dynamicLabel = meta?.labels?.[bf.param] || bf.label;
+                                return <BoolFilterRow key={bf.id} label={dynamicLabel} param={bf.param} searchParams={queryParams} onChange={handleFilterChange} />;
+                            })}
                         </div>
                     </div>
                 </div>
