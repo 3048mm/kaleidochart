@@ -28,18 +28,18 @@ const mockData: ChartDataPoint[] = [
     {
         time: '2023-01-01',
         open: 100, high: 110, low: 90, close: 105, volume: 1000,
-        relative_strength_spy: 1.1,
-        rs_ema_14: 1.0,
-        rs_ema_21: 1.0,
-        rs_ema_63: 1.0,
+        rs_value: 1.1,
+        rs_value_e14: 1.0,
+        rs_value_e21: 1.0,
+        rs_value_e63: 1.0,
     },
     {
         time: '2023-01-02',
         open: 105, high: 115, low: 100, close: 110, volume: 1100,
-        relative_strength_spy: 1.2,
-        rs_ema_14: 1.05,
-        rs_ema_21: 1.02,
-        rs_ema_63: 1.01,
+        rs_value: 1.2,
+        rs_value_e14: 1.05,
+        rs_value_e21: 1.02,
+        rs_value_e63: 1.01,
     }
 ];
 

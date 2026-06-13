@@ -6,7 +6,7 @@ import { appConfig } from '../config';
 import { useWatchlist } from '../hooks/useWatchlist';
 
 type Tab = 'active' | 'removed';
-type SortKey = 'entry_date' | 'ticker' | 'gain_pct' | 'max_gain_pct' | 'min_gain_pct' | 'latest_dist_sma50_atr' | 'removed_at' | 'result_pct' | 'next_earnings_date';
+type SortKey = 'entry_date' | 'ticker' | 'gain_pct' | 'max_gain_pct' | 'min_gain_pct' | 'latest_sma50_atr_mult' | 'removed_at' | 'result_pct' | 'next_earnings_date';
 type SortOrder = 'asc' | 'desc';
 
 export const WatchlistPage: React.FC = () => {
@@ -338,7 +338,7 @@ export const WatchlistPage: React.FC = () => {
                                             <th className="hide-on-mobile" style={{ ...headerStyle, textAlign: 'right' }} onClick={() => handleSort('max_gain_pct')}>Max Gain {renderSortIcon('max_gain_pct')}</th>
                                             <th className="hide-on-mobile" style={{ ...headerStyle, textAlign: 'right' }} onClick={() => handleSort('min_gain_pct')}>Min Gain {renderSortIcon('min_gain_pct')}</th>
                                             <th className="hide-on-mobile" style={{ padding: '12px 10px', textAlign: 'right' }}>ADR%(21)</th>
-                                            <th className="hide-on-mobile" style={{ ...headerStyle, textAlign: 'right' }} onClick={() => handleSort('latest_dist_sma50_atr')}>50dATR {renderSortIcon('latest_dist_sma50_atr')}</th>
+                                            <th className="hide-on-mobile" style={{ ...headerStyle, textAlign: 'right' }} onClick={() => handleSort('latest_sma50_atr_mult')}>50/ATR {renderSortIcon('latest_sma50_atr_mult')}</th>
                                             <th className="hide-on-mobile" style={{ padding: '12px 10px', textAlign: 'center', width: '80px' }}>RSR21% (30d)</th>
                                             <th style={headerStyle} onClick={() => handleSort('next_earnings_date')}>Earnings {renderSortIcon('next_earnings_date')}</th>
                                             <th className="hide-on-mobile" style={headerStyle} onClick={() => handleSort('entry_date')}>Entry Date {renderSortIcon('entry_date')}</th>
@@ -376,8 +376,8 @@ export const WatchlistPage: React.FC = () => {
                                                 <td className="hide-on-mobile" style={{ padding: '12px 10px', textAlign: 'right', color: appConfig.colors.good }}>{formatPct(item.max_gain_pct)}</td>
                                                 <td className="hide-on-mobile" style={{ padding: '12px 10px', textAlign: 'right', color: appConfig.colors.bad }}>{formatPct(item.min_gain_pct)}</td>
                                                 <td className="hide-on-mobile" style={{ padding: '12px 10px', textAlign: 'right', color: '#ccc' }}>{item.latest_adr_pct.toFixed(2)}</td>
-                                                <td className="hide-on-mobile" style={{ padding: '12px 10px', textAlign: 'right', color: item.latest_dist_sma50_atr >= 8 ? '#ffff00' : '#ccc' }}>
-                                                    {item.latest_dist_sma50_atr.toFixed(1)}
+                                                <td className="hide-on-mobile" style={{ padding: '12px 10px', textAlign: 'right', color: item.latest_sma50_atr_mult >= 8 ? '#ffff00' : '#ccc' }}>
+                                                    {item.latest_sma50_atr_mult.toFixed(1)}
                                                 </td>
                                                 <td className="hide-on-mobile" style={{ padding: '12px 10px', textAlign: 'center' }}>
                                                     <Sparkline data={item.rs_sparkline} width={70} height={28} color={item.gain_pct >= 0 ? appConfig.colors.good : appConfig.colors.bad} fixedRange={true} />

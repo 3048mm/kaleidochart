@@ -7,7 +7,7 @@ import { useWatchlist } from '../hooks/useWatchlist';
 import { WatchlistButton } from '../components/WatchlistButton';
 
 
-type SortKey = 'change_pct' | 'rs_ratio_21_rank' | 'vol_surge_21' | 'up_down_vol_ratio_50' | 'vcr';
+type SortKey = 'change_pct' | 'rs_ratio_rank_e21' | 'vol_surge_21' | 'up_down_vol_ratio_50' | 'vcr';
 
 // --- Types for Meta API ---
 interface ColumnMeta {
@@ -26,8 +26,8 @@ interface MetaResponse {
 
 // Hard-wired boolean filters that cannot be expressed as simple min/max
 const BOOLEAN_FILTERS = [
-    { id: 'rs_rank_21_gt_63', label: 'RS21rank > RS63rank', param: 'rs_rank_21_gt_63' },
-    { id: 'theme_rs21_gt_63', label: 'Theme RS21 > RS63', param: 'theme_rs21_gt_63' },
+    { id: 'is_rs_ratio_rank_e21_gt_e63', label: 'RS Ratio Rank 21 > 63', param: 'is_rs_ratio_rank_e21_gt_e63' },
+    { id: 'is_theme_rs_ratio_e21_gt_e63', label: 'Theme RS21 > RS63', param: 'is_theme_rs_ratio_e21_gt_e63' },
     { id: 'rrg_leading_in', label: 'RRG Leading In', param: 'rrg_leading_in' },
     { id: 'rrg_lagging_in', label: 'RRG Lagging In', param: 'rrg_lagging_in' },
     { id: 'rrg_improving_in', label: 'RRG Improving In', param: 'rrg_improving_in' },
@@ -311,11 +311,11 @@ export const ScreenerResultPage: React.FC = () => {
                     <div style={{ width: '40px', textAlign: 'right' }}>50dATR</div>
                     <div style={{ width: '60px', textAlign: 'center' }}>Price Trend</div>
                     <div
-                        style={{ width: '32px', textAlign: 'right', cursor: 'pointer', color: sortKey === 'rs_ratio_21_rank' ? '#fff' : '#aaa' }}
-                        onClick={() => handleSort('rs_ratio_21_rank')}
+                        style={{ width: '32px', textAlign: 'right', cursor: 'pointer', color: sortKey === 'rs_ratio_rank_e21' ? '#fff' : '#aaa' }}
+                        onClick={() => handleSort('rs_ratio_rank_e21')}
                         title="Sort by RS21 Rank"
                     >
-                        RS21 {sortKey === 'rs_ratio_21_rank' ? (sortDesc ? '▼' : '▲') : ''}
+                        RS21 {sortKey === 'rs_ratio_rank_e21' ? (sortDesc ? '▼' : '▲') : ''}
                     </div>
                     <div style={{ width: '32px', textAlign: 'right' }}>RS63</div>
                 </div>
@@ -361,15 +361,15 @@ export const ScreenerResultPage: React.FC = () => {
                             <div style={{ width: '36px', textAlign: 'right', fontSize: '11px', fontVariantNumeric: 'tabular-nums', color: item.up_down_vol_ratio_50 && item.up_down_vol_ratio_50 > 1.5 ? appConfig.colors.good : '#ccc', fontWeight: item.up_down_vol_ratio_50 && item.up_down_vol_ratio_50 > 1.5 ? 'bold' : 'normal', flexShrink: 0 }}>{formatNum(item.up_down_vol_ratio_50, 1)}</div>
                             <div style={{ width: '36px', textAlign: 'right', fontSize: '11px', fontVariantNumeric: 'tabular-nums', color: item.vcr && item.vcr < 0.5 ? appConfig.colors.accent : '#ccc', fontWeight: item.vcr && item.vcr < 0.5 ? 'bold' : 'normal', flexShrink: 0 }}>{formatNum(item.vcr, 2)}</div>
                             <div style={{ width: '24px', textAlign: 'center', flexShrink: 0, display: 'flex', justifyContent: 'center', gap: '2px' }}>
-                                {item.rs_blue_dot === 1 && <span style={{ color: '#00d0ff', fontSize: '14px', lineHeight: 1 }}>●</span>}
-                                {item.rs_red_dot === 1 && <span style={{ color: '#ff4444', fontSize: '14px', lineHeight: 1 }}>●</span>}
+                                {item.is_rs_blue_dot === 1 && <span style={{ color: '#00d0ff', fontSize: '14px', lineHeight: 1 }}>●</span>}
+                                {item.is_rs_red_dot === 1 && <span style={{ color: '#ff4444', fontSize: '14px', lineHeight: 1 }}>●</span>}
                             </div>
-                            <div style={{ width: '40px', textAlign: 'right', fontSize: '11px', fontVariantNumeric: 'tabular-nums', fontWeight: item.dist_sma50_atr && Math.abs(item.dist_sma50_atr) > 2.0 ? 'bold' : 'normal', color: item.dist_sma50_atr && item.dist_sma50_atr > 2.0 ? appConfig.colors.good : item.dist_sma50_atr && item.dist_sma50_atr < -2.0 ? appConfig.colors.bad : '#ccc', flexShrink: 0 }}>{formatNum(item.dist_sma50_atr, 1)}</div>
+                             <div style={{ width: '40px', textAlign: 'right', fontSize: '11px', fontVariantNumeric: 'tabular-nums', fontWeight: item.sma50_atr_mult && Math.abs(item.sma50_atr_mult) > 2.0 ? 'bold' : 'normal', color: item.sma50_atr_mult && item.sma50_atr_mult > 2.0 ? appConfig.colors.good : item.sma50_atr_mult && item.sma50_atr_mult < -2.0 ? appConfig.colors.bad : '#ccc', flexShrink: 0 }}>{formatNum(item.sma50_atr_mult, 1)}</div>
                             <div style={{ width: '60px', flexShrink: 0 }}>
                                 <Sparkline data={item.sparkline} width={60} height={22} color={item.change_1m_pct >= 0 ? appConfig.colors.good : appConfig.colors.bad} fixedRange={true} />
                             </div>
-                            <div style={{ width: '32px', textAlign: 'right', fontSize: '11px', fontVariantNumeric: 'tabular-nums', color: item.rs_ratio_21_rank >= 0.7 ? appConfig.colors.good : item.rs_ratio_21_rank <= 0.3 ? appConfig.colors.bad : '#aaa', fontWeight: '600', flexShrink: 0 }}>{(item.rs_ratio_21_rank * 100).toFixed(0)}</div>
-                            <div style={{ width: '32px', textAlign: 'right', fontSize: '11px', fontVariantNumeric: 'tabular-nums', color: item.rs_ratio_63_rank >= 0.7 ? appConfig.colors.good : item.rs_ratio_63_rank <= 0.3 ? appConfig.colors.bad : '#aaa', fontWeight: '600', flexShrink: 0 }}>{(item.rs_ratio_63_rank * 100).toFixed(0)}</div>
+                            <div style={{ width: '32px', textAlign: 'right', fontSize: '11px', fontVariantNumeric: 'tabular-nums', color: item.rs_ratio_rank_e21 >= 0.7 ? appConfig.colors.good : item.rs_ratio_rank_e21 <= 0.3 ? appConfig.colors.bad : '#aaa', fontWeight: '600', flexShrink: 0 }}>{(item.rs_ratio_rank_e21 * 100).toFixed(0)}</div>
+                            <div style={{ width: '32px', textAlign: 'right', fontSize: '11px', fontVariantNumeric: 'tabular-nums', color: item.rs_ratio_rank_e63 >= 0.7 ? appConfig.colors.good : item.rs_ratio_rank_e63 <= 0.3 ? appConfig.colors.bad : '#aaa', fontWeight: '600', flexShrink: 0 }}>{(item.rs_ratio_rank_e63 * 100).toFixed(0)}</div>
                         </div>
                     );
                 })}

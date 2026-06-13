@@ -386,7 +386,7 @@ export const DashboardPage: React.FC = () => {
                                             items={data.sectors} 
                                             maxPct={appConfig.thresholds.sparkline_max_pct_sector} 
                                             linkTo={(item) => `/group/${encodeURIComponent(item.ticker)}${selectedDate ? `?date=${selectedDate}` : ''}`}
-                                            defaultSortKey="rs_ratio_21_rank"
+                                            defaultSortKey="rs_ratio_rank_e21"
                                         />
                                     </div>
                                 </div>
@@ -399,7 +399,7 @@ export const DashboardPage: React.FC = () => {
                                             items={data.themes_top.slice(0, themesVisibleCount)} 
                                             maxPct={appConfig.thresholds.sparkline_max_pct_theme} 
                                             linkTo={(item) => `/group/${encodeURIComponent(item.ticker)}${selectedDate ? `?date=${selectedDate}` : ''}`}
-                                            defaultSortKey="rs_ratio_21_rank"
+                                            defaultSortKey="rs_ratio_rank_e21"
                                         />
                                     </div>
 
@@ -453,7 +453,7 @@ export const DashboardPage: React.FC = () => {
                                             items={data.themes_bottom.slice(0, themesVisibleCount)} 
                                             maxPct={appConfig.thresholds.sparkline_max_pct_theme} 
                                             linkTo={(item) => `/group/${encodeURIComponent(item.ticker)}${selectedDate ? `?date=${selectedDate}` : ''}`}
-                                            defaultSortKey="rs_ratio_21_rank"
+                                            defaultSortKey="rs_ratio_rank_e21"
                                             defaultSortDirection="desc"
                                         />
                                     </div>
@@ -472,12 +472,12 @@ export const DashboardPage: React.FC = () => {
                                                 data: [{
                                                     time: data.date,
                                                     close: item.close,
-                                                    rs_ratio_14: item.rs_ratio_21,
-                                                    rs_momentum_14: item.rs_momentum_21,
-                                                    rs_ratio_21: item.rs_ratio_21,
-                                                    rs_momentum_21: item.rs_momentum_21,
-                                                    rs_ratio_63: item.rs_ratio_21,
-                                                    rs_momentum_63: item.rs_momentum_21,
+                                                    rs_ratio_e14: item.rs_ratio_e21,
+                                                    rs_momentum_e14: item.rs_momentum_e21,
+                                                    rs_ratio_e21: item.rs_ratio_e21,
+                                                    rs_momentum_e21: item.rs_momentum_e21,
+                                                    rs_ratio_e63: item.rs_ratio_e21,
+                                                    rs_momentum_e63: item.rs_momentum_e21,
                                                     open: item.close, high: item.close, low: item.close, volume: 0
                                                 }]
                                             })),
@@ -487,12 +487,12 @@ export const DashboardPage: React.FC = () => {
                                                 data: [{
                                                     time: data.date,
                                                     close: item.close,
-                                                    rs_ratio_14: item.rs_ratio_21,
-                                                    rs_momentum_14: item.rs_momentum_21,
-                                                    rs_ratio_21: item.rs_ratio_21,
-                                                    rs_momentum_21: item.rs_momentum_21,
-                                                    rs_ratio_63: item.rs_ratio_21,
-                                                    rs_momentum_63: item.rs_momentum_21,
+                                                    rs_ratio_e14: item.rs_ratio_e21,
+                                                    rs_momentum_e14: item.rs_momentum_e21,
+                                                    rs_ratio_e21: item.rs_ratio_e21,
+                                                    rs_momentum_e21: item.rs_momentum_e21,
+                                                    rs_ratio_e63: item.rs_ratio_e21,
+                                                    rs_momentum_e63: item.rs_momentum_e21,
                                                     open: item.close, high: item.close, low: item.close, volume: 0
                                                 }]
                                             }))

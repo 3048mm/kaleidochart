@@ -73,9 +73,9 @@ export const EtfFeaturePanel: React.FC<EtfFeaturePanelProps> = ({
                 {/* RS Ranks & Sparklines */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(90px, 1fr))', gap: '10px' }}>
                     {[
-                        { label: 'RS Ratio 14', spark: feature.rs14_sparkline, rank: feature.rank_rs_ratio_14 },
-                        { label: 'RS Ratio 21', spark: feature.rs21_sparkline, rank: feature.rank_rs_ratio_21 },
-                        { label: 'RS Ratio 63', spark: feature.rs63_sparkline, rank: feature.rank_rs_ratio_63 },
+                        { label: 'RS Ratio 14', spark: feature.rs14_sparkline, rank: feature.rs_ratio_rank_e14 },
+                        { label: 'RS Ratio 21', spark: feature.rs21_sparkline, rank: feature.rs_ratio_rank_e21 },
+                        { label: 'RS Ratio 63', spark: feature.rs63_sparkline, rank: feature.rs_ratio_rank_e63 },
                     ].map(s => (
                         <div key={s.label} style={{ background: 'rgba(255,255,255,0.03)', padding: '10px', borderRadius: '6px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                             <div style={{ fontSize: '10px', color: '#aaa' }}>{s.label}</div>

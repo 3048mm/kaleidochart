@@ -16,8 +16,8 @@ export const appConfig = {
 
     // Thresholds for alerts and rendering
     thresholds: {
-        atr_multiple_yellow: 8,       // dist_sma50_atr >= 8 (Caution)
-        atr_multiple_red: 10,         // dist_sma50_atr >= 10 (Danger)
+        atr_multiple_yellow: 8,       // sma50_atr_mult >= 8 (Caution)
+        atr_multiple_red: 10,         // sma50_atr_mult >= 10 (Danger)
         sparkline_max_pct_sector: 4,  // Maximum absolute 1D% for full color intensity in Sector List
         sparkline_max_pct_theme: 8,   // Maximum absolute 1D% for full color intensity in Theme List
         sparkline_max_pct_index: 4,   // Maximum absolute 1D% for Indices List

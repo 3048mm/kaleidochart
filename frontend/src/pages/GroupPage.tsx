@@ -160,10 +160,10 @@ export const GroupPage: React.FC = () => {
                                 
                                 // Helper to get rank from either ThemeConstituentItem or DashboardPanelItem
                                 const getRank = (type: '21' | '63' | 'mom21' | 'mom63') => {
-                                    if (type === '21') return c.rank_rs_ratio_21 ?? c.rs_ratio_21_rank;
-                                    if (type === '63') return c.rank_rs_ratio_63 ?? c.rs_ratio_63_rank;
-                                    if (type === 'mom21') return c.rank_rs_momentum_21 ?? c.rs_momentum_21_rank;
-                                    if (type === 'mom63') return c.rank_rs_momentum_63 ?? c.rs_momentum_63_rank;
+                                    if (type === '21') return c.rs_ratio_rank_e21;
+                                    if (type === '63') return c.rs_ratio_rank_e63;
+                                    if (type === 'mom21') return c.rs_momentum_rank_e21;
+                                    if (type === 'mom63') return c.rs_momentum_rank_e63;
                                     return 0;
                                 };
 

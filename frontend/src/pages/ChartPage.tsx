@@ -371,13 +371,13 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
         }
 
         data.forEach((d) => {
-            const dist = d.dist_sma50_atr != null ? d.dist_sma50_atr : 0;
+            const dist = d.sma50_atr_mult != null ? d.sma50_atr_mult : 0;
             const showAtrRed = dist >= appConfig.thresholds.atr_multiple_red;
             const showAtrYellow = dist >= appConfig.thresholds.atr_multiple_yellow;
             if (showAtrRed || showAtrYellow) {
                 markers.push({
                     time: d.time as any,
-                    position: (d.dist_sma50_atr || 0) > 0 ? 'aboveBar' : 'belowBar',
+                    position: (d.sma50_atr_mult || 0) > 0 ? 'aboveBar' : 'belowBar',
                     color: showAtrRed ? '#ff0000' : '#ffff00',
                     shape: 'circle',
                     text: '',
@@ -466,8 +466,8 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
             rsSeries.setData(data.map(d => ({ time: d.time as any, value: 100 })));
             const dotMarkers: SeriesMarker<any>[] = [];
             data.forEach(d => {
-                if (d.rs_blue_dot === 1) dotMarkers.push({ time: d.time as any, position: 'inBar', color: '#00d0ff', shape: 'circle', text: '◆', size: 0 });
-                if (d.rs_red_dot === 1) dotMarkers.push({ time: d.time as any, position: 'inBar', color: '#ff4444', shape: 'circle', text: '◆', size: 0 });
+                if (d.is_rs_blue_dot === 1) dotMarkers.push({ time: d.time as any, position: 'inBar', color: '#00d0ff', shape: 'circle', text: '◆', size: 0 });
+                if (d.is_rs_red_dot === 1) dotMarkers.push({ time: d.time as any, position: 'inBar', color: '#ff4444', shape: 'circle', text: '◆', size: 0 });
             });
             dotMarkers.sort((a,b) => (a.time < b.time ? -1 : 1));
             rsSeries.setMarkers(dotMarkers);
@@ -556,8 +556,8 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
                 <td style={{ padding: '2px 10px', textAlign: 'right' }}>{point.sma_50?.toFixed(2) ?? '-'}</td>
                 <td style={{ padding: '2px 10px', textAlign: 'right' }}>{point.sma_200?.toFixed(2) ?? '-'}</td>
                 <td style={{ padding: '2px 10px', textAlign: 'right' }}>{point.adr_pct_21?.toFixed(1) ?? '-'}</td>
-                <td style={{ padding: '2px 10px', textAlign: 'right', color: (point.dist_sma50_atr || 0) >= appConfig.thresholds.atr_multiple_red ? '#ff0000' : (point.dist_sma50_atr || 0) >= appConfig.thresholds.atr_multiple_yellow ? '#ffff00' : 'inherit' }}>
-                    {point.dist_sma50_atr?.toFixed(1) ?? '-'}
+                <td style={{ padding: '2px 10px', textAlign: 'right', color: (point.sma50_atr_mult || 0) >= appConfig.thresholds.atr_multiple_red ? '#ff0000' : (point.sma50_atr_mult || 0) >= appConfig.thresholds.atr_multiple_yellow ? '#ffff00' : 'inherit' }}>
+                    {point.sma50_atr_mult?.toFixed(1) ?? '-'}
                 </td>
             </tr>
         );
@@ -768,14 +768,14 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
                                         {showSma21 && activePoint.sma_21 && <span>SMA21:<strong style={{ color: '#2962FF' }}>{activePoint.sma_21.toFixed(1)}</strong></span>}
                                         {showSma50 && activePoint.sma_50 && <span>SMA50:<strong style={{ color: '#FF6D00' }}>{activePoint.sma_50.toFixed(1)}</strong></span>}
                                         {activePoint.adr_pct_21 && <span>ADR:<strong style={{ color: '#ccc' }}>{activePoint.adr_pct_21.toFixed(1)}%</strong></span>}
-                                        {activePoint.dist_sma50_atr != null && (() => {
-                                            const distColor = activePoint.dist_sma50_atr >= appConfig.thresholds.atr_multiple_red 
+                                        {activePoint.sma50_atr_mult != null && (() => {
+                                            const distColor = activePoint.sma50_atr_mult >= appConfig.thresholds.atr_multiple_red 
                                                 ? '#ff4444' 
-                                                : activePoint.dist_sma50_atr >= appConfig.thresholds.atr_multiple_yellow 
+                                                : activePoint.sma50_atr_mult >= appConfig.thresholds.atr_multiple_yellow 
                                                     ? '#ffff00' 
                                                     : '#ccc';
                                             return (
-                                                <span>50/ATR:<strong style={{ color: distColor }}>{activePoint.dist_sma50_atr.toFixed(1)}</strong></span>
+                                                <span>50/ATR:<strong style={{ color: distColor }}>{activePoint.sma50_atr_mult.toFixed(1)}</strong></span>
                                             );
                                         })()}
                                     </div>

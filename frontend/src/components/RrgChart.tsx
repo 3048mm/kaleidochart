@@ -52,7 +52,7 @@ export const RrgChart: React.FC<RrgChartProps> = ({ data, ticker, series: propSe
         return allSeries.map(s => {
             const ratioKey = `rs_ratio_${rrgTimeframe}` as keyof ChartDataPoint;
             const momKey = `rs_momentum_${rrgTimeframe}` as keyof ChartDataPoint;
-            const condKey = `rs_condition_${rrgTimeframe}` as keyof ChartDataPoint;
+            const condKey = `rs_trend_s${rrgTimeframe}` as keyof ChartDataPoint;
 
             const sData = s.data || [];
             const points = sData.filter(d => d[ratioKey] != null && d[momKey] != null).map(d => ({
@@ -84,7 +84,7 @@ export const RrgChart: React.FC<RrgChartProps> = ({ data, ticker, series: propSe
             res[tf] = {
                 ratio: last30.map(d => (d[`rank_rs_ratio_${tf}` as keyof ChartDataPoint] as number) || 0),
                 mom: last30.map(d => (d[`rank_rs_momentum_${tf}` as keyof ChartDataPoint] as number) || 0),
-                cond: last30.map(d => (d[`rank_rs_condition_${tf}` as keyof ChartDataPoint] as number) || 0),
+                cond: last30.map(d => (d[`rs_trend_rank_s${tf}` as keyof ChartDataPoint] as number) || 0),
             };
         });
         
@@ -224,7 +224,7 @@ export const RrgChart: React.FC<RrgChartProps> = ({ data, ticker, series: propSe
                             {[
                                 { key: 'ratio' as const, label: 'RS Ratio', pctLabel: '%Rank' },
                                 { key: 'mom' as const, label: 'RS Momentum', pctLabel: '%Rank' },
-                                { key: 'cond' as const, label: 'RS Condition', pctLabel: '%Rank' }
+                                { key: 'cond' as const, label: 'RS Trend', pctLabel: '%Rank' }
                             ].map(row => (
                                 <div key={row.key} style={{ display: 'flex', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
                                     {/* Row Header Label */}
@@ -284,7 +284,7 @@ export const RrgChart: React.FC<RrgChartProps> = ({ data, ticker, series: propSe
                             {[
                                 { key: 'ratio' as const, label: 'RS Ratio' },
                                 { key: 'mom' as const, label: 'RS Momentum' },
-                                { key: 'cond' as const, label: 'RS Condition' }
+                                { key: 'cond' as const, label: 'RS Trend' }
                             ].map(row => (
                                 <div key={row.key} style={{ display: 'flex', alignItems: 'center', padding: '2px 0' }}>
                                     {/* Row label on the left */}

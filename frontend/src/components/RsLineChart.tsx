@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createChart, IChartApi, CrosshairMode } from 'lightweight-charts';
 import { ChartDataPoint } from '../types';
 
@@ -10,6 +10,14 @@ interface RsLineChartProps {
 export const RsLineChart: React.FC<RsLineChartProps> = ({ data, height }) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
+    const [hoverData, setHoverData] = useState<ChartDataPoint | null>(null);
+    const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+
+    useEffect(() => {
+        const handleResize = () => setIsMobile(window.innerWidth <= 768);
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
 
     useEffect(() => {
         if (!containerRef.current || data.length === 0) return;
@@ -34,6 +42,7 @@ export const RsLineChart: React.FC<RsLineChartProps> = ({ data, height }) => {
                 borderColor: 'rgba(255, 255, 255, 0.1)',
                 timeVisible: true,
                 fixLeftEdge: true,
+                rightOffset: 5,
             },
             height: height || 250,
             autoSize: true,
@@ -51,7 +60,7 @@ export const RsLineChart: React.FC<RsLineChartProps> = ({ data, height }) => {
         const rsSeries = chart.addLineSeries({
             color: '#ffffff',
             lineWidth: 2,
-            title: 'RS vs SPY',
+            lastValueVisible: true,
             priceFormat: {
                 type: 'price',
                 precision: 4,
@@ -70,7 +79,7 @@ export const RsLineChart: React.FC<RsLineChartProps> = ({ data, height }) => {
             color: '#2962FF',
             lineWidth: 1,
             lineStyle: 2,
-            title: 'EMA 14',
+            lastValueVisible: false,
             priceFormat: {
                 type: 'price',
                 precision: 4,
@@ -86,7 +95,7 @@ export const RsLineChart: React.FC<RsLineChartProps> = ({ data, height }) => {
             color: '#FF9800',
             lineWidth: 1,
             lineStyle: 2,
-            title: 'EMA 21',
+            lastValueVisible: false,
             priceFormat: {
                 type: 'price',
                 precision: 4,
@@ -102,7 +111,7 @@ export const RsLineChart: React.FC<RsLineChartProps> = ({ data, height }) => {
             color: '#E040FB',
             lineWidth: 1,
             lineStyle: 2,
-            title: 'EMA 63',
+            lastValueVisible: false,
             priceFormat: {
                 type: 'price',
                 precision: 4,
@@ -129,6 +138,20 @@ export const RsLineChart: React.FC<RsLineChartProps> = ({ data, height }) => {
             chart.timeScale().fitContent();
         }
 
+        // Crosshair move subscription to track hover value
+        const dataMap = new Map<string, ChartDataPoint>();
+        data.forEach(d => dataMap.set(d.time, d));
+
+        const handleMove = (param: any) => {
+            if (param.time) {
+                const point = dataMap.get(String(param.time));
+                setHoverData(point || null);
+            } else {
+                setHoverData(null);
+            }
+        };
+        chart.subscribeCrosshairMove(handleMove);
+
         const handleResize = () => {
             if (containerRef.current && chartRef.current) {
                 chartRef.current.applyOptions({ width: containerRef.current.clientWidth });
@@ -138,30 +161,64 @@ export const RsLineChart: React.FC<RsLineChartProps> = ({ data, height }) => {
 
         return () => {
             window.removeEventListener('resize', handleResize);
+            chart.unsubscribeCrosshairMove(handleMove);
             chart.remove();
         };
     }, [data]);
 
+    const latest = data.length > 0 ? data[data.length - 1] : null;
+    const activePoint = hoverData || latest;
+
+    const formatValue = (val: number | undefined | null) => {
+        if (val == null) return '-';
+        return val.toFixed(4);
+    };
+
     return (
         <div style={{ marginBottom: '20px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', padding: '15px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                <h4 style={{ margin: 0, fontSize: '14px', color: '#ccc' }}>Relative Strength vs SPY</h4>
-                <div style={{ display: 'flex', gap: '15px', fontSize: '11px' }}>
+            <div style={{ 
+                display: 'flex', 
+                flexDirection: isMobile ? 'column' : 'row', 
+                justifyContent: 'space-between', 
+                alignItems: isMobile ? 'flex-start' : 'center', 
+                marginBottom: '10px',
+                gap: isMobile ? '8px' : '0'
+            }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <h4 style={{ margin: 0, fontSize: '14px', color: '#ccc' }}>Relative Strength vs SPY</h4>
+                    {activePoint && (
+                        <span style={{ 
+                            fontSize: '11px', 
+                            color: hoverData ? '#60a5fa' : '#888', 
+                            background: hoverData ? 'rgba(96,165,250,0.1)' : 'rgba(255,255,255,0.05)',
+                            padding: '1px 6px',
+                            borderRadius: '3px',
+                            fontWeight: hoverData ? 'bold' : 'normal'
+                        }}>
+                            {activePoint.time} {hoverData && '(Cursor)'}
+                        </span>
+                    )}
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: isMobile ? '10px' : '15px', fontSize: '11px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                         <div style={{ width: '10px', height: '2px', background: '#ffffff' }} />
-                        <span>RS Line</span>
+                        <span style={{ color: '#aaa' }}>RS:</span>
+                        <strong style={{ color: '#ffffff' }}>{formatValue(activePoint?.rs_value)}</strong>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                         <div style={{ width: '10px', height: '2px', background: '#2962FF' }} />
-                        <span>EMA 14</span>
+                        <span style={{ color: '#aaa' }}>EMA14:</span>
+                        <strong style={{ color: '#2962FF' }}>{formatValue(activePoint?.rs_value_e14)}</strong>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                        <div style={{ width: '10px', height: '2px', background: '#FF6D00' }} />
-                        <span>EMA 21</span>
+                        <div style={{ width: '10px', height: '2px', background: '#FF9800' }} />
+                        <span style={{ color: '#aaa' }}>EMA21:</span>
+                        <strong style={{ color: '#FF9800' }}>{formatValue(activePoint?.rs_value_e21)}</strong>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                        <div style={{ width: '10px', height: '2px', background: '#9c27b0' }} />
-                        <span>EMA 63</span>
+                        <div style={{ width: '10px', height: '2px', background: '#E040FB' }} />
+                        <span style={{ color: '#aaa' }}>EMA63:</span>
+                        <strong style={{ color: '#E040FB' }}>{formatValue(activePoint?.rs_value_e63)}</strong>
                     </div>
                 </div>
             </div>
