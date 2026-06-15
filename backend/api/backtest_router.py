@@ -32,10 +32,19 @@ def resolve_scenario_path(name: str) -> str:
             raise HTTPException(status_code=404, detail="Output directory not found")
         
         candidates = []
+        # Search output directory
         for item in os.listdir(OUTPUT_DIR):
             d_path = os.path.join(OUTPUT_DIR, item)
             if os.path.isdir(d_path) and os.path.exists(os.path.join(d_path, "scenario_summary.json")):
                 candidates.append((d_path, os.path.getmtime(d_path)))
+                
+        # Search output/scenario directory if it exists
+        sub_scenario_dir = os.path.join(OUTPUT_DIR, "scenario")
+        if os.path.exists(sub_scenario_dir) and os.path.isdir(sub_scenario_dir):
+            for item in os.listdir(sub_scenario_dir):
+                d_path = os.path.join(sub_scenario_dir, item)
+                if os.path.isdir(d_path) and os.path.exists(os.path.join(d_path, "scenario_summary.json")):
+                    candidates.append((d_path, os.path.getmtime(d_path)))
         
         if not candidates:
             raise HTTPException(status_code=404, detail="No backtest scenarios found")
@@ -44,10 +53,17 @@ def resolve_scenario_path(name: str) -> str:
         candidates.sort(key=lambda x: x[1], reverse=True)
         return candidates[0][0]
     else:
+        # Check output directory
         scenario_path = os.path.join(OUTPUT_DIR, name)
-        if not os.path.exists(scenario_path) or not os.path.isdir(scenario_path):
-            raise HTTPException(status_code=404, detail=f"Scenario '{name}' not found")
-        return scenario_path
+        if os.path.exists(scenario_path) and os.path.isdir(scenario_path):
+            return scenario_path
+            
+        # Check output/scenario directory
+        scenario_path_sub = os.path.join(OUTPUT_DIR, "scenario", name)
+        if os.path.exists(scenario_path_sub) and os.path.isdir(scenario_path_sub):
+            return scenario_path_sub
+            
+        raise HTTPException(status_code=404, detail=f"Scenario '{name}' not found")
 
 @router.get("/backtest/scenarios", response_model=List[str])
 def get_scenarios():
@@ -59,10 +75,19 @@ def get_scenarios():
         return []
         
     candidates = []
+    # Search output directory
     for item in os.listdir(OUTPUT_DIR):
         d_path = os.path.join(OUTPUT_DIR, item)
         if os.path.isdir(d_path) and os.path.exists(os.path.join(d_path, "scenario_summary.json")):
             candidates.append((item, os.path.getmtime(d_path)))
+            
+    # Search output/scenario directory
+    sub_scenario_dir = os.path.join(OUTPUT_DIR, "scenario")
+    if os.path.exists(sub_scenario_dir) and os.path.isdir(sub_scenario_dir):
+        for item in os.listdir(sub_scenario_dir):
+            d_path = os.path.join(sub_scenario_dir, item)
+            if os.path.isdir(d_path) and os.path.exists(os.path.join(d_path, "scenario_summary.json")):
+                candidates.append((item, os.path.getmtime(d_path)))
             
     # Sort newest first
     candidates.sort(key=lambda x: x[1], reverse=True)
@@ -207,63 +232,82 @@ def get_scenario_equity(name: str):
         first_row_eq_key = "total_equity" if "total_equity" in rows[0] else "equity"
         initial_equity = float(rows[0][first_row_eq_key]) if first_row_eq_key in rows[0] else 100000.0
         
-        # Enriched DB queries
+        # Enriched DB queries & Parquet queries
         spy_prices_dict = {}
         qqq_prices_dict = {}
         tqqq_prices_dict = {}
         soxl_prices_dict = {}
         trend_scores_dict = {}
         
+        # 1. Fetch benchmark prices from Parquet
+        try:
+            from db.database import get_active_db_path
+            import pandas as pd
+            
+            db_path = get_active_db_path() or os.path.join(PROJECT_ROOT, "data", "stocktool.db")
+            parquet_dir = os.path.join(os.path.dirname(db_path), "parquet_master")
+            pointer_file = os.path.join(parquet_dir, "latest_master.json")
+            
+            if os.path.exists(pointer_file):
+                with open(pointer_file, "r", encoding="utf-8") as f:
+                    latest_files = json.load(f)
+                
+                # Load symbols from Parquet
+                symbols_file = os.path.join(parquet_dir, os.path.basename(latest_files['symbols']))
+                prices_file = os.path.join(parquet_dir, os.path.basename(latest_files['prices']))
+                
+                if os.path.exists(symbols_file) and os.path.exists(prices_file):
+                    df_symbols = pd.read_parquet(symbols_file)
+                    
+                    # Resolve symbol IDs
+                    def get_id(ticker):
+                        s = df_symbols[df_symbols['ticker'] == ticker]['id']
+                        return int(s.iloc[0]) if not s.empty else None
+                        
+                    spy_id = get_id("SPY") or get_id("^GSPC")
+                    qqq_id = get_id("QQQ")
+                    tqqq_id = get_id("TQQQ")
+                    soxl_id = get_id("SOXL")
+                    
+                    valid_ids = [i for i in [spy_id, qqq_id, tqqq_id, soxl_id] if i is not None]
+                    if valid_ids:
+                        df_prices = pd.read_parquet(
+                            prices_file,
+                            filters=[
+                                ('symbol_id', 'in', valid_ids),
+                                ('date', '>=', start_date_str),
+                                ('date', '<=', end_date_str)
+                            ],
+                            columns=['symbol_id', 'date', 'close']
+                        )
+                        df_prices['date'] = df_prices['date'].astype(str)
+                        
+                        if spy_id is not None:
+                            spy_df = df_prices[df_prices['symbol_id'] == spy_id]
+                            spy_prices_dict = {row['date']: float(row['close']) for _, row in spy_df.iterrows()}
+                        if qqq_id is not None:
+                            qqq_df = df_prices[df_prices['symbol_id'] == qqq_id]
+                            qqq_prices_dict = {row['date']: float(row['close']) for _, row in qqq_df.iterrows()}
+                        if tqqq_id is not None:
+                            tqqq_df = df_prices[df_prices['symbol_id'] == tqqq_id]
+                            tqqq_prices_dict = {row['date']: float(row['close']) for _, row in tqqq_df.iterrows()}
+                        if soxl_id is not None:
+                            soxl_df = df_prices[df_prices['symbol_id'] == soxl_id]
+                            soxl_prices_dict = {row['date']: float(row['close']) for _, row in soxl_df.iterrows()}
+        except Exception as py_ex:
+            print(f"Parquet query failed during get_scenario_equity: {py_ex}")
+            
+        # 2. Fetch Market Trend Score from DB
         try:
             from db.database import SessionLocal
-            from db.models import Symbol, DailyPrice, MarketSignal
+            from db.models import MarketSignal
             
             db = SessionLocal()
             if db:
-                # 1. Fetch SPY
-                spy_sym = db.query(Symbol).filter(Symbol.ticker == "SPY").first()
-                if not spy_sym:
-                    spy_sym = db.query(Symbol).filter(Symbol.ticker == "^GSPC").first()
-                if spy_sym:
-                    spy_prices = db.query(DailyPrice).filter(
-                        DailyPrice.symbol_id == spy_sym.id,
-                        DailyPrice.date.between(start_date_str, end_date_str)
-                    ).all()
-                    spy_prices_dict = {str(p.date): float(p.close) for p in spy_prices}
-                    
-                # 2. Fetch QQQ
-                qqq_sym = db.query(Symbol).filter(Symbol.ticker == "QQQ").first()
-                if qqq_sym:
-                    qqq_prices = db.query(DailyPrice).filter(
-                        DailyPrice.symbol_id == qqq_sym.id,
-                        DailyPrice.date.between(start_date_str, end_date_str)
-                    ).all()
-                    qqq_prices_dict = {str(p.date): float(p.close) for p in qqq_prices}
-                    
-                # 3. Fetch TQQQ
-                tqqq_sym = db.query(Symbol).filter(Symbol.ticker == "TQQQ").first()
-                if tqqq_sym:
-                    tqqq_prices = db.query(DailyPrice).filter(
-                        DailyPrice.symbol_id == tqqq_sym.id,
-                        DailyPrice.date.between(start_date_str, end_date_str)
-                    ).all()
-                    tqqq_prices_dict = {str(p.date): float(p.close) for p in tqqq_prices}
-
-                # 4. Fetch SOXL
-                soxl_sym = db.query(Symbol).filter(Symbol.ticker == "SOXL").first()
-                if soxl_sym:
-                    soxl_prices = db.query(DailyPrice).filter(
-                        DailyPrice.symbol_id == soxl_sym.id,
-                        DailyPrice.date.between(start_date_str, end_date_str)
-                    ).all()
-                    soxl_prices_dict = {str(p.date): float(p.close) for p in soxl_prices}
-
-                # 5. Fetch Market Signal Trend Scores
                 signals = db.query(MarketSignal).filter(
                     MarketSignal.date.between(start_date_str, end_date_str)
                 ).all()
                 trend_scores_dict = {str(s.date): float(s.market_trend_score) for s in signals if s.market_trend_score is not None}
-                
                 db.close()
         except Exception as db_ex:
             print(f"Database query skipped during get_scenario_equity: {db_ex}")

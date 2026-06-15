@@ -568,6 +568,7 @@ class BacktestEquityPoint(BaseModel):
     tqqq_equity: Optional[float] = None
     soxl_equity: Optional[float] = None
     trend_score: Optional[float] = None
+    run_equities: Optional[Dict[str, float]] = None
 
 class BacktestTradeLogItem(BaseModel):
     date: str
