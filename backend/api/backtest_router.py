@@ -21,7 +21,7 @@ def is_monte_carlo_group(name: str) -> bool:
     Checks if the name represents a Monte Carlo simulation group (e.g. 'A', 'B1').
     It checks if '{name}_run_0' directory exists in 'output/scenario'.
     """
-    if name in ["A", "B1", "B2", "B3", "E2"]:
+    if name in ["A", "B1", "B2", "B3", "B4", "E2"]:
         sub_dir = os.path.join(OUTPUT_DIR, "scenario")
         if os.path.exists(sub_dir):
             if os.path.exists(os.path.join(sub_dir, f"{name}_run_0")):
@@ -107,7 +107,7 @@ def get_scenarios():
                 candidates.append((item, os.path.getmtime(d_path)))
                 if "_run_" in item:
                     group_name = item.split("_run_")[0]
-                    if group_name in ["A", "B1", "B2", "B3", "E2"]:
+                    if group_name in ["A", "B1", "B2", "B3", "B4", "E2"]:
                         groups_detected.add(group_name)
             
     # Sort newest first

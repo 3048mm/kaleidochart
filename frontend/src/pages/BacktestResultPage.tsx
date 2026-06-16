@@ -20,9 +20,12 @@ import {
   BacktestTradeLogItem
 } from '../api/backtest';
 
+const MONTE_CARLO_GROUPS = ["A", "B1", "B2", "B3", "B4", "E2"];
+
 export const BacktestResultPage: React.FC = () => {
   const [scenarios, setScenarios] = useState<string[]>([]);
   const [selectedScenario, setSelectedScenario] = useState<string>('latest');
+  const [selectedSubRun, setSelectedSubRun] = useState<string>('all');
   const [summary, setSummary] = useState<BacktestScenarioSummary | null>(null);
   const [equityData, setEquityData] = useState<BacktestEquityPoint[]>([]);
   const [tradeLogs, setTradeLogs] = useState<BacktestTradeLogItem[]>([]);
@@ -54,15 +57,20 @@ export const BacktestResultPage: React.FC = () => {
       });
   }, []);
 
+  const isGroupSelected = MONTE_CARLO_GROUPS.includes(selectedScenario);
+  const targetRequestScenario = isGroupSelected && selectedSubRun !== 'all'
+    ? `${selectedScenario}_run_${selectedSubRun}`
+    : selectedScenario;
+
   // Fetch results when selected scenario changes
   useEffect(() => {
     setLoading(true);
     setError('');
     
     Promise.all([
-      fetchScenarioSummary(selectedScenario),
-      fetchScenarioEquity(selectedScenario),
-      fetchScenarioTrades(selectedScenario)
+      fetchScenarioSummary(targetRequestScenario),
+      fetchScenarioEquity(targetRequestScenario),
+      fetchScenarioTrades(targetRequestScenario)
     ])
       .then(([sum, eq, tr]) => {
         setSummary(sum);
@@ -76,11 +84,17 @@ export const BacktestResultPage: React.FC = () => {
       .finally(() => {
         setLoading(false);
       });
-  }, [selectedScenario]);
+  }, [selectedScenario, selectedSubRun]);
 
   // Handle scenario selector change
   const handleScenarioChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     setSelectedScenario(e.target.value);
+    setSelectedSubRun('all');
+  };
+
+  // Handle sub-run selector change
+  const handleSubRunChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setSelectedSubRun(e.target.value);
   };
 
   // Filtered trades list
@@ -357,17 +371,45 @@ export const BacktestResultPage: React.FC = () => {
               }}
             >
               <option value="latest" style={{ backgroundColor: 'var(--bg-surface)' }}>🔄 Latest (最新の結果を自動ロード)</option>
-              {scenarios.map((name) => {
-                const isGroup = ["A", "B1", "B2", "B3", "E2"].includes(name);
-                const displayName = isGroup ? `${name} (Monte Carlo 10x)` : name;
-                return (
-                  <option key={name} value={name} style={{ backgroundColor: 'var(--bg-surface)' }}>
-                    {isGroup ? '🎲' : '📁'} {displayName}
-                  </option>
-                );
-              })}
+              {scenarios
+                .filter((name) => !name.includes('_run_'))
+                .map((name) => {
+                  const isGroup = MONTE_CARLO_GROUPS.includes(name);
+                  const displayName = isGroup ? `${name} (Monte Carlo 10x)` : name;
+                  return (
+                    <option key={name} value={name} style={{ backgroundColor: 'var(--bg-surface)' }}>
+                      {isGroup ? '🎲' : '📁'} {displayName}
+                    </option>
+                  );
+                })}
             </select>
           </div>
+
+          {/* Sub-run selector for Monte Carlo groups */}
+          {isGroupSelected && (
+            <div style={{ display: 'flex', alignItems: 'center', background: 'rgba(255,255,255,0.04)', padding: '6px 12px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+              <select
+                value={selectedSubRun}
+                onChange={handleSubRunChange}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#fff',
+                  fontSize: '13px',
+                  outline: 'none',
+                  cursor: 'pointer',
+                  fontFamily: 'var(--font)'
+                }}
+              >
+                <option value="all" style={{ backgroundColor: 'var(--bg-surface)' }}>🎲 10回平均 (統合ファンチャート)</option>
+                {[...Array(10)].map((_, idx) => (
+                  <option key={idx} value={idx.toString()} style={{ backgroundColor: 'var(--bg-surface)' }}>
+                    📁 Run {idx}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
       </div>
 
