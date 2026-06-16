@@ -94,7 +94,7 @@ export const BacktestResultPage: React.FC = () => {
   const uniqueReasons = Array.from(new Set(tradeLogs.map((t) => t.reason).filter(Boolean)));
 
   // Helper for KPI styling
-  const renderKPICard = (title: string, value: string | number, subtext: string, type: 'good' | 'bad' | 'neutral' = 'neutral') => {
+  const renderKPICard = (title: string, value: string | number, subtext: string, type: 'good' | 'bad' | 'neutral' = 'neutral', mcInfo?: string) => {
     const color = type === 'good' ? 'var(--accent-green)' : type === 'bad' ? 'var(--accent-red)' : 'var(--text-primary)';
     
     return (
@@ -140,6 +140,11 @@ export const BacktestResultPage: React.FC = () => {
         <div style={{ fontSize: '11px', marginTop: '6px', color: 'var(--text-muted)' }}>
           {subtext}
         </div>
+        {mcInfo && (
+          <div style={{ fontSize: '10px', marginTop: '4px', color: 'var(--accent-yellow)', fontWeight: '500' }}>
+            {mcInfo}
+          </div>
+        )}
       </div>
     );
   };
@@ -352,11 +357,15 @@ export const BacktestResultPage: React.FC = () => {
               }}
             >
               <option value="latest" style={{ backgroundColor: 'var(--bg-surface)' }}>🔄 Latest (最新の結果を自動ロード)</option>
-              {scenarios.map((name) => (
-                <option key={name} value={name} style={{ backgroundColor: 'var(--bg-surface)' }}>
-                  📁 {name}
-                </option>
-              ))}
+              {scenarios.map((name) => {
+                const isGroup = ["A", "B1", "B2", "B3", "E2"].includes(name);
+                const displayName = isGroup ? `${name} (Monte Carlo 10x)` : name;
+                return (
+                  <option key={name} value={name} style={{ backgroundColor: 'var(--bg-surface)' }}>
+                    {isGroup ? '🎲' : '📁'} {displayName}
+                  </option>
+                );
+              })}
             </select>
           </div>
         </div>
@@ -380,34 +389,39 @@ export const BacktestResultPage: React.FC = () => {
           {/* KPI Metrics Row */}
           <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
             {renderKPICard(
-              'CAGR (年平均成長率)', 
+              summary.is_monte_carlo ? 'CAGR (10回平均)' : 'CAGR (年平均成長率)', 
               `${(summary.cagr * 100).toFixed(2)}%`, 
               'ベンチマークを凌駕する実質年利換算値',
-              summary.cagr >= 0 ? 'good' : 'bad'
+              summary.cagr >= 0 ? 'good' : 'bad',
+              summary.is_monte_carlo ? `(最良: ${(summary.cagr_max * 100).toFixed(1)}% / 最悪: ${(summary.cagr_min * 100).toFixed(1)}%)` : undefined
             )}
             {renderKPICard(
-              'Profit Factor', 
+              summary.is_monte_carlo ? 'PF (10回平均)' : 'Profit Factor', 
               summary.profit_factor.toFixed(2), 
               '総利益 / 総損失の比率（期待値）',
-              summary.profit_factor >= 1.0 ? 'good' : 'bad'
+              summary.profit_factor >= 1.0 ? 'good' : 'bad',
+              summary.is_monte_carlo ? `(平均: ${summary.profit_factor_avg.toFixed(2)})` : undefined
             )}
             {renderKPICard(
-              'Max Drawdown (最悪下落率)', 
+              summary.is_monte_carlo ? '最大DD (10回平均)' : 'Max Drawdown (最悪下落率)', 
               `${(summary.max_drawdown * 100).toFixed(2)}%`, 
               'ピークからの最大口座下落幅',
-              summary.max_drawdown >= -0.2 ? 'neutral' : 'bad'
+              summary.max_drawdown >= -0.2 ? 'neutral' : 'bad',
+              summary.is_monte_carlo ? `(最悪: ${(summary.max_drawdown_min * 100).toFixed(1)}% / 最良: ${(summary.max_drawdown_max * 100).toFixed(1)}%)` : undefined
             )}
             {renderKPICard(
-              'Win Rate (勝率)', 
+              summary.is_monte_carlo ? '勝率 (10回平均)' : 'Win Rate (勝率)', 
               `${(summary.win_rate * 100).toFixed(1)}%`, 
               '全決済取引における利益取引の割合',
-              summary.win_rate >= 0.5 ? 'good' : 'neutral'
+              summary.win_rate >= 0.5 ? 'good' : 'neutral',
+              summary.is_monte_carlo ? `(平均: ${(summary.win_rate_avg * 100).toFixed(1)}%)` : undefined
             )}
             {renderKPICard(
-              'Total Trades (総決済回数)', 
+              summary.is_monte_carlo ? '総決済数 (10回平均)' : 'Total Trades (総決済回数)', 
               summary.total_trades, 
               '決済が確定した累計ポジション数',
-              'neutral'
+              'neutral',
+              summary.is_monte_carlo ? `(代表Run 1のログを表示中)` : undefined
             )}
           </div>
 
@@ -665,17 +679,45 @@ export const BacktestResultPage: React.FC = () => {
                       />
                     )}
                     <Tooltip content={<CustomTooltip />} />
+                    {/* Background fan lines for Monte Carlo runs */}
+                    {showEquity && equityData.length > 0 && equityData[0].run_equities && (
+                      Object.keys(equityData[0].run_equities).map((runKey) => (
+                        <Line
+                          key={runKey}
+                          yAxisId="left"
+                          type="monotone"
+                          dataKey={`run_equities.${runKey}`}
+                          stroke="rgba(34, 211, 160, 0.12)"
+                          strokeWidth={1}
+                          dot={false}
+                          activeDot={false}
+                        />
+                      ))
+                    )}
+                    {/* Main average equity line or standard area plot */}
                     {showEquity && (
-                      <Area 
-                        yAxisId="left"
-                        name="Equity (純資産)"
-                        type="monotone" 
-                        dataKey="equity" 
-                        stroke="var(--accent-green)" 
-                        strokeWidth={2}
-                        fillOpacity={1} 
-                        fill="url(#colorEquity)" 
-                      />
+                      equityData.length > 0 && equityData[0].run_equities ? (
+                        <Line 
+                          yAxisId="left"
+                          name="Strategy Equity (平均)"
+                          type="monotone" 
+                          dataKey="equity" 
+                          stroke="var(--accent-green)" 
+                          strokeWidth={3}
+                          dot={false}
+                        />
+                      ) : (
+                        <Area 
+                          yAxisId="left"
+                          name="Equity (純資産)"
+                          type="monotone" 
+                          dataKey="equity" 
+                          stroke="var(--accent-green)" 
+                          strokeWidth={2}
+                          fillOpacity={1} 
+                          fill="url(#colorEquity)" 
+                        />
+                      )
                     )}
                     {showCash && (
                       <Line 

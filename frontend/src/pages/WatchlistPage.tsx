@@ -335,13 +335,13 @@ export const WatchlistPage: React.FC = () => {
                                             <th style={{ padding: '12px 10px', textAlign: 'right' }}>Entry Price</th>
                                             <th style={{ padding: '12px 10px', textAlign: 'right' }}>Latest</th>
                                             <th style={{ ...headerStyle, textAlign: 'right' }} onClick={() => handleSort('gain_pct')}>Gain% {renderSortIcon('gain_pct')}</th>
-                                            <th className="hide-on-mobile" style={{ ...headerStyle, textAlign: 'right' }} onClick={() => handleSort('max_gain_pct')}>Max Gain {renderSortIcon('max_gain_pct')}</th>
-                                            <th className="hide-on-mobile" style={{ ...headerStyle, textAlign: 'right' }} onClick={() => handleSort('min_gain_pct')}>Min Gain {renderSortIcon('min_gain_pct')}</th>
-                                            <th className="hide-on-mobile" style={{ padding: '12px 10px', textAlign: 'right' }}>ADR%(21)</th>
-                                            <th className="hide-on-mobile" style={{ ...headerStyle, textAlign: 'right' }} onClick={() => handleSort('latest_sma50_atr_mult')}>50/ATR {renderSortIcon('latest_sma50_atr_mult')}</th>
-                                            <th className="hide-on-mobile" style={{ padding: '12px 10px', textAlign: 'center', width: '80px' }}>RSR21% (30d)</th>
+                                            <th style={{ ...headerStyle, textAlign: 'right' }} onClick={() => handleSort('max_gain_pct')}>Max Gain {renderSortIcon('max_gain_pct')}</th>
+                                            <th style={{ ...headerStyle, textAlign: 'right' }} onClick={() => handleSort('min_gain_pct')}>Min Gain {renderSortIcon('min_gain_pct')}</th>
+                                            <th style={{ padding: '12px 10px', textAlign: 'right' }}>ADR%(21)</th>
+                                            <th style={{ ...headerStyle, textAlign: 'right' }} onClick={() => handleSort('latest_sma50_atr_mult')}>50/ATR {renderSortIcon('latest_sma50_atr_mult')}</th>
+                                            <th style={{ padding: '12px 10px', textAlign: 'center', width: '80px' }}>RSR21% (30d)</th>
                                             <th style={headerStyle} onClick={() => handleSort('next_earnings_date')}>Earnings {renderSortIcon('next_earnings_date')}</th>
-                                            <th className="hide-on-mobile" style={headerStyle} onClick={() => handleSort('entry_date')}>Entry Date {renderSortIcon('entry_date')}</th>
+                                            <th style={headerStyle} onClick={() => handleSort('entry_date')}>Entry Date {renderSortIcon('entry_date')}</th>
                                             <th style={{ padding: '12px 10px', textAlign: 'center' }}>Actions</th>
                                         </tr>
                                     </thead>
@@ -373,19 +373,19 @@ export const WatchlistPage: React.FC = () => {
                                                 <td style={{ padding: '12px 10px', textAlign: 'right', fontWeight: 700, color: getPctColor(item.gain_pct) }}>
                                                     {formatPct(item.gain_pct)}
                                                 </td>
-                                                <td className="hide-on-mobile" style={{ padding: '12px 10px', textAlign: 'right', color: appConfig.colors.good }}>{formatPct(item.max_gain_pct)}</td>
-                                                <td className="hide-on-mobile" style={{ padding: '12px 10px', textAlign: 'right', color: appConfig.colors.bad }}>{formatPct(item.min_gain_pct)}</td>
-                                                <td className="hide-on-mobile" style={{ padding: '12px 10px', textAlign: 'right', color: '#ccc' }}>{item.latest_adr_pct.toFixed(2)}</td>
-                                                <td className="hide-on-mobile" style={{ padding: '12px 10px', textAlign: 'right', color: item.latest_sma50_atr_mult >= 8 ? '#ffff00' : '#ccc' }}>
+                                                <td style={{ padding: '12px 10px', textAlign: 'right', color: appConfig.colors.good }}>{formatPct(item.max_gain_pct)}</td>
+                                                <td style={{ padding: '12px 10px', textAlign: 'right', color: appConfig.colors.bad }}>{formatPct(item.min_gain_pct)}</td>
+                                                <td style={{ padding: '12px 10px', textAlign: 'right', color: '#ccc' }}>{item.latest_adr_pct.toFixed(2)}</td>
+                                                <td style={{ padding: '12px 10px', textAlign: 'right', color: item.latest_sma50_atr_mult >= 8 ? '#ffff00' : '#ccc' }}>
                                                     {item.latest_sma50_atr_mult.toFixed(1)}
                                                 </td>
-                                                <td className="hide-on-mobile" style={{ padding: '12px 10px', textAlign: 'center' }}>
+                                                <td style={{ padding: '12px 10px', textAlign: 'center' }}>
                                                     <Sparkline data={item.rs_sparkline} width={70} height={28} color={item.gain_pct >= 0 ? appConfig.colors.good : appConfig.colors.bad} fixedRange={true} />
                                                 </td>
                                                 <td style={{ padding: '12px 10px', whiteSpace: 'nowrap' }}>
                                                     {renderEarningsDate(item)}
                                                 </td>
-                                                <td className="hide-on-mobile" style={{ padding: '12px 10px' }}>
+                                                <td style={{ padding: '12px 10px' }}>
                                                     <input 
                                                         type="date" 
                                                         defaultValue={item.entry_date} 
@@ -466,10 +466,10 @@ export const WatchlistPage: React.FC = () => {
                                         <thead style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
                                             <tr style={{ color: '#888', textAlign: 'left' }}>
                                                 <th className="watchlist-ticker-cell" style={{ ...headerStyle, position: 'sticky', left: 0, background: '#0d1117', zIndex: 3, borderRight: '1px solid rgba(255,255,255,0.1)' }} onClick={() => handleSort('ticker')}>Ticker {renderSortIcon('ticker')}</th>
-                                                <th className="hide-on-mobile" style={headerStyle} onClick={() => handleSort('entry_date')}>Entry Date {renderSortIcon('entry_date')}</th>
+                                                <th style={headerStyle} onClick={() => handleSort('entry_date')}>Entry Date {renderSortIcon('entry_date')}</th>
                                                 <th style={headerStyle} onClick={() => handleSort('removed_at')}>Removed Date {renderSortIcon('removed_at')}</th>
-                                                <th className="hide-on-mobile" style={{ padding: '12px 10px', textAlign: 'right' }}>Entry Price</th>
-                                                <th className="hide-on-mobile" style={{ padding: '12px 10px', textAlign: 'right' }}>Removed Price</th>
+                                                <th style={{ padding: '12px 10px', textAlign: 'right' }}>Entry Price</th>
+                                                <th style={{ padding: '12px 10px', textAlign: 'right' }}>Removed Price</th>
                                                 <th style={{ ...headerStyle, textAlign: 'right' }} onClick={() => handleSort('result_pct')}>Result% {renderSortIcon('result_pct')}</th>
                                                 <th style={{ padding: '12px 10px', textAlign: 'center' }}>Actions</th>
                                             </tr>
@@ -483,10 +483,10 @@ export const WatchlistPage: React.FC = () => {
                                                             <div style={{ color: '#aaa', fontWeight: 600 }}>{item.ticker}</div>
                                                             <div className="watchlist-name-text" style={{ color: '#555' }} title={item.name}>{item.name}</div>
                                                         </td>
-                                                        <td className="hide-on-mobile" style={{ padding: '12px 10px', color: '#888' }}>{item.entry_date}</td>
+                                                        <td style={{ padding: '12px 10px', color: '#888' }}>{item.entry_date}</td>
                                                         <td style={{ padding: '12px 10px', color: '#888' }}>{item.removed_at?.split('T')[0]}</td>
-                                                        <td className="hide-on-mobile" style={{ padding: '12px 10px', textAlign: 'right', color: '#888' }}>{item.entry_price.toFixed(2)}</td>
-                                                        <td className="hide-on-mobile" style={{ padding: '12px 10px', textAlign: 'right', color: '#888' }}>{item.removed_price?.toFixed(2)}</td>
+                                                        <td style={{ padding: '12px 10px', textAlign: 'right', color: '#888' }}>{item.entry_price.toFixed(2)}</td>
+                                                        <td style={{ padding: '12px 10px', textAlign: 'right', color: '#888' }}>{item.removed_price?.toFixed(2)}</td>
                                                         <td style={{ padding: '12px 10px', textAlign: 'right', fontWeight: 600, color: getPctColor(resultPct) }}>
                                                             {formatPct(resultPct)}
                                                         </td>

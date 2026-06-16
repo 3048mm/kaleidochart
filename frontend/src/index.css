@@ -795,12 +795,12 @@ body {
   }
 
   .watchlist-ticker-cell {
-    width: 90px;
-    min-width: 90px;
-    max-width: 90px;
+    width: 70px;
+    min-width: 70px;
+    max-width: 70px;
   }
   
   .watchlist-name-text {
-    max-width: 70px;
+    display: none !important;
   }
 }

@@ -29,6 +29,7 @@ export interface BacktestEquityPoint {
   tqqq_equity?: number;
   soxl_equity?: number;
   trend_score?: number;
+  run_equities?: { [key: string]: number };
 }
 
 export interface BacktestTradeLogItem {
