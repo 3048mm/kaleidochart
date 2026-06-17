@@ -214,6 +214,111 @@ def _apply_filter(query, key: str, value, db: Session, latest_date):
         logger.warning(f"Screener filter '{key}={value}' skipped due to error: {e}")
     return query
 
+# --- Boolean Filter Handlers for Screener Presets ---
+def _apply_rrg_leading_in(q, preset_def, db, latest_date_result, previous_date_result):
+    if not previous_date_result:
+        return q
+    intensity_threshold = preset_def.get("rrg_intensity_threshold", 0.0)
+    if intensity_threshold == 0.0:
+        intensity_threshold = preset_def.get("filters", {}).get("rrg_intensity_threshold", 0.0)
+    intensity_sq = float(intensity_threshold) * float(intensity_threshold)
+    
+    IndPrev = aliased(Indicator)
+    q = q.join(IndPrev, (Symbol.id == IndPrev.symbol_id) & (IndPrev.date == previous_date_result))
+    return q.filter(
+        Indicator.rs_ratio_e21 > 0, Indicator.rs_momentum_e21 > 0,
+        Indicator.rs_momentum_e21 > IndPrev.rs_momentum_e21,
+        (Indicator.rs_ratio_e21 * Indicator.rs_ratio_e21 + Indicator.rs_momentum_e21 * Indicator.rs_momentum_e21) >= intensity_sq,
+        or_(
+            or_(IndPrev.rs_ratio_e21 <= 0, IndPrev.rs_momentum_e21 <= 0),
+            (IndPrev.rs_ratio_e21 * IndPrev.rs_ratio_e21 + IndPrev.rs_momentum_e21 * IndPrev.rs_momentum_e21) < intensity_sq
+        )
+    )
+
+def _apply_rrg_lagging_in(q, preset_def, db, latest_date_result, previous_date_result):
+    if not previous_date_result:
+        return q
+    IndPrev = aliased(Indicator)
+    q = q.join(IndPrev, (Symbol.id == IndPrev.symbol_id) & (IndPrev.date == previous_date_result))
+    return q.filter(
+        Indicator.rs_ratio_e21 < 0, Indicator.rs_momentum_e21 < 0,
+        or_(IndPrev.rs_ratio_e21 >= 0, IndPrev.rs_momentum_e21 >= 0)
+    )
+
+def _apply_rrg_improving_in(q, preset_def, db, latest_date_result, previous_date_result):
+    if not previous_date_result:
+        return q
+    intensity_threshold = preset_def.get("rrg_intensity_threshold", 0.0)
+    if intensity_threshold == 0.0:
+        intensity_threshold = preset_def.get("filters", {}).get("rrg_intensity_threshold", 0.0)
+    intensity_sq = float(intensity_threshold) * float(intensity_threshold)
+    
+    IndPrev = aliased(Indicator)
+    q = q.join(IndPrev, (Symbol.id == IndPrev.symbol_id) & (IndPrev.date == previous_date_result))
+    return q.filter(
+        Indicator.rs_ratio_e21 < 0, Indicator.rs_momentum_e21 > 0,
+        Indicator.rs_momentum_e21 > IndPrev.rs_momentum_e21,
+        (Indicator.rs_ratio_e21 * Indicator.rs_ratio_e21 + Indicator.rs_momentum_e21 * Indicator.rs_momentum_e21) >= intensity_sq,
+        or_(
+            and_(IndPrev.rs_ratio_e21 < 0, IndPrev.rs_momentum_e21 <= 0),
+            and_(IndPrev.rs_ratio_e21 < 0, (IndPrev.rs_ratio_e21 * IndPrev.rs_ratio_e21 + IndPrev.rs_momentum_e21 * IndPrev.rs_momentum_e21) < intensity_sq)
+        )
+    )
+
+def _apply_theme_rs_ratio_e21_gt_e63(q, preset_def, db, latest_date_result, previous_date_result):
+    theme_momentum_subq = db.query(Indicator.symbol_id).filter(
+        Indicator.date == latest_date_result,
+        Indicator.rs_ratio_e21 > Indicator.rs_ratio_e63
+    ).subquery()
+    stock_in_leading_themes_subq = db.query(ThemeConstituent.symbol_id).filter(
+        ThemeConstituent.theme_id.in_(theme_momentum_subq)
+    ).subquery()
+    return q.filter(
+        or_(
+            (Symbol.category == "テーマ") & (Symbol.id.in_(theme_momentum_subq)),
+            (Symbol.category == "個別") & (Symbol.id.in_(stock_in_leading_themes_subq))
+        )
+    )
+
+def _apply_theme_rs_ratio_rank_e21_gt_e63(q, preset_def, db, latest_date_result, previous_date_result):
+    _rk_date = db.query(func.max(RelativeRank.date)).filter(RelativeRank.date <= latest_date_result).scalar()
+    if _rk_date:
+        theme_momentum_subq = db.query(RelativeRank.symbol_id).filter(
+            RelativeRank.date == _rk_date,
+            RelativeRank.group_name == "テーマ",
+            RelativeRank.rs_ratio_rank_e21 > RelativeRank.rs_ratio_rank_e63
+        ).subquery()
+        stock_in_leading_themes_subq = db.query(ThemeConstituent.symbol_id).filter(
+            ThemeConstituent.theme_id.in_(theme_momentum_subq)
+        ).subquery()
+        return q.filter(
+            or_(
+                (Symbol.category == "テーマ") & (Symbol.id.in_(theme_momentum_subq)),
+                (Symbol.category == "個別") & (Symbol.id.in_(stock_in_leading_themes_subq))
+            )
+        )
+    return q
+
+def _apply_rs_ratio_rank_e21_gt_e63(q, preset_def, db, latest_date_result, previous_date_result):
+    _rk_date = db.query(func.max(RelativeRank.date)).filter(RelativeRank.date <= latest_date_result).scalar()
+    if _rk_date:
+        rank_subq = db.query(RelativeRank.symbol_id).filter(
+            RelativeRank.date == _rk_date,
+            RelativeRank.group_name == "個別",
+            RelativeRank.rs_ratio_rank_e21 > RelativeRank.rs_ratio_rank_e63
+        ).subquery()
+        return q.filter(Symbol.id.in_(rank_subq))
+    return q
+
+BOOLEAN_FILTER_HANDLERS = {
+    "rrg_leading_in": _apply_rrg_leading_in,
+    "rrg_lagging_in": _apply_rrg_lagging_in,
+    "rrg_improving_in": _apply_rrg_improving_in,
+    "is_theme_rs_ratio_e21_gt_e63": _apply_theme_rs_ratio_e21_gt_e63,
+    "is_theme_rs_ratio_rank_e21_gt_e63": _apply_theme_rs_ratio_rank_e21_gt_e63,
+    "is_rs_ratio_rank_e21_gt_e63": _apply_rs_ratio_rank_e21_gt_e63,
+}
+
 # --- Expression parser for OR/complex conditions ---
 _EXPR_OPS = {
     '>': lambda a, b: a > b,
@@ -320,7 +425,6 @@ def get_screener_presets():
                 group=p.get("group", ""),
                 filters=p.get("filters", {}),
                 expression=p.get("expression"),
-                special=p.get("special"),
             ))
         return items
     return schemas.ScreenerPresetsResponse(
@@ -1847,73 +1951,6 @@ def get_screener_dashboard(
         """Build a query from a single preset definition (TOML dict)."""
         q = q_base()
 
-        # Apply special logic
-        special = preset_def.get("special")
-        if special:
-            if special in ("rrg_leading_in", "rrg_lagging_in", "rrg_improving_in") and previous_date_result:
-                intensity_threshold = preset_def.get("rrg_intensity_threshold", 0.0)
-                intensity_sq = intensity_threshold * intensity_threshold
-                
-                IndPrev = aliased(Indicator)
-                q = q.join(IndPrev, (Symbol.id == IndPrev.symbol_id) & (IndPrev.date == previous_date_result))
-                
-                if special == "rrg_leading_in":
-                    q = q.filter(
-                        Indicator.rs_ratio_e21 > 0, Indicator.rs_momentum_e21 > 0,
-                        Indicator.rs_momentum_e21 > IndPrev.rs_momentum_e21,
-                        (Indicator.rs_ratio_e21 * Indicator.rs_ratio_e21 + Indicator.rs_momentum_e21 * Indicator.rs_momentum_e21) >= intensity_sq,
-                        or_(
-                            or_(IndPrev.rs_ratio_e21 <= 0, IndPrev.rs_momentum_e21 <= 0),
-                            (IndPrev.rs_ratio_e21 * IndPrev.rs_ratio_e21 + IndPrev.rs_momentum_e21 * IndPrev.rs_momentum_e21) < intensity_sq
-                        )
-                    )
-                elif special == "rrg_lagging_in":
-                    q = q.filter(
-                        Indicator.rs_ratio_e21 < 0, Indicator.rs_momentum_e21 < 0,
-                        or_(IndPrev.rs_ratio_e21 >= 0, IndPrev.rs_momentum_e21 >= 0)
-                    )
-                elif special == "rrg_improving_in":
-                    q = q.filter(
-                        Indicator.rs_ratio_e21 < 0, Indicator.rs_momentum_e21 > 0,
-                        Indicator.rs_momentum_e21 > IndPrev.rs_momentum_e21,
-                        (Indicator.rs_ratio_e21 * Indicator.rs_ratio_e21 + Indicator.rs_momentum_e21 * Indicator.rs_momentum_e21) >= intensity_sq,
-                        or_(
-                            and_(IndPrev.rs_ratio_e21 < 0, IndPrev.rs_momentum_e21 <= 0),
-                            and_(IndPrev.rs_ratio_e21 < 0, (IndPrev.rs_ratio_e21 * IndPrev.rs_ratio_e21 + IndPrev.rs_momentum_e21 * IndPrev.rs_momentum_e21) < intensity_sq)
-                        )
-                    )
-            elif special == "theme_rs21_gt_63":
-                theme_momentum_subq = db.query(Indicator.symbol_id).filter(
-                    Indicator.date == latest_date_result,
-                    Indicator.rs_ratio_e21 > Indicator.rs_ratio_e63
-                ).subquery()
-                stock_in_leading_themes_subq = db.query(ThemeConstituent.symbol_id).filter(
-                    ThemeConstituent.theme_id.in_(theme_momentum_subq)
-                ).subquery()
-                q = q.filter(
-                    or_(
-                        (Symbol.category == "テーマ") & (Symbol.id.in_(theme_momentum_subq)),
-                        (Symbol.category == "個別") & (Symbol.id.in_(stock_in_leading_themes_subq))
-                    )
-                )
-            elif special == "theme_rs_rank_21_gt_63":
-                _rk_date = db.query(func.max(RelativeRank.date)).filter(RelativeRank.date <= latest_date_result).scalar()
-                if _rk_date:
-                    theme_momentum_subq = db.query(RelativeRank.symbol_id).filter(
-                        RelativeRank.date == _rk_date,
-                        RelativeRank.group_name == "テーマ",
-                        RelativeRank.rs_ratio_rank_e21 > RelativeRank.rs_ratio_rank_e63
-                    ).subquery()
-                    stock_in_leading_themes_subq = db.query(ThemeConstituent.symbol_id).filter(
-                        ThemeConstituent.theme_id.in_(theme_momentum_subq)
-                    ).subquery()
-                    q = q.filter(
-                        or_(
-                            (Symbol.category == "テーマ") & (Symbol.id.in_(theme_momentum_subq)),
-                            (Symbol.category == "個別") & (Symbol.id.in_(stock_in_leading_themes_subq))
-                        )
-                    )
-
         # Apply expression-based filters (OR conditions etc.)
         expression = preset_def.get("expression")
         if expression:
@@ -1923,10 +1960,36 @@ def get_screener_dashboard(
             else:
                 logger.warning(f"Preset '{preset_def.get('id')}': expression parse failed, skipping expression.")
 
-        # Apply standard AND filters
+        # Apply standard AND and boolean filters
         filters = preset_def.get("filters", {})
         for key, value in filters.items():
-            q = _apply_filter(q, key, value, db, latest_date_result)
+            if key in BOOLEAN_FILTER_HANDLERS:
+                if value is True:
+                    q = BOOLEAN_FILTER_HANDLERS[key](q, preset_def, db, latest_date_result, previous_date_result)
+            elif key == "_use_hysteresis":
+                continue
+            elif key == "rrg_intensity_threshold":
+                continue
+            else:
+                # Check if filter key is known
+                is_known = False
+                if key == "expression":
+                    is_known = True
+                elif re.match(r'^(min|max)_(.+)_rank$', key):
+                    direction, indicator = re.match(r'^(min|max)_(.+)_rank$', key).groups()
+                    if hasattr(RelativeRank, indicator):
+                        is_known = True
+                elif re.match(r'^(min|max)_(.+)$', key):
+                    direction, col_name = re.match(r'^(min|max)_(.+)$', key).groups()
+                    if _resolve_column(col_name) is not None:
+                        is_known = True
+                elif _resolve_column(key) is not None:
+                    is_known = True
+                
+                if not is_known:
+                    logger.warning(f"Screener Preset '{preset_def.get('id')}': Unknown filter key '{key}' ignored.")
+                
+                q = _apply_filter(q, key, value, db, latest_date_result)
 
         # Default sort: by 1Day% (Prev Close base) descending
         q = q.order_by(desc(Indicator.change_1d_pct))

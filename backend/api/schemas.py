@@ -415,7 +415,6 @@ class ScreenerPresetItem(BaseModel):
     group: str
     filters: dict = {}
     expression: Optional[str] = None
-    special: Optional[str] = None
 
 class ScreenerPresetsResponse(BaseModel):
     rise: List[ScreenerPresetItem]

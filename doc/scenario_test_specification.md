@@ -89,15 +89,13 @@ group = "Check"                  # Rise セクションの group="Check" のみ�
 # (初期値は全て 1.0 のため、コメントアウトで省略可能)
 ```
 
-> **WARNING: `special` フィールドの処理について**
+> **NOTE: `special` フィールドの廃止と boolean フィルタの統合について**
 >
-> `screener_presets.toml` では `special = "theme_rs21_gt_63"` / `special = "rs_rank_21_gt_63"` / `special = "rrg_improving_in"` 等の指定により、単純な `min_/max_` フィルタではなく**複合的な計算ロジック**が必要になるプリセットが存在する。
->
-> 現状、これらのロジックは `backend/api/routers.py`（SQLAlchemy版）と `backend/backtest/backtest_screener.py`（pandas版）に**それぞれ重複実装**されている。シナリオテストの実装にあたっては、以下の方針で共通化を行う：
->
-> 1. **`backend/indicators/screener_filters.py`（新設）** に、pandas DataFrame ベースの特殊フィルタ関数を純粋関数として集約する。
-> 2. `backtest_screener.py` および `scenario_scorer.py` からはこの共通関数を呼び出す。
-> 3. `routers.py` の SQLAlchemy 版は当面そのまま維持するが、将来的には共通ロジックへの統合を検討する。
+> `screener_presets.toml` において、以前は `special = "theme_rs21_gt_63"` などのディスパッチ用キーを用いていた複合計算ロジック（RRG系やRS Rank系など）は、**`special` キー自体が完全に廃止**されました。
+> 
+> 現在は、これらすべての特殊条件も `[rise.filters]` / `[fall.filters]` セクション内の boolean フラグ（例：`rrg_improving_in = true`、`is_rs_ratio_rank_e21_gt_e63 = true`）として定義するように統一されました。
+> 
+> バックエンド内では、`backend/backtest/backtest_screener.py`（pandas版）および `backend/api/routers.py`（SQLAlchemy版）に定義された boolean フィルタハンドラ（`BOOLEAN_FILTER_HANDLERS`）を介して、それぞれ透過的にフィルタリングが適用されます。
 
 ```toml
 
@@ -421,7 +419,7 @@ python backend/backtest/scenario_runner.py --refresh-cache
 - [ ] 重み付けが正しく適用されること（1:2:1 等の非均等重み）
 - [ ] 既に保有中の銘柄がスコア結果から除外されること
 - [ ] タイブレーク（RS Rank 21 降順）が正しく動作すること
-- [ ] `special` フィールド（RRG, theme_rs21_gt_63 等）を持つプリセットが正しく適用されること
+- [ ] `filters` 内の boolean カスタムフィルタ（RRG系, RS Rank比較等）を持つプリセットが正しく適用されること
 
 #### scenario_portfolio.py
 - [ ] `calculate_target_positions`: Score=100 → max_positions, Score=0 → 0, Score=50 → 線形補間
@@ -448,6 +446,7 @@ python backend/backtest/scenario_runner.py --refresh-cache
 ---
 
 ## 更新履歴
+- 2026-06-17: `special` キーを廃止し、RRG系やRS Rank系のカスタムフィルタを `filters` 内の boolean キーに統一（TDDによるリファクタリングの実施）
 - 2026-06-09: QQQ/TQQQ/SOXL ベンチマークとの資産推移スケーリング比較機能の追加
 - 2026-05-09: コメントフィードバック反映（売買ログCSV、SPYリターン比率、special共通化、FTD/DD、関数粒度方針、購入前提条件、確定損益capital）
 - 2026-05-09: 初版作成

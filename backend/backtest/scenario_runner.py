@@ -99,10 +99,6 @@ def load_scenario_config(config_path: str = "data/screener_presets.toml") -> Dic
             name = item.get('name', item.get('id', 'Unknown'))
             filters = item.get('filters', {}).copy()
             
-            special = item.get('special')
-            if special:
-                filters[special] = True
-            
             expression = item.get('expression')
             if expression:
                 filters['expression'] = expression

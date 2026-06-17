@@ -43,9 +43,9 @@ id = "momentum_breakout"
 name = "momentum_breakout"
 subname = "出来高を伴った急騰銘柄"
 group = "Check"
-special = "is_rs_ratio_rank_e21_gt_e63"
 use_hysteresis = false
 [rise.filters]
+is_rs_ratio_rank_e21_gt_e63 = true
 min_change_1d_pct = 7.0
 min_change_oc_pct = 7.0
 min_vol_surge_21 = 2.8
@@ -74,9 +74,9 @@ id = "thema_momentum"
 name = "Theme Momentum"
 subname = "強いテーマに属する銘柄のモメンタム"
 group = "Check"
-special = "is_theme_rs_ratio_e21_gt_e63"
 use_hysteresis = false
 [rise.filters]
+is_theme_rs_ratio_e21_gt_e63 = true
 min_change_1d_pct = 7.0
 min_vol_surge_21 = 2.8
 min_adr_pct_21 = 6.0
@@ -200,9 +200,9 @@ id = "rrg_improving_in"
 name = "RRG Improving In"
 group = "Check"
 # RRGは前日比較ロジックが必要な特殊プリセット（バックエンド実装）
-special = "rrg_improving_in"
 use_hysteresis = false
 [rise.filters]
+rrg_improving_in = true
 min_vol_surge_21 = 1.6 
 min_adr_pct_21 = 3.5 
 max_sma50_atr_mult = 5.0 
@@ -339,8 +339,8 @@ min_td9 = 8
 id = "rrg_lagging_in"
 name = "RRG Lagging In"
 group = "Warning"
-special = "rrg_lagging_in"
 [fall.filters]
+rrg_lagging_in = true
 max_change_1d_pct = -2.0
 min_vol_surge_21 = 1.0
 
