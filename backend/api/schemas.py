@@ -553,6 +553,7 @@ class BacktestScenarioSummary(BaseModel):
     win_rate: float
     total_trades: int
     yearly_performance: Optional[dict] = None
+    exit_reasons: Optional[dict] = None
     # Allow extra fields for safety
     model_config = {
         "extra": "allow"

@@ -45,6 +45,14 @@ def test_scenario_reporter_generates_summary(mock_trade_history, mock_spy_data):
     assert summary['net_profit'] == 500.0
     assert summary['total_return_pct'] == 0.5 # 500 / 100000 * 100
     
+    assert 'exit_reasons' in summary
+    assert 'profit_target' in summary['exit_reasons']
+    assert summary['exit_reasons']['profit_target']['count'] == 1
+    assert summary['exit_reasons']['profit_target']['avg_pnl_pct'] == 10.0
+    assert 'stop_loss' in summary['exit_reasons']
+    assert summary['exit_reasons']['stop_loss']['count'] == 1
+    assert summary['exit_reasons']['stop_loss']['avg_pnl_pct'] == -5.0
+    
     # SPY return from index 0 to -1
     spy_start = mock_spy_data.iloc[0]['close']
     spy_end = mock_spy_data.iloc[-1]['close']

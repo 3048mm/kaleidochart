@@ -341,6 +341,7 @@ score = (spy_trend / 4.0) * w.spy_trend
 | `qqq_equity` | 各日程における QQQ ベンチマーク評価額 (スケーリング後) |
 | `tqqq_equity` | 各日程における TQQQ ベンチマーク評価額 (スケーリング後) |
 | `soxl_equity` | 各日程における SOXL ベンチマーク評価額 (スケーリング後) |
+| `exit_reasons` | 決済理由別内訳（回数・比率・平均損益・保有日数）の集計辞書データ |
 
 ### 6.5 売買ログ CSV 出力
 
@@ -446,6 +447,7 @@ python backend/backtest/scenario_runner.py --refresh-cache
 ---
 
 ## 更新履歴
+- 2026-06-17: 決済（売却）理由別統計機能を追加。各決済理由の回数・比率・平均損益・平均保有日数をシミュレーションレポート（`scenario_summary.json`）に集計・記録し、フロントエンドに「Exit Reason Statistics」セクションとして統合表示する機能を追加。
 - 2026-06-17: `special` キーを廃止し、RRG系やRS Rank系のカスタムフィルタを `filters` 内の boolean キーに統一（TDDによるリファクタリングの実施）
 - 2026-06-09: QQQ/TQQQ/SOXL ベンチマークとの資産推移スケーリング比較機能の追加
 - 2026-05-09: コメントフィードバック反映（売買ログCSV、SPYリターン比率、special共通化、FTD/DD、関数粒度方針、購入前提条件、確定損益capital）

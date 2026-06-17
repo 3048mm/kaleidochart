@@ -17,6 +17,13 @@ export interface BacktestScenarioSummary {
   win_rate: number;
   total_trades: number;
   yearly_performance?: { [year: string]: YearlyPerformanceItem };
+  exit_reasons?: {
+    [reason: string]: {
+      count: number;
+      avg_pnl_pct: number;
+      avg_holding_days: number;
+    }
+  };
   [key: string]: any; // Allow extra fields
 }
 

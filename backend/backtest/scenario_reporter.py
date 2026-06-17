@@ -122,6 +122,26 @@ class ScenarioReporter:
         else:
             end_date_str = str(end_date)
         
+        # --- Exit Reasons Breakdown ---
+        exit_reasons_stats = {}
+        if trade_history:
+            df_trades = pd.DataFrame(trade_history)
+            if 'exit_reason' in df_trades.columns:
+                df_trades['entry_date'] = pd.to_datetime(df_trades['entry_date'])
+                df_trades['exit_date'] = pd.to_datetime(df_trades['exit_date'])
+                df_trades['holding_days'] = (df_trades['exit_date'] - df_trades['entry_date']).dt.days
+                
+                for reason, group in df_trades.groupby('exit_reason'):
+                    count = len(group)
+                    avg_pnl = float(group['pnl_pct'].mean() * 100) if 'pnl_pct' in group.columns else 0.0
+                    avg_hold = float(group['holding_days'].mean()) if 'holding_days' in group.columns else 0.0
+                    
+                    exit_reasons_stats[str(reason)] = {
+                        'count': count,
+                        'avg_pnl_pct': round(avg_pnl, 2),
+                        'avg_holding_days': round(avg_hold, 1)
+                    }
+
         summary = {
             'start_date': start_date_str,
             'end_date': end_date_str,
@@ -139,6 +159,7 @@ class ScenarioReporter:
             'avg_holding_days_loss': round(avg_holding_loss, 2),
             'max_drawdown': max_drawdown,
             'yearly_performance': yearly_stats,
+            'exit_reasons': exit_reasons_stats,
         }
         
         # Extract top 5 most profitable trades by PnL amount

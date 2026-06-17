@@ -145,19 +145,19 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
     const [compareLoading, setCompareLoading] = useState(false);
 
     // active toggles
-    const [showSma21, setShowSma21] = useState(true);
-    const [showSma50, setShowSma50] = useState(true);
+    const [showSma21, setShowSma21] = useState(false);
+    const [showSma50, setShowSma50] = useState(false);
     const [showSma63, setShowSma63] = useState(false);
     const [showSma150, setShowSma150] = useState(false);
     const [showSma200, setShowSma200] = useState(false);
     const [showEma5, setShowEma5] = useState(false);
-    const [showEma21, setShowEma21] = useState(false);
+    const [showEma21, setShowEma21] = useState(true);
     const [showEma50, setShowEma50] = useState(false);
-    const [showEma63, setShowEma63] = useState(false);
-    const [showEma200, setShowEma200] = useState(false);
+    const [showEma63, setShowEma63] = useState(true);
+    const [showEma200, setShowEma200] = useState(true);
     const [showVolume, setShowVolume] = useState(true);
     const [showTd9, setShowTd9] = useState(true);
-    const [showBB, setShowBB] = useState(false);
+    const [showBB, setShowBB] = useState(true);
     const [showRsDots, setShowRsDots] = useState(true);
 
     const chartRef = useRef<IChartApi | null>(null);

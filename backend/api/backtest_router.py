@@ -280,13 +280,42 @@ def get_scenario_summary(name: str):
         final_capital_max = float(np.max(final_capitals))
         final_capital_min = float(np.min(final_capitals))
         
+        # Average exit reasons stats
+        exit_reasons_merged = {}
+        reasons_detected = set()
+        for s in run_summaries:
+            er = s.get("exit_reasons", {})
+            if isinstance(er, dict):
+                reasons_detected.update(er.keys())
+            
+        for reason in reasons_detected:
+            counts = []
+            pnl_pcts = []
+            holding_days_list = []
+            for s in run_summaries:
+                er = s.get("exit_reasons", {})
+                if isinstance(er, dict):
+                    r_stats = er.get(reason, {})
+                    if isinstance(r_stats, dict):
+                        counts.append(r_stats.get("count", 0))
+                        pnl_pcts.append(r_stats.get("avg_pnl_pct", 0.0))
+                        holding_days_list.append(r_stats.get("avg_holding_days", 0.0))
+            
+            if counts:
+                exit_reasons_merged[reason] = {
+                    "count": int(np.mean(counts)),
+                    "avg_pnl_pct": float(np.mean(pnl_pcts)) if any(c > 0 for c in counts) else 0.0,
+                    "avg_holding_days": float(np.mean(holding_days_list)) if any(c > 0 for c in counts) else 0.0
+                }
+        
         summary_obj = BacktestScenarioSummary(
             cagr=cagr_avg,
             profit_factor=profit_factor_avg,
             max_drawdown=max_dd_avg,
             win_rate=win_rate_avg,
             total_trades=total_trades_avg,
-            yearly_performance=yearly_performance
+            yearly_performance=yearly_performance,
+            exit_reasons=exit_reasons_merged
         )
         
         summary_obj.__dict__.update({
@@ -303,7 +332,8 @@ def get_scenario_summary(name: str):
             "profit_factor_avg": profit_factor_avg,
             "final_capital_avg": final_capital_avg,
             "final_capital_max": final_capital_max,
-            "final_capital_min": final_capital_min
+            "final_capital_min": final_capital_min,
+            "exit_reasons": exit_reasons_merged
         })
         
         return summary_obj
@@ -408,7 +438,8 @@ def get_scenario_summary(name: str):
             max_drawdown=max_drawdown,
             win_rate=win_rate,
             total_trades=total_trades,
-            yearly_performance=yearly_performance
+            yearly_performance=yearly_performance,
+            exit_reasons=raw_data.get("exit_reasons", {})
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read/parse summary JSON: {str(e)}")
