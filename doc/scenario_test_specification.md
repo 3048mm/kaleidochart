@@ -8,7 +8,7 @@
 ## 1. 目的
 
 1. **スクリーナーの統合的な妥当性検証**: 複数のスクリーナープリセット（`screener_presets.toml` の Rise - Check グループ）を組み合わせ、「多くの条件に合致する銘柄ほど優秀か」をポートフォリオ運用レベルで検証する。
-2. **Market Trend Score 計算式の最適化**: Market Trend Score の4構成要素（SPYトレンド、市場の幅、Momentum Ratio、VIX）の重み配分を変数化し、シナリオテスト結果を目的関数として最適な重みを探索する。
+2. **Market Trend Score 計算式の最適化**: Market Trend Score の5構成要素（VXV/VIXレシオ、市場の幅、50EMA/ATR乖離、200EMA/ATR乖離、Distribution Days）の重み配分を最適化し、シナリオテスト結果を目的関数として検証する。
 3. **実運用シミュレーション**: 有限資金・ポジション数制限・市場環境連動のキャッシュ管理を伴う、現実的な運用成績の推計。
 
 ---
@@ -111,12 +111,13 @@ full_cash_score = 20             # このスコア以下でポジション数 = 
 max_position_change_per_day = 2  # 1日あたりの最大ポジション増減数（ダンパー）
 reduction_priority = "unrealized_loss"  # 削減時の優先順位 ("unrealized_loss")
 
-# --- Market Trend Score 重み (合計 = 100) ---
+# --- Market Trend Score 重み (合計 = 1.0 または 100) ---
 [market_score_weights]
-spy_trend = 25.0                 # SPYトレンド (EMA21, SMA50, SMA200上抜け, SMA200上昇)
-market_breadth = 25.0            # 市場の幅 (SMA50上抜け率)
-momentum_ratio = 25.0            # Momentum Ratio (前日比プラス率)
-vix = 25.0                       # VIX (12-35 線形補間)
+vxv_vix = 20.0                   # VXV/VIXレシオ (0.90 - 1.25)
+breadth = 20.0                   # 市場の幅 (SMA50上抜け率)
+ema50_atr = 20.0                 # 50EMA/ATR乖離 (-4.0 - +8.0)
+ema200_atr = 20.0                # 200EMA/ATR乖離 (-4.0 - +16.0)
+dist_days = 20.0                 # Distribution Days (5日以下で満点、10日以上で0点)
 
 # --- 出口ルール (backtest_config.toml と同一構造) ---
 [exit_rules]
@@ -260,40 +261,46 @@ def select_positions_to_cut(
 
 ### 5.4 Market Trend Score 再計算 (`scenario_market_score.py`)
 
-パイプライン（T5）で事前計算された値を使用せず、**T3/T4 データからオンザフライで再計算**する。これにより重み配分の変更実験が可能。
+パイプライン（T5）で事前計算された値を使用せず、**T3/T4 データからオンザフライで再計算**する（`MarketTrendScorer` クラスを使用）。これにより重み配分の変更やシミュレーション実験が可能。
 
 ```python
-def calculate_market_trend_score(
-    date: datetime.date,
-    spy_row: dict,                  # SPY の T3 指標（close, ema_21, sma_50, sma_200 等）
-    spy_row_prev: dict,             # 前日の SPY データ (SMA200 上昇判定用)
-    all_indicators: pd.DataFrame,   # 当日の全銘柄 T3 (close, sma_50, change_1d_pct)
-    vix_close: float,               # 当日の VIX 終値
-    weights: dict,                  # {spy_trend, market_breadth, momentum_ratio, vix}
-) -> tuple[float, dict]:
-    """
-    戻り値: (total_score, sub_scores_dict)
-    sub_scores_dict: {"spy_trend": x, "market_breadth": y, "momentum_ratio": z, "vix": w}
-    """
+class MarketTrendScorer:
+    def __init__(
+        self, 
+        prices_df: pd.DataFrame, 
+        symbols_df: pd.DataFrame, 
+        daily_metrics: Optional[Dict[object, Dict[str, float]]] = None,
+        weights: Optional[Dict[str, float]] = None,
+        use_vxv_vix: bool = True,
+        scaling_ratio: Optional[float] = None
+    ):
+        # データのインデックス化とSPY/VIX/VXV関連指標の事前算出
+
+    def evaluate_market_phase(self, target_date: object) -> Tuple[float, MarketPhase]:
+        # 各サブスコアを算出して最終スコアを計算し、60/40基準でBULL/NEUTRAL/BEARを判定
 ```
 
 #### サブスコア計算仕様（既存 T5 ロジックと同一）
 
 | 構成要素 | 配点基準 (正規化前) | 計算式 |
 | :--- | :--- | :--- |
-| **SPY Trend** | 4項目 × 各1.0pt = 4.0pt 満点 | ①close>EMA21, ②close>SMA50, ③close>SMA200, ④SMA200上昇(5日前比較) |
+| **VXV/VIX Ratio** | 0.90〜1.25 (比率) | `clamp((vxv_vix_ratio - 0.90) / (1.25 - 0.90), 0, 1)` |
 | **Market Breadth** | 0.0〜1.0 (比率) | `個別銘柄のうち close > sma_50 の割合` |
-| **Momentum Ratio** | 0.0〜1.0 (比率) | `個別銘柄のうち change_1d_pct > 0 の割合` |
-| **VIX** | 0.0〜1.0 (正規化値) | `clamp((35 - vix) / (35 - 12), 0, 1)` |
+| **SPY 50EMA/ATR Distance** | -4.0〜+8.0 (ATR倍数) | `clamp((dist_50ema_atr - (-4.0)) / (8.0 - (-4.0)), 0, 1)` |
+| **SPY 200EMA/ATR Distance** | -4.0〜+16.0 (ATR倍数) | `clamp((dist_200ema_atr - (-4.0)) / (16.0 - (-4.0)), 0, 1)` |
+| **Distribution Days** | 過去25日間の売り抜け日数 | 5日以下で 1.0、10日以上で 0.0、その間（6〜9日）は線形減少 |
 
-最終スコア:
+最終スコア (等価 20% ずつ):
 ```
-score = (spy_trend / 4.0) * w.spy_trend
-       + breadth * w.market_breadth
-       + momentum * w.momentum_ratio
-       + vix_norm * w.vix
+score = (
+    vxv_vix_score * 0.20 +
+    breadth_score * 0.20 +
+    score_50ema_atr * 0.20 +
+    score_200ema_atr * 0.20 +
+    dist_score * 0.20
+) * 100.0
 ```
-ここで `w.spy_trend + w.market_breadth + w.momentum_ratio + w.vix = 100`
+※ `scaling_ratio` を指定した場合は、50.0を起点としてスケーリングを適用した上で `0.0〜100.0` にクリップします。
 
 ---
 
@@ -370,7 +377,6 @@ score = (spy_trend / 4.0) * w.spy_trend
 - [ ] **Fall Warning による購入フィルタ**: Fall - Warning にヒットした銘柄を購入対象から除外する
 - [ ] **Follow Through Day (FTD) / Distribution Day (DD) の統合**: 市場シグナル（FTD, DD）をエクスポージャー管理の追加判断材料として組み込む
 - [ ] **ATRベースの動的ポジションサイジング**: ボラティリティに応じた資金配分
-- [ ] **VXV/VIX 比率の Market Score 統合**: VXV を第5の構成要素として追加
 - [ ] **Optuna による Market Score 重み自動最適化**: 既存 Optuna インフラとの統合
 
 ---
@@ -446,10 +452,50 @@ python backend/backtest/scenario_runner.py --refresh-cache
 
 ---
 
+## 10. Market Trend Score v3_B の検証および採用経緯
+
+市場環境判定モデル「Market Trend Score (MTS)」を v2 から v3 へアップデートし、最終的に「v3_B」仕様を採用するに至った検証経緯は以下の通り。
+
+### 10.1 検証の背景と目的
+従来の VXV/VIX EMA を用いた4レジーム制御（個別株向けのB4戦略など）を、ETFのシナリオトレードに直接適用すると、取引回数の多さや市場急変時の遅行性が課題となっていた。
+そこで、中期および長期のボラティリティ調整乖離（EMA/ATR乖離）や、VXV/VIX比率の生値、Distribution Days（売り抜け日）のカウントなど、多角的な指標を等価（各20%）に組み合わせた5要素モデル（MTS v3）を設計し、パフォーマンス改善を検証した。
+
+### 10.2 v3（標準仕様）の課題と v3_B（範囲緩和仕様）の考案
+MTS v3のプロトタイプ（標準仕様）を実装してバックテストを行ったところ、以下の問題が判明した。
+
+- **v3 標準仕様のパラメータ**:
+  - SPY 50EMA/ATR 乖離: `-4.0` 〜 `+4.0` ATR
+  - SPY 200EMA/ATR 乖離: `-4.0` 〜 `+10.0` ATR
+- **発生した課題**:
+  通常の上昇トレンド相場において、SPYの価格がEMAから容易に大きく乖離し、過熱判定（MTS >= 80）が頻発した。
+  これにより、通常の上昇トレンド中の過熱判定割合が **8.5% ➔ 26.5%（約3倍）** に急増。
+  その結果、上昇相場の中途でポジションを半減（利益確定）させてはすぐに買い直すという無駄なリバランス取引が多発し、利益の取りこぼしと手数料・税金コストによるパフォーマンスの大幅悪化（TQQQの最終資産が $8.34M ➔ $5.25M へ下落）を引き起こした。
+
+- **v3_B 案での解決アプローチ**:
+  通常の上昇相場でのボラティリティや乖離幅のノイズを許容し、真の過熱局面のみを捉えるため、乖離幅のしきい値を上方向に緩和した。
+  - SPY 50EMA/ATR 乖離: `-4.0` 〜 `+8.0` ATR
+  - SPY 200EMA/ATR 乖離: `-4.0` 〜 `+16.0` ATR
+
+### 10.3 バックテスト検証結果 (2010年 - 2025年)
+単一のレバレッジETF（TQQQ）およびインデックスETF（SPY）を対象とし、MTS制御ロジックを適用したシナリオバックテストの結果は以下の通りとなった。
+
+| 指標 | TQQQ (MTS v3_B) | SPY (MTS v3_B) | 備考 (従来のVXV/VIX EMA制御等) |
+| :--- | :--- | :--- | :--- |
+| **最終資産額** | **$8.47M** | **$532k** | v3標準仕様（TQQQ: $5.25M）から大幅に改善 |
+| **CAGR (年率)** | **31.99%** | **11.01%** | 歴代最高水準のリターンを達成 |
+| **取引(リバランス)回数** | **44回** | **44回** | v3標準仕様（約100回）から**半分以下に半減**し、取引コストを大きく削減 |
+| **シャープレシオ** | **0.78** | **0.72** | 高いリスク調整後リターンを維持 |
+
+### 10.4 結論と採用決定
+MTS v3_B は、上限乖離幅を緩和したことで通常上昇相場におけるノイズを完全に排除し、**「取引回数を半分以下に削減しながら、CAGRとシャープレシオを最大化する」** という極めて優れた結果を実証した。
+このため、本システムにおける標準の Market Trend Score ロジックとして **MTS v3_B** を正式採用した。
+
+---
+
 ## 更新履歴
+- 2026-06-19: Market Trend Score v3_B（5要素等価20%、EMA/ATR範囲緩和仕様）の仕様および検証経緯を追加。
 - 2026-06-17: 決済（売却）理由別統計機能を追加。各決済理由の回数・比率・平均損益・平均保有日数をシミュレーションレポート（`scenario_summary.json`）に集計・記録し、フロントエンドに「Exit Reason Statistics」セクションとして統合表示する機能を追加。
 - 2026-06-17: `special` キーを廃止し、RRG系やRS Rank系のカスタムフィルタを `filters` 内の boolean キーに統一（TDDによるリファクタリングの実施）
 - 2026-06-09: QQQ/TQQQ/SOXL ベンチマークとの資産推移スケーリング比較機能の追加
 - 2026-05-09: コメントフィードバック反映（売買ログCSV、SPYリターン比率、special共通化、FTD/DD、関数粒度方針、購入前提条件、確定損益capital）
 - 2026-05-09: 初版作成
-

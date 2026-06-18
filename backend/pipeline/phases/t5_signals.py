@@ -22,7 +22,7 @@ def sync_phase_t5_signals(db, logger: logging.Logger):
         logger.info("No gaps or missing scores detected in Phase 5.")
         return
 
-    spy_df = pd.DataFrame([{"date": r.date, "close": r.close, "volume": r.volume} for r in db.query(DailyPrice).filter(DailyPrice.symbol_id == spy_sym_id).order_by(DailyPrice.date).all()])
+    spy_df = pd.DataFrame([{"date": r.date, "close": r.close, "high": r.high, "low": r.low, "volume": r.volume} for r in db.query(DailyPrice).filter(DailyPrice.symbol_id == spy_sym_id).order_by(DailyPrice.date).all()])
     if spy_df.empty:
         logger.error("SPY price data missing.")
         return

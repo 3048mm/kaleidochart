@@ -119,6 +119,56 @@ def load_etf_data(
 
 
 # ---------------------------------------------------------------------------
+# Load and compute MTS v2 Timeline
+# ---------------------------------------------------------------------------
+def build_mts_v2_timeline(
+    trading_dates: list,
+    prices_df: pd.DataFrame,
+    symbols_df: pd.DataFrame
+) -> Dict[Any, float]:
+    """
+    Builds a complete daily timeline of MTS v2 scores for the specified trading dates.
+    Uses DB values where available, and falls back to MarketTrendScorer on-the-fly calculations for pre-2020.
+    """
+    from backend.backtest.scenario_market_score import MarketTrendScorer
+    
+    mts_timeline = {}
+    
+    # 1. Try to load from DB
+    try:
+        from backend.db.database import get_active_db_path
+        from sqlalchemy import create_engine
+        db_path = get_active_db_path() or "data/stocktool.db"
+        engine = create_engine(f"sqlite:///{db_path}")
+        df_db = pd.read_sql("SELECT date, market_trend_score FROM market_signals", engine)
+        df_db['date'] = pd.to_datetime(df_db['date']).dt.date
+        for _, row in df_db.iterrows():
+            mts_timeline[row['date']] = float(row['market_trend_score'])
+    except Exception as e:
+        print(f"  Warning: Failed to load MTS from DB: {e}. Relying entirely on on-the-fly calculation.", flush=True)
+        
+    # 2. For missing dates, compute on-the-fly using MarketTrendScorer
+    missing_dates = [d for d in trading_dates if d not in mts_timeline]
+    if missing_dates:
+        print(f"  On-the-fly calculating MTS v2 for {len(missing_dates)} historical dates...", flush=True)
+        scorer = MarketTrendScorer(
+            prices_df,
+            symbols_df,
+            daily_metrics={},
+            use_vxv_vix=True,
+            scaling_ratio=None
+        )
+        for d in missing_dates:
+            try:
+                score, _ = scorer.evaluate_market_phase(d)
+                mts_timeline[d] = score
+            except Exception as e:
+                mts_timeline[d] = 70.0 # Default fallback
+                
+    return mts_timeline
+
+
+# ---------------------------------------------------------------------------
 # VXV/VIX Regime Engine
 # ---------------------------------------------------------------------------
 class VxvVixRegimeEngine:
@@ -447,6 +497,163 @@ def _simulate_dca(
     }
 
 
+def _simulate_mts_v2_strategy(
+    trading_dates: list,
+    etf_prices: Dict,
+    mts_timeline: Dict[Any, float],
+    initial_capital: float,
+    consider_tax: float,
+) -> Dict[str, Any]:
+    """
+    Run the MTS v2 position-sizing strategy.
+    Positions are determined by absolute MTS score thresholds:
+      - MTS <= 20: 100% position (Buy the panic bottom)
+      - MTS >= 80: 50% position (Reduce exposure on overheat)
+      - 20 < MTS < 80: 100% position (Standard trend hold)
+    Uses a 5-day EMA of MTS to filter daily noise.
+    """
+    # 1. Convert timeline dict to sorted pandas series to calculate EMA
+    dates_sorted = sorted(mts_timeline.keys())
+    scores_sorted = [mts_timeline[d] for d in dates_sorted]
+    df_mts = pd.DataFrame({'date': dates_sorted, 'score': scores_sorted})
+    df_mts['score_ema5'] = df_mts['score'].ewm(span=5, adjust=False).mean()
+    
+    # Create lookup for daily EMA
+    mts_ema_lookup = {row['date']: row['score_ema5'] for _, row in df_mts.iterrows()}
+
+    capital = initial_capital
+    shares = 0
+    avg_entry_price = 0.0
+    prev_target_pct = None
+    rebalance_count = 0
+    days_in_market = 0
+
+    equity_curve = []
+    trade_log = []
+
+    for day in trading_dates:
+        etf_close = etf_prices.get(day, {}).get("close")
+        if etf_close is None or etf_close <= 0:
+            continue
+
+        # Get MTS EMA5
+        mts_ema = mts_ema_lookup.get(day, 70.0) # default neutral
+
+        # Determine target allocation based on MTS v2 thresholds (20 / 80)
+        if mts_ema <= 20.0:
+            target_pct = 1.00  # Panic bottom -> 100% invested
+        elif mts_ema >= 80.0:
+            target_pct = 0.50  # Overheat -> Reduce to 50%
+        else:
+            target_pct = 1.00  # Default -> 100% standard trend
+
+        # Rebalance only on target percentage change
+        if prev_target_pct is not None and target_pct != prev_target_pct:
+            current_value = capital + shares * etf_close
+            target_invested = current_value * target_pct
+            current_invested = shares * etf_close
+
+            delta = target_invested - current_invested
+
+            if delta > 0:
+                shares_to_buy = int(delta / etf_close)
+                cost = shares_to_buy * etf_close
+                if cost <= capital and shares_to_buy > 0:
+                    total_cost = avg_entry_price * shares + cost
+                    shares += shares_to_buy
+                    avg_entry_price = total_cost / shares if shares > 0 else 0.0
+                    capital -= cost
+                    rebalance_count += 1
+                    trade_log.append({
+                        "date": day, "action": "BUY",
+                        "shares": shares_to_buy, "price": etf_close,
+                        "reason": f"MTS EMA5={mts_ema:.1f} (target {target_pct*100:.0f}%)",
+                    })
+            elif delta < 0:
+                shares_to_sell = min(shares, int(abs(delta) / etf_close))
+                if shares_to_sell > 0:
+                    proceeds = shares_to_sell * etf_close
+                    realized_gain = (etf_close - avg_entry_price) * shares_to_sell
+                    tax_paid = 0.0
+                    if consider_tax > 0 and realized_gain > 0:
+                        tax_paid = realized_gain * consider_tax
+                        capital -= tax_paid
+
+                    shares -= shares_to_sell
+                    capital += proceeds
+                    rebalance_count += 1
+                    trade_log.append({
+                        "date": day, "action": "SELL",
+                        "shares": shares_to_sell, "price": etf_close,
+                        "reason": f"MTS EMA5={mts_ema:.1f} (target {target_pct*100:.0f}%)",
+                        "tax_paid": round(tax_paid, 2),
+                    })
+                    if shares == 0:
+                        avg_entry_price = 0.0
+
+        # First day initial buy
+        if prev_target_pct is None and target_pct > 0:
+            target_invested = initial_capital * target_pct
+            shares_to_buy = int(target_invested / etf_close)
+            if shares_to_buy > 0:
+                cost = shares_to_buy * etf_close
+                shares = shares_to_buy
+                avg_entry_price = etf_close
+                capital -= cost
+                trade_log.append({
+                    "date": day, "action": "BUY",
+                    "shares": shares_to_buy, "price": etf_close,
+                    "reason": f"Initial buy (MTS EMA5={mts_ema:.1f}, target {target_pct*100:.0f}%)",
+                })
+
+        prev_target_pct = target_pct
+
+        if shares > 0:
+            days_in_market += 1
+
+        invested_value = shares * etf_close
+        total_equity = capital + invested_value
+        equity_curve.append({
+            "date": day,
+            "mts_v2_equity": round(total_equity, 2),
+            "mts_v2_cash": round(capital, 2),
+            "mts_v2_invested": round(invested_value, 2),
+            "mts_v2_shares": shares,
+            "mts_v2_position_pct": round((invested_value / total_equity * 100) if total_equity > 0 else 0, 1),
+            "mts_score": mts_timeline.get(day, 70.0),
+            "mts_ema5": mts_ema,
+        })
+
+    # Final day liquidation
+    final_equity = capital
+    if shares > 0 and trading_dates:
+        last_day = trading_dates[-1]
+        last_close = etf_prices.get(last_day, {}).get("close", 0)
+        if last_close > 0:
+            proceeds = shares * last_close
+            unrealized_gain = (last_close - avg_entry_price) * shares
+            tax_paid = 0.0
+            if consider_tax > 0 and unrealized_gain > 0:
+                tax_paid = unrealized_gain * consider_tax
+            final_equity = capital + proceeds - tax_paid
+            trade_log.append({
+                "date": last_day, "action": "LIQUIDATE",
+                "shares": shares, "price": last_close,
+                "reason": "Final day liquidation (tax applied)",
+                "tax_paid": round(tax_paid, 2),
+            })
+
+    time_in_market_pct = (days_in_market / len(trading_dates) * 100) if trading_dates else 0
+
+    return {
+        "final_capital": round(final_equity, 2),
+        "equity_curve": equity_curve,
+        "trade_log": trade_log,
+        "rebalance_count": rebalance_count,
+        "time_in_market_pct": round(time_in_market_pct, 1),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
@@ -508,8 +715,12 @@ def run_etf_single_backtest(
     trading_dates = [d for d in trading_dates if d in etf_prices]
     print(f"  Target ETF '{ticker}' has {len(trading_dates)} trading days.", flush=True)
 
-    # 3. Run all three strategies
-    print(f"\n  [1/3] Running VXV/VIX EMA Strategy...", flush=True)
+    # Load and build MTS v2 timeline for the period
+    print(f"\n  Building MTS v2 Daily Timeline...", flush=True)
+    mts_timeline = build_mts_v2_timeline(trading_dates, df_prices, df_symbols)
+
+    # 3. Run all strategies
+    print(f"\n  [1/4] Running VXV/VIX EMA Strategy...", flush=True)
     vxv_result = _simulate_vxv_strategy(
         trading_dates, etf_prices, vix_prices, vxv_prices,
         initial_capital, consider_tax,
@@ -518,13 +729,21 @@ def run_etf_single_backtest(
           f"(Regime changes: {vxv_result['regime_changes']}, "
           f"Rebalances: {vxv_result['rebalance_count']})", flush=True)
 
-    print(f"  [2/3] Running Buy & Hold...", flush=True)
+    print(f"  [2/4] Running MTS v2 Position Strategy...", flush=True)
+    mts_v2_result = _simulate_mts_v2_strategy(
+        trading_dates, etf_prices, mts_timeline,
+        initial_capital, consider_tax,
+    )
+    print(f"    -> Final: ${mts_v2_result['final_capital']:,.2f} "
+          f"(Rebalances: {mts_v2_result['rebalance_count']})", flush=True)
+
+    print(f"  [3/4] Running Buy & Hold...", flush=True)
     bh_result = _simulate_buy_and_hold(
         trading_dates, etf_prices, initial_capital, consider_tax,
     )
     print(f"    -> Final: ${bh_result['final_capital']:,.2f}", flush=True)
 
-    print(f"  [3/3] Running DCA (Monthly)...", flush=True)
+    print(f"  [4/4] Running DCA (Monthly)...", flush=True)
     dca_result = _simulate_dca(
         trading_dates, etf_prices, initial_capital, consider_tax,
         start_date, end_date,
@@ -552,6 +771,7 @@ def run_etf_single_backtest(
         consider_tax=consider_tax,
         trading_dates=trading_dates,
         vxv_result=vxv_result,
+        mts_v2_result=mts_v2_result,  # Pass new MTS v2 strategy
         bh_result=bh_result,
         dca_result=dca_result,
         benchmark_data=benchmark_data,

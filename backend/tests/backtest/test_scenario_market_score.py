@@ -22,11 +22,12 @@ class TestScenarioMarketTrendScorer(unittest.TestCase):
         # 1. Prepare Mock symbols
         self.symbols_df = pd.DataFrame([
             {'id': 1, 'ticker': 'SPY', 'name': 'SPY ETF', 'category': '個別', 'active': 1},
-            {'id': 2, 'ticker': '^VIX', 'name': 'VIX Index', 'category': '個別', 'active': 1}
+            {'id': 2, 'ticker': '^VIX', 'name': 'VIX Index', 'category': '個別', 'active': 1},
+            {'id': 3, 'ticker': '^VIX3M', 'name': 'VXV Index', 'category': '個別', 'active': 1}
         ])
         
         # 2. Prepare Mock prices including SMA indicators for SPY
-        # We need close, ema_21, sma_50, sma_200 to compute SPY score
+        # We need close, sma_50 to compute SPY distance score
         dates = [pd.Timestamp('2026-05-17').date()]
         self.prices_df = pd.DataFrame([
             # SPY Price
@@ -34,9 +35,7 @@ class TestScenarioMarketTrendScorer(unittest.TestCase):
                 'symbol_id': 1, 
                 'date': dates[0], 
                 'close': 100.0, 
-                'ema_21': 95.0,   # SPY > EMA21 (+8.33)
-                'sma_50': 105.0,  # SPY < SMA50 (0.0)
-                'sma_200': 90.0,  # SPY > SMA200 (+8.34)
+                'sma_50': 100.0,  # SPY is at SMA50 -> distance_score = 0.50 (neutral)
                 'volume': 1000000
             },
             # VIX Price (vix_close = 15.0)
@@ -45,95 +44,48 @@ class TestScenarioMarketTrendScorer(unittest.TestCase):
                 'date': dates[0], 
                 'close': 15.0, 
                 'volume': 0
+            },
+            # VXV Price (vxv_close = 16.5) -> VXV/VIX = 1.10
+            {
+                'symbol_id': 3, 
+                'date': dates[0], 
+                'close': 16.5, 
+                'volume': 0
             }
         ])
         
-        # spy_score:
-        # close(100.0) > ema_21(95.0)  -> 8.33
-        # close(100.0) > sma_50(105.0) -> 0.0
-        # close(100.0) > sma_200(90.0) -> 8.34
-        # Total spy_score = 16.67 (out of 25.0)
-        
-        # vix_score:
-        # vix_val = 15.0
-        # vix_score = 25.0 * (35.0 - 15.0) / (35.0 - 12.0) = 25.0 * 20 / 23 = 21.7391
-        
         # 3. Prepare Mock Pre-calculated daily metrics (breadth & momentum)
-        # breadth_sma50: 0.60 (60% above SMA50) -> breadth_score = 0.60 * 25.0 = 15.0
-        # momentum_ratio: 0.80 (80% positive day) -> momentum_score = 0.80 * 25.0 = 20.0
+        # breadth_sma50: 0.60 (60% above SMA50)
         self.daily_metrics = {
             dates[0]: {
-                'breadth_sma50': 0.60,
-                'momentum_ratio': 0.80
+                'breadth_sma50': 0.60
             }
         }
         
     def test_default_weights_calculation(self):
         """
-        Verify that with uniform weights (each 25%), the calculated Trend Score (0-100)
-        perfectly matches the dashboard formulation.
+        Verify that calculated Trend Score (0-100) matches the MTS v2 equal-weighted formula.
         """
-        # Equal weights (sum to 1.0)
-        weights = {
-            'spy_trend': 0.25,
-            'breadth': 0.25,
-            'momentum': 0.25,
-            'vix': 0.25
-        }
-        
         scorer = MarketTrendScorer(
             self.prices_df, 
             self.symbols_df, 
             daily_metrics=self.daily_metrics,
-            weights=weights,
-            scaling_ratio=1.0
+            use_vxv_vix=True,
+            scaling_ratio=None
         )
         
         target_date = pd.Timestamp('2026-05-17').date()
         score, phase = scorer.evaluate_market_phase(target_date)
         
         # Calculate manually:
-        # spy_score: 16.67
-        # breadth_score: 15.0
-        # momentum_score: 20.0
-        # vix_score: 25 * 20 / 23 = 21.7391
-        # Weighted sum:
-        #   (16.67 * 0.25 * 4) + (15.0 * 0.25 * 4) + (20.0 * 0.25 * 4) + (21.7391 * 0.25 * 4)
-        #   = 16.67 + 15.0 + 20.0 + 21.7391 = 73.4091
+        # Component A: VXV/VIX Score = (1.10 - 0.90) / (1.25 - 0.90) = 0.20 / 0.35 = 0.571428
+        # Component B: Breadth Score = 0.60
+        # Component C: SPY distance = 0.50 (since close == sma_50 -> diff = 0.0%)
+        # Component D: Distribution Days = 1.0 (since days = 0 <= 5)
+        # Expected equal-weighted score: (0.571428 + 0.60 + 0.50 + 1.0) * 25.0 = 66.7857
         
-        self.assertAlmostEqual(score, 73.4091, places=3)
-        self.assertEqual(phase, MarketPhase.BULL) # Score 73.4 >= 60.0
-        
-    def test_custom_weights_calculation(self):
-        """
-        Verify that when weights are skewed, the Trend Score reflects the new weights.
-        """
-        weights = {
-            'spy_trend': 0.50, # 50%
-            'breadth': 0.10,   # 10%
-            'momentum': 0.10,  # 10%
-            'vix': 0.30        # 30%
-        }
-        
-        scorer = MarketTrendScorer(
-            self.prices_df, 
-            self.symbols_df, 
-            daily_metrics=self.daily_metrics,
-            weights=weights,
-            scaling_ratio=1.0
-        )
-        
-        target_date = pd.Timestamp('2026-05-17').date()
-        score, phase = scorer.evaluate_market_phase(target_date)
-        
-        # Calculate manually with normalized multipliers:
-        # spy_score_contrib: 16.67 * 0.50 * 4 = 33.34
-        # breadth_score_contrib: 15.0 * 0.10 * 4 = 6.0
-        # momentum_score_contrib: 20.0 * 0.10 * 4 = 8.0
-        # vix_score_contrib: 21.7391 * 0.30 * 4 = 26.0869
-        # Total expected: 33.34 + 6.0 + 8.0 + 26.0869 = 73.4269
-        
-        self.assertAlmostEqual(score, 73.4269, places=3)
+        self.assertAlmostEqual(score, 66.7857, places=3)
+        self.assertEqual(phase, MarketPhase.BULL) # Score 66.79 >= 60.0
         
     def test_phase_boundaries(self):
         """
@@ -142,88 +94,74 @@ class TestScenarioMarketTrendScorer(unittest.TestCase):
         - Score <= 40: BEAR
         - 40 < Score < 60: NEUTRAL
         """
-        # We will dynamically inject values to force different scores
         target_date = pd.Timestamp('2026-05-17').date()
         
         # Case A: Force low scores (BEAR)
-        # spy_close = 80.0 (below EMA21, SMA50, SMA200 -> spy_score = 0.0)
-        # vix_close = 32.0 (vix_score = 25 * 3 / 23 = 3.26)
-        # breadth = 0.1 (breadth_score = 2.5)
-        # momentum = 0.1 (momentum_score = 2.5)
-        # Total expected (equal weights): 0.0 + 3.26 + 2.5 + 2.5 = 8.26 (BEAR)
+        # VIX = 30.0 -> fallback ratio = 1.15 - (30 - 12) * (0.25 / 23) = 0.9543
+        # vxv_vix_score = (0.9543 - 0.90) / 0.35 = 0.155
+        # breadth = 0.1
+        # SPY distance: close = 90.0, sma_50 = 100.0 -> diff = -10% -> clipped to 0.0
+        # Distribution days: let's assume 11 (we will inject) -> score = 0.0
+        # Equal-weighted: (0.155 + 0.10 + 0.0 + 0.0) * 25.0 = 6.375% (BEAR)
         prices_bear = pd.DataFrame([
-            {'symbol_id': 1, 'date': target_date, 'close': 80.0, 'ema_21': 95.0, 'sma_50': 105.0, 'sma_200': 90.0, 'volume': 1000000},
-            {'symbol_id': 2, 'date': target_date, 'close': 32.0, 'volume': 0}
+            {'symbol_id': 1, 'date': target_date, 'close': 90.0, 'sma_50': 100.0, 'volume': 1000000},
+            {'symbol_id': 2, 'date': target_date, 'close': 30.0, 'volume': 0}
         ])
-        metrics_bear = {target_date: {'breadth_sma50': 0.1, 'momentum_ratio': 0.1}}
+        metrics_bear = {target_date: {'breadth_sma50': 0.1}}
         
-        scorer_bear = MarketTrendScorer(prices_bear, self.symbols_df, daily_metrics=metrics_bear)
+        scorer_bear = MarketTrendScorer(prices_bear, self.symbols_df, daily_metrics=metrics_bear, use_vxv_vix=True)
+        # Inject distribution days
+        scorer_bear._spy_mts_v2_metrics[target_date]['distribution_days'] = 11
+        
         score, phase = scorer_bear.evaluate_market_phase(target_date)
         self.assertEqual(phase, MarketPhase.BEAR)
         
         # Case B: Force Neutral score
-        # Let's target score = 50.0 (NEUTRAL)
-        # spy_score: 16.67
-        # breadth_score: 12.5 (breadth = 0.5)
-        # momentum_score: 12.5 (momentum = 0.5)
-        # vix_score: 8.33 (vix = 27.33)
-        # Total = 16.67 + 12.5 + 12.5 + 8.33 = 50.0
+        # Let's target score around 50.0 (NEUTRAL)
+        # Component A: VXV/VIX = 1.075 -> score = (1.075-0.90)/0.35 = 0.50
+        # Component B: breadth = 0.50
+        # Component C: SPY distance = 0.0% -> score = 0.50
+        # Component D: distribution days = 5 -> score = 1.0
+        # Total = (0.5 + 0.5 + 0.5 + 1.0) * 25 = 62.5 (BULL) -> To make it neutral, we want total = 50.
+        # Let's adjust Component D to 8 -> score = 1.0 - (8-5)/5 = 0.40
+        # Let's adjust Component B to 0.40
+        # Component A = 0.50, B = 0.40, C = 0.50, D = 0.40 -> Total = (0.5+0.4+0.5+0.4)*25 = 45.0 (NEUTRAL)
         prices_neutral = pd.DataFrame([
-            {'symbol_id': 1, 'date': target_date, 'close': 100.0, 'ema_21': 95.0, 'sma_50': 105.0, 'sma_200': 90.0, 'volume': 1000000},
-            {'symbol_id': 2, 'date': target_date, 'close': 27.3333, 'volume': 0}
+            {'symbol_id': 1, 'date': target_date, 'close': 100.0, 'sma_50': 100.0, 'volume': 1000000},
+            {'symbol_id': 2, 'date': target_date, 'close': 16.0, 'volume': 0},
+            {'symbol_id': 3, 'date': target_date, 'close': 17.2, 'volume': 0} # 17.2/16 = 1.075 -> score = 0.50
         ])
-        metrics_neutral = {target_date: {'breadth_sma50': 0.5, 'momentum_ratio': 0.5}}
+        metrics_neutral = {target_date: {'breadth_sma50': 0.40}}
         
-        scorer_neutral = MarketTrendScorer(prices_neutral, self.symbols_df, daily_metrics=metrics_neutral)
+        scorer_neutral = MarketTrendScorer(prices_neutral, self.symbols_df, daily_metrics=metrics_neutral, use_vxv_vix=True)
+        scorer_neutral._spy_mts_v2_metrics[target_date]['distribution_days'] = 8
+        
         score, phase = scorer_neutral.evaluate_market_phase(target_date)
         self.assertEqual(phase, MarketPhase.NEUTRAL)
 
-    def test_use_vxv_vix_calculation(self):
+    def test_fallback_calculation_pre_2020(self):
         """
-        Verify the VXV/VIX Sentiment Score calculation when use_vxv_vix=True.
+        Verify VIX-based fallback when VXV is missing (pre-2020 simulation).
         """
         target_date = pd.Timestamp('2026-05-17').date()
         
-        symbols_extended = pd.DataFrame([
-            {'id': 1, 'ticker': 'SPY', 'name': 'SPY ETF', 'category': '個別', 'active': 1},
-            {'id': 2, 'ticker': '^VIX', 'name': 'VIX Index', 'category': '個別', 'active': 1},
-            {'id': 3, 'ticker': '^VIX3M', 'name': 'VXV Index', 'category': '個別', 'active': 1}
+        # Missing VXV symbol ID or price
+        prices_missing_vxv = pd.DataFrame([
+            {'symbol_id': 1, 'date': target_date, 'close': 100.0, 'sma_50': 100.0, 'volume': 1000000},
+            {'symbol_id': 2, 'date': target_date, 'close': 15.0, 'volume': 0}
         ])
-        
-        prices_extended = pd.DataFrame([
-            {'symbol_id': 1, 'date': target_date, 'close': 100.0, 'ema_21': 95.0, 'sma_50': 105.0, 'sma_200': 90.0, 'volume': 1000000},
-            {'symbol_id': 2, 'date': target_date, 'close': 15.0, 'volume': 0},
-            {'symbol_id': 3, 'date': target_date, 'close': 16.5, 'volume': 0} # VXV/VIX = 1.10
-        ])
-        
-        weights = {
-            'spy_trend': 0.25,
-            'breadth': 0.25,
-            'momentum': 0.25,
-            'vix': 0.25
-        }
         
         scorer = MarketTrendScorer(
-            prices_extended,
-            symbols_extended,
+            prices_missing_vxv,
+            self.symbols_df,
             daily_metrics=self.daily_metrics,
             use_vxv_vix=True,
-            weights=weights,
-            scaling_ratio=1.0
+            scaling_ratio=None
         )
         
-        score, phase = scorer.evaluate_market_phase(target_date)
-        
-        # Calculate manually with VXV/VIX:
-        # spy_score: 16.67
-        # breadth_score: 15.0
-        # momentum_score: 20.0
-        # vxv_vix_ratio = 16.5 / 15.0 = 1.10
-        # sentiment_score = 25.0 * (1.10 - 0.90) / (1.20 - 0.90) = 25.0 * 0.20 / 0.30 = 16.6667
-        # Total expected score (equal weights): 16.67 + 15.0 + 20.0 + 16.6667 = 68.3367
-        
-        self.assertAlmostEqual(score, 68.3367, places=3)
-        self.assertEqual(phase, MarketPhase.BULL)
+        ratio = scorer.get_vxv_vix_ratio(target_date)
+        # Fallback ratio = 1.15 - (15 - 12) * (0.25 / 23) = 1.15 - 0.0326 = 1.11739
+        self.assertAlmostEqual(ratio, 1.11739, places=4)
 
 if __name__ == '__main__':
     unittest.main()

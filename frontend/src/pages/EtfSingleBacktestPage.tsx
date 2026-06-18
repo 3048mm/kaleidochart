@@ -25,6 +25,7 @@ import {
 
 const COLORS = {
   vxv: '#22d3a0',       // Green — VXV Strategy
+  mts: '#a855f7',       // Purple — MTS Strategy
   buyhold: '#3b82f6',   // Blue — Buy & Hold
   dca: '#f59e0b',       // Amber — DCA
   regime_bull: 'rgba(34, 211, 160, 0.08)',
@@ -149,6 +150,7 @@ export const EtfSingleBacktestPage: React.FC<{ hideHeader?: boolean }> = ({ hide
 
   // Chart toggles
   const [showVxv, setShowVxv] = useState(true);
+  const [showMts, setShowMts] = useState(true);
   const [showBuyHold, setShowBuyHold] = useState(true);
   const [showDca, setShowDca] = useState(true);
 
@@ -180,18 +182,25 @@ export const EtfSingleBacktestPage: React.FC<{ hideHeader?: boolean }> = ({ hide
   // Yearly returns table data
   const yearlyData = useMemo(() => {
     if (!summary) return [];
-    const vxvYears = summary.strategies.vxv_vix_ema.yearly_returns || {};
-    const bhYears = summary.strategies.buy_and_hold.yearly_returns || {};
-    const dcaYears = summary.strategies.dca.yearly_returns || {};
-    const allYears = [...new Set([...Object.keys(vxvYears), ...Object.keys(bhYears), ...Object.keys(dcaYears)])].sort();
+    const vxvYears = summary.strategies.vxv_vix_ema?.yearly_returns || {};
+    const mtsYears = summary.strategies.mts_v2?.yearly_returns || {};
+    const bhYears = summary.strategies.buy_and_hold?.yearly_returns || {};
+    const dcaYears = summary.strategies.dca?.yearly_returns || {};
+    const allYears = [...new Set([
+      ...Object.keys(vxvYears),
+      ...Object.keys(mtsYears),
+      ...Object.keys(bhYears),
+      ...Object.keys(dcaYears)
+    ])].sort();
 
     return allYears.map(year => {
       const vxv = vxvYears[year] ?? null;
+      const mts = mtsYears[year] ?? null;
       const bh = bhYears[year] ?? null;
       const dca = dcaYears[year] ?? null;
-      const vals = [vxv, bh, dca].filter(v => v !== null) as number[];
+      const vals = [vxv, mts, bh, dca].filter(v => v !== null) as number[];
       const best = vals.length > 0 ? Math.max(...vals) : null;
-      return { year, vxv, bh, dca, best };
+      return { year, vxv, mts, bh, dca, best };
     });
   }, [summary]);
 
@@ -232,7 +241,7 @@ export const EtfSingleBacktestPage: React.FC<{ hideHeader?: boolean }> = ({ hide
                 ETF Regime Backtest
               </span>
             </h1>
-            <p style={{ fontSize: 12, color: '#8b9cc8', marginTop: 4 }}>VXV/VIX EMA regime-based position sizing vs Buy & Hold vs DCA</p>
+            <p style={{ fontSize: 12, color: '#8b9cc8', marginTop: 4 }}>Regime-based position sizing (VXV/VIX EMA & MTS) vs Buy & Hold vs DCA</p>
           </div>
         ) : <div />}
 
@@ -297,25 +306,26 @@ export const EtfSingleBacktestPage: React.FC<{ hideHeader?: boolean }> = ({ hide
           {/* Strategy Comparison Cards */}
           <div style={sectionTitle}>Strategy Comparison</div>
           <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-            {[
-              { key: 'vxv_vix_ema' as const, label: 'VXV/VIX EMA', color: COLORS.vxv },
-              { key: 'buy_and_hold' as const, label: 'Buy & Hold', color: COLORS.buyhold },
-              { key: 'dca' as const, label: 'DCA (Monthly)', color: COLORS.dca },
-            ].map(s => {
-              const result = summary.strategies[s.key];
-              const bestCagr = Math.max(
-                summary.strategies.vxv_vix_ema.cagr,
-                summary.strategies.buy_and_hold.cagr,
-                summary.strategies.dca.cagr,
-              );
-              return (
-                <StrategyCard
-                  key={s.key} name={s.key} label={s.label}
-                  color={s.color} result={result}
-                  isBest={result.cagr === bestCagr}
-                />
-              );
-            })}
+            {(() => {
+              const strategyConfigs = [
+                { key: 'vxv_vix_ema' as const, label: 'VXV/VIX EMA', color: COLORS.vxv },
+                ...(summary.strategies.mts_v2 ? [{ key: 'mts_v2' as const, label: 'Market Trend Score', color: COLORS.mts }] : []),
+                { key: 'buy_and_hold' as const, label: 'Buy & Hold', color: COLORS.buyhold },
+                { key: 'dca' as const, label: 'DCA (Monthly)', color: COLORS.dca },
+              ];
+              const bestCagr = Math.max(...strategyConfigs.map(s => summary.strategies[s.key]?.cagr || 0));
+              return strategyConfigs.map(s => {
+                const result = summary.strategies[s.key];
+                if (!result) return null;
+                return (
+                  <StrategyCard
+                    key={s.key} name={s.key} label={s.label}
+                    color={s.color} result={result}
+                    isBest={result.cagr === bestCagr}
+                  />
+                );
+              });
+            })()}
           </div>
 
           {/* Equity Curve Chart */}
@@ -324,6 +334,7 @@ export const EtfSingleBacktestPage: React.FC<{ hideHeader?: boolean }> = ({ hide
             <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
               {[
                 { label: 'VXV', show: showVxv, set: setShowVxv, color: COLORS.vxv },
+                ...(summary.strategies.mts_v2 ? [{ label: 'MTS', show: showMts, set: setShowMts, color: COLORS.mts }] : []),
                 { label: 'B&H', show: showBuyHold, set: setShowBuyHold, color: COLORS.buyhold },
                 { label: 'DCA', show: showDca, set: setShowDca, color: COLORS.dca },
               ].map(t => (
@@ -353,6 +364,7 @@ export const EtfSingleBacktestPage: React.FC<{ hideHeader?: boolean }> = ({ hide
                 />
                 <Tooltip content={<EquityTooltip />} />
                 {showVxv && <Area type="monotone" dataKey="vxv_equity" name="VXV Strategy" stroke={COLORS.vxv} fill={COLORS.vxv} fillOpacity={0.08} strokeWidth={2} dot={false} />}
+                {summary.strategies.mts_v2 && showMts && <Area type="monotone" dataKey="mts_v2_equity" name="Market Trend Score" stroke={COLORS.mts} fill={COLORS.mts} fillOpacity={0.08} strokeWidth={2} dot={false} />}
                 {showBuyHold && <Line type="monotone" dataKey="buyhold_equity" name="Buy & Hold" stroke={COLORS.buyhold} strokeWidth={1.5} dot={false} strokeDasharray="4 2" />}
                 {showDca && <Line type="monotone" dataKey="dca_equity" name="DCA" stroke={COLORS.dca} strokeWidth={1.5} dot={false} strokeDasharray="6 3" />}
               </ComposedChart>
@@ -412,7 +424,7 @@ export const EtfSingleBacktestPage: React.FC<{ hideHeader?: boolean }> = ({ hide
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
               <thead>
                 <tr style={{ background: 'rgba(15, 23, 42, 0.8)', borderBottom: '1px solid rgba(99, 120, 180, 0.18)' }}>
-                  {['Year', 'VXV Strategy', 'Buy & Hold', 'DCA', 'Best'].map(h => (
+                  {['Year', 'VXV Strategy', ...(summary.strategies.mts_v2 ? ['Market Trend Score'] : []), 'Buy & Hold', 'DCA', 'Best'].map(h => (
                     <th key={h} style={{ padding: '10px 14px', textAlign: h === 'Year' ? 'left' : 'right', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#475685' }}>{h}</th>
                   ))}
                 </tr>
@@ -423,6 +435,7 @@ export const EtfSingleBacktestPage: React.FC<{ hideHeader?: boolean }> = ({ hide
                     <td style={{ padding: '8px 14px', fontWeight: 600, color: '#e8edf7' }}>{row.year}</td>
                     {[
                       { val: row.vxv, isBest: row.vxv === row.best, color: COLORS.vxv },
+                      ...(summary.strategies.mts_v2 ? [{ val: row.mts, isBest: row.mts === row.best, color: COLORS.mts }] : []),
                       { val: row.bh, isBest: row.bh === row.best, color: COLORS.buyhold },
                       { val: row.dca, isBest: row.dca === row.best, color: COLORS.dca },
                     ].map((cell, i) => (
@@ -435,7 +448,7 @@ export const EtfSingleBacktestPage: React.FC<{ hideHeader?: boolean }> = ({ hide
                       </td>
                     ))}
                     <td style={{ padding: '8px 14px', textAlign: 'right', fontSize: 10, fontWeight: 700, color: '#8b9cc8' }}>
-                      {row.best !== null && row.vxv === row.best ? 'VXV' : row.bh === row.best ? 'B&H' : 'DCA'}
+                      {row.best !== null && row.vxv === row.best ? 'VXV' : row.mts === row.best ? 'MTS' : row.bh === row.best ? 'B&H' : 'DCA'}
                     </td>
                   </tr>
                 ))}

@@ -613,6 +613,10 @@ class EtfSingleEquityPoint(BaseModel):
     dca_equity: float
     vxv_position_pct: float
     regime: str
+    mts_v2_equity: Optional[float] = None
+    mts_v2_position_pct: Optional[float] = None
+    mts_score: Optional[float] = None
+    mts_ema5: Optional[float] = None
     model_config = {
         "extra": "allow"
     }

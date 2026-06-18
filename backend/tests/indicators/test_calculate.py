@@ -18,10 +18,16 @@ def test_market_trend_score_bull():
         'volume': [1000000] * 250
     })
     
-    # VIX: 12以下 (25 pts)
+    # VIX: 12.0
     df_vix = pd.DataFrame({
         'date': [dates[-1]],
         'close': [12.0]
+    })
+    
+    # VXV: 15.0 -> ratio = 1.25 (100 pts)
+    df_vxv = pd.DataFrame({
+        'date': [dates[-1]],
+        'close': [15.0]
     })
     
     # Metrics: Breadth 1.0, Momentum 1.0 (25 + 25 pts)
@@ -31,15 +37,14 @@ def test_market_trend_score_bull():
         'momentum_ratio': [1.0]
     })
     
-    res = calculate_market_signals(df_spy, df_vix=df_vix, df_metrics=df_metrics)
+    res = calculate_market_signals(df_spy, df_vix=df_vix, df_vxv=df_vxv, df_metrics=df_metrics)
     score = res.iloc[-1]['market_trend_score']
     
-    # SPY(25) + Breadth(25) + Momentum(25) + VIX(25) = 100
     assert score >= 99.0
 
 def test_market_trend_score_bear():
     """極端な弱気相場での0点（に近い）スコアを検証"""
-    # SPY: 200日分の下落データ
+    # SPY: 200日分の下落データ、かつボリュームが交互に増加してディストリビューション・デーを発生させる
     dates = pd.date_range(start='2025-01-01', periods=250)
     prices = [500.0 - i * 1.0 for i in range(250)]
     df_spy = pd.DataFrame({
@@ -48,13 +53,19 @@ def test_market_trend_score_bear():
         'open': [p + 0.1 for p in prices],
         'high': [p + 0.2 for p in prices],
         'low': [p - 0.2 for p in prices],
-        'volume': [1000000] * 250
+        'volume': [1000000 if i % 2 == 0 else 2000000 for i in range(250)]
     })
     
-    # VIX: 35以上 (0 pts)
+    # VIX: 40.0
     df_vix = pd.DataFrame({
         'date': [dates[-1]],
         'close': [40.0]
+    })
+    
+    # VXV: 35.0 -> ratio = 0.875 (0 pts)
+    df_vxv = pd.DataFrame({
+        'date': [dates[-1]],
+        'close': [35.0]
     })
     
     # Metrics: Breadth 0.0, Momentum 0.0 (0 + 0 pts)
@@ -64,10 +75,9 @@ def test_market_trend_score_bear():
         'momentum_ratio': [0.0]
     })
     
-    res = calculate_market_signals(df_spy, df_vix=df_vix, df_metrics=df_metrics)
+    res = calculate_market_signals(df_spy, df_vix=df_vix, df_vxv=df_vxv, df_metrics=df_metrics)
     score = res.iloc[-1]['market_trend_score']
     
-    # 全 MA 割れなら SPY=0, 他も0なので 0
     assert score <= 1.0
 
 def test_market_trend_score_neutral():

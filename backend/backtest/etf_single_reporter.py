@@ -143,6 +143,7 @@ class EtfSingleReporter:
         consider_tax: float,
         trading_dates: list,
         vxv_result: Dict[str, Any],
+        mts_v2_result: Dict[str, Any],  # Add parameter
         bh_result: Dict[str, Any],
         dca_result: Dict[str, Any],
         benchmark_data: Dict[str, Dict] = None,
@@ -173,6 +174,22 @@ class EtfSingleReporter:
             "regime_changes": vxv_result.get("regime_changes", 0),
             "rebalance_count": vxv_result.get("rebalance_count", 0),
             "time_in_market_pct": vxv_result.get("time_in_market_pct", 0.0),
+        }
+
+        # MTS v2 Strategy
+        mts_eq = mts_v2_result["equity_curve"]
+        strategies["mts_v2"] = {
+            "final_capital": mts_v2_result["final_capital"],
+            "total_return_pct": round(
+                (mts_v2_result["final_capital"] / initial_capital - 1.0) * 100.0, 2
+            ),
+            "cagr": self.calculate_cagr(initial_capital, mts_v2_result["final_capital"], years),
+            "max_drawdown_pct": self.calculate_max_drawdown(mts_eq, "mts_v2_equity")["pct"],
+            "max_drawdown_date": self.calculate_max_drawdown(mts_eq, "mts_v2_equity").get("trough_date"),
+            "sharpe_ratio": self.calculate_sharpe_ratio(mts_eq, "mts_v2_equity"),
+            "yearly_returns": self.calculate_yearly_returns(mts_eq, "mts_v2_equity"),
+            "rebalance_count": mts_v2_result.get("rebalance_count", 0),
+            "time_in_market_pct": mts_v2_result.get("time_in_market_pct", 0.0),
         }
 
         # Buy & Hold
@@ -215,7 +232,7 @@ class EtfSingleReporter:
 
         # Merge equity curves into a single timeline
         merged_equity = self._merge_equity_curves(
-            vxv_eq, bh_eq, dca_eq, benchmark_data, initial_capital
+            vxv_eq, mts_eq, bh_eq, dca_eq, benchmark_data, initial_capital
         )
 
         return {
@@ -226,6 +243,7 @@ class EtfSingleReporter:
     @staticmethod
     def _merge_equity_curves(
         vxv_eq: List[Dict],
+        mts_eq: List[Dict],  # Add parameter
         bh_eq: List[Dict],
         dca_eq: List[Dict],
         benchmark_data: Optional[Dict] = None,
@@ -234,6 +252,7 @@ class EtfSingleReporter:
         """Merge all strategy equity curves into a unified daily timeline."""
 
         # Index by date
+        mts_map = {_normalize_date(e.get("date")): e for e in mts_eq}
         bh_map = {_normalize_date(e.get("date")): e.get("buyhold_equity", 0) for e in bh_eq}
         dca_map = {_normalize_date(e.get("date")): e.get("dca_equity", 0) for e in dca_eq}
 
@@ -251,14 +270,20 @@ class EtfSingleReporter:
         for snap in vxv_eq:
             day = snap.get("date")
             day_key = _normalize_date(day)
+            
+            mts_snap = mts_map.get(day_key, {})
 
             point = {
                 "date": _fmt_date(day),
                 "vxv_equity": snap.get("vxv_equity", 0),
+                "mts_v2_equity": mts_snap.get("mts_v2_equity", 0),
                 "buyhold_equity": bh_map.get(day_key, 0),
                 "dca_equity": dca_map.get(day_key, 0),
                 "vxv_position_pct": snap.get("vxv_position_pct", 0),
+                "mts_v2_position_pct": mts_snap.get("mts_v2_position_pct", 0),
                 "regime": snap.get("regime", ""),
+                "mts_score": mts_snap.get("mts_score"),
+                "mts_ema5": mts_snap.get("mts_ema5"),
             }
 
             # Add VXV/VIX Ratio and EMA from regime history if available

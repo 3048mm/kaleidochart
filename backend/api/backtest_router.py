@@ -896,6 +896,10 @@ def get_etf_single_equity(ticker: str):
         with open(csv_file, "r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for row in reader:
+                mts_eq = row.get("mts_v2_equity")
+                mts_pos = row.get("mts_v2_position_pct")
+                mts_sc = row.get("mts_score")
+                mts_ema = row.get("mts_ema5")
                 points.append(EtfSingleEquityPoint(
                     date=row.get("date", ""),
                     vxv_equity=float(row.get("vxv_equity", 0)),
@@ -903,6 +907,10 @@ def get_etf_single_equity(ticker: str):
                     dca_equity=float(row.get("dca_equity", 0)),
                     vxv_position_pct=float(row.get("vxv_position_pct", 0)),
                     regime=row.get("regime", ""),
+                    mts_v2_equity=float(mts_eq) if mts_eq else None,
+                    mts_v2_position_pct=float(mts_pos) if mts_pos else None,
+                    mts_score=float(mts_sc) if mts_sc else None,
+                    mts_ema5=float(mts_ema) if mts_ema else None,
                 ))
         return points
     except Exception as e:

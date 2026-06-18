@@ -108,6 +108,7 @@ export interface EtfSingleSummary {
   trading_days: number;
   strategies: {
     vxv_vix_ema: EtfStrategyResult;
+    mts_v2?: EtfStrategyResult;
     buy_and_hold: EtfStrategyResult;
     dca: EtfStrategyResult;
   };
