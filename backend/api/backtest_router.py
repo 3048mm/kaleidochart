@@ -7,7 +7,10 @@ from fastapi import APIRouter, HTTPException
 from api.schemas import (
     BacktestScenarioSummary,
     BacktestEquityPoint,
-    BacktestTradeLogItem
+    BacktestTradeLogItem,
+    EtfSingleSummary,
+    EtfSingleEquityPoint,
+    EtfSingleRegimeItem,
 )
 
 router = APIRouter(tags=["backtest"])
@@ -849,3 +852,85 @@ def get_scenario_trades(name: str):
         return trades
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to parse trades CSV: {str(e)}")
+
+
+# ============================================================
+# ETF Single Backtest Endpoints
+# ============================================================
+
+def _resolve_etf_single_path(ticker: str) -> str:
+    """Resolve the output directory path for an ETF single backtest result."""
+    clean = os.path.basename(ticker).upper()
+    if clean != ticker.upper() or ".." in ticker:
+        raise HTTPException(status_code=400, detail="Invalid ticker")
+    etf_dir = os.path.join(OUTPUT_DIR, "etf_single", clean)
+    if not os.path.isdir(etf_dir):
+        raise HTTPException(status_code=404, detail=f"No ETF backtest results found for '{clean}'")
+    return etf_dir
+
+
+@router.get("/backtest/etf-single/{ticker}/summary", response_model=EtfSingleSummary)
+def get_etf_single_summary(ticker: str):
+    """Returns the ETF single backtest summary JSON."""
+    etf_dir = _resolve_etf_single_path(ticker)
+    summary_file = os.path.join(etf_dir, "etf_single_summary.json")
+    if not os.path.exists(summary_file):
+        raise HTTPException(status_code=404, detail="etf_single_summary.json not found")
+    try:
+        with open(summary_file, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        return EtfSingleSummary(**raw)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse summary: {str(e)}")
+
+
+@router.get("/backtest/etf-single/{ticker}/equity", response_model=List[EtfSingleEquityPoint])
+def get_etf_single_equity(ticker: str):
+    """Returns the ETF single backtest equity curve from CSV."""
+    etf_dir = _resolve_etf_single_path(ticker)
+    csv_file = os.path.join(etf_dir, "etf_single_equity.csv")
+    if not os.path.exists(csv_file):
+        raise HTTPException(status_code=404, detail="etf_single_equity.csv not found")
+    try:
+        points = []
+        with open(csv_file, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                points.append(EtfSingleEquityPoint(
+                    date=row.get("date", ""),
+                    vxv_equity=float(row.get("vxv_equity", 0)),
+                    buyhold_equity=float(row.get("buyhold_equity", 0)),
+                    dca_equity=float(row.get("dca_equity", 0)),
+                    vxv_position_pct=float(row.get("vxv_position_pct", 0)),
+                    regime=row.get("regime", ""),
+                ))
+        return points
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse equity CSV: {str(e)}")
+
+
+@router.get("/backtest/etf-single/{ticker}/regimes", response_model=List[EtfSingleRegimeItem])
+def get_etf_single_regimes(ticker: str):
+    """Returns the ETF single backtest regime history from CSV."""
+    etf_dir = _resolve_etf_single_path(ticker)
+    csv_file = os.path.join(etf_dir, "etf_single_regimes.csv")
+    if not os.path.exists(csv_file):
+        raise HTTPException(status_code=404, detail="etf_single_regimes.csv not found")
+    try:
+        items = []
+        with open(csv_file, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                ema5_val = row.get("ema5", "")
+                ema21_val = row.get("ema21", "")
+                items.append(EtfSingleRegimeItem(
+                    date=row.get("date", ""),
+                    regime=row.get("regime", ""),
+                    vxv_vix_ratio=float(row.get("vxv_vix_ratio", 0)),
+                    ema5=float(ema5_val) if ema5_val and ema5_val.lower() != "none" else None,
+                    ema21=float(ema21_val) if ema21_val and ema21_val.lower() != "none" else None,
+                    position_pct=float(row.get("position_pct", 0)),
+                ))
+        return items
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse regimes CSV: {str(e)}")

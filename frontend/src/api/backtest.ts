@@ -80,3 +80,78 @@ export async function fetchScenarioTrades(name: string): Promise<BacktestTradeLo
   }
   return response.json();
 }
+
+
+// ============================================================
+// ETF Single Backtest Types & API
+// ============================================================
+
+export interface EtfStrategyResult {
+  final_capital: number;
+  total_return_pct: number;
+  cagr: number;
+  max_drawdown_pct: number;
+  max_drawdown_date?: string;
+  sharpe_ratio: number;
+  yearly_returns?: { [year: string]: number };
+  regime_changes?: number;
+  rebalance_count?: number;
+  time_in_market_pct?: number;
+}
+
+export interface EtfSingleSummary {
+  ticker: string;
+  start_date: string;
+  end_date: string;
+  initial_capital: number;
+  consider_tax: number;
+  trading_days: number;
+  strategies: {
+    vxv_vix_ema: EtfStrategyResult;
+    buy_and_hold: EtfStrategyResult;
+    dca: EtfStrategyResult;
+  };
+}
+
+export interface EtfSingleEquityPoint {
+  date: string;
+  vxv_equity: number;
+  buyhold_equity: number;
+  dca_equity: number;
+  vxv_position_pct: number;
+  regime: string;
+  [key: string]: any;
+}
+
+export interface EtfSingleRegimeItem {
+  date: string;
+  regime: string;
+  vxv_vix_ratio: number;
+  ema5?: number;
+  ema21?: number;
+  position_pct: number;
+}
+
+export async function fetchEtfSingleSummary(ticker: string): Promise<EtfSingleSummary> {
+  const response = await fetch(`/api/backtest/etf-single/${ticker}/summary`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch ETF single summary for ${ticker}`);
+  }
+  return response.json();
+}
+
+export async function fetchEtfSingleEquity(ticker: string): Promise<EtfSingleEquityPoint[]> {
+  const response = await fetch(`/api/backtest/etf-single/${ticker}/equity`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch ETF single equity for ${ticker}`);
+  }
+  return response.json();
+}
+
+export async function fetchEtfSingleRegimes(ticker: string): Promise<EtfSingleRegimeItem[]> {
+  const response = await fetch(`/api/backtest/etf-single/${ticker}/regimes`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch ETF single regimes for ${ticker}`);
+  }
+  return response.json();
+}

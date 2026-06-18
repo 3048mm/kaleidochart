@@ -22,7 +22,7 @@ import {
 
 const MONTE_CARLO_GROUPS = ["A", "B1", "B2", "B3", "B4", "E2"];
 
-export const BacktestResultPage: React.FC = () => {
+export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHeader }) => {
   const [scenarios, setScenarios] = useState<string[]>([]);
   const [selectedScenario, setSelectedScenario] = useState<string>('latest');
   const [selectedSubRun, setSelectedSubRun] = useState<string>('all');
@@ -342,16 +342,18 @@ export const BacktestResultPage: React.FC = () => {
   };
 
   return (
-    <div className="dashboard-page" style={{ padding: '20px', width: '100%', maxWidth: '1200px', margin: '0 auto', boxSizing: 'border-box' }}>
+    <div className="dashboard-page" style={{ padding: hideHeader ? '0' : '20px', width: '100%', maxWidth: hideHeader ? '100%' : '1200px', margin: '0 auto', boxSizing: 'border-box' }}>
       
       {/* Header section with Dropdown */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '15px' }}>
-        <div>
-          <h1 style={{ margin: 0, background: 'linear-gradient(135deg, var(--accent-green), var(--accent))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text', fontWeight: 'bold', fontSize: '24px' }}>
-            📊 Scenario Test Results
-          </h1>
-          <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>シナリオテスト結果</span>
-        </div>
+        {!hideHeader ? (
+          <div>
+            <h1 style={{ margin: 0, background: 'linear-gradient(135deg, var(--accent-green), var(--accent))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text', fontWeight: 'bold', fontSize: '24px' }}>
+              📊 Scenario Test Results
+            </h1>
+            <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>シナリオテスト結果</span>
+          </div>
+        ) : <div />}
         
         {/* Scenario selector */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>

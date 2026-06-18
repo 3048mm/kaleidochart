@@ -9,7 +9,7 @@ import { WatchlistPage } from './pages/WatchlistPage'
 import { GroupPage } from './pages/GroupPage'
 import { TotalPortfolioPage } from './pages/TotalPortfolioPage'
 import { PortfolioDetailPage } from './pages/PortfolioDetailPage'
-import { BacktestResultPage } from './pages/BacktestResultPage'
+import { BacktestPage } from './pages/BacktestPage'
 
 
 const API = '/api'
@@ -177,7 +177,7 @@ export default function App() {
                     <Link to="/screener" style={{ color: location.pathname === '/screener' ? '#00ff88' : '#d1d4dc', textDecoration: 'none' }}>Screener</Link>
                     <Link to="/watchlist" style={{ color: location.pathname === '/watchlist' ? '#00ff88' : '#d1d4dc', textDecoration: 'none' }}>Watchlist</Link>
                     <Link to="/portfolio" style={{ color: location.pathname.startsWith('/portfolio') ? '#00ff88' : '#d1d4dc', textDecoration: 'none' }}>Portfolio</Link>
-                    <Link to="/scenariotest" style={{ color: location.pathname.startsWith('/scenariotest') ? '#00ff88' : '#d1d4dc', textDecoration: 'none' }}>Scenario Test</Link>
+                    <Link to="/backtest" style={{ color: location.pathname.startsWith('/backtest') || location.pathname.startsWith('/scenariotest') || location.pathname.startsWith('/etf-backtest') ? '#00ff88' : '#d1d4dc', textDecoration: 'none' }}>Backtest</Link>
                 </nav>
                 <div className="header-status">
                     <div className="status-dot" />
@@ -336,7 +336,9 @@ export default function App() {
                     <Route path="/group/:ticker" element={<GroupPage />} />
                     <Route path="/portfolio" element={<TotalPortfolioPage />} />
                     <Route path="/portfolio/:portfolioId" element={<PortfolioDetailPage />} />
-                    <Route path="/scenariotest" element={<BacktestResultPage />} />
+                    <Route path="/backtest" element={<BacktestPage />} />
+                    <Route path="/scenariotest" element={<BacktestPage />} />
+                    <Route path="/etf-backtest" element={<BacktestPage />} />
                 </Routes>
             </main>
         </div>

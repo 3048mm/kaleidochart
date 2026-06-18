@@ -579,3 +579,48 @@ class BacktestTradeLogItem(BaseModel):
     reason: str
     pnl_pct: float
 
+
+# --- ETF Single Backtest Results ---
+
+class EtfStrategyResult(BaseModel):
+    final_capital: float
+    total_return_pct: float
+    cagr: float
+    max_drawdown_pct: float
+    max_drawdown_date: Optional[str] = None
+    sharpe_ratio: float
+    yearly_returns: Optional[Dict[str, float]] = None
+    regime_changes: Optional[int] = None
+    rebalance_count: Optional[int] = None
+    time_in_market_pct: Optional[float] = None
+
+class EtfSingleSummary(BaseModel):
+    ticker: str
+    start_date: str
+    end_date: str
+    initial_capital: float
+    consider_tax: float
+    trading_days: int
+    strategies: Dict[str, EtfStrategyResult]
+    model_config = {
+        "extra": "allow"
+    }
+
+class EtfSingleEquityPoint(BaseModel):
+    date: str
+    vxv_equity: float
+    buyhold_equity: float
+    dca_equity: float
+    vxv_position_pct: float
+    regime: str
+    model_config = {
+        "extra": "allow"
+    }
+
+class EtfSingleRegimeItem(BaseModel):
+    date: str
+    regime: str
+    vxv_vix_ratio: float
+    ema5: Optional[float] = None
+    ema21: Optional[float] = None
+    position_pct: float
