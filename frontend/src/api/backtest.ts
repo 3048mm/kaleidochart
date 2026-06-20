@@ -109,6 +109,11 @@ export interface EtfSingleSummary {
   strategies: {
     vxv_vix_ema: EtfStrategyResult;
     mts_v2?: EtfStrategyResult;
+    option_a?: EtfStrategyResult;
+    option_c_strict?: EtfStrategyResult;
+    option_d?: EtfStrategyResult;
+    based_sma200?: EtfStrategyResult;
+    based_sma63?: EtfStrategyResult;
     buy_and_hold: EtfStrategyResult;
     dca: EtfStrategyResult;
   };
@@ -121,6 +126,20 @@ export interface EtfSingleEquityPoint {
   dca_equity: number;
   vxv_position_pct: number;
   regime: string;
+  mts_v2_equity?: number;
+  mts_v2_position_pct?: number;
+  mts_score?: number;
+  mts_ema5?: number;
+  option_a_equity?: number;
+  option_c_equity?: number;
+  option_d_equity?: number;
+  option_a_position_pct?: number;
+  option_c_position_pct?: number;
+  option_d_position_pct?: number;
+  based_sma200_equity?: number;
+  based_sma200_position_pct?: number;
+  based_sma63_equity?: number;
+  based_sma63_position_pct?: number;
   [key: string]: any;
 }
 

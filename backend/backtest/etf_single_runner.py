@@ -104,11 +104,13 @@ def load_etf_data(
     # Normalize dates
     df_prices["date"] = pd.to_datetime(df_prices["date"]).dt.date
     sd = datetime.date.fromisoformat(start_date)
+    # Warm-up: load data from 365 days before start_date to calculate SMA200 correctly
+    sd_warmup = sd - datetime.timedelta(days=365)
     ed = datetime.date.fromisoformat(end_date)
-    df_prices = df_prices[(df_prices["date"] >= sd) & (df_prices["date"] <= ed)]
+    df_prices = df_prices[(df_prices["date"] >= sd_warmup) & (df_prices["date"] <= ed)]
 
-    # Build trading dates from the target ETF prices (use the ticker with most data)
-    trading_dates = sorted(df_prices["date"].unique())
+    # Build trading dates from the target ETF prices (limited to start_date onwards for simulation)
+    trading_dates = sorted(df_prices[df_prices["date"] >= sd]["date"].unique())
     print(
         f"  Trading Dates: {len(trading_dates)} days "
         f"({trading_dates[0]} ~ {trading_dates[-1]})" if trading_dates else "  No trading dates found",
@@ -644,7 +646,6 @@ def _simulate_mts_v2_strategy(
             })
 
     time_in_market_pct = (days_in_market / len(trading_dates) * 100) if trading_dates else 0
-
     return {
         "final_capital": round(final_equity, 2),
         "equity_curve": equity_curve,
@@ -652,6 +653,842 @@ def _simulate_mts_v2_strategy(
         "rebalance_count": rebalance_count,
         "time_in_market_pct": round(time_in_market_pct, 1),
     }
+
+
+def _simulate_option_a_strategy(
+    trading_dates: list,
+    etf_prices: Dict,
+    mts_timeline: Dict[Any, float],
+    initial_capital: float,
+    consider_tax: float,
+) -> Dict[str, Any]:
+    """
+    案A: パーフェクトオーダー型
+    EMA 5, 21, 63 の上下関係に基づいてポジションを決定：
+      - EMA 5 > EMA 21 > EMA 63 かつ EMA 63が上昇(5日比) ➔ 100% position
+      - EMA 5 < EMA 21 < EMA 63 ➔ 0% position
+      - その他 ➔ 50% position
+    """
+    dates_sorted = sorted(mts_timeline.keys())
+    scores_sorted = [mts_timeline[d] for d in dates_sorted]
+    df_mts = pd.DataFrame({'date': dates_sorted, 'score': scores_sorted})
+    df_mts['ema5'] = df_mts['score'].ewm(span=5, adjust=False).mean()
+    df_mts['ema21'] = df_mts['score'].ewm(span=21, adjust=False).mean()
+    df_mts['ema63'] = df_mts['score'].ewm(span=63, adjust=False).mean()
+    df_mts['ema63_rising'] = df_mts['ema63'] > df_mts['ema63'].shift(5)
+
+    ema5_lookup = {row['date']: row['ema5'] for _, row in df_mts.iterrows()}
+    ema21_lookup = {row['date']: row['ema21'] for _, row in df_mts.iterrows()}
+    ema63_lookup = {row['date']: row['ema63'] for _, row in df_mts.iterrows()}
+    ema63_rising_lookup = {row['date']: bool(row['ema63_rising']) for _, row in df_mts.iterrows()}
+
+    capital = initial_capital
+    shares = 0
+    avg_entry_price = 0.0
+    prev_target_pct = None
+    rebalance_count = 0
+    days_in_market = 0
+
+    equity_curve = []
+    trade_log = []
+
+    for day in trading_dates:
+        etf_close = etf_prices.get(day, {}).get("close")
+        if etf_close is None or etf_close <= 0:
+            continue
+
+        e5 = ema5_lookup.get(day, 70.0)
+        e21 = ema21_lookup.get(day, 70.0)
+        e63 = ema63_lookup.get(day, 70.0)
+        e63_rising = ema63_rising_lookup.get(day, True)
+
+        if e5 > e21 and e21 > e63 and e63_rising:
+            target_pct = 1.0
+        elif e5 < e21 and e21 < e63:
+            target_pct = 0.0
+        else:
+            target_pct = 0.5
+
+        if prev_target_pct is not None and target_pct != prev_target_pct:
+            current_value = capital + shares * etf_close
+            target_invested = current_value * target_pct
+            current_invested = shares * etf_close
+            delta = target_invested - current_invested
+
+            if delta > 0:
+                shares_to_buy = int(delta / etf_close)
+                cost = shares_to_buy * etf_close
+                if cost <= capital and shares_to_buy > 0:
+                    total_cost = avg_entry_price * shares + cost
+                    shares += shares_to_buy
+                    avg_entry_price = total_cost / shares if shares > 0 else 0.0
+                    capital -= cost
+                    rebalance_count += 1
+                    trade_log.append({
+                        "date": day, "action": "BUY",
+                        "shares": shares_to_buy, "price": etf_close,
+                        "reason": f"Option A Change (target {target_pct*100:.0f}%)",
+                    })
+            elif delta < 0:
+                shares_to_sell = min(shares, int(abs(delta) / etf_close))
+                if shares_to_sell > 0:
+                    proceeds = shares_to_sell * etf_close
+                    realized_gain = (etf_close - avg_entry_price) * shares_to_sell
+                    tax_paid = 0.0
+                    if consider_tax > 0 and realized_gain > 0:
+                        tax_paid = realized_gain * consider_tax
+                        capital -= tax_paid
+                    shares -= shares_to_sell
+                    capital += proceeds
+                    rebalance_count += 1
+                    trade_log.append({
+                        "date": day, "action": "SELL",
+                        "shares": shares_to_sell, "price": etf_close,
+                        "reason": f"Option A Change (target {target_pct*100:.0f}%)",
+                        "tax_paid": round(tax_paid, 2),
+                    })
+                    if shares == 0:
+                        avg_entry_price = 0.0
+
+        if prev_target_pct is None and target_pct > 0:
+            target_invested = initial_capital * target_pct
+            shares_to_buy = int(target_invested / etf_close)
+            if shares_to_buy > 0:
+                cost = shares_to_buy * etf_close
+                shares = shares_to_buy
+                avg_entry_price = etf_close
+                capital -= cost
+                trade_log.append({
+                    "date": day, "action": "BUY",
+                    "shares": shares_to_buy, "price": etf_close,
+                    "reason": f"Initial buy (Option A target {target_pct*100:.0f}%)",
+                })
+
+        prev_target_pct = target_pct
+        if shares > 0:
+            days_in_market += 1
+
+        invested_value = shares * etf_close
+        total_equity = capital + invested_value
+        equity_curve.append({
+            "date": day,
+            "option_a_equity": round(total_equity, 2),
+            "option_a_cash": round(capital, 2),
+            "option_a_invested": round(invested_value, 2),
+            "option_a_shares": shares,
+            "option_a_position_pct": round((invested_value / total_equity * 100) if total_equity > 0 else 0, 1),
+        })
+
+    final_equity = capital
+    if shares > 0 and trading_dates:
+        last_day = trading_dates[-1]
+        last_close = etf_prices.get(last_day, {}).get("close", 0)
+        if last_close > 0:
+            proceeds = shares * last_close
+            unrealized_gain = (last_close - avg_entry_price) * shares
+            tax_paid = 0.0
+            if consider_tax > 0 and unrealized_gain > 0:
+                tax_paid = unrealized_gain * consider_tax
+            final_equity = capital + proceeds - tax_paid
+            trade_log.append({
+                "date": last_day, "action": "LIQUIDATE",
+                "shares": shares, "price": last_close,
+                "reason": "Final day liquidation (tax applied)",
+                "tax_paid": round(tax_paid, 2),
+            })
+
+    time_in_market_pct = (days_in_market / len(trading_dates) * 100) if trading_dates else 0
+    return {
+        "final_capital": round(final_equity, 2),
+        "equity_curve": equity_curve,
+        "trade_log": trade_log,
+        "rebalance_count": rebalance_count,
+        "time_in_market_pct": round(time_in_market_pct, 1),
+    }
+
+
+def _simulate_option_c_strict_strategy(
+    trading_dates: list,
+    etf_prices: Dict,
+    mts_timeline: Dict[Any, float],
+    initial_capital: float,
+    consider_tax: float,
+) -> Dict[str, Any]:
+    """
+    案C_strict: 即0強制型
+      - EMA 21 < EMA 63 ➔ 0% position
+      - それ以外で MTS生値 >= 60 且つ EMA 5上昇 ➔ 100% position (買いトリガー)
+      - それ以外で EMA 5 < EMA 21 且つ EMA 21下降 ➔ 0% position (売りトリガー)
+      - どちらでもない場合は前日維持。
+    """
+    dates_sorted = sorted(mts_timeline.keys())
+    scores_sorted = [mts_timeline[d] for d in dates_sorted]
+    df_mts = pd.DataFrame({'date': dates_sorted, 'score': scores_sorted})
+    df_mts['ema5'] = df_mts['score'].ewm(span=5, adjust=False).mean()
+    df_mts['ema21'] = df_mts['score'].ewm(span=21, adjust=False).mean()
+    df_mts['ema63'] = df_mts['score'].ewm(span=63, adjust=False).mean()
+    
+    # シグナルの上昇下降
+    df_mts['ema5_rising'] = df_mts['ema5'] > df_mts['ema5'].shift(1)
+    df_mts['ema21_rising'] = df_mts['ema21'] > df_mts['ema21'].shift(1)
+
+    ema5_lookup = {row['date']: row['ema5'] for _, row in df_mts.iterrows()}
+    ema21_lookup = {row['date']: row['ema21'] for _, row in df_mts.iterrows()}
+    ema63_lookup = {row['date']: row['ema63'] for _, row in df_mts.iterrows()}
+    ema5_rising_lookup = {row['date']: bool(row['ema5_rising']) for _, row in df_mts.iterrows()}
+    ema21_rising_lookup = {row['date']: bool(row['ema21_rising']) for _, row in df_mts.iterrows()}
+    score_lookup = {row['date']: row['score'] for _, row in df_mts.iterrows()}
+
+    capital = initial_capital
+    shares = 0
+    avg_entry_price = 0.0
+    current_pos = 0.0
+    prev_target_pct = None
+    rebalance_count = 0
+    days_in_market = 0
+
+    equity_curve = []
+    trade_log = []
+
+    for day in trading_dates:
+        etf_close = etf_prices.get(day, {}).get("close")
+        if etf_close is None or etf_close <= 0:
+            continue
+
+        e5 = ema5_lookup.get(day, 70.0)
+        e21 = ema21_lookup.get(day, 70.0)
+        e63 = ema63_lookup.get(day, 70.0)
+        e5_rising = ema5_rising_lookup.get(day, True)
+        e21_rising = ema21_rising_lookup.get(day, True)
+        mts = score_lookup.get(day, 70.0)
+
+        # ターゲット比率判定
+        if e21 < e63:
+            target_pct = 0.0
+        else:
+            buy_trigger = (mts >= 60.0) and e5_rising
+            sell_trigger = (e5 < e21) and not e21_rising
+            if buy_trigger:
+                target_pct = 1.0
+            elif sell_trigger:
+                target_pct = 0.0
+            else:
+                target_pct = current_pos if prev_target_pct is not None else 0.0
+
+        current_pos = target_pct
+
+        if prev_target_pct is not None and target_pct != prev_target_pct:
+            current_value = capital + shares * etf_close
+            target_invested = current_value * target_pct
+            current_invested = shares * etf_close
+            delta = target_invested - current_invested
+
+            if delta > 0:
+                shares_to_buy = int(delta / etf_close)
+                cost = shares_to_buy * etf_close
+                if cost <= capital and shares_to_buy > 0:
+                    total_cost = avg_entry_price * shares + cost
+                    shares += shares_to_buy
+                    avg_entry_price = total_cost / shares if shares > 0 else 0.0
+                    capital -= cost
+                    rebalance_count += 1
+                    trade_log.append({
+                        "date": day, "action": "BUY",
+                        "shares": shares_to_buy, "price": etf_close,
+                        "reason": f"Option C Strict Change (target {target_pct*100:.0f}%)",
+                    })
+            elif delta < 0:
+                shares_to_sell = min(shares, int(abs(delta) / etf_close))
+                if shares_to_sell > 0:
+                    proceeds = shares_to_sell * etf_close
+                    realized_gain = (etf_close - avg_entry_price) * shares_to_sell
+                    tax_paid = 0.0
+                    if consider_tax > 0 and realized_gain > 0:
+                        tax_paid = realized_gain * consider_tax
+                        capital -= tax_paid
+                    shares -= shares_to_sell
+                    capital += proceeds
+                    rebalance_count += 1
+                    trade_log.append({
+                        "date": day, "action": "SELL",
+                        "shares": shares_to_sell, "price": etf_close,
+                        "reason": f"Option C Strict Change (target {target_pct*100:.0f}%)",
+                        "tax_paid": round(tax_paid, 2),
+                    })
+                    if shares == 0:
+                        avg_entry_price = 0.0
+
+        if prev_target_pct is None and target_pct > 0:
+            target_invested = initial_capital * target_pct
+            shares_to_buy = int(target_invested / etf_close)
+            if shares_to_buy > 0:
+                cost = shares_to_buy * etf_close
+                shares = shares_to_buy
+                avg_entry_price = etf_close
+                capital -= cost
+                trade_log.append({
+                    "date": day, "action": "BUY",
+                    "shares": shares_to_buy, "price": etf_close,
+                    "reason": f"Initial buy (Option C Strict target {target_pct*100:.0f}%)",
+                })
+
+        prev_target_pct = target_pct
+        if shares > 0:
+            days_in_market += 1
+
+        invested_value = shares * etf_close
+        total_equity = capital + invested_value
+        equity_curve.append({
+            "date": day,
+            "option_c_equity": round(total_equity, 2),
+            "option_c_cash": round(capital, 2),
+            "option_c_invested": round(invested_value, 2),
+            "option_c_shares": shares,
+            "option_c_position_pct": round((invested_value / total_equity * 100) if total_equity > 0 else 0, 1),
+        })
+
+    final_equity = capital
+    if shares > 0 and trading_dates:
+        last_day = trading_dates[-1]
+        last_close = etf_prices.get(last_day, {}).get("close", 0)
+        if last_close > 0:
+            proceeds = shares * last_close
+            unrealized_gain = (last_close - avg_entry_price) * shares
+            tax_paid = 0.0
+            if consider_tax > 0 and unrealized_gain > 0:
+                tax_paid = unrealized_gain * consider_tax
+            final_equity = capital + proceeds - tax_paid
+            trade_log.append({
+                "date": last_day, "action": "LIQUIDATE",
+                "shares": shares, "price": last_close,
+                "reason": "Final day liquidation (tax applied)",
+                "tax_paid": round(tax_paid, 2),
+            })
+
+    time_in_market_pct = (days_in_market / len(trading_dates) * 100) if trading_dates else 0
+    return {
+        "final_capital": round(final_equity, 2),
+        "equity_curve": equity_curve,
+        "trade_log": trade_log,
+        "rebalance_count": rebalance_count,
+        "time_in_market_pct": round(time_in_market_pct, 1),
+    }
+
+
+def _simulate_option_d_stage_strategy(
+    trading_dates: list,
+    etf_prices: Dict,
+    mts_timeline: Dict[Any, float],
+    spy_ftd_lookup: Dict[Any, int],
+    spy_dd_lookup: Dict[Any, int],
+    initial_capital: float,
+    consider_tax: float,
+) -> Dict[str, Any]:
+    """
+    案D: ステージ分析・早期復帰トリガー型
+      - 基本は大局ベア `EMA 21 < EMA 63` ➔ ポジション 0%
+      - ただし、早期復帰トリガーが引かれたら即座に 100% position (BULL状態へ)
+        - トリガーA: `EMA 21` が低い位置 (< 50) で `EMA 5 > EMA 21` (ゴールデンクロス)
+        - トリガーB: SPYのフォロースルーデー (FTD) が発生
+      - 過熱判定: `MTS生スコア >= 80` または `SPYのディストリビューション・デイが25日間に6日以上` ➔ ポジション 50%
+      - 売りトリガー: `EMA 5 < EMA 21` 且つ `EMA 21` 下降 ➔ ポジション 0% (BEARへ)
+    """
+    dates_sorted = sorted(mts_timeline.keys())
+    scores_sorted = [mts_timeline[d] for d in dates_sorted]
+    df_mts = pd.DataFrame({'date': dates_sorted, 'score': scores_sorted})
+    df_mts['ema5'] = df_mts['score'].ewm(span=5, adjust=False).mean()
+    df_mts['ema21'] = df_mts['score'].ewm(span=21, adjust=False).mean()
+    df_mts['ema63'] = df_mts['score'].ewm(span=63, adjust=False).mean()
+    df_mts['ema21_rising'] = df_mts['ema21'] > df_mts['ema21'].shift(1)
+
+    ema5_lookup = {row['date']: row['ema5'] for _, row in df_mts.iterrows()}
+    ema21_lookup = {row['date']: row['ema21'] for _, row in df_mts.iterrows()}
+    ema63_lookup = {row['date']: row['ema63'] for _, row in df_mts.iterrows()}
+    ema21_rising_lookup = {row['date']: bool(row['ema21_rising']) for _, row in df_mts.iterrows()}
+    score_lookup = {row['date']: row['score'] for _, row in df_mts.iterrows()}
+
+    capital = initial_capital
+    shares = 0
+    avg_entry_price = 0.0
+    
+    # Start Bull
+    current_pos = 1.0
+    prev_target_pct = None
+    rebalance_count = 0
+    days_in_market = 0
+
+    equity_curve = []
+    trade_log = []
+
+    for day in trading_dates:
+        etf_close = etf_prices.get(day, {}).get("close")
+        if etf_close is None or etf_close <= 0:
+            continue
+
+        e5 = ema5_lookup.get(day, 70.0)
+        e21 = ema21_lookup.get(day, 70.0)
+        e63 = ema63_lookup.get(day, 70.0)
+        e21_rising = ema21_rising_lookup.get(day, True)
+        mts = score_lookup.get(day, 70.0)
+        ftd = spy_ftd_lookup.get(day, 0)
+        dd_count = spy_dd_lookup.get(day, 0)
+
+        # 1. 早期復帰判定 (BULL化)
+        trigger_gc = (e21 < 50.0) and (e5 > e21)
+        trigger_buy = trigger_gc or (ftd == 1)
+
+        # 2. 売り判定 (BEAR化)
+        trigger_sell = (e21 < e63) or ((e5 < e21) and not e21_rising)
+
+        if trigger_buy:
+            target_pct = 1.0
+        elif trigger_sell:
+            target_pct = 0.0
+        else:
+            target_pct = current_pos if prev_target_pct is not None else 1.0
+
+        # 3. 過熱判定 (BULL中の MTS >= 80 または DD >= 6)
+        if target_pct > 0.0 and (mts >= 80.0 or dd_count >= 6):
+            target_pct = 0.5
+
+        current_pos = target_pct
+
+        if prev_target_pct is not None and target_pct != prev_target_pct:
+            current_value = capital + shares * etf_close
+            target_invested = current_value * target_pct
+            current_invested = shares * etf_close
+            delta = target_invested - current_invested
+
+            if delta > 0:
+                shares_to_buy = int(delta / etf_close)
+                cost = shares_to_buy * etf_close
+                if cost <= capital and shares_to_buy > 0:
+                    total_cost = avg_entry_price * shares + cost
+                    shares += shares_to_buy
+                    avg_entry_price = total_cost / shares if shares > 0 else 0.0
+                    capital -= cost
+                    rebalance_count += 1
+                    trade_log.append({
+                        "date": day, "action": "BUY",
+                        "shares": shares_to_buy, "price": etf_close,
+                        "reason": f"Option D Stage Change (target {target_pct*100:.0f}%, ftd={ftd}, e21={e21:.1f})",
+                    })
+            elif delta < 0:
+                shares_to_sell = min(shares, int(abs(delta) / etf_close))
+                if shares_to_sell > 0:
+                    proceeds = shares_to_sell * etf_close
+                    realized_gain = (etf_close - avg_entry_price) * shares_to_sell
+                    tax_paid = 0.0
+                    if consider_tax > 0 and realized_gain > 0:
+                        tax_paid = realized_gain * consider_tax
+                        capital -= tax_paid
+                    shares -= shares_to_sell
+                    capital += proceeds
+                    rebalance_count += 1
+                    trade_log.append({
+                        "date": day, "action": "SELL",
+                        "shares": shares_to_sell, "price": etf_close,
+                        "reason": f"Option D Stage Change (target {target_pct*100:.0f}%)",
+                        "tax_paid": round(tax_paid, 2),
+                    })
+                    if shares == 0:
+                        avg_entry_price = 0.0
+
+        if prev_target_pct is None and target_pct > 0:
+            target_invested = initial_capital * target_pct
+            shares_to_buy = int(target_invested / etf_close)
+            if shares_to_buy > 0:
+                cost = shares_to_buy * etf_close
+                shares = shares_to_buy
+                avg_entry_price = etf_close
+                capital -= cost
+                trade_log.append({
+                    "date": day, "action": "BUY",
+                    "shares": shares_to_buy, "price": etf_close,
+                    "reason": f"Initial buy (Option D target {target_pct*100:.0f}%)",
+                })
+
+        prev_target_pct = target_pct
+        if shares > 0:
+            days_in_market += 1
+
+        invested_value = shares * etf_close
+        total_equity = capital + invested_value
+        equity_curve.append({
+            "date": day,
+            "option_d_equity": round(total_equity, 2),
+            "option_d_cash": round(capital, 2),
+            "option_d_invested": round(invested_value, 2),
+            "option_d_shares": shares,
+            "option_d_position_pct": round((invested_value / total_equity * 100) if total_equity > 0 else 0, 1),
+        })
+
+    final_equity = capital
+    if shares > 0 and trading_dates:
+        last_day = trading_dates[-1]
+        last_close = etf_prices.get(last_day, {}).get("close", 0)
+        if last_close > 0:
+            proceeds = shares * last_close
+            unrealized_gain = (last_close - avg_entry_price) * shares
+            tax_paid = 0.0
+            if consider_tax > 0 and unrealized_gain > 0:
+                tax_paid = unrealized_gain * consider_tax
+            final_equity = capital + proceeds - tax_paid
+            trade_log.append({
+                "date": last_day, "action": "LIQUIDATE",
+                "shares": shares, "price": last_close,
+                "reason": "Final day liquidation (tax applied)",
+                "tax_paid": round(tax_paid, 2),
+            })
+
+    time_in_market_pct = (days_in_market / len(trading_dates) * 100) if trading_dates else 0
+    return {
+        "final_capital": round(final_equity, 2),
+        "equity_curve": equity_curve,
+        "trade_log": trade_log,
+        "rebalance_count": rebalance_count,
+        "time_in_market_pct": round(time_in_market_pct, 1),
+    }
+
+
+def _simulate_based_etf_from_sma200_strategy(
+    trading_dates: list,
+    etf_prices: Dict,
+    base_prices: Dict,
+    base_sma200: Dict,
+    leverage: float,
+    initial_capital: float,
+    consider_tax: float,
+) -> Dict[str, Any]:
+    """
+    Run the Based ETF from SMA200 position-sizing strategy.
+    - Signal: Underlying Base ETF (SPY or QQQ) close vs its SMA200 with +5%/-3% buffers
+    - Rebuy: Triggered when target ETF price drops by -8% * leverage from its base sell price.
+    - Rebalance: Executed at the NEXT OPEN for consistency with compare_all_etfs.py.
+    """
+    capital = initial_capital
+    shares = 0.0
+    avg_entry_price = 0.0
+    pos_state = 1.0
+    sell_exec_price = None
+    rebalance_count = 0
+    days_in_market = 0
+
+    equity_curve = []
+    trade_log = []
+
+    rebuy_drop_ratio = 1.0 - (0.08 * leverage)
+
+    # Initialize at first day open
+    if trading_dates:
+        first_day = trading_dates[0]
+        first_open = etf_prices.get(first_day, {}).get("open")
+        if first_open and first_open > 0:
+            shares = capital / first_open
+            avg_entry_price = first_open
+            capital = 0.0
+            pos_state = 1.0
+            trade_log.append({
+                "date": first_day, "action": "BUY",
+                "shares": shares, "price": first_open,
+                "reason": "Initial buy (100% position)",
+            })
+
+    for i, day in enumerate(trading_dates):
+        etf_close = etf_prices.get(day, {}).get("close")
+        if etf_close is None or etf_close <= 0:
+            continue
+
+        sig_c = base_prices.get(day, {}).get("close")
+        sma = base_sma200.get(day)
+
+        # Track portfolio value using daily close
+        p_val = (shares * etf_close) + capital
+        
+        equity_curve.append({
+            "date": day,
+            "based_sma200_equity": round(p_val, 2),
+            "based_sma200_cash": round(capital, 2),
+            "based_sma200_invested": round(shares * etf_close, 2),
+            "based_sma200_shares": shares,
+            "based_sma200_position_pct": round((shares * etf_close / p_val * 100) if p_val > 0 else 0, 1),
+        })
+
+        if shares > 0:
+            days_in_market += 1
+
+        if sig_c is None or sma is None:
+            continue
+
+        buy_t = sma * 1.05
+        sell_t = sma * 0.97
+
+        # Signal checks logic - same as compare_all_etfs.py next-open execution
+        if i + 1 < len(trading_dates):
+            next_day = trading_dates[i + 1]
+            next_open = etf_prices.get(next_day, {}).get("open")
+            next_base_open = base_prices.get(next_day, {}).get("open")
+            
+            if next_open is None or next_open <= 0:
+                continue
+
+            # Check for Buyback/Full buy
+            if sig_c > buy_t and pos_state < 1.0:
+                current_value = (shares * etf_close) + capital
+                target_invested = current_value * 1.0
+                current_invested = shares * etf_close
+                delta = target_invested - current_invested
+                
+                if delta > 0:
+                    shares_to_buy = delta / next_open
+                    total_cost = avg_entry_price * shares + shares_to_buy * next_open
+                    shares += shares_to_buy
+                    avg_entry_price = total_cost / shares if shares > 0 else 0.0
+                    capital -= (shares_to_buy * next_open)
+                    rebalance_count += 1
+                    trade_log.append({
+                        "date": next_day, "action": "BUY",
+                        "shares": shares_to_buy, "price": next_open,
+                        "reason": f"Signal close={sig_c:.1f} > SMA200*1.05={buy_t:.1f} (target 100%)",
+                    })
+                pos_state = 1.0
+                sell_exec_price = None
+
+            # Check for Sell
+            elif sig_c < sell_t and pos_state == 1.0:
+                proceeds = shares * next_open
+                realized_gain = (next_open - avg_entry_price) * shares
+                tax_paid = 0.0
+                if consider_tax > 0 and realized_gain > 0:
+                    tax_paid = realized_gain * consider_tax
+                    capital -= tax_paid
+                
+                capital += proceeds
+                shares = 0.0
+                pos_state = 0.0
+                rebalance_count += 1
+                trade_log.append({
+                    "date": next_day, "action": "SELL",
+                    "shares": proceeds / next_open, "price": next_open,
+                    "reason": f"Signal close={sig_c:.1f} < SMA200*0.97={sell_t:.1f} (target 0%)",
+                    "tax_paid": round(tax_paid, 2),
+                })
+                sell_exec_price = next_open
+                avg_entry_price = 0.0
+
+            # Check for rebuy (only when in cash 0.0)
+            elif pos_state == 0.0 and sell_exec_price is not None and etf_close < sell_exec_price * rebuy_drop_ratio:
+                current_value = (shares * etf_close) + capital
+                target_invested = current_value * 0.5
+                shares_to_buy = target_invested / next_open
+                shares = shares_to_buy
+                avg_entry_price = next_open
+                capital -= (shares_to_buy * next_open)
+                rebalance_count += 1
+                trade_log.append({
+                    "date": next_day, "action": "BUY",
+                    "shares": shares_to_buy, "price": next_open,
+                    "reason": f"Rebuy drop: price={etf_close:.1f} < sell_price*ratio={sell_exec_price * rebuy_drop_ratio:.1f} (target 50%)",
+                })
+                pos_state = 0.5
+
+    # Final day liquidation
+    final_equity = capital
+    if shares > 0 and trading_dates:
+        last_day = trading_dates[-1]
+        last_close = etf_prices.get(last_day, {}).get("close", 0)
+        if last_close > 0:
+            proceeds = shares * last_close
+            unrealized_gain = (last_close - avg_entry_price) * shares
+            tax_paid = 0.0
+            if consider_tax > 0 and unrealized_gain > 0:
+                tax_paid = unrealized_gain * consider_tax
+            final_equity = capital + proceeds - tax_paid
+            trade_log.append({
+                "date": last_day, "action": "LIQUIDATE",
+                "shares": shares, "price": last_close,
+                "reason": "Final day liquidation (tax applied)",
+                "tax_paid": round(tax_paid, 2),
+            })
+
+    time_in_market_pct = (days_in_market / len(trading_dates) * 100) if trading_dates else 0
+    return {
+        "final_capital": round(final_equity, 2),
+        "equity_curve": equity_curve,
+        "trade_log": trade_log,
+        "rebalance_count": rebalance_count,
+        "time_in_market_pct": round(time_in_market_pct, 1),
+    }
+
+
+def _simulate_based_etf_from_sma63_strategy(
+    trading_dates: list,
+    etf_prices: Dict,
+    base_prices: Dict,
+    base_sma63: Dict,
+    leverage: float,
+    initial_capital: float,
+    consider_tax: float,
+) -> Dict[str, Any]:
+    """
+    Run the Based ETF from SMA63 position-sizing strategy.
+    - Signal: Underlying Base ETF (SPY or QQQ) close vs its SMA63 with +5%/-3% buffers.
+    - Rebuy: Triggered when target ETF price drops by -8% * leverage from its base sell price.
+    - Rebalance: Executed at the NEXT OPEN for consistency.
+    """
+    capital = initial_capital
+    shares = 0.0
+    avg_entry_price = 0.0
+    pos_state = 1.0
+    sell_exec_price = None
+    rebalance_count = 0
+    days_in_market = 0
+
+    equity_curve = []
+    trade_log = []
+
+    rebuy_drop_ratio = 1.0 - (0.08 * leverage)
+
+    # Initialize at first day open
+    if trading_dates:
+        first_day = trading_dates[0]
+        first_open = etf_prices.get(first_day, {}).get("open")
+        if first_open and first_open > 0:
+            shares = capital / first_open
+            avg_entry_price = first_open
+            capital = 0.0
+            pos_state = 1.0
+            trade_log.append({
+                "date": first_day, "action": "BUY",
+                "shares": shares, "price": first_open,
+                "reason": "Initial buy (100% position)",
+            })
+
+    for i, day in enumerate(trading_dates):
+        etf_close = etf_prices.get(day, {}).get("close")
+        if etf_close is None or etf_close <= 0:
+            continue
+
+        sig_c = base_prices.get(day, {}).get("close")
+        sma = base_sma63.get(day)
+
+        # Track portfolio value using daily close
+        p_val = (shares * etf_close) + capital
+        
+        equity_curve.append({
+            "date": day,
+            "based_sma63_equity": round(p_val, 2),
+            "based_sma63_cash": round(capital, 2),
+            "based_sma63_invested": round(shares * etf_close, 2),
+            "based_sma63_shares": shares,
+            "based_sma63_position_pct": round((shares * etf_close / p_val * 100) if p_val > 0 else 0, 1),
+        })
+
+        if shares > 0:
+            days_in_market += 1
+
+        if sig_c is None or sma is None:
+            continue
+
+        buy_t = sma * 1.05
+        sell_t = sma * 0.97
+
+        # Signal checks logic
+        if i + 1 < len(trading_dates):
+            next_day = trading_dates[i + 1]
+            next_open = etf_prices.get(next_day, {}).get("open")
+            
+            if next_open is None or next_open <= 0:
+                continue
+
+            # Check for Buyback/Full buy
+            if sig_c > buy_t and pos_state < 1.0:
+                current_value = (shares * etf_close) + capital
+                target_invested = current_value * 1.0
+                current_invested = shares * etf_close
+                delta = target_invested - current_invested
+                
+                if delta > 0:
+                    shares_to_buy = delta / next_open
+                    total_cost = avg_entry_price * shares + shares_to_buy * next_open
+                    shares += shares_to_buy
+                    avg_entry_price = total_cost / shares if shares > 0 else 0.0
+                    capital -= (shares_to_buy * next_open)
+                    rebalance_count += 1
+                    trade_log.append({
+                        "date": next_day, "action": "BUY",
+                        "shares": shares_to_buy, "price": next_open,
+                        "reason": f"Signal close={sig_c:.1f} > SMA63*1.05={buy_t:.1f} (target 100%)",
+                    })
+                pos_state = 1.0
+                sell_exec_price = None
+
+            # Check for Sell
+            elif sig_c < sell_t and pos_state == 1.0:
+                proceeds = shares * next_open
+                realized_gain = (next_open - avg_entry_price) * shares
+                tax_paid = 0.0
+                if consider_tax > 0 and realized_gain > 0:
+                    tax_paid = realized_gain * consider_tax
+                    capital -= tax_paid
+                
+                capital += proceeds
+                shares = 0.0
+                pos_state = 0.0
+                rebalance_count += 1
+                trade_log.append({
+                    "date": next_day, "action": "SELL",
+                    "shares": proceeds / next_open, "price": next_open,
+                    "reason": f"Signal close={sig_c:.1f} < SMA63*0.97={sell_t:.1f} (target 0%)",
+                    "tax_paid": round(tax_paid, 2),
+                })
+                sell_exec_price = next_open
+                avg_entry_price = 0.0
+
+            # Check for rebuy (only when in cash 0.0)
+            elif pos_state == 0.0 and sell_exec_price is not None and etf_close < sell_exec_price * rebuy_drop_ratio:
+                current_value = (shares * etf_close) + capital
+                target_invested = current_value * 0.5
+                shares_to_buy = target_invested / next_open
+                shares = shares_to_buy
+                avg_entry_price = next_open
+                capital -= (shares_to_buy * next_open)
+                rebalance_count += 1
+                trade_log.append({
+                    "date": next_day, "action": "BUY",
+                    "shares": shares_to_buy, "price": next_open,
+                    "reason": f"Rebuy drop: price={etf_close:.1f} < sell_price*ratio={sell_exec_price * rebuy_drop_ratio:.1f} (target 50%)",
+                })
+                pos_state = 0.5
+
+    # Final day liquidation
+    final_equity = capital
+    if shares > 0 and trading_dates:
+        last_day = trading_dates[-1]
+        last_close = etf_prices.get(last_day, {}).get("close", 0)
+        if last_close > 0:
+            proceeds = shares * last_close
+            unrealized_gain = (last_close - avg_entry_price) * shares
+            tax_paid = 0.0
+            if consider_tax > 0 and unrealized_gain > 0:
+                tax_paid = unrealized_gain * consider_tax
+            final_equity = capital + proceeds - tax_paid
+            trade_log.append({
+                "date": last_day, "action": "LIQUIDATE",
+                "shares": shares, "price": last_close,
+                "reason": "Final day liquidation (tax applied)",
+                "tax_paid": round(tax_paid, 2),
+            })
+
+    time_in_market_pct = (days_in_market / len(trading_dates) * 100) if trading_dates else 0
+    return {
+        "final_capital": round(final_equity, 2),
+        "equity_curve": equity_curve,
+        "trade_log": trade_log,
+        "rebalance_count": rebalance_count,
+        "time_in_market_pct": round(time_in_market_pct, 1),
+    }
+
 
 
 # ---------------------------------------------------------------------------
@@ -695,18 +1532,48 @@ def run_etf_single_backtest(
     if not trading_dates:
         raise ValueError("No trading dates found for the specified period.")
 
-    # 2. Build price lookup dicts {date -> {close, ...}}
+    # 2. Build price lookup dicts {date -> {close, open, ...}}
     def build_price_dict(tick: str) -> Dict:
         match = df_symbols[df_symbols["ticker"] == tick]
         if match.empty:
             return {}
         sym_id = int(match["id"].iloc[0])
-        sub = df_prices[df_prices["symbol_id"] == sym_id][["date", "close"]].copy()
-        return {row["date"]: {"close": float(row["close"])} for _, row in sub.iterrows()}
+        sub = df_prices[df_prices["symbol_id"] == sym_id][["date", "close", "open"]].copy()
+        return {row["date"]: {"close": float(row["close"]), "open": float(row["open"])} for _, row in sub.iterrows()}
 
     etf_prices = build_price_dict(ticker)
     vix_prices = build_price_dict("^VIX")
     vxv_prices = build_price_dict("^VIX3M")
+
+    # Build SMA200 and price lookups for SPY and QQQ
+    def build_sma200_dict(tick: str) -> Dict[Any, float]:
+        match = df_symbols[df_symbols["ticker"] == tick]
+        if match.empty:
+            return {}
+        sym_id = int(match["id"].iloc[0])
+        sub = df_prices[df_prices["symbol_id"] == sym_id].sort_values("date").copy()
+        sub["sma200"] = sub["close"].rolling(window=200, min_periods=200).mean()
+        sub["date"] = pd.to_datetime(sub["date"]).dt.date
+        return {row["date"]: float(row["sma200"]) for _, row in sub.iterrows() if not pd.isna(row["sma200"])}
+
+    spy_sma200_lookup = build_sma200_dict("SPY")
+    qqq_sma200_lookup = build_sma200_dict("QQQ")
+    
+    def build_sma63_dict(tick: str) -> Dict[Any, float]:
+        match = df_symbols[df_symbols["ticker"] == tick]
+        if match.empty:
+            return {}
+        sym_id = int(match["id"].iloc[0])
+        sub = df_prices[df_prices["symbol_id"] == sym_id].sort_values("date").copy()
+        sub["sma63"] = sub["close"].rolling(window=63, min_periods=63).mean()
+        sub["date"] = pd.to_datetime(sub["date"]).dt.date
+        return {row["date"]: float(row["sma63"]) for _, row in sub.iterrows() if not pd.isna(row["sma63"])}
+
+    spy_sma63_lookup = build_sma63_dict("SPY")
+    qqq_sma63_lookup = build_sma63_dict("QQQ")
+    
+    spy_prices_raw = build_price_dict("SPY")
+    qqq_prices_raw = build_price_dict("QQQ")
 
     if not etf_prices:
         raise ValueError(f"No price data found for ticker '{ticker}'.")
@@ -719,8 +1586,25 @@ def run_etf_single_backtest(
     print(f"\n  Building MTS v2 Daily Timeline...", flush=True)
     mts_timeline = build_mts_v2_timeline(trading_dates, df_prices, df_symbols)
 
+    # 2.5 Calculate SPY FTD & DD lookup
+    spy_match = df_symbols[df_symbols["ticker"] == "SPY"]
+    if not spy_match.empty:
+        spy_id = int(spy_match["id"].iloc[0])
+        spy_prices = df_prices[df_prices["symbol_id"] == spy_id].sort_values("date").copy()
+        spy_ret = spy_prices["close"].pct_change()
+        spy_vol_inc = spy_prices["volume"].astype(float) > spy_prices["volume"].astype(float).shift(1)
+        spy_prices["ftd"] = ((spy_ret >= 0.017) & spy_vol_inc).astype(int)
+        spy_ftd_lookup = {row["date"]: int(row["ftd"]) for _, row in spy_prices.iterrows()}
+        
+        spy_prices["is_dist_day"] = ((spy_ret <= -0.002) & spy_vol_inc).astype(int)
+        spy_prices["dd_count"] = spy_prices["is_dist_day"].rolling(window=25, min_periods=1).sum().astype(int)
+        spy_dd_lookup = {row["date"]: int(row["dd_count"]) for _, row in spy_prices.iterrows()}
+    else:
+        spy_ftd_lookup = {}
+        spy_dd_lookup = {}
+
     # 3. Run all strategies
-    print(f"\n  [1/4] Running VXV/VIX EMA Strategy...", flush=True)
+    print(f"\n  [1/8] Running VXV/VIX EMA Strategy...", flush=True)
     vxv_result = _simulate_vxv_strategy(
         trading_dates, etf_prices, vix_prices, vxv_prices,
         initial_capital, consider_tax,
@@ -729,7 +1613,7 @@ def run_etf_single_backtest(
           f"(Regime changes: {vxv_result['regime_changes']}, "
           f"Rebalances: {vxv_result['rebalance_count']})", flush=True)
 
-    print(f"  [2/4] Running MTS v2 Position Strategy...", flush=True)
+    print(f"  [2/8] Running MTS v2 Position Strategy...", flush=True)
     mts_v2_result = _simulate_mts_v2_strategy(
         trading_dates, etf_prices, mts_timeline,
         initial_capital, consider_tax,
@@ -737,13 +1621,71 @@ def run_etf_single_backtest(
     print(f"    -> Final: ${mts_v2_result['final_capital']:,.2f} "
           f"(Rebalances: {mts_v2_result['rebalance_count']})", flush=True)
 
-    print(f"  [3/4] Running Buy & Hold...", flush=True)
+    print(f"  [3/8] Running Option A Strategy...", flush=True)
+    option_a_result = _simulate_option_a_strategy(
+        trading_dates, etf_prices, mts_timeline,
+        initial_capital, consider_tax,
+    )
+    print(f"    -> Final: ${option_a_result['final_capital']:,.2f} "
+          f"(Rebalances: {option_a_result['rebalance_count']})", flush=True)
+
+    print(f"  [4/8] Running Option C Strict Strategy...", flush=True)
+    option_c_result = _simulate_option_c_strict_strategy(
+        trading_dates, etf_prices, mts_timeline,
+        initial_capital, consider_tax,
+    )
+    print(f"    -> Final: ${option_c_result['final_capital']:,.2f} "
+          f"(Rebalances: {option_c_result['rebalance_count']})", flush=True)
+
+    print(f"  [5/8] Running Option D Stage Strategy...", flush=True)
+    option_d_result = _simulate_option_d_stage_strategy(
+        trading_dates, etf_prices, mts_timeline, spy_ftd_lookup, spy_dd_lookup,
+        initial_capital, consider_tax,
+    )
+    print(f"    -> Final: ${option_d_result['final_capital']:,.2f} "
+          f"(Rebalances: {option_d_result['rebalance_count']})", flush=True)
+
+    # Resolve Base Index and Leverage
+    etf_configs = {
+        "SPY": {"base": "SPY", "leverage": 1},
+        "QQQ": {"base": "QQQ", "leverage": 1},
+        "TQQQ": {"base": "QQQ", "leverage": 3},
+        "UPRO": {"base": "SPY", "leverage": 3},
+        "SOXL": {"base": "QQQ", "leverage": 3},
+        "UGL": {"base": "SPY", "leverage": 2},
+    }
+    cfg = etf_configs.get(ticker, {"base": "SPY", "leverage": 1})
+    base_idx = cfg["base"]
+    lev = cfg["leverage"]
+
+    print(f"  [6/8] Running Based ETF from SMA200 Strategy (Base: {base_idx}, Lev: {lev}x)...", flush=True)
+    base_prices = spy_prices_raw if base_idx == "SPY" else qqq_prices_raw
+    base_sma200 = spy_sma200_lookup if base_idx == "SPY" else qqq_sma200_lookup
+
+    based_sma200_result = _simulate_based_etf_from_sma200_strategy(
+        trading_dates, etf_prices, base_prices, base_sma200,
+        lev, initial_capital, consider_tax
+    )
+    print(f"    -> Final: ${based_sma200_result['final_capital']:,.2f} "
+          f"(Rebalances: {based_sma200_result['rebalance_count']})", flush=True)
+
+    print(f"  [6.5/8] Running Based ETF from SMA63 Strategy (Base: {base_idx}, Lev: {lev}x)...", flush=True)
+    base_sma63 = spy_sma63_lookup if base_idx == "SPY" else qqq_sma63_lookup
+
+    based_sma63_result = _simulate_based_etf_from_sma63_strategy(
+        trading_dates, etf_prices, base_prices, base_sma63,
+        lev, initial_capital, consider_tax
+    )
+    print(f"    -> Final: ${based_sma63_result['final_capital']:,.2f} "
+          f"(Rebalances: {based_sma63_result['rebalance_count']})", flush=True)
+
+    print(f"  [7/8] Running Buy & Hold...", flush=True)
     bh_result = _simulate_buy_and_hold(
         trading_dates, etf_prices, initial_capital, consider_tax,
     )
     print(f"    -> Final: ${bh_result['final_capital']:,.2f}", flush=True)
 
-    print(f"  [4/4] Running DCA (Monthly)...", flush=True)
+    print(f"  [8/8] Running DCA (Monthly)...", flush=True)
     dca_result = _simulate_dca(
         trading_dates, etf_prices, initial_capital, consider_tax,
         start_date, end_date,
@@ -771,7 +1713,12 @@ def run_etf_single_backtest(
         consider_tax=consider_tax,
         trading_dates=trading_dates,
         vxv_result=vxv_result,
-        mts_v2_result=mts_v2_result,  # Pass new MTS v2 strategy
+        mts_v2_result=mts_v2_result,
+        option_a_result=option_a_result,
+        option_c_result=option_c_result,
+        option_d_result=option_d_result,
+        based_sma200_result=based_sma200_result,
+        based_sma63_result=based_sma63_result,
         bh_result=bh_result,
         dca_result=dca_result,
         benchmark_data=benchmark_data,

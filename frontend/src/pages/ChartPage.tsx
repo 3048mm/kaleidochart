@@ -159,6 +159,7 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
     const [showTd9, setShowTd9] = useState(true);
     const [showBB, setShowBB] = useState(true);
     const [showRsDots, setShowRsDots] = useState(true);
+    const [showSma50Atr, setShowSma50Atr] = useState(false);
 
     const chartRef = useRef<IChartApi | null>(null);
     const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -169,6 +170,7 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
     const volSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
     const rsSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const compSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+    const sma50AtrSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
 
     const selected = useMemo(() => {
         const parsedTicker = ticker?.includes(':') ? ticker.split(':')[1] : ticker;
@@ -303,6 +305,7 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
             volSeriesRef.current = null;
             rsSeriesRef.current = null;
             compSeriesRef.current = null;
+            sma50AtrSeriesRef.current = null;
         };
     }, [selected, loading]);
 
@@ -489,6 +492,80 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
             chart.priceScale('left').applyOptions({ visible: false });
         }
 
+        // --- 50SMA/ATR% Line ---
+        let sma50AtrSeries = sma50AtrSeriesRef.current;
+        if (showSma50Atr) {
+            if (!sma50AtrSeries) {
+                sma50AtrSeries = chart.addLineSeries({
+                    color: '#FFD700', // ゴールド
+                    lineWidth: 1,
+                    title: '50SMA/ATR',
+                    priceScaleId: 'sma50_atr',
+                    crosshairMarkerVisible: true,
+                    lastValueVisible: false,
+                    priceLineVisible: false,
+                });
+                chart.priceScale('sma50_atr').applyOptions({
+                    scaleMargins: {
+                        top: 0.65,
+                        bottom: 0.18,
+                    },
+                    visible: false,
+                });
+                
+                // 0 line
+                sma50AtrSeries.createPriceLine({
+                    price: 0,
+                    color: 'rgba(255, 255, 255, 0.25)',
+                    lineWidth: 1,
+                    lineStyle: 2,
+                    axisLabelVisible: false,
+                });
+
+                // Yellow Caution line (+8, -8)
+                sma50AtrSeries.createPriceLine({
+                    price: appConfig.thresholds.atr_multiple_yellow,
+                    color: 'rgba(255, 255, 0, 0.15)',
+                    lineWidth: 1,
+                    lineStyle: 2,
+                    axisLabelVisible: false,
+                });
+                sma50AtrSeries.createPriceLine({
+                    price: -appConfig.thresholds.atr_multiple_yellow,
+                    color: 'rgba(255, 255, 0, 0.15)',
+                    lineWidth: 1,
+                    lineStyle: 2,
+                    axisLabelVisible: false,
+                });
+
+                // Red Danger line (+10, -10)
+                sma50AtrSeries.createPriceLine({
+                    price: appConfig.thresholds.atr_multiple_red,
+                    color: 'rgba(255, 0, 0, 0.2)',
+                    lineWidth: 1,
+                    lineStyle: 2,
+                    axisLabelVisible: false,
+                });
+                sma50AtrSeries.createPriceLine({
+                    price: -appConfig.thresholds.atr_multiple_red,
+                    color: 'rgba(255, 0, 0, 0.2)',
+                    lineWidth: 1,
+                    lineStyle: 2,
+                    axisLabelVisible: false,
+                });
+
+                sma50AtrSeriesRef.current = sma50AtrSeries;
+            }
+            sma50AtrSeries.applyOptions({ visible: true });
+            sma50AtrSeries.setData(data.filter(d => d.sma50_atr_mult != null).map(d => ({
+                time: d.time as any,
+                value: d.sma50_atr_mult as number,
+            })));
+        } else if (sma50AtrSeries) {
+            chart.removeSeries(sma50AtrSeries);
+            sma50AtrSeriesRef.current = null;
+        }
+
         // Set default visible range to last 6 months
         if (data.length > 0) {
             const lastDate = new Date(data[data.length - 1].time);
@@ -518,7 +595,7 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
         return () => chart.unsubscribeCrosshairMove(handleMove);
 
     }, [
-        data, compareData, showVolume, showTd9, showBB, showRsDots,
+        data, compareData, showVolume, showTd9, showBB, showRsDots, showSma50Atr,
         showSma21, showSma50, showSma63, showSma150, showSma200,
         showEma5, showEma21, showEma50, showEma63, showEma200
     ]);
@@ -899,6 +976,7 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
                                     <button className={`toggle-btn ${showTd9 ? 'active' : ''}`} onClick={() => setShowTd9(!showTd9)}>TD9</button>
                                     <button className={`toggle-btn ${showBB ? 'active' : ''}`} onClick={() => setShowBB(!showBB)}>BB</button>
                                     <button className={`toggle-btn ${showRsDots ? 'active' : ''}`} onClick={() => setShowRsDots(!showRsDots)}>RS.</button>
+                                    <button className={`toggle-btn ${showSma50Atr ? 'active' : ''}`} onClick={() => setShowSma50Atr(!showSma50Atr)}>50/ATR</button>
 
                                     <div style={{ borderLeft: '1px solid #333', margin: '0 10px', height: '24px', alignSelf: 'center' }}></div>
 
@@ -1073,6 +1151,7 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
                                 <button className={`toggle-btn ${showTd9 ? 'active' : ''}`} style={{ padding: '8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }} onClick={() => setShowTd9(!showTd9)}>TD9 シーケンシャル</button>
                                 <button className={`toggle-btn ${showBB ? 'active' : ''}`} style={{ padding: '8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }} onClick={() => setShowBB(!showBB)}>ボリンジャーバンド</button>
                                 <button className={`toggle-btn ${showRsDots ? 'active' : ''}`} style={{ padding: '8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }} onClick={() => setShowRsDots(!showRsDots)}>RSシグナルドット</button>
+                                <button className={`toggle-btn ${showSma50Atr ? 'active' : ''}`} style={{ padding: '8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer', gridColumn: 'span 2' }} onClick={() => setShowSma50Atr(!showSma50Atr)}>50SMA/ATR% 乖離</button>
                             </div>
                         </div>
 

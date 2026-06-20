@@ -64,7 +64,7 @@ class TestScenarioMarketTrendScorer(unittest.TestCase):
         
     def test_default_weights_calculation(self):
         """
-        Verify that calculated Trend Score (0-100) matches the MTS v2 equal-weighted formula.
+        Verify that calculated Trend Score (0-100) matches the MTS v3 equal-weighted formula.
         """
         scorer = MarketTrendScorer(
             self.prices_df, 
@@ -77,15 +77,16 @@ class TestScenarioMarketTrendScorer(unittest.TestCase):
         target_date = pd.Timestamp('2026-05-17').date()
         score, phase = scorer.evaluate_market_phase(target_date)
         
-        # Calculate manually:
+        # Calculate manually (MTS v3 equal-weighted score, Component D has weight 0.0):
         # Component A: VXV/VIX Score = (1.10 - 0.90) / (1.25 - 0.90) = 0.20 / 0.35 = 0.571428
         # Component B: Breadth Score = 0.60
-        # Component C: SPY distance = 0.50 (since close == sma_50 -> diff = 0.0%)
-        # Component D: Distribution Days = 1.0 (since days = 0 <= 5)
-        # Expected equal-weighted score: (0.571428 + 0.60 + 0.50 + 1.0) * 25.0 = 66.7857
+        # Component C1: SPY 50SMA/ATR distance = (0.0 - (-4.0)) / 12.0 = 0.333333
+        # Component C2: SPY 200SMA/ATR distance = (0.0 - (-4.0)) / 20.0 = 0.20
+        # Component D: Distribution Days = 1.0 (weight 0.0)
+        # Expected score: (0.571428 + 0.60 + 0.333333 + 0.20) * 25.0 = 42.6190
         
-        self.assertAlmostEqual(score, 66.7857, places=3)
-        self.assertEqual(phase, MarketPhase.BULL) # Score 66.79 >= 60.0
+        self.assertAlmostEqual(score, 42.6190, places=3)
+        self.assertEqual(phase, MarketPhase.NEUTRAL) # Score 42.62 is between 40.0 and 60.0
         
     def test_phase_boundaries(self):
         """
@@ -101,7 +102,7 @@ class TestScenarioMarketTrendScorer(unittest.TestCase):
         # vxv_vix_score = (0.9543 - 0.90) / 0.35 = 0.155
         # breadth = 0.1
         # SPY distance: close = 90.0, sma_50 = 100.0 -> diff = -10% -> clipped to 0.0
-        # Distribution days: let's assume 11 (we will inject) -> score = 0.0
+        # Distribution days: let's assume 11 (we will inject) -> score = 0.0 (weight 0.0)
         # Equal-weighted: (0.155 + 0.10 + 0.0 + 0.0) * 25.0 = 6.375% (BEAR)
         prices_bear = pd.DataFrame([
             {'symbol_id': 1, 'date': target_date, 'close': 90.0, 'sma_50': 100.0, 'volume': 1000000},
@@ -111,30 +112,22 @@ class TestScenarioMarketTrendScorer(unittest.TestCase):
         
         scorer_bear = MarketTrendScorer(prices_bear, self.symbols_df, daily_metrics=metrics_bear, use_vxv_vix=True)
         # Inject distribution days
-        scorer_bear._spy_mts_v2_metrics[target_date]['distribution_days'] = 11
+        scorer_bear._spy_mts_v3_metrics[target_date]['distribution_days'] = 11
         
         score, phase = scorer_bear.evaluate_market_phase(target_date)
         self.assertEqual(phase, MarketPhase.BEAR)
         
         # Case B: Force Neutral score
         # Let's target score around 50.0 (NEUTRAL)
-        # Component A: VXV/VIX = 1.075 -> score = (1.075-0.90)/0.35 = 0.50
-        # Component B: breadth = 0.50
-        # Component C: SPY distance = 0.0% -> score = 0.50
-        # Component D: distribution days = 5 -> score = 1.0
-        # Total = (0.5 + 0.5 + 0.5 + 1.0) * 25 = 62.5 (BULL) -> To make it neutral, we want total = 50.
-        # Let's adjust Component D to 8 -> score = 1.0 - (8-5)/5 = 0.40
-        # Let's adjust Component B to 0.40
-        # Component A = 0.50, B = 0.40, C = 0.50, D = 0.40 -> Total = (0.5+0.4+0.5+0.4)*25 = 45.0 (NEUTRAL)
         prices_neutral = pd.DataFrame([
             {'symbol_id': 1, 'date': target_date, 'close': 100.0, 'sma_50': 100.0, 'volume': 1000000},
             {'symbol_id': 2, 'date': target_date, 'close': 16.0, 'volume': 0},
             {'symbol_id': 3, 'date': target_date, 'close': 17.2, 'volume': 0} # 17.2/16 = 1.075 -> score = 0.50
         ])
-        metrics_neutral = {target_date: {'breadth_sma50': 0.40}}
+        metrics_neutral = {target_date: {'breadth_sma50': 0.60}}
         
         scorer_neutral = MarketTrendScorer(prices_neutral, self.symbols_df, daily_metrics=metrics_neutral, use_vxv_vix=True)
-        scorer_neutral._spy_mts_v2_metrics[target_date]['distribution_days'] = 8
+        scorer_neutral._spy_mts_v3_metrics[target_date]['distribution_days'] = 8
         
         score, phase = scorer_neutral.evaluate_market_phase(target_date)
         self.assertEqual(phase, MarketPhase.NEUTRAL)

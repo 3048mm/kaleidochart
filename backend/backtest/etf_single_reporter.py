@@ -143,7 +143,12 @@ class EtfSingleReporter:
         consider_tax: float,
         trading_dates: list,
         vxv_result: Dict[str, Any],
-        mts_v2_result: Dict[str, Any],  # Add parameter
+        mts_v2_result: Dict[str, Any],
+        option_a_result: Dict[str, Any],
+        option_c_result: Dict[str, Any],
+        option_d_result: Dict[str, Any],
+        based_sma200_result: Dict[str, Any],
+        based_sma63_result: Dict[str, Any],
         bh_result: Dict[str, Any],
         dca_result: Dict[str, Any],
         benchmark_data: Dict[str, Dict] = None,
@@ -176,7 +181,7 @@ class EtfSingleReporter:
             "time_in_market_pct": vxv_result.get("time_in_market_pct", 0.0),
         }
 
-        # MTS v2 Strategy
+        # MTS v2 Strategy (MTS v3_B actual)
         mts_eq = mts_v2_result["equity_curve"]
         strategies["mts_v2"] = {
             "final_capital": mts_v2_result["final_capital"],
@@ -190,6 +195,86 @@ class EtfSingleReporter:
             "yearly_returns": self.calculate_yearly_returns(mts_eq, "mts_v2_equity"),
             "rebalance_count": mts_v2_result.get("rebalance_count", 0),
             "time_in_market_pct": mts_v2_result.get("time_in_market_pct", 0.0),
+        }
+
+        # Option A Strategy
+        opt_a_eq = option_a_result["equity_curve"]
+        strategies["option_a"] = {
+            "final_capital": option_a_result["final_capital"],
+            "total_return_pct": round(
+                (option_a_result["final_capital"] / initial_capital - 1.0) * 100.0, 2
+            ),
+            "cagr": self.calculate_cagr(initial_capital, option_a_result["final_capital"], years),
+            "max_drawdown_pct": self.calculate_max_drawdown(opt_a_eq, "option_a_equity")["pct"],
+            "max_drawdown_date": self.calculate_max_drawdown(opt_a_eq, "option_a_equity").get("trough_date"),
+            "sharpe_ratio": self.calculate_sharpe_ratio(opt_a_eq, "option_a_equity"),
+            "yearly_returns": self.calculate_yearly_returns(opt_a_eq, "option_a_equity"),
+            "rebalance_count": option_a_result.get("rebalance_count", 0),
+            "time_in_market_pct": option_a_result.get("time_in_market_pct", 0.0),
+        }
+
+        # Option C Strict Strategy
+        opt_c_eq = option_c_result["equity_curve"]
+        strategies["option_c_strict"] = {
+            "final_capital": option_c_result["final_capital"],
+            "total_return_pct": round(
+                (option_c_result["final_capital"] / initial_capital - 1.0) * 100.0, 2
+            ),
+            "cagr": self.calculate_cagr(initial_capital, option_c_result["final_capital"], years),
+            "max_drawdown_pct": self.calculate_max_drawdown(opt_c_eq, "option_c_equity")["pct"],
+            "max_drawdown_date": self.calculate_max_drawdown(opt_c_eq, "option_c_equity").get("trough_date"),
+            "sharpe_ratio": self.calculate_sharpe_ratio(opt_c_eq, "option_c_equity"),
+            "yearly_returns": self.calculate_yearly_returns(opt_c_eq, "option_c_equity"),
+            "rebalance_count": option_c_result.get("rebalance_count", 0),
+            "time_in_market_pct": option_c_result.get("time_in_market_pct", 0.0),
+        }
+
+        # Option D Stage Strategy
+        opt_d_eq = option_d_result["equity_curve"]
+        strategies["option_d"] = {
+            "final_capital": option_d_result["final_capital"],
+            "total_return_pct": round(
+                (option_d_result["final_capital"] / initial_capital - 1.0) * 100.0, 2
+            ),
+            "cagr": self.calculate_cagr(initial_capital, option_d_result["final_capital"], years),
+            "max_drawdown_pct": self.calculate_max_drawdown(opt_d_eq, "option_d_equity")["pct"],
+            "max_drawdown_date": self.calculate_max_drawdown(opt_d_eq, "option_d_equity").get("trough_date"),
+            "sharpe_ratio": self.calculate_sharpe_ratio(opt_d_eq, "option_d_equity"),
+            "yearly_returns": self.calculate_yearly_returns(opt_d_eq, "option_d_equity"),
+            "rebalance_count": option_d_result.get("rebalance_count", 0),
+            "time_in_market_pct": option_d_result.get("time_in_market_pct", 0.0),
+        }
+
+        # Based ETF from SMA200 Strategy
+        based_eq = based_sma200_result["equity_curve"]
+        strategies["based_sma200"] = {
+            "final_capital": based_sma200_result["final_capital"],
+            "total_return_pct": round(
+                (based_sma200_result["final_capital"] / initial_capital - 1.0) * 100.0, 2
+            ),
+            "cagr": self.calculate_cagr(initial_capital, based_sma200_result["final_capital"], years),
+            "max_drawdown_pct": self.calculate_max_drawdown(based_eq, "based_sma200_equity")["pct"],
+            "max_drawdown_date": self.calculate_max_drawdown(based_eq, "based_sma200_equity").get("trough_date"),
+            "sharpe_ratio": self.calculate_sharpe_ratio(based_eq, "based_sma200_equity"),
+            "yearly_returns": self.calculate_yearly_returns(based_eq, "based_sma200_equity"),
+            "rebalance_count": based_sma200_result.get("rebalance_count", 0),
+            "time_in_market_pct": based_sma200_result.get("time_in_market_pct", 0.0),
+        }
+
+        # Based ETF from SMA63 Strategy
+        based_sma63_eq = based_sma63_result["equity_curve"]
+        strategies["based_sma63"] = {
+            "final_capital": based_sma63_result["final_capital"],
+            "total_return_pct": round(
+                (based_sma63_result["final_capital"] / initial_capital - 1.0) * 100.0, 2
+            ),
+            "cagr": self.calculate_cagr(initial_capital, based_sma63_result["final_capital"], years),
+            "max_drawdown_pct": self.calculate_max_drawdown(based_sma63_eq, "based_sma63_equity")["pct"],
+            "max_drawdown_date": self.calculate_max_drawdown(based_sma63_eq, "based_sma63_equity").get("trough_date"),
+            "sharpe_ratio": self.calculate_sharpe_ratio(based_sma63_eq, "based_sma63_equity"),
+            "yearly_returns": self.calculate_yearly_returns(based_sma63_eq, "based_sma63_equity"),
+            "rebalance_count": based_sma63_result.get("rebalance_count", 0),
+            "time_in_market_pct": based_sma63_result.get("time_in_market_pct", 0.0),
         }
 
         # Buy & Hold
@@ -232,7 +317,7 @@ class EtfSingleReporter:
 
         # Merge equity curves into a single timeline
         merged_equity = self._merge_equity_curves(
-            vxv_eq, mts_eq, bh_eq, dca_eq, benchmark_data, initial_capital
+            vxv_eq, mts_eq, opt_a_eq, opt_c_eq, opt_d_eq, based_eq, based_sma63_eq, bh_eq, dca_eq, benchmark_data, initial_capital
         )
 
         return {
@@ -240,10 +325,15 @@ class EtfSingleReporter:
             "equity_curve": merged_equity,
         }
 
-    @staticmethod
     def _merge_equity_curves(
+        self,
         vxv_eq: List[Dict],
-        mts_eq: List[Dict],  # Add parameter
+        mts_eq: List[Dict],
+        opt_a_eq: List[Dict],
+        opt_c_eq: List[Dict],
+        opt_d_eq: List[Dict],
+        based_eq: List[Dict],
+        based_sma63_eq: List[Dict],
         bh_eq: List[Dict],
         dca_eq: List[Dict],
         benchmark_data: Optional[Dict] = None,
@@ -253,6 +343,11 @@ class EtfSingleReporter:
 
         # Index by date
         mts_map = {_normalize_date(e.get("date")): e for e in mts_eq}
+        opt_a_map = {_normalize_date(e.get("date")): e for e in opt_a_eq}
+        opt_c_map = {_normalize_date(e.get("date")): e for e in opt_c_eq}
+        opt_d_map = {_normalize_date(e.get("date")): e for e in opt_d_eq}
+        based_map = {_normalize_date(e.get("date")): e for e in based_eq}
+        based_sma63_map = {_normalize_date(e.get("date")): e for e in based_sma63_eq}
         bh_map = {_normalize_date(e.get("date")): e.get("buyhold_equity", 0) for e in bh_eq}
         dca_map = {_normalize_date(e.get("date")): e.get("dca_equity", 0) for e in dca_eq}
 
@@ -272,22 +367,34 @@ class EtfSingleReporter:
             day_key = _normalize_date(day)
             
             mts_snap = mts_map.get(day_key, {})
+            opta_snap = opt_a_map.get(day_key, {})
+            optc_snap = opt_c_map.get(day_key, {})
+            optd_snap = opt_d_map.get(day_key, {})
+            based_snap = based_map.get(day_key, {})
+            based_sma63_snap = based_sma63_map.get(day_key, {})
 
             point = {
                 "date": _fmt_date(day),
                 "vxv_equity": snap.get("vxv_equity", 0),
                 "mts_v2_equity": mts_snap.get("mts_v2_equity", 0),
+                "option_a_equity": opta_snap.get("option_a_equity", 0),
+                "option_c_equity": optc_snap.get("option_c_equity", 0),
+                "option_d_equity": optd_snap.get("option_d_equity", 0),
+                "based_sma200_equity": based_snap.get("based_sma200_equity", 0),
+                "based_sma63_equity": based_sma63_snap.get("based_sma63_equity", 0),
                 "buyhold_equity": bh_map.get(day_key, 0),
                 "dca_equity": dca_map.get(day_key, 0),
                 "vxv_position_pct": snap.get("vxv_position_pct", 0),
                 "mts_v2_position_pct": mts_snap.get("mts_v2_position_pct", 0),
+                "option_a_position_pct": opta_snap.get("option_a_position_pct", 0),
+                "option_c_position_pct": optc_snap.get("option_c_position_pct", 0),
+                "option_d_position_pct": optd_snap.get("option_d_position_pct", 0),
+                "based_sma200_position_pct": based_snap.get("based_sma200_position_pct", 0),
+                "based_sma63_position_pct": based_sma63_snap.get("based_sma63_position_pct", 0),
                 "regime": snap.get("regime", ""),
                 "mts_score": mts_snap.get("mts_score"),
                 "mts_ema5": mts_snap.get("mts_ema5"),
             }
-
-            # Add VXV/VIX Ratio and EMA from regime history if available
-            # (These come from the regime_history list but we embed the daily values in equity_curve)
 
             # Add benchmark equities
             for bench_tick, bp in bench_maps.items():

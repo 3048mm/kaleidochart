@@ -900,6 +900,17 @@ def get_etf_single_equity(ticker: str):
                 mts_pos = row.get("mts_v2_position_pct")
                 mts_sc = row.get("mts_score")
                 mts_ema = row.get("mts_ema5")
+                opt_a_eq = row.get("option_a_equity")
+                opt_c_eq = row.get("option_c_equity")
+                opt_d_eq = row.get("option_d_equity")
+                opt_a_pos = row.get("option_a_position_pct")
+                opt_c_pos = row.get("option_c_position_pct")
+                opt_d_pos = row.get("option_d_position_pct")
+                based_eq = row.get("based_sma200_equity")
+                based_pos = row.get("based_sma200_position_pct")
+                based_sma63_eq = row.get("based_sma63_equity")
+                based_sma63_pos = row.get("based_sma63_position_pct")
+                
                 points.append(EtfSingleEquityPoint(
                     date=row.get("date", ""),
                     vxv_equity=float(row.get("vxv_equity", 0)),
@@ -911,6 +922,16 @@ def get_etf_single_equity(ticker: str):
                     mts_v2_position_pct=float(mts_pos) if mts_pos else None,
                     mts_score=float(mts_sc) if mts_sc else None,
                     mts_ema5=float(mts_ema) if mts_ema else None,
+                    option_a_equity=float(opt_a_eq) if opt_a_eq else None,
+                    option_c_equity=float(opt_c_eq) if opt_c_eq else None,
+                    option_d_equity=float(opt_d_eq) if opt_d_eq else None,
+                    option_a_position_pct=float(opt_a_pos) if opt_a_pos else None,
+                    option_c_position_pct=float(opt_c_pos) if opt_c_pos else None,
+                    option_d_position_pct=float(opt_d_pos) if opt_d_pos else None,
+                    based_sma200_equity=float(based_eq) if based_eq else None,
+                    based_sma200_position_pct=float(based_pos) if based_pos else None,
+                    based_sma63_equity=float(based_sma63_eq) if based_sma63_eq else None,
+                    based_sma63_position_pct=float(based_sma63_pos) if based_sma63_pos else None,
                 ))
         return points
     except Exception as e:

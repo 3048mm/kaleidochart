@@ -18,11 +18,12 @@ DIST_DAYS_MIN = 5
 DIST_DAYS_MAX = 10
 
 # 4. Component Weights (Must sum to 1.0)
-WEIGHT_VXV_VIX    = 0.20
-WEIGHT_BREADTH    = 0.20
-WEIGHT_EMA50_ATR  = 0.20
-WEIGHT_EMA200_ATR = 0.20
-WEIGHT_DIST_DAYS  = 0.20
+WEIGHT_VXV_VIX    = 0.25
+WEIGHT_BREADTH    = 0.25
+WEIGHT_EMA50_ATR  = 0.25
+WEIGHT_EMA200_ATR = 0.25
+WEIGHT_DIST_DAYS  = 0.00
+
 
 
 def calculate_market_signals(
@@ -33,11 +34,11 @@ def calculate_market_signals(
 ) -> pd.DataFrame:
     """
     Calculates market phase signals and numerical score (0-100) using MTS v3.
-    - Uses VXV/VIX ratio (0.90 to 1.25) [20%]
-    - Uses Market Breadth (50 SMA above ratio) [20%]
-    - Uses SPY Distance to 50 EMA / ATR (-4.0 to +4.0) [20%]
-    - Uses SPY Distance to 200 EMA / ATR (-4.0 to +10.0) [20%]
-    - Uses Distribution Days (step-down logic for days > 5) [20%]
+    - Uses VXV/VIX ratio (0.90 to 1.25) [25%]
+    - Uses Market Breadth (50 SMA above ratio) [25%]
+    - Uses SPY Distance to 50 EMA / ATR (-4.0 to +8.0) [25%]
+    - Uses SPY Distance to 200 EMA / ATR (-4.0 to +16.0) [25%]
+    - Distribution Days are calculated but excluded from the composite trend score.
     """
     if df_spy is None or df_spy.empty:
         return pd.DataFrame()
@@ -141,19 +142,26 @@ def calculate_market_signals(
     # Avoid zero division
     df['atr_14'] = np.where(df['atr_14'] > 0, df['atr_14'], 1.0)
 
-    # Calculate EMAs
-    df['ema_50'] = close.ewm(span=50, adjust=False).mean()
-    df['ema_200'] = close.ewm(span=200, adjust=False).mean()
+    # Calculate ATR% (14-day) to match the standard indicator formula
+    df['atr_pct_14'] = np.where(close == 0, 0, (df['atr_14'] / close) * 100)
 
-    # Component C1: SPY 50EMA / ATR Distance Score (-4.0 to +4.0)
-    dist_50ema = (close - df['ema_50']) / df['atr_14']
-    score_50ema_atr = (dist_50ema - EMA50_ATR_MIN) / (EMA50_ATR_MAX - EMA50_ATR_MIN)
-    score_50ema_atr = score_50ema_atr.clip(0.0, 1.0)
+    # Component C1: SPY 50SMA / ATR Distance Score (-4.0 to +8.0)
+    # Using SMA50 to match the standard volatility.py sma50_atr_mult formula
+    dist_50sma = np.where(
+        df['atr_pct_14'] == 0, 0,
+        ((close / df['sma_50'] * 100) - 100) / df['atr_pct_14']
+    )
+    score_50sma_atr = (dist_50sma - EMA50_ATR_MIN) / (EMA50_ATR_MAX - EMA50_ATR_MIN)
+    score_50sma_atr = np.clip(score_50sma_atr, 0.0, 1.0)
 
-    # Component C2: SPY 200EMA / ATR Distance Score (-4.0 to +10.0)
-    dist_200ema = (close - df['ema_200']) / df['atr_14']
-    score_200ema_atr = (dist_200ema - EMA200_ATR_MIN) / (EMA200_ATR_MAX - EMA200_ATR_MIN)
-    score_200ema_atr = score_200ema_atr.clip(0.0, 1.0)
+    # Component C2: SPY 200SMA / ATR Distance Score (-4.0 to +16.0)
+    # Using SMA200 to match the standard volatility.py sma200_atr_mult formula logic
+    dist_200sma = np.where(
+        df['atr_pct_14'] == 0, 0,
+        ((close / df['sma_200'] * 100) - 100) / df['atr_pct_14']
+    )
+    score_200sma_atr = (dist_200sma - EMA200_ATR_MIN) / (EMA200_ATR_MAX - EMA200_ATR_MIN)
+    score_200sma_atr = np.clip(score_200sma_atr, 0.0, 1.0)
     
     # Component D: Distribution Days Score (<=5 days = 1.0, >=10 days = 0.0, step-down in between)
     dist_days = df['distribution_days']
@@ -171,12 +179,12 @@ def calculate_market_signals(
     raw_score = (
         vxv_vix_score * WEIGHT_VXV_VIX +
         breadth_score * WEIGHT_BREADTH +
-        score_50ema_atr * WEIGHT_EMA50_ATR +
-        score_200ema_atr * WEIGHT_EMA200_ATR +
+        score_50sma_atr * WEIGHT_EMA50_ATR +
+        score_200sma_atr * WEIGHT_EMA200_ATR +
         dist_score * WEIGHT_DIST_DAYS
     ) * 100.0
     
-    df['market_trend_score'] = raw_score.clip(0.0, 100.0)
+    df['market_trend_score'] = np.clip(raw_score, 0.0, 100.0)
 
     return df[['date', 'spy_above_sma200', 'spy_sma200_rising',
                 'distribution_days', 'is_distribution_day', 'follow_through_day', 'market_phase', 'market_trend_score', 'vxv_vix_ratio']]

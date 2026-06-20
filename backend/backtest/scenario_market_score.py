@@ -66,26 +66,30 @@ class MarketTrendScorer:
             vxv_data = prices_df[prices_df['symbol_id'] == self.vxv_id]
             self._vxv_by_date = {row['date']: row for _, row in vxv_data.iterrows()}
 
-        # Pre-calculate SPY specific metrics for MTS v3 (Distribution Days, 50EMA/ATR, 200EMA/ATR)
+        # Pre-calculate SPY specific metrics for MTS v3 (Distribution Days, 50SMA/ATR, 200SMA/ATR)
         self._spy_mts_v3_metrics = {}
         if self.spy_id is not None and not prices_df.empty:
             spy_data = prices_df[prices_df['symbol_id'] == self.spy_id].copy()
             spy_data = spy_data.sort_values('date').reset_index(drop=True)
             
-            # Ensure atr_14 and EMAs are computed
+            # Ensure atr_14 and SMAs are computed
             if 'atr_14' not in spy_data.columns:
-                high = spy_data['high']
-                low = spy_data['low']
-                close_prev = spy_data['close'].shift(1)
-                tr = pd.concat([
-                    high - low,
-                    (high - close_prev).abs(),
-                    (low - close_prev).abs()
-                ], axis=1).max(axis=1)
-                spy_data['atr_14'] = tr.rolling(14, min_periods=1).mean().ffill().fillna(1.0)
+                if 'high' in spy_data.columns and 'low' in spy_data.columns:
+                    high = spy_data['high']
+                    low = spy_data['low']
+                    close_prev = spy_data['close'].shift(1)
+                    tr = pd.concat([
+                        high - low,
+                        (high - close_prev).abs(),
+                        (low - close_prev).abs()
+                    ], axis=1).max(axis=1)
+                    spy_data['atr_14'] = tr.rolling(14, min_periods=1).mean().ffill().fillna(1.0)
+                else:
+                    spy_data['atr_14'] = 1.0
                 
-            spy_data['ema_50'] = spy_data['close'].ewm(span=50, adjust=False).mean()
-            spy_data['ema_200'] = spy_data['close'].ewm(span=200, adjust=False).mean()
+            spy_data['sma_50'] = spy_data['close'].rolling(50, min_periods=1).mean()
+            spy_data['sma_200'] = spy_data['close'].rolling(200, min_periods=1).mean()
+            spy_data['atr_pct_14'] = np.where(spy_data['close'] == 0, 0.0, (spy_data['atr_14'] / spy_data['close']) * 100)
             
             # Calculate distribution days
             close = spy_data['close']
@@ -99,18 +103,18 @@ class MarketTrendScorer:
             for _, row in spy_data.iterrows():
                 dt = row['date']
                 close_val = row['close']
-                ema50 = row['ema_50']
-                ema200 = row['ema_200']
-                atr = row['atr_14'] if row['atr_14'] > 0 else 1.0
+                sma50 = row['sma_50']
+                sma200 = row['sma_200']
+                atr_pct = row['atr_pct_14'] if row['atr_pct_14'] > 0 else 1.0
                 dist_days = row['distribution_days']
                 
-                # ATR distances
-                dist_50ema_atr = (close_val - ema50) / atr
-                dist_200ema_atr = (close_val - ema200) / atr
+                # ATR distances (SMA %-based)
+                dist_50sma_atr = ((close_val / sma50 * 100) - 100) / atr_pct if sma50 > 0 else 0.0
+                dist_200sma_atr = ((close_val / sma200 * 100) - 100) / atr_pct if sma200 > 0 else 0.0
                 
                 self._spy_mts_v3_metrics[dt] = {
-                    'dist_50ema_atr': dist_50ema_atr,
-                    'dist_200ema_atr': dist_200ema_atr,
+                    'dist_50sma_atr': dist_50sma_atr,
+                    'dist_200sma_atr': dist_200sma_atr,
                     'distribution_days': dist_days
                 }
 
@@ -163,15 +167,15 @@ class MarketTrendScorer:
 
         spy_mts_data = self._spy_mts_v3_metrics.get(target_date, {})
 
-        # Component C1: SPY 50EMA / ATR Distance Score (-4.0 to +8.0)
-        dist_50ema = spy_mts_data.get('dist_50ema_atr', 0.0)
-        score_50ema_atr = (dist_50ema - (-4.0)) / (8.0 - (-4.0))
-        score_50ema_atr = max(0.0, min(1.0, score_50ema_atr))
+        # Component C1: SPY 50SMA / ATR Distance Score (-4.0 to +8.0)
+        dist_50sma = spy_mts_data.get('dist_50sma_atr', 0.0)
+        score_50sma_atr = (dist_50sma - (-4.0)) / (8.0 - (-4.0))
+        score_50sma_atr = max(0.0, min(1.0, score_50sma_atr))
 
-        # Component C2: SPY 200EMA / ATR Distance Score (-4.0 to +16.0)
-        dist_200ema = spy_mts_data.get('dist_200ema_atr', 0.0)
-        score_200ema_atr = (dist_200ema - (-4.0)) / (16.0 - (-4.0))
-        score_200ema_atr = max(0.0, min(1.0, score_200ema_atr))
+        # Component C2: SPY 200SMA / ATR Distance Score (-4.0 to +16.0)
+        dist_200sma = spy_mts_data.get('dist_200sma_atr', 0.0)
+        score_200sma_atr = (dist_200sma - (-4.0)) / (16.0 - (-4.0))
+        score_200sma_atr = max(0.0, min(1.0, score_200sma_atr))
 
         # Component D: Distribution Days Score (<=5 days = 1.0, >=10 days = 0.0)
         dist_days = spy_mts_data.get('distribution_days', 0)
@@ -183,18 +187,18 @@ class MarketTrendScorer:
             dist_score = 1.0 - (dist_days - 5) / (10 - 5)
             dist_score = max(0.0, min(1.0, dist_score))
 
-        # Weight and aggregate score (5-component equal weighted: 20% each)
-        w_vxv = 0.20
-        w_brd = 0.20
-        w_c50 = 0.20
-        w_c200 = 0.20
-        w_dst = 0.20
+        # Weight and aggregate score (4-component equal weighted: 25% each, DD is 0%)
+        w_vxv = 0.25
+        w_brd = 0.25
+        w_c50 = 0.25
+        w_c200 = 0.25
+        w_dst = 0.00
         
         final_score = (
             vxv_vix_score * w_vxv +
             breadth_score * w_brd +
-            score_50ema_atr * w_c50 +
-            score_200ema_atr * w_c200 +
+            score_50sma_atr * w_c50 +
+            score_200sma_atr * w_c200 +
             dist_score * w_dst
         ) * 100.0
         
