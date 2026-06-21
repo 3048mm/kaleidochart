@@ -613,16 +613,10 @@ class EtfSingleEquityPoint(BaseModel):
     dca_equity: float
     vxv_position_pct: float
     regime: str
-    mts_v2_equity: Optional[float] = None
-    mts_v2_position_pct: Optional[float] = None
+    mts_v3_raw_equity: Optional[float] = None
+    mts_v3_raw_position_pct: Optional[float] = None
     mts_score: Optional[float] = None
     mts_ema5: Optional[float] = None
-    option_a_equity: Optional[float] = None
-    option_c_equity: Optional[float] = None
-    option_d_equity: Optional[float] = None
-    option_a_position_pct: Optional[float] = None
-    option_c_position_pct: Optional[float] = None
-    option_d_position_pct: Optional[float] = None
     based_sma200_equity: Optional[float] = None
     based_sma200_position_pct: Optional[float] = None
     based_sma63_equity: Optional[float] = None

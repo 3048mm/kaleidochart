@@ -73,8 +73,8 @@ def run_production_restore():
         logger.error(f"Failed to initialize database: {e}")
         return False
         
-    # 4. Import the latest 2 years from Parquet Master
-    logger.info("3. Bulk-importing the latest 2-years of historical cache from Parquet masters...")
+    # 4. Import the historical cache from Parquet Master
+    logger.info("3. Bulk-importing the historical cache from Parquet masters...")
     try:
         # Re-import db module to get fresh sessionlocal
         import backend.db.database as db_module
@@ -106,7 +106,7 @@ def run_production_restore():
         logger.warning(f"  Failed to restore pipeline metadata: {me}")
         
     logger.info("\n🎉 PRODUCTION DATABASE MIGRATION & RESTORE COMPLETED SUCCESSFULLY!")
-    logger.info(f"  Bloated DB (4.7 GB) has been successfully cap-shrunk into lightweight 2-year cache!")
+    logger.info(f"  Bloated DB (4.7 GB) has been successfully rebuilt into optimized historical cache!")
     return True
 
 if __name__ == "__main__":

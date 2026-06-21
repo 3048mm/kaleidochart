@@ -430,10 +430,7 @@ class TestEtfSingleReporter:
         vxv_eq = [{"date": d, "vxv_equity": 10000.0 + i * 10, "regime": "BULL",
                     "vxv_position_pct": 100.0, "vxv_cash": 0.0, "vxv_invested": 10000.0 + i * 10,
                     "vxv_shares": 100} for i, d in enumerate(dates)]
-        mts_eq = [{"date": d, "mts_v2_equity": 10000.0 + i * 10, "mts_v2_position_pct": 100.0, "mts_score": 50, "mts_ema5": 50} for i, d in enumerate(dates)]
-        opta_eq = [{"date": d, "option_a_equity": 10000.0 + i * 10, "option_a_position_pct": 100.0} for i, d in enumerate(dates)]
-        optc_eq = [{"date": d, "option_c_equity": 10000.0 + i * 10, "option_c_position_pct": 100.0} for i, d in enumerate(dates)]
-        optd_eq = [{"date": d, "option_d_equity": 10000.0 + i * 10, "option_d_position_pct": 100.0} for i, d in enumerate(dates)]
+        mts_eq = [{"date": d, "mts_v3_raw_equity": 10000.0 + i * 10, "mts_v3_raw_position_pct": 100.0, "mts_score": 50, "mts_ema5": 50} for i, d in enumerate(dates)]
         based_eq = [{"date": d, "based_sma200_equity": 10000.0 + i * 10, "based_sma200_position_pct": 100.0} for i, d in enumerate(dates)]
 
         bh_eq = [{"date": d, "buyhold_equity": 10000.0 + i * 10} for i, d in enumerate(dates)]
@@ -445,10 +442,7 @@ class TestEtfSingleReporter:
             "regime_changes": 2, "rebalance_count": 2,
             "time_in_market_pct": 95.0, "trade_log": [], "regime_history": [],
         }
-        mts_v2_result = {"final_capital": 10290.0, "equity_curve": mts_eq, "rebalance_count": 2}
-        option_a_result = {"final_capital": 10290.0, "equity_curve": opta_eq, "rebalance_count": 2}
-        option_c_result = {"final_capital": 10290.0, "equity_curve": optc_eq, "rebalance_count": 2}
-        option_d_result = {"final_capital": 10290.0, "equity_curve": optd_eq, "rebalance_count": 2}
+        mts_v3_raw_result = {"final_capital": 10290.0, "equity_curve": mts_eq, "rebalance_count": 2}
         based_sma200_result = {"final_capital": 10290.0, "equity_curve": based_eq, "rebalance_count": 2}
         based_sma63_result = {"final_capital": 10290.0, "equity_curve": based63_eq, "rebalance_count": 2}
 
@@ -460,10 +454,7 @@ class TestEtfSingleReporter:
             initial_capital=10000.0, consider_tax=0.0,
             trading_dates=dates,
             vxv_result=vxv_result,
-            mts_v2_result=mts_v2_result,
-            option_a_result=option_a_result,
-            option_c_result=option_c_result,
-            option_d_result=option_d_result,
+            mts_v3_raw_result=mts_v3_raw_result,
             based_sma200_result=based_sma200_result,
             based_sma63_result=based_sma63_result,
             bh_result=bh_result,
@@ -476,10 +467,7 @@ class TestEtfSingleReporter:
         summary = report["summary"]
         assert "strategies" in summary
         assert "vxv_vix_ema" in summary["strategies"]
-        assert "mts_v2" in summary["strategies"]
-        assert "option_a" in summary["strategies"]
-        assert "option_c_strict" in summary["strategies"]
-        assert "option_d" in summary["strategies"]
+        assert "mts_v3_raw" in summary["strategies"]
         assert "based_sma200" in summary["strategies"]
         assert "based_sma63" in summary["strategies"]
         assert "buy_and_hold" in summary["strategies"]

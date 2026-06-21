@@ -4,7 +4,7 @@ import numpy as np
 # --- Tuning Parameters for MTS v3 ---
 # 1. VXV/VIX Ratio bounds (Low = panic/0.0, High = overheat/1.0)
 VXV_VIX_MIN = 0.90
-VXV_VIX_MAX = 1.25
+VXV_VIX_MAX = 1.20
 
 # 2. EMA/ATR deviation bounds
 EMA50_ATR_MIN = -4.0
@@ -13,16 +13,15 @@ EMA50_ATR_MAX = 8.0
 EMA200_ATR_MIN = -4.0
 EMA200_ATR_MAX = 16.0
 
-# 3. Distribution Days bounds (<= 5 days = 1.0, >= 10 days = 0.0, step-down in between)
-DIST_DAYS_MIN = 5
-DIST_DAYS_MAX = 10
+# 3. Market Breadth bounds (Low = oversold/0.0, High = overbought/1.0)
+BREADTH_MIN = 0.20
+BREADTH_MAX = 0.75
 
 # 4. Component Weights (Must sum to 1.0)
 WEIGHT_VXV_VIX    = 0.25
 WEIGHT_BREADTH    = 0.25
 WEIGHT_EMA50_ATR  = 0.25
 WEIGHT_EMA200_ATR = 0.25
-WEIGHT_DIST_DAYS  = 0.00
 
 
 
@@ -109,20 +108,23 @@ def calculate_market_signals(
     # 6. Integrate Breadth and Momentum
     if df_metrics is not None and not df_metrics.empty:
         df = pd.merge(df, df_metrics, on='date', how='left')
+        has_breadth = (df['date'] >= '2018-04-01')
         df['breadth_sma50'] = df['breadth_sma50'].fillna(0.5)
         df['momentum_ratio'] = df['momentum_ratio'].fillna(0.5)
     else:
         df['breadth_sma50'] = 0.5
         df['momentum_ratio'] = 0.5
+        has_breadth = pd.Series(False, index=df.index)
 
     # 7. Calculate individual component scores (0.0 to 1.0)
     
-    # Component A: VXV/VIX Score (0.90 to 1.25)
+    # Component A: VXV/VIX Score
     vxv_vix_score = (df['vxv_vix_ratio'] - VXV_VIX_MIN) / (VXV_VIX_MAX - VXV_VIX_MIN)
     vxv_vix_score = vxv_vix_score.clip(0.0, 1.0)
     
     # Component B: Market Breadth Score
-    breadth_score = df['breadth_sma50'].clip(0.0, 1.0)
+    breadth_score = (df['breadth_sma50'] - BREADTH_MIN) / (BREADTH_MAX - BREADTH_MIN)
+    breadth_score = breadth_score.clip(0.0, 1.0)
     
     # Calculate ATR 14
     if 'high' in df.columns and 'low' in df.columns:
@@ -163,27 +165,21 @@ def calculate_market_signals(
     score_200sma_atr = (dist_200sma - EMA200_ATR_MIN) / (EMA200_ATR_MAX - EMA200_ATR_MIN)
     score_200sma_atr = np.clip(score_200sma_atr, 0.0, 1.0)
     
-    # Component D: Distribution Days Score (<=5 days = 1.0, >=10 days = 0.0, step-down in between)
-    dist_days = df['distribution_days']
-    dist_score = np.where(
-        dist_days <= DIST_DAYS_MIN,
-        1.0,
-        np.where(
-            dist_days >= DIST_DAYS_MAX,
-            0.0,
-            1.0 - (dist_days - DIST_DAYS_MIN) / (DIST_DAYS_MAX - DIST_DAYS_MIN)
-        )
-    )
-    
     # 8. Weight and aggregate score (0 to 100)
-    raw_score = (
-        vxv_vix_score * WEIGHT_VXV_VIX +
-        breadth_score * WEIGHT_BREADTH +
-        score_50sma_atr * WEIGHT_EMA50_ATR +
-        score_200sma_atr * WEIGHT_EMA200_ATR +
-        dist_score * WEIGHT_DIST_DAYS
+    score_4comp = (
+        vxv_vix_score * 0.25 +
+        breadth_score * 0.25 +
+        score_50sma_atr * 0.25 +
+        score_200sma_atr * 0.25
     ) * 100.0
     
+    score_3comp = (
+        vxv_vix_score * (1.0/3.0) +
+        score_50sma_atr * (1.0/3.0) +
+        score_200sma_atr * (1.0/3.0)
+    ) * 100.0
+
+    raw_score = np.where(has_breadth, score_4comp, score_3comp)
     df['market_trend_score'] = np.clip(raw_score, 0.0, 100.0)
 
     return df[['date', 'spy_above_sma200', 'spy_sma200_rising',

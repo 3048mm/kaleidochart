@@ -78,15 +78,14 @@ class TestScenarioMarketTrendScorer(unittest.TestCase):
         score, phase = scorer.evaluate_market_phase(target_date)
         
         # Calculate manually (MTS v3 equal-weighted score, Component D has weight 0.0):
-        # Component A: VXV/VIX Score = (1.10 - 0.90) / (1.25 - 0.90) = 0.20 / 0.35 = 0.571428
-        # Component B: Breadth Score = 0.60
+        # Component A: VXV/VIX Score = (1.10 - 0.90) / (1.20 - 0.90) = 0.20 / 0.30 = 0.666667
+        # Component B: Breadth Score = (0.60 - 0.20) / (0.75 - 0.20) = 0.40 / 0.55 = 0.727273
         # Component C1: SPY 50SMA/ATR distance = (0.0 - (-4.0)) / 12.0 = 0.333333
         # Component C2: SPY 200SMA/ATR distance = (0.0 - (-4.0)) / 20.0 = 0.20
-        # Component D: Distribution Days = 1.0 (weight 0.0)
-        # Expected score: (0.571428 + 0.60 + 0.333333 + 0.20) * 25.0 = 42.6190
+        # Expected score: (0.666667 + 0.727273 + 0.333333 + 0.20) * 25.0 = 48.1818
         
-        self.assertAlmostEqual(score, 42.6190, places=3)
-        self.assertEqual(phase, MarketPhase.NEUTRAL) # Score 42.62 is between 40.0 and 60.0
+        self.assertAlmostEqual(score, 48.1818, places=3)
+        self.assertEqual(phase, MarketPhase.NEUTRAL) # Score 48.18 is between 40.0 and 60.0
         
     def test_phase_boundaries(self):
         """

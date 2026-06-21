@@ -215,7 +215,17 @@ def purge_sqlite_cache_older_than_2_years(db, db_path: str, logger: logging.Logg
         return
         
     max_date = pd.to_datetime(max_date_str).date()
-    cutoff_date = max_date - timedelta(days=730)
+    try:
+        import tomli
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        config_path = os.path.join(project_root, "config.toml")
+        with open(config_path, "rb") as f:
+            config = tomli.load(f)
+        default_start_date = config.get("data_collection", {}).get("default_start_date", "2018-04-01")
+        cutoff_date = pd.to_datetime(default_start_date).date()
+    except Exception as e:
+        logger.warning(f"Failed to load config.toml in purge_sqlite_cache_older_than_2_years, using default 2018-04-01: {e}")
+        cutoff_date = pd.to_datetime("2018-04-01").date()
     cutoff_str = cutoff_date.isoformat()
     
     logger.info(f"  Latest date in SQLite: {max_date_str}")
@@ -290,7 +300,17 @@ def restore_sqlite_cache_from_parquet(db, db_path: str, logger: logging.Logger):
     else:
         max_date = max_date_val
         
-    cutoff_date = max_date - timedelta(days=730)
+    try:
+        import tomli
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        config_path = os.path.join(project_root, "config.toml")
+        with open(config_path, "rb") as f:
+            config = tomli.load(f)
+        default_start_date = config.get("data_collection", {}).get("default_start_date", "2018-04-01")
+        cutoff_date = pd.to_datetime(default_start_date).date()
+    except Exception as e:
+        logger.warning(f"Failed to load config.toml in restore_sqlite_cache_from_parquet, using default 2018-04-01: {e}")
+        cutoff_date = pd.to_datetime("2018-04-01").date()
     cutoff_str = cutoff_date.isoformat()
     
     logger.info(f"    Parquet Master Latest Date: {max_date.isoformat()}")
@@ -301,14 +321,14 @@ def restore_sqlite_cache_from_parquet(db, db_path: str, logger: logging.Logger):
     df_symbols = pd.read_parquet(latest_files['symbols'])
     df_tc = pd.read_parquet(latest_files['tc'])
     
-    # Load historical transaction tables, filtered by date to keep only 2 years in hot db cache
-    logger.info("    Loading daily prices (last 2 years)...")
+    # Load historical transaction tables, filtered by date to restore historical data
+    logger.info("    Loading daily prices...")
     df_prices_cached = pd.read_parquet(latest_files['prices'], filters=[('date', '>=', cutoff_str)])
     
-    logger.info("    Loading indicators (last 2 years)...")
+    logger.info("    Loading indicators...")
     df_indicators_cached = pd.read_parquet(latest_files['indicators'], filters=[('date', '>=', cutoff_str)])
     
-    logger.info("    Loading ranks (last 2 years)...")
+    logger.info("    Loading ranks...")
     df_ranks_cached = pd.read_parquet(latest_files['ranks'], filters=[('date', '>=', cutoff_str)])
     
     logger.info(f"  3. Bulk-importing records to SQLite...")

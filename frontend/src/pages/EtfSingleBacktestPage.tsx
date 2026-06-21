@@ -25,14 +25,11 @@ import {
 
 const COLORS = {
   vxv: '#22d3a0',       // Green — VXV Strategy
-  mts: '#a855f7',       // Purple — MTS Strategy
+  mts: '#a855f7',       // Purple — MTS Strategy (MTS raw)
   buyhold: '#3b82f6',   // Blue — Buy & Hold
   dca: '#f59e0b',       // Amber — DCA
   based_sma200: '#38bdf8', // Sky Blue — Based ETF from SMA200
   based_sma63: '#818cf8',  // Indigo — Based ETF from SMA63
-  option_a: '#ec4899',  // Pink — Option A (Perfect Order)
-  option_c: '#ef4444',  // Red — Option C (Strict Zero)
-  option_d: '#06b6d4',  // Cyan — Option D
   regime_bull: 'rgba(34, 211, 160, 0.08)',
   regime_bear: 'rgba(244, 63, 94, 0.08)',
   regime_bottom: 'rgba(168, 85, 247, 0.08)',
@@ -46,7 +43,7 @@ const REGIME_BADGE: Record<string, { bg: string; color: string; label: string }>
   OVERHEAT: { bg: 'rgba(245, 158, 11, 0.15)', color: '#f59e0b', label: '🟡 Overheat' },
 };
 
-const AVAILABLE_TICKERS = ['SPY', 'QQQ', 'TQQQ', 'SOXL', 'UGL'];
+const AVAILABLE_TICKERS = ['SPY', 'UPRO', 'QQQ', 'TQQQ', 'SOXX', 'SOXL', 'UGL'];
 
 // ============================================================
 // Formatter Utils
@@ -156,11 +153,8 @@ export const EtfSingleBacktestPage: React.FC<{ hideHeader?: boolean }> = ({ hide
   // Chart toggles
   const [showVxv, setShowVxv] = useState(true);
   const [showMts, setShowMts] = useState(true);
-  const [showOptionA, setShowOptionA] = useState(false);
-  const [showOptionC, setShowOptionC] = useState(false);
-  const [showOptionD, setShowOptionD] = useState(true);
   const [showBasedSma200, setShowBasedSma200] = useState(true);
-  const [showBasedSma63, setShowBasedSma63] = useState(false);
+  const [showBasedSma63, setShowBasedSma63] = useState(true);
   const [showBuyHold, setShowBuyHold] = useState(true);
   const [showDca, setShowDca] = useState(true);
 
@@ -193,10 +187,7 @@ export const EtfSingleBacktestPage: React.FC<{ hideHeader?: boolean }> = ({ hide
   const yearlyData = useMemo(() => {
     if (!summary) return [];
     const vxvYears = summary.strategies.vxv_vix_ema?.yearly_returns || {};
-    const mtsYears = summary.strategies.mts_v2?.yearly_returns || {};
-    const optAYears = summary.strategies.option_a?.yearly_returns || {};
-    const optCYears = summary.strategies.option_c_strict?.yearly_returns || {};
-    const optDYears = summary.strategies.option_d?.yearly_returns || {};
+    const mtsYears = summary.strategies.mts_v3_raw?.yearly_returns || {};
     const basedYears = summary.strategies.based_sma200?.yearly_returns || {};
     const based63Years = summary.strategies.based_sma63?.yearly_returns || {};
     const bhYears = summary.strategies.buy_and_hold?.yearly_returns || {};
@@ -204,9 +195,6 @@ export const EtfSingleBacktestPage: React.FC<{ hideHeader?: boolean }> = ({ hide
     const allYears = [...new Set([
       ...Object.keys(vxvYears),
       ...Object.keys(mtsYears),
-      ...Object.keys(optAYears),
-      ...Object.keys(optCYears),
-      ...Object.keys(optDYears),
       ...Object.keys(basedYears),
       ...Object.keys(based63Years),
       ...Object.keys(bhYears),
@@ -216,16 +204,13 @@ export const EtfSingleBacktestPage: React.FC<{ hideHeader?: boolean }> = ({ hide
     return allYears.map(year => {
       const vxv = vxvYears[year] ?? null;
       const mts = mtsYears[year] ?? null;
-      const optA = optAYears[year] ?? null;
-      const optC = optCYears[year] ?? null;
-      const optD = optDYears[year] ?? null;
       const based = basedYears[year] ?? null;
       const based63 = based63Years[year] ?? null;
       const bh = bhYears[year] ?? null;
       const dca = dcaYears[year] ?? null;
-      const vals = [vxv, mts, optA, optC, optD, based, based63, bh, dca].filter(v => v !== null) as number[];
+      const vals = [vxv, mts, based, based63, bh, dca].filter(v => v !== null) as number[];
       const best = vals.length > 0 ? Math.max(...vals) : null;
-      return { year, vxv, mts, optA, optC, optD, based, based63, bh, dca, best };
+      return { year, vxv, mts, based, based63, bh, dca, best };
     });
   }, [summary]);
 
@@ -334,14 +319,11 @@ export const EtfSingleBacktestPage: React.FC<{ hideHeader?: boolean }> = ({ hide
             {(() => {
               const strategyConfigs = [
                 { key: 'buy_and_hold' as const, label: 'Buy & Hold', color: COLORS.buyhold },
-                { key: 'dca' as const, label: 'DCA (Monthly)', color: COLORS.dca },
-                ...(summary.strategies.based_sma200 ? [{ key: 'based_sma200' as const, label: 'Based ETF from SMA200', color: COLORS.based_sma200 }] : []),
-                ...(summary.strategies.based_sma63 ? [{ key: 'based_sma63' as const, label: 'Based ETF from SMA63', color: COLORS.based_sma63 }] : []),
-                { key: 'vxv_vix_ema' as const, label: 'VXV ratio', color: COLORS.vxv },
-                ...(summary.strategies.mts_v2 ? [{ key: 'mts_v2' as const, label: 'MTS v2', color: COLORS.mts }] : []),
-                ...(summary.strategies.option_d ? [{ key: 'option_d' as const, label: 'MTS v3 (Option D)', color: COLORS.option_d }] : []),
-                ...(summary.strategies.option_a ? [{ key: 'option_a' as const, label: 'Option A (Perfect)', color: COLORS.option_a }] : []),
-                ...(summary.strategies.option_c_strict ? [{ key: 'option_c_strict' as const, label: 'Option C (Strict)', color: COLORS.option_c }] : []),
+                { key: 'dca' as const, label: 'DCA', color: COLORS.dca },
+                ...(summary.strategies.based_sma200 ? [{ key: 'based_sma200' as const, label: 'ETF from SMA200', color: COLORS.based_sma200 }] : []),
+                ...(summary.strategies.based_sma63 ? [{ key: 'based_sma63' as const, label: 'ETF from SMA63', color: COLORS.based_sma63 }] : []),
+                { key: 'vxv_vix_ema' as const, label: 'VXV ratio ema', color: COLORS.vxv },
+                ...(summary.strategies.mts_v3_raw ? [{ key: 'mts_v3_raw' as const, label: 'MTS raw', color: COLORS.mts }] : []),
               ];
               const bestCagr = Math.max(...strategyConfigs.map(s => summary.strategies[s.key]?.cagr || 0));
               return strategyConfigs.map(s => {
@@ -367,11 +349,8 @@ export const EtfSingleBacktestPage: React.FC<{ hideHeader?: boolean }> = ({ hide
                 { label: 'DCA', show: showDca, set: setShowDca, color: COLORS.dca },
                 ...(summary.strategies.based_sma200 ? [{ label: 'Based SMA200', show: showBasedSma200, set: setShowBasedSma200, color: COLORS.based_sma200 }] : []),
                 ...(summary.strategies.based_sma63 ? [{ label: 'Based SMA63', show: showBasedSma63, set: setShowBasedSma63, color: COLORS.based_sma63 }] : []),
-                { label: 'VXV', show: showVxv, set: setShowVxv, color: COLORS.vxv },
-                ...(summary.strategies.mts_v2 ? [{ label: 'MTS', show: showMts, set: setShowMts, color: COLORS.mts }] : []),
-                ...(summary.strategies.option_d ? [{ label: 'Opt D', show: showOptionD, set: setShowOptionD, color: COLORS.option_d }] : []),
-                ...(summary.strategies.option_a ? [{ label: 'Opt A', show: showOptionA, set: setShowOptionA, color: COLORS.option_a }] : []),
-                ...(summary.strategies.option_c_strict ? [{ label: 'Opt C', show: showOptionC, set: setShowOptionC, color: COLORS.option_c }] : []),
+                { label: 'VXV ratio ema', show: showVxv, set: setShowVxv, color: COLORS.vxv },
+                ...(summary.strategies.mts_v3_raw ? [{ label: 'MTS raw', show: showMts, set: setShowMts, color: COLORS.mts }] : []),
               ].map(t => (
                 <button key={t.label} onClick={() => t.set(!t.show)} style={{
                   padding: '3px 10px', fontSize: 10, fontWeight: 600, fontFamily: 'inherit',
@@ -403,10 +382,7 @@ export const EtfSingleBacktestPage: React.FC<{ hideHeader?: boolean }> = ({ hide
                 {summary.strategies.based_sma200 && showBasedSma200 && <Area type="monotone" dataKey="based_sma200_equity" name="Based ETF from SMA200" stroke={COLORS.based_sma200} fill={COLORS.based_sma200} fillOpacity={0.08} strokeWidth={2} dot={false} />}
                 {summary.strategies.based_sma63 && showBasedSma63 && <Area type="monotone" dataKey="based_sma63_equity" name="Based ETF from SMA63" stroke={COLORS.based_sma63} fill={COLORS.based_sma63} fillOpacity={0.08} strokeWidth={2} dot={false} />}
                 {showVxv && <Area type="monotone" dataKey="vxv_equity" name="VXV Strategy" stroke={COLORS.vxv} fill={COLORS.vxv} fillOpacity={0.08} strokeWidth={2} dot={false} />}
-                {summary.strategies.mts_v2 && showMts && <Area type="monotone" dataKey="mts_v2_equity" name="Market Trend Score" stroke={COLORS.mts} fill={COLORS.mts} fillOpacity={0.08} strokeWidth={2} dot={false} />}
-                {summary.strategies.option_d && showOptionD && <Area type="monotone" dataKey="option_d_equity" name="Option D" stroke={COLORS.option_d} fill={COLORS.option_d} fillOpacity={0.08} strokeWidth={2} dot={false} />}
-                {summary.strategies.option_a && showOptionA && <Line type="monotone" dataKey="option_a_equity" name="Option A" stroke={COLORS.option_a} strokeWidth={1.5} dot={false} />}
-                {summary.strategies.option_c_strict && showOptionC && <Line type="monotone" dataKey="option_c_equity" name="Option C" stroke={COLORS.option_c} strokeWidth={1.5} dot={false} />}
+                {summary.strategies.mts_v3_raw && showMts && <Area type="monotone" dataKey="mts_v3_raw_equity" name="MTS raw" stroke={COLORS.mts} fill={COLORS.mts} fillOpacity={0.08} strokeWidth={2} dot={false} />}
               </ComposedChart>
             </ResponsiveContainer>
           </div>
@@ -467,13 +443,10 @@ export const EtfSingleBacktestPage: React.FC<{ hideHeader?: boolean }> = ({ hide
                   <th style={{ padding: '10px 14px', textAlign: 'left', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#475685' }}>Year</th>
                   <th style={{ padding: '10px 14px', textAlign: 'right', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#475685' }}>Buy & Hold</th>
                   <th style={{ padding: '10px 14px', textAlign: 'right', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#475685' }}>DCA</th>
-                  {summary.strategies.based_sma200 && <th style={{ padding: '10px 14px', textAlign: 'right', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#475685' }}>Based ETF from SMA200</th>}
-                  {summary.strategies.based_sma63 && <th style={{ padding: '10px 14px', textAlign: 'right', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#475685' }}>Based ETF from SMA63</th>}
-                  <th style={{ padding: '10px 14px', textAlign: 'right', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#475685' }}>VXV Strategy</th>
-                  {summary.strategies.mts_v2 && <th style={{ padding: '10px 14px', textAlign: 'right', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#475685' }}>Market Trend Score</th>}
-                  {summary.strategies.option_d && <th style={{ padding: '10px 14px', textAlign: 'right', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#475685' }}>Opt D (Stage)</th>}
-                  {summary.strategies.option_a && <th style={{ padding: '10px 14px', textAlign: 'right', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#475685' }}>Opt A (Perfect)</th>}
-                  {summary.strategies.option_c_strict && <th style={{ padding: '10px 14px', textAlign: 'right', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#475685' }}>Opt C (Strict)</th>}
+                  {summary.strategies.based_sma200 && <th style={{ padding: '10px 14px', textAlign: 'right', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#475685' }}>ETF from SMA200</th>}
+                  {summary.strategies.based_sma63 && <th style={{ padding: '10px 14px', textAlign: 'right', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#475685' }}>ETF from SMA63</th>}
+                  <th style={{ padding: '10px 14px', textAlign: 'right', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#475685' }}>VXV ratio ema</th>
+                  {summary.strategies.mts_v3_raw && <th style={{ padding: '10px 14px', textAlign: 'right', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#475685' }}>MTS raw</th>}
                   <th style={{ padding: '10px 14px', textAlign: 'right', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#475685' }}>Best</th>
                 </tr>
               </thead>
@@ -487,10 +460,7 @@ export const EtfSingleBacktestPage: React.FC<{ hideHeader?: boolean }> = ({ hide
                       ...(summary.strategies.based_sma200 ? [{ val: row.based, isBest: row.based === row.best, color: COLORS.based_sma200 }] : []),
                       ...(summary.strategies.based_sma63 ? [{ val: row.based63, isBest: row.based63 === row.best, color: COLORS.based_sma63 }] : []),
                       { val: row.vxv, isBest: row.vxv === row.best, color: COLORS.vxv },
-                      ...(summary.strategies.mts_v2 ? [{ val: row.mts, isBest: row.mts === row.best, color: COLORS.mts }] : []),
-                      ...(summary.strategies.option_d ? [{ val: row.optD, isBest: row.optD === row.best, color: COLORS.option_d }] : []),
-                      ...(summary.strategies.option_a ? [{ val: row.optA, isBest: row.optA === row.best, color: COLORS.option_a }] : []),
-                      ...(summary.strategies.option_c_strict ? [{ val: row.optC, isBest: row.optC === row.best, color: COLORS.option_c }] : []),
+                      ...(summary.strategies.mts_v3_raw ? [{ val: row.mts, isBest: row.mts === row.best, color: COLORS.mts }] : []),
                     ].map((cell, i) => (
                       <td key={i} style={{
                         padding: '8px 14px', textAlign: 'right', fontWeight: 600, fontVariantNumeric: 'tabular-nums',
@@ -507,10 +477,7 @@ export const EtfSingleBacktestPage: React.FC<{ hideHeader?: boolean }> = ({ hide
                         if (row.based === row.best) return 'Based 200';
                         if (row.based63 === row.best) return 'Based 63';
                         if (row.vxv === row.best) return 'VXV';
-                        if (row.mts === row.best) return 'MTS';
-                        if (row.optD === row.best) return 'Opt D';
-                        if (row.optA === row.best) return 'Opt A';
-                        return 'Opt C';
+                        return 'MTS';
                       })()}
                     </td>
                   </tr>

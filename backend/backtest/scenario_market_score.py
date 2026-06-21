@@ -152,18 +152,25 @@ class MarketTrendScorer:
         Returns:
             Tuple[float, MarketPhase]: The Trend Score [0.0 to 100.0] and the resulting market phase.
         """
-        # Component A: VXV/VIX Ratio (0.90 to 1.25)
+        # Component A: VXV/VIX Ratio (0.90 to 1.20)
         ratio = self.get_vxv_vix_ratio(target_date)
         if ratio is None:
             ratio = 1.15
             
-        vxv_vix_score = (ratio - 0.90) / (1.25 - 0.90)
+        vxv_vix_score = (ratio - 0.90) / (1.20 - 0.90)
         vxv_vix_score = max(0.0, min(1.0, vxv_vix_score))
 
-        # Component B: Market Breadth Component
+        # Component B: Market Breadth Component (0.20 to 0.75)
         metrics = self.daily_metrics.get(target_date, {})
-        breadth_val = metrics.get('breadth_sma50', 0.5)
-        breadth_score = max(0.0, min(1.0, breadth_val))
+        breadth_val = metrics.get('breadth_sma50')
+        
+        date_str = str(target_date)
+        has_breadth = (breadth_val is not None) and (date_str >= '2018-04-01')
+        if has_breadth:
+            breadth_score = (breadth_val - 0.20) / (0.75 - 0.20)
+            breadth_score = max(0.0, min(1.0, breadth_score))
+        else:
+            breadth_score = 0.0
 
         spy_mts_data = self._spy_mts_v3_metrics.get(target_date, {})
 
@@ -177,29 +184,23 @@ class MarketTrendScorer:
         score_200sma_atr = (dist_200sma - (-4.0)) / (16.0 - (-4.0))
         score_200sma_atr = max(0.0, min(1.0, score_200sma_atr))
 
-        # Component D: Distribution Days Score (<=5 days = 1.0, >=10 days = 0.0)
-        dist_days = spy_mts_data.get('distribution_days', 0)
-        if dist_days <= 5:
-            dist_score = 1.0
-        elif dist_days >= 10:
-            dist_score = 0.0
+        # Weight and aggregate score (4 components if breadth exists, otherwise 3 components)
+        if has_breadth:
+            w_vxv = 0.25
+            w_brd = 0.25
+            w_c50 = 0.25
+            w_c200 = 0.25
         else:
-            dist_score = 1.0 - (dist_days - 5) / (10 - 5)
-            dist_score = max(0.0, min(1.0, dist_score))
-
-        # Weight and aggregate score (4-component equal weighted: 25% each, DD is 0%)
-        w_vxv = 0.25
-        w_brd = 0.25
-        w_c50 = 0.25
-        w_c200 = 0.25
-        w_dst = 0.00
+            w_vxv = 1.0 / 3.0
+            w_brd = 0.0
+            w_c50 = 1.0 / 3.0
+            w_c200 = 1.0 / 3.0
         
         final_score = (
             vxv_vix_score * w_vxv +
             breadth_score * w_brd +
             score_50sma_atr * w_c50 +
-            score_200sma_atr * w_c200 +
-            dist_score * w_dst
+            score_200sma_atr * w_c200
         ) * 100.0
         
         # Apply Scaling Ratio around median 50.0
