@@ -20,12 +20,70 @@ import {
   BacktestTradeLogItem
 } from '../api/backtest';
 
-const MONTE_CARLO_GROUPS = ["A", "B1", "B2", "B3", "B4", "E2"];
-
 export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHeader }) => {
   const [scenarios, setScenarios] = useState<string[]>([]);
-  const [selectedScenario, setSelectedScenario] = useState<string>('latest');
+  const [selectedStrategy, setSelectedStrategy] = useState<string>('latest');
+  const [selectedRegime, setSelectedRegime] = useState<string>('default');
   const [selectedSubRun, setSelectedSubRun] = useState<string>('all');
+  
+  const baseGroups = React.useMemo(() => ["A", "B1", "B2", "B3", "B4", "E2"], []);
+  const isGroup = baseGroups.includes(selectedStrategy);
+
+  // 実質的なベースシナリオ名 (グループ + レジーム)
+  const baseScenarioName = isGroup && selectedRegime !== 'default'
+    ? `${selectedStrategy}_${selectedRegime}`
+    : selectedStrategy;
+
+  // モンテカルログループとしての判定
+  const isMCGroup = isGroup;
+
+  const targetRequestScenario = isMCGroup && selectedSubRun !== 'all'
+    ? `${baseScenarioName}_run_${selectedSubRun}`
+    : baseScenarioName;
+
+  // 第1階層（Strategy / Base Scenarios）の選択肢
+  const strategyOptions = React.useMemo(() => {
+    const opts = new Set<string>();
+    opts.add('latest');
+    
+    scenarios.forEach(name => {
+      const matchedBase = baseGroups.find(bg => name === bg || name.startsWith(bg + '_'));
+      if (matchedBase) {
+        opts.add(matchedBase);
+      } else if (name !== 'latest') {
+        opts.add(name);
+      }
+    });
+    
+    return Array.from(opts);
+  }, [scenarios, baseGroups]);
+
+  // 第2階層（Regime / トレードシナリオ）の選択肢
+  const regimeOptions = React.useMemo(() => {
+    if (!baseGroups.includes(selectedStrategy)) return [];
+    
+    const opts = [{ value: 'default', label: 'デフォルト (レジームなし/単体)' }];
+    
+    scenarios.forEach(name => {
+      if (name.startsWith(selectedStrategy + '_')) {
+        const regimeKey = name.substring(selectedStrategy.length + 1);
+        
+        let label = regimeKey;
+        if (regimeKey === 'mts_raw') label = 'MTS Raw (生データ)';
+        else if (regimeKey === 'vxv_vix_ema') label = 'VXV/VIX Ratio EMA';
+        else if (regimeKey === 'spy_sma200') label = 'SPY from SMA 200';
+        else if (regimeKey === 'spy_sma63') label = 'SPY from SMA 63';
+        else {
+          label = regimeKey.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+        }
+        
+        opts.push({ value: regimeKey, label });
+      }
+    });
+    
+    return opts;
+  }, [scenarios, selectedStrategy, baseGroups]);
+
   const [summary, setSummary] = useState<BacktestScenarioSummary | null>(null);
   const [equityData, setEquityData] = useState<BacktestEquityPoint[]>([]);
   const [tradeLogs, setTradeLogs] = useState<BacktestTradeLogItem[]>([]);
@@ -57,11 +115,6 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
       });
   }, []);
 
-  const isGroupSelected = MONTE_CARLO_GROUPS.includes(selectedScenario);
-  const targetRequestScenario = isGroupSelected && selectedSubRun !== 'all'
-    ? `${selectedScenario}_run_${selectedSubRun}`
-    : selectedScenario;
-
   // Fetch results when selected scenario changes
   useEffect(() => {
     setLoading(true);
@@ -84,11 +137,18 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
       .finally(() => {
         setLoading(false);
       });
-  }, [selectedScenario, selectedSubRun]);
+  }, [selectedStrategy, selectedRegime, selectedSubRun, targetRequestScenario]);
 
-  // Handle scenario selector change
-  const handleScenarioChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    setSelectedScenario(e.target.value);
+  // Handle strategy selector change
+  const handleStrategyChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setSelectedStrategy(e.target.value);
+    setSelectedRegime('default');
+    setSelectedSubRun('all');
+  };
+
+  // Handle regime selector change
+  const handleRegimeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setSelectedRegime(e.target.value);
     setSelectedSubRun('all');
   };
 
@@ -355,44 +415,15 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
           </div>
         ) : <div />}
         
-        {/* Scenario selector */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <label style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: '600' }}>Select Run:</label>
-          <div style={{ display: 'flex', alignItems: 'center', background: 'rgba(255,255,255,0.04)', padding: '6px 12px', borderRadius: '8px', border: '1px solid var(--border)' }}>
-            <select
-              value={selectedScenario}
-              onChange={handleScenarioChange}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: '#fff',
-                fontSize: '13px',
-                outline: 'none',
-                cursor: 'pointer',
-                fontFamily: 'var(--font)'
-              }}
-            >
-              <option value="latest" style={{ backgroundColor: 'var(--bg-surface)' }}>🔄 Latest (最新の結果を自動ロード)</option>
-              {scenarios
-                .filter((name) => !name.includes('_run_'))
-                .map((name) => {
-                  const isGroup = MONTE_CARLO_GROUPS.includes(name);
-                  const displayName = isGroup ? `${name} (Monte Carlo 10x)` : name;
-                  return (
-                    <option key={name} value={name} style={{ backgroundColor: 'var(--bg-surface)' }}>
-                      {isGroup ? '🎲' : '📁'} {displayName}
-                    </option>
-                  );
-                })}
-            </select>
-          </div>
-
-          {/* Sub-run selector for Monte Carlo groups */}
-          {isGroupSelected && (
+        {/* Hierarchical selector */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap' }}>
+          {/* 1st Level: Strategy / Base Scenario */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <label style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: '600' }}>戦略選択 (A〜E2):</label>
             <div style={{ display: 'flex', alignItems: 'center', background: 'rgba(255,255,255,0.04)', padding: '6px 12px', borderRadius: '8px', border: '1px solid var(--border)' }}>
               <select
-                value={selectedSubRun}
-                onChange={handleSubRunChange}
+                value={selectedStrategy}
+                onChange={handleStrategyChange}
                 style={{
                   background: 'transparent',
                   border: 'none',
@@ -403,13 +434,73 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
                   fontFamily: 'var(--font)'
                 }}
               >
-                <option value="all" style={{ backgroundColor: 'var(--bg-surface)' }}>🎲 10回平均 (統合ファンチャート)</option>
-                {[...Array(10)].map((_, idx) => (
-                  <option key={idx} value={idx.toString()} style={{ backgroundColor: 'var(--bg-surface)' }}>
-                    📁 Run {idx}
-                  </option>
-                ))}
+                {strategyOptions.map((name) => {
+                  const isMC = baseGroups.includes(name);
+                  const displayName = isMC ? `${name} (Monte Carlo 10x)` : (name === 'latest' ? '🔄 Latest (最新結果を自動ロード)' : name);
+                  return (
+                    <option key={name} value={name} style={{ backgroundColor: 'var(--bg-surface)' }}>
+                      {isMC ? '🎲' : '📁'} {displayName}
+                    </option>
+                  );
+                })}
               </select>
+            </div>
+          </div>
+
+          {/* 2nd Level: Regime (Trade Scenario) */}
+          {isGroup && regimeOptions.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <label style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: '600' }}>トレードシナリオ:</label>
+              <div style={{ display: 'flex', alignItems: 'center', background: 'rgba(255,255,255,0.04)', padding: '6px 12px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                <select
+                  value={selectedRegime}
+                  onChange={handleRegimeChange}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#fff',
+                    fontSize: '13px',
+                    outline: 'none',
+                    cursor: 'pointer',
+                    fontFamily: 'var(--font)'
+                  }}
+                >
+                  {regimeOptions.map((opt) => (
+                    <option key={opt.value} value={opt.value} style={{ backgroundColor: 'var(--bg-surface)' }}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
+
+          {/* 3rd Level: Monte Carlo Sub-run (Run 0-9) */}
+          {isMCGroup && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <label style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: '600' }}>モンテカルロ個別/平均:</label>
+              <div style={{ display: 'flex', alignItems: 'center', background: 'rgba(255,255,255,0.04)', padding: '6px 12px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                <select
+                  value={selectedSubRun}
+                  onChange={handleSubRunChange}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#fff',
+                    fontSize: '13px',
+                    outline: 'none',
+                    cursor: 'pointer',
+                    fontFamily: 'var(--font)'
+                  }}
+                >
+                  <option value="all" style={{ backgroundColor: 'var(--bg-surface)' }}>🎲 10回平均 (統合ファンチャート)</option>
+                  {[...Array(10)].map((_, idx) => (
+                    <option key={idx} value={idx.toString()} style={{ backgroundColor: 'var(--bg-surface)' }}>
+                      📁 Run {idx}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
           )}
         </div>

@@ -552,6 +552,7 @@ class BacktestScenarioSummary(BaseModel):
     max_drawdown: float
     win_rate: float
     total_trades: int
+    final_capital: Optional[float] = None
     yearly_performance: Optional[dict] = None
     exit_reasons: Optional[dict] = None
     # Allow extra fields for safety
@@ -632,3 +633,26 @@ class EtfSingleRegimeItem(BaseModel):
     ema5: Optional[float] = None
     ema21: Optional[float] = None
     position_pct: float
+
+# --- Scenario Comparison Results ---
+
+class ScenarioComparisonStrategyMetrics(BaseModel):
+    final_capital: float
+    cagr: float
+    max_drawdown: float
+    win_rate: float
+    total_trades: int
+    profit_factor: float
+
+class ScenarioComparisonSummary(BaseModel):
+    start_date: str
+    end_date: str
+    strategies: Dict[str, ScenarioComparisonStrategyMetrics]
+
+class ScenarioComparisonEquityPoint(BaseModel):
+    date: str
+    spy_equity: float
+    equity_mts_raw: float
+    equity_vxv_vix_ema: float
+    equity_spy_sma200: float
+    equity_spy_sma63: float

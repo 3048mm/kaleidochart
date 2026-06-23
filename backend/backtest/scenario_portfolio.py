@@ -13,6 +13,7 @@ class PortfolioConfig:
     neutral_cash_ratio: float = 0.3   # 30% cash required in NEUTRAL
     bear_cash_ratio: float = 0.6      # 60% cash required in BEAR
     consider_tax: float = 0.0         # tax rate (e.g. 0.2 for 20%)
+    regime_model: str = "mts_raw"     # "mts_raw", "vxv_vix_ema", "spy_sma200", "spy_sma63"
 
 
 class ScenarioPortfolio:
@@ -34,6 +35,7 @@ class ScenarioPortfolio:
         self.current_market_score = 50.0
         self.prev_market_score = 50.0
         self.dynamic_max_positions = config.max_positions
+        self.pos_state = 1.0 # 1.0 for BULL (invested), 0.0 for BEAR (cash) - used in SMA regimes
         
         # VXV/VIX Ratio hysteresis states
         self.current_vxv_vix_ratio = 1.10
@@ -79,7 +81,7 @@ class ScenarioPortfolio:
                 self.dynamic_max_positions = 4
                 self.config.neutral_cash_ratio = 0.30
                 self.tighten_all_stop_losses()
-            elif ema5 > ema21:
+            elif ema5 >= ema21:
                 # BULL (Stable Trend - Full size)
                 self.dynamic_max_positions = self.config.max_positions
                 self.config.neutral_cash_ratio = 0.00
@@ -370,3 +372,54 @@ class ScenarioPortfolio:
                 current_stop = pos.get('stop_price', 0.0)
                 if current_stop < pos['entry_price']:
                     pos['stop_price'] = pos['entry_price']
+
+    def update_regime(
+        self,
+        date,
+        spy_close: Optional[float],
+        spy_sma200: Optional[float],
+        spy_sma63: Optional[float],
+        vxv_vix_ratio: Optional[float],
+        mts_score: float
+    ) -> MarketPhase:
+        """
+        Updates the portfolio's allocation limit and returns the resulting MarketPhase.
+        """
+        model = self.config.regime_model
+        
+        if model in ("spy_sma200", "spy_sma63"):
+            sma = spy_sma200 if model == "spy_sma200" else spy_sma63
+            if spy_close is not None and sma is not None and sma > 0:
+                buy_t = sma * 1.05
+                sell_t = sma * 0.97
+                
+                if spy_close > buy_t:
+                    self.pos_state = 1.0
+                elif spy_close < sell_t:
+                    self.pos_state = 0.0
+                # otherwise keep previous self.pos_state
+                
+            if self.pos_state == 1.0:
+                self.dynamic_max_positions = self.config.max_positions
+                return MarketPhase.BULL
+            else:
+                self.dynamic_max_positions = 0
+                return MarketPhase.BEAR
+                
+        elif model == "vxv_vix_ema":
+            self.update_vxv_vix_state(vxv_vix_ratio, h_type="vxv_vix_ema")
+            if self.dynamic_max_positions >= self.config.max_positions:
+                return MarketPhase.BULL
+            elif self.dynamic_max_positions == 0:
+                return MarketPhase.BEAR
+            else:
+                return MarketPhase.NEUTRAL
+                
+        else: # default "mts_raw"
+            self.update_market_state(mts_score)
+            if mts_score >= 60.0:
+                return MarketPhase.BULL
+            elif mts_score <= 40.0:
+                return MarketPhase.BEAR
+            else:
+                return MarketPhase.NEUTRAL

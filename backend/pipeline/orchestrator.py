@@ -7,7 +7,7 @@ import hashlib
 from typing import Optional, List
 from sqlalchemy import func
 
-from db.database import init_db, get_db
+from db.database import init_db, get_db, get_active_db_path
 from db.models import Symbol, DailyPrice, Indicator, RelativeRank, MarketSignal, ThemeConstituent
 from data_collection.spreadsheet_sync import fetch_symbols_from_sheet
 
@@ -484,6 +484,7 @@ def run_pipeline(config, db_path, logger: logging.Logger, rebuild_from: Optional
     """
     logger.info(f"Starting Step 3 Pipeline Orchestrator - rebuild_from={rebuild_from}, categories={categories}, re-calculate={recalculate_all}")
     init_db(db_path)
+    db_path = get_active_db_path()
     
     start_time_utc = datetime.utcnow()
     has_explicit_rebuild = (rebuild_from is not None) or recalculate_all

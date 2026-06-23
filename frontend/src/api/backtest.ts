@@ -166,3 +166,116 @@ export async function fetchEtfSingleRegimes(ticker: string): Promise<EtfSingleRe
   }
   return response.json();
 }
+
+
+// ============================================================
+// Scenario Comparison Types & API
+// ============================================================
+
+export interface ScenarioComparisonStrategyMetrics {
+  final_capital: number;
+  cagr: number;
+  max_drawdown: number;
+  win_rate: number;
+  total_trades: number;
+  profit_factor: number;
+}
+
+export interface ScenarioComparisonSummary {
+  start_date: string;
+  end_date: string;
+  strategies: {
+    mts_raw: ScenarioComparisonStrategyMetrics;
+    vxv_vix_ema: ScenarioComparisonStrategyMetrics;
+    spy_sma200: ScenarioComparisonStrategyMetrics;
+    spy_sma63: ScenarioComparisonStrategyMetrics;
+  };
+}
+
+export interface ScenarioComparisonEquityPoint {
+  date: string;
+  spy_equity: number;
+  equity_mts_raw: number;
+  equity_vxv_vix_ema: number;
+  equity_spy_sma200: number;
+  equity_spy_sma63: number;
+}
+
+export interface ScenarioComparisonProgress {
+  status: 'not_started' | 'running' | 'completed' | 'error';
+  progress_pct: number;
+}
+
+export async function runScenarioComparison(params: {
+  start_date: string;
+  end_date: string;
+  initial_capital?: number;
+  max_positions?: number;
+  min_score?: number;
+  stop_loss_pct?: number;
+  profit_target_pct?: number;
+  refresh_cache?: boolean;
+  use_vxv_vix?: boolean;
+}): Promise<{ status: string; message: string }> {
+  const query = new URLSearchParams();
+  Object.entries(params).forEach(([key, val]) => {
+    if (val !== undefined) query.append(key, String(val));
+  });
+  
+  const response = await fetch(`/api/backtest/comparison/run?${query.toString()}`, {
+    method: 'POST'
+  });
+  if (!response.ok) {
+    throw new Error('Failed to trigger comparison run');
+  }
+  return response.json();
+}
+
+export async function fetchComparisonProgress(): Promise<ScenarioComparisonProgress> {
+  const response = await fetch('/api/backtest/comparison/progress');
+  if (!response.ok) {
+    throw new Error('Failed to fetch comparison progress');
+  }
+  return response.json();
+}
+
+export async function fetchComparisonSummary(): Promise<ScenarioComparisonSummary> {
+  const response = await fetch('/api/backtest/comparison/summary');
+  if (!response.ok) {
+    throw new Error('Failed to fetch comparison summary');
+  }
+  return response.json();
+}
+
+export async function fetchComparisonEquity(): Promise<ScenarioComparisonEquityPoint[]> {
+  const response = await fetch('/api/backtest/comparison/equity');
+  if (!response.ok) {
+    throw new Error('Failed to fetch comparison equity curve');
+  }
+  return response.json();
+}
+
+export interface ScenarioGroupComparisonResult {
+  group: string;
+  start_date: string;
+  end_date: string;
+  strategies: {
+    [model: string]: ScenarioComparisonStrategyMetrics;
+  };
+  equity_curves: {
+    date: string;
+    spy_equity: number;
+    equity_mts_raw: number;
+    equity_vxv_vix_ema: number;
+    equity_spy_sma200: number;
+    equity_spy_sma63: number;
+  }[];
+}
+
+export async function fetchGroupComparison(group: string): Promise<ScenarioGroupComparisonResult> {
+  const response = await fetch(`/api/backtest/comparison/group/${group}`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch group comparison for ${group}`);
+  }
+  return response.json();
+}

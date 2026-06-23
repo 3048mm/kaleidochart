@@ -15,7 +15,7 @@ if backend_dir not in sys.path:
     sys.path.append(backend_dir)
 
 from db.database import get_db
-from db.models import Symbol, DailyPrice, Indicator, RelativeRank, ThemeConstituent
+from db.models import Symbol, DailyPrice, Indicator, RelativeRank, ThemeConstituent, MarketSignal
 
 def get_parquet_master_dir(db_path: str) -> str:
     """Returns the Parquet master storage directory path relative to the active db_path."""
@@ -112,7 +112,8 @@ def rotate_and_archive_to_parquet(db, db_path: str, logger: logging.Logger) -> d
         'prices': os.path.join(parquet_dir, f"prices_{timestamp}.parquet"),
         'indicators': os.path.join(parquet_dir, f"indicators_{timestamp}.parquet"),
         'ranks': os.path.join(parquet_dir, f"ranks_{timestamp}.parquet"),
-        'tc': os.path.join(parquet_dir, f"theme_constituents_{timestamp}.parquet")
+        'tc': os.path.join(parquet_dir, f"theme_constituents_{timestamp}.parquet"),
+        'signals': os.path.join(parquet_dir, f"market_signals_{timestamp}.parquet")
     }
     
     latest_pointers = get_latest_master_files(pointer_file)
@@ -156,6 +157,7 @@ def rotate_and_archive_to_parquet(db, db_path: str, logger: logging.Logger) -> d
     df_indicators_sql = pd.read_sql("SELECT * FROM indicators", engine)
     df_ranks_sql = pd.read_sql("SELECT * FROM relative_ranks", engine)
     df_tc_sql = pd.read_sql("SELECT * FROM theme_constituents", engine)
+    df_signals_sql = pd.read_sql("SELECT * FROM market_signals", engine)
     
     # Resolve previous versions for incremental merges
     old_paths = latest_pointers if latest_pointers else {}
@@ -167,17 +169,20 @@ def rotate_and_archive_to_parquet(db, db_path: str, logger: logging.Logger) -> d
     df_indicators = process_and_merge_table("indicators", ["symbol_id", "date"], df_indicators_sql, old_paths.get('indicators'))
     df_ranks = process_and_merge_table("relative_ranks", ["symbol_id", "date"], df_ranks_sql, old_paths.get('ranks'))
     df_tc = process_and_merge_table("theme_constituents", ["theme_id", "symbol_id"], df_tc_sql, old_paths.get('tc'))
+    df_signals = process_and_merge_table("market_signals", ["date"], df_signals_sql, old_paths.get('signals'))
     
     # Save the updated full history masters
     logger_fn = logger.info
     logger_fn(f"  Writing updated masters - Symbols: {len(df_symbols)}, Prices: {len(df_prices)}, "
-              f"Indicators: {len(df_indicators)}, Ranks: {len(df_ranks)}, ThemeConstituents: {len(df_tc)}")
+              f"Indicators: {len(df_indicators)}, Ranks: {len(df_ranks)}, ThemeConstituents: {len(df_tc)}, "
+              f"MarketSignals: {len(df_signals)}")
     
     df_symbols.to_parquet(files['symbols'], index=False)
     df_prices.to_parquet(files['prices'], index=False)
     df_indicators.to_parquet(files['indicators'], index=False)
     df_ranks.to_parquet(files['ranks'], index=False)
     df_tc.to_parquet(files['tc'], index=False)
+    df_signals.to_parquet(files['signals'], index=False)
     
     # Save version-specific pointer list
     version_json_path = os.path.join(parquet_dir, f"{version_id}.json")
@@ -281,6 +286,7 @@ def restore_sqlite_cache_from_parquet(db, db_path: str, logger: logging.Logger):
         
     logger.info("  1. Clearing SQLite Cache tables...")
     # Delete tables to keep schema metadata (this is safer than deleting SQLite file itself during active backend executions)
+    db.query(MarketSignal).delete(synchronize_session=False)
     db.query(DailyPrice).delete(synchronize_session=False)
     db.query(Indicator).delete(synchronize_session=False)
     db.query(RelativeRank).delete(synchronize_session=False)
@@ -338,11 +344,30 @@ def restore_sqlite_cache_from_parquet(db, db_path: str, logger: logging.Logger):
         if df.empty:
             return
         
+        df_to_insert = df.copy()
+        
         # Drop auto-incrementing ID column for tables other than 'symbols' to prevent UNIQUE constraint failures.
         # 'symbols' ID must be preserved because it is referenced as a foreign key by other tables.
-        df_to_insert = df.copy()
         if 'id' in df_to_insert.columns and table_name != 'symbols':
             df_to_insert = df_to_insert.drop(columns=['id'])
+            
+        # Get column names of the SQLAlchemy table dynamically
+        # Map table name to the respective Model class
+        from db.models import Symbol, ThemeConstituent, DailyPrice, Indicator, RelativeRank
+        model_map = {
+            "symbols": Symbol,
+            "theme_constituents": ThemeConstituent,
+            "daily_prices": DailyPrice,
+            "indicators": Indicator,
+            "relative_ranks": RelativeRank
+        }
+        
+        model_cls = model_map.get(table_name)
+        if model_cls:
+            valid_cols = {c.name for c in model_cls.__table__.columns}
+            # Filter df columns to keep only those that exist in the database table
+            cols_to_keep = [c for c in df_to_insert.columns if c in valid_cols]
+            df_to_insert = df_to_insert[cols_to_keep]
             
         cols = df_to_insert.columns.tolist()
         col_str = ", ".join([f'"{c}"' for c in cols])
@@ -383,6 +408,14 @@ def restore_sqlite_cache_from_parquet(db, db_path: str, logger: logging.Logger):
     bulk_insert_df_to_sqlite(df_indicators_cached, "indicators")
     logger.info("    Importing relative ranks...")
     bulk_insert_df_to_sqlite(df_ranks_cached, "relative_ranks")
+    
+    # Import market signals (full history - small table, no date filtering needed)
+    if 'signals' in latest_files and os.path.exists(latest_files['signals']):
+        logger.info("    Loading & importing market signals...")
+        df_signals_cached = pd.read_parquet(latest_files['signals'], filters=[('date', '>=', cutoff_str)])
+        bulk_insert_df_to_sqlite(df_signals_cached, "market_signals")
+    else:
+        logger.warning("    market_signals Parquet not found in pointer - will be recalculated on next pipeline run.")
     
     db.commit()
     

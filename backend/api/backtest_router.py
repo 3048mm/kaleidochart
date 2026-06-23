@@ -2,7 +2,7 @@ import os
 import csv
 import json
 from typing import List
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, BackgroundTasks
 
 from api.schemas import (
     BacktestScenarioSummary,
@@ -11,6 +11,8 @@ from api.schemas import (
     EtfSingleSummary,
     EtfSingleEquityPoint,
     EtfSingleRegimeItem,
+    ScenarioComparisonSummary,
+    ScenarioComparisonEquityPoint,
 )
 
 router = APIRouter(tags=["backtest"])
@@ -21,10 +23,21 @@ OUTPUT_DIR = os.path.join(PROJECT_ROOT, "output")
 
 def is_monte_carlo_group(name: str) -> bool:
     """
-    Checks if the name represents a Monte Carlo simulation group (e.g. 'A', 'B1').
+    Checks if the name represents a Monte Carlo simulation group (e.g. 'A', 'B1', or 'A_mts_raw').
     It checks if '{name}_run_0' directory exists in 'output/scenario'.
     """
-    if name in ["A", "B1", "B2", "B3", "B4", "E2"]:
+    base_groups = ["A", "B1", "B2", "B3", "B4", "E2"]
+    is_valid_group = False
+    
+    if name in base_groups:
+        is_valid_group = True
+    else:
+        for bg in base_groups:
+            if name.startswith(f"{bg}_") and not name.endswith("_run_"):
+                is_valid_group = True
+                break
+                
+    if is_valid_group:
         sub_dir = os.path.join(OUTPUT_DIR, "scenario")
         if os.path.exists(sub_dir):
             if os.path.exists(os.path.join(sub_dir, f"{name}_run_0")):
@@ -110,12 +123,21 @@ def get_scenarios():
                 candidates.append((item, os.path.getmtime(d_path)))
                 if "_run_" in item:
                     group_name = item.split("_run_")[0]
-                    if group_name in ["A", "B1", "B2", "B3", "B4", "E2"]:
+                    base_prefixes = ["A", "B1", "B2", "B3", "B4", "E2"]
+                    is_matching_mc = False
+                    if group_name in base_prefixes:
+                        is_matching_mc = True
+                    else:
+                        for bp in base_prefixes:
+                            if group_name.startswith(f"{bp}_"):
+                                is_matching_mc = True
+                                break
+                    if is_matching_mc:
                         groups_detected.add(group_name)
             
     # Sort newest first
     candidates.sort(key=lambda x: x[1], reverse=True)
-    sorted_names = [name for name, _ in candidates]
+    sorted_names = [name for name, _ in candidates if "_run_" not in name]
     
     # Prepend integrated groups
     sorted_groups = sorted(list(groups_detected))
@@ -317,6 +339,7 @@ def get_scenario_summary(name: str):
             max_drawdown=max_dd_avg,
             win_rate=win_rate_avg,
             total_trades=total_trades_avg,
+            final_capital=final_capital_avg,
             yearly_performance=yearly_performance,
             exit_reasons=exit_reasons_merged
         )
@@ -333,6 +356,7 @@ def get_scenario_summary(name: str):
             "win_rate_avg": win_rate_avg,
             "total_trades_avg": total_trades_avg,
             "profit_factor_avg": profit_factor_avg,
+            "final_capital": final_capital_avg,
             "final_capital_avg": final_capital_avg,
             "final_capital_max": final_capital_max,
             "final_capital_min": final_capital_min,
@@ -441,6 +465,7 @@ def get_scenario_summary(name: str):
             max_drawdown=max_drawdown,
             win_rate=win_rate,
             total_trades=total_trades,
+            final_capital=raw_data.get("final_capital"),
             yearly_performance=yearly_performance,
             exit_reasons=raw_data.get("exit_reasons", {})
         )
@@ -951,3 +976,267 @@ def get_etf_single_regimes(ticker: str):
         return items
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to parse regimes CSV: {str(e)}")
+
+
+# ============================================================
+# Scenario Comparison Endpoints
+# ============================================================
+
+_comparison_run_status = {"status": "idle"}
+
+def _bg_run_comparison(
+    start_date: str,
+    end_date: str,
+    initial_capital: float,
+    max_positions: int,
+    min_score: int,
+    stop_loss_pct: float,
+    profit_target_pct: float,
+    refresh_cache: bool,
+    use_vxv_vix: bool
+):
+    global _comparison_run_status
+    import datetime
+    _comparison_run_status = {
+        "status": "running", 
+        "start_time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+    
+    try:
+        from backend.backtest.scenario_comparison_runner import run_comparison
+        comp_dir = os.path.join(OUTPUT_DIR, "scenario_comparison")
+        run_comparison(
+            start_date=start_date,
+            end_date=end_date,
+            output_dir=comp_dir,
+            initial_capital=initial_capital,
+            max_positions=max_positions,
+            min_score=min_score,
+            stop_loss_pct=stop_loss_pct,
+            profit_target_pct=profit_target_pct,
+            refresh_cache=refresh_cache,
+            use_vxv_vix=use_vxv_vix
+        )
+        _comparison_run_status = {"status": "completed"}
+    except Exception as e:
+        _comparison_run_status = {"status": "error", "error": str(e)}
+
+
+@router.post("/backtest/comparison/run")
+def run_scenario_comparison(
+    start_date: str,
+    end_date: str,
+    initial_capital: float = 100000.0,
+    max_positions: int = 8,
+    min_score: int = 2,
+    stop_loss_pct: float = -0.08,
+    profit_target_pct: float = 0.20,
+    refresh_cache: bool = False,
+    use_vxv_vix: bool = False,
+    background_tasks: BackgroundTasks = None
+):
+    """
+    Triggers the side-by-side market regime comparison test as a background task.
+    """
+    global _comparison_run_status
+    if _comparison_run_status["status"] == "running":
+        raise HTTPException(status_code=400, detail="A comparison run is already in progress.")
+        
+    from fastapi import BackgroundTasks as FastAPIBackgroundTasks
+    
+    # Instantiate or use background tasks parameter
+    bg_tasks = background_tasks or FastAPIBackgroundTasks()
+    
+    bg_tasks.add_task(
+        _bg_run_comparison,
+        start_date=start_date,
+        end_date=end_date,
+        initial_capital=initial_capital,
+        max_positions=max_positions,
+        min_score=min_score,
+        stop_loss_pct=stop_loss_pct,
+        profit_target_pct=profit_target_pct,
+        refresh_cache=refresh_cache,
+        use_vxv_vix=use_vxv_vix
+    )
+    _comparison_run_status = {"status": "running"}
+    return {"status": "started", "message": "Comparison run initiated."}
+
+
+@router.get("/backtest/comparison/status")
+def get_scenario_comparison_status():
+    """
+    Returns the general trigger state of the comparison run.
+    """
+    global _comparison_run_status
+    return _comparison_run_status
+
+
+@router.get("/backtest/comparison/progress")
+def get_scenario_comparison_progress():
+    """
+    Returns the average progress percentage of the ongoing comparison run.
+    """
+    models = ['mts_raw', 'vxv_vix_ema', 'spy_sma200', 'spy_sma63']
+    comp_dir = os.path.join(OUTPUT_DIR, "scenario_comparison")
+    
+    from backend.backtest.scenario_runner import get_scenario_progress
+    
+    status_list = []
+    progress_pcts = []
+    
+    for model in models:
+        model_dir = os.path.join(comp_dir, model)
+        prog = get_scenario_progress(model_dir)
+        status_list.append(prog.get("status", "not_started"))
+        if "progress_pct" in prog:
+            progress_pcts.append(prog["progress_pct"])
+            
+    if all(s == "completed" for s in status_list):
+        return {"status": "completed", "progress_pct": 100.0}
+    elif any(s == "running" for s in status_list):
+        avg_prog = sum(progress_pcts) / len(models) if progress_pcts else 0.0
+        return {"status": "running", "progress_pct": round(avg_prog, 2)}
+    elif any(s == "error" for s in status_list):
+        return {"status": "error", "progress_pct": 0.0}
+    else:
+        return {"status": "not_started", "progress_pct": 0.0}
+
+
+@router.get("/backtest/comparison/summary", response_model=ScenarioComparisonSummary)
+def get_scenario_comparison_summary():
+    """
+    Returns the combined scenario comparison summary.
+    """
+    summary_path = os.path.join(OUTPUT_DIR, "scenario_comparison", "comparison_summary.json")
+    if not os.path.exists(summary_path):
+        raise HTTPException(status_code=404, detail="Comparison summary not found. Please run the comparison test first.")
+    
+    try:
+        with open(summary_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse comparison summary: {str(e)}")
+
+
+@router.get("/backtest/comparison/equity", response_model=List[ScenarioComparisonEquityPoint])
+def get_scenario_comparison_equity():
+    """
+    Returns the daily equity curves for all regime models compared side-by-side.
+    """
+    csv_path = os.path.join(OUTPUT_DIR, "scenario_comparison", "comparison_equity_curve.csv")
+    if not os.path.exists(csv_path):
+        raise HTTPException(status_code=404, detail="Comparison equity curve CSV not found. Please run the comparison test first.")
+    
+    try:
+        points = []
+        with open(csv_path, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                points.append(ScenarioComparisonEquityPoint(
+                    date=row.get("date", ""),
+                    spy_equity=float(row.get("spy_equity", 0.0)),
+                    equity_mts_raw=float(row.get("equity_mts_raw", 0.0)),
+                    equity_vxv_vix_ema=float(row.get("equity_vxv_vix_ema", 0.0)),
+                    equity_spy_sma200=float(row.get("equity_spy_sma200", 0.0)),
+                    equity_spy_sma63=float(row.get("equity_spy_sma63", 0.0))
+                ))
+        return points
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse comparison equity CSV: {str(e)}")
+
+
+@router.get("/backtest/comparison/group/{group}")
+def get_group_comparison(group: str):
+    """
+    Returns the side-by-side comparison of the 4 market regimes for a given Monte Carlo group.
+    Loads and aggregates results across their respective 10 runs.
+    """
+    base_groups = ["A", "B1", "B2", "B3", "B4", "E2"]
+    if group not in base_groups:
+        raise HTTPException(status_code=400, detail="Invalid group name")
+    sub_scenario_dir = os.path.join(OUTPUT_DIR, "scenario")
+    
+    # Dynamically detect regime model names from output/scenario directories
+    detected_models = set()
+    if os.path.exists(sub_scenario_dir):
+        for item in os.listdir(sub_scenario_dir):
+            if item.startswith(f"{group}_") and "_run_" in item:
+                # Format: {group}_{model}_run_{idx}
+                parts = item.split("_run_")
+                if len(parts) >= 2:
+                    model_part = parts[0][len(f"{group}_"):]
+                    if model_part:
+                        detected_models.add(model_part)
+                        
+    models = sorted(list(detected_models)) if detected_models else ["mts_raw", "vxv_vix_ema", "spy_sma200", "spy_sma63"]
+    
+    strategies_summary = {}
+    curves_by_model = {}
+    
+    for model in models:
+        name = f"{group}_{model}"
+        sub_scenario_dir = os.path.join(OUTPUT_DIR, "scenario")
+        
+        # Check if run_0 folder exists for this group + model combination
+        if not os.path.exists(os.path.join(sub_scenario_dir, f"{name}_run_0")):
+            continue
+            
+        try:
+            summary_data = get_scenario_summary(name)
+            equity_points = get_scenario_equity(name)
+            
+            # Resolve fields from Pydantic model (response from get_scenario_summary)
+            strategies_summary[model] = {
+                "final_capital": getattr(summary_data, 'final_capital', 100000.0),
+                "cagr": getattr(summary_data, 'cagr', 0.0) * 100.0, # convert decimal to percent (e.g. 0.31 -> 31.0)
+                "max_drawdown": getattr(summary_data, 'max_drawdown', 0.0) * 100.0, # convert decimal to percent (e.g. -0.28 -> -28.0)
+                "win_rate": getattr(summary_data, 'win_rate', 0.0),
+                "total_trades": getattr(summary_data, 'total_trades', 0),
+                "profit_factor": getattr(summary_data, 'profit_factor', 0.0),
+            }
+            
+            curves_by_model[model] = {p.date: p for p in equity_points}
+        except Exception as e:
+            print(f"Error loading group comparison for {name}: {e}")
+            continue
+
+    if not strategies_summary:
+        raise HTTPException(status_code=404, detail=f"No Monte Carlo comparison data found for group '{group}'")
+
+    # Merge equity curves by date
+    all_dates = set()
+    for model in curves_by_model:
+        all_dates.update(curves_by_model[model].keys())
+        
+    sorted_dates = sorted(list(all_dates))
+    merged_curves = []
+    
+    first_model = list(curves_by_model.keys())[0]
+    
+    for d in sorted_dates:
+        row = {"date": d}
+        
+        pt_ref = curves_by_model[first_model].get(d)
+        row["spy_equity"] = getattr(pt_ref, "spy_equity", 100000.0) or 100000.0
+        
+        for model in models:
+            if model in curves_by_model:
+                pt = curves_by_model[model].get(d)
+                row[f"equity_{model}"] = getattr(pt, "equity", 100000.0) or 100000.0
+            else:
+                row[f"equity_{model}"] = 100000.0
+                
+        merged_curves.append(row)
+        
+    start_date = sorted_dates[0] if sorted_dates else ""
+    end_date = sorted_dates[-1] if sorted_dates else ""
+
+    return {
+        "group": group,
+        "start_date": start_date,
+        "end_date": end_date,
+        "strategies": strategies_summary,
+        "equity_curves": merged_curves
+    }

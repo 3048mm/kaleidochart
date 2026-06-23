@@ -130,35 +130,40 @@ def run_scenario_test(
     scaling_ratio: float = 1.7,
     monte_carlo_mode: bool = False,
     monte_carlo_seed: int = None,
-    consider_tax: float = 0.0
+    consider_tax: float = 0.0,
+    regime_model: str = "mts_raw",
+    preloaded_data: Any = None
 ) -> Dict[str, Any]:
     """
     Executes the full portfolio-level scenario simulation.
     """
     pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     
     # 1. Load Data
-    from backend.db import database
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    app_config_path = os.path.join(project_root, "config.toml")
-    try:
-        import tomli
-        with open(app_config_path, "rb") as f:
-            app_config = tomli.load(f)
-        db_path = app_config.get("system", {}).get("db_path", "data/stocktool.db")
-        if not os.path.isabs(db_path):
-            db_path = os.path.join(project_root, db_path)
-    except Exception as e:
-        print(f"Warning: Failed to load config.toml: {e}")
-        db_path = os.path.join(project_root, "data/stocktool.db")
-        
-    database.init_db(db_path)
-    db = database.SessionLocal()
-    try:
-        engine = db.get_bind()
-        df_symbols, df_prices, df_indicators, df_ranks, df_theme_constituents, trading_dates = preload_data(engine, start_date, end_date, refresh_cache)
-    finally:
-        db.close()
+    if preloaded_data is not None:
+        df_symbols, df_prices, df_indicators, df_ranks, df_theme_constituents, trading_dates = preloaded_data
+    else:
+        from backend.db import database
+        app_config_path = os.path.join(project_root, "config.toml")
+        try:
+            import tomli
+            with open(app_config_path, "rb") as f:
+                app_config = tomli.load(f)
+            db_path = app_config.get("system", {}).get("db_path", "data/stocktool.db")
+            if not os.path.isabs(db_path):
+                db_path = os.path.join(project_root, db_path)
+        except Exception as e:
+            print(f"Warning: Failed to load config.toml: {e}")
+            db_path = os.path.join(project_root, "data/stocktool.db")
+            
+        database.init_db(db_path)
+        db = database.SessionLocal()
+        try:
+            engine = db.get_bind()
+            df_symbols, df_prices, df_indicators, df_ranks, df_theme_constituents, trading_dates = preload_data(engine, start_date, end_date, refresh_cache)
+        finally:
+            db.close()
         
     prices_df = df_prices
     symbols_df = df_symbols
@@ -225,9 +230,10 @@ def run_scenario_test(
         max_positions=max_positions,
         stop_loss_pct=stop_loss_pct,
         consider_tax=consider_tax,
+        regime_model=regime_model
      )
     portfolio = ScenarioPortfolio(port_config)
-    portfolio.use_hysteresis = any(strat_rules.get('_use_hysteresis', False) for strat_rules in strategies.values())
+    portfolio.use_hysteresis = True
     
     simulator = BacktestSimulator(prices_df, symbols_df)
     reporter = ScenarioReporter()
@@ -301,24 +307,22 @@ def run_scenario_test(
         exits_triggered = simulator.evaluate_exit_for_day(current_date, exit_rules)
         portfolio.apply_exits(exits_triggered)
         
-        # Step B: Evaluate Market Phase
-        score, phase = market_scorer.evaluate_market_phase(current_date)
+        # Step B: Evaluate Market Phase & Update Regime Allocation
+        score, _ = market_scorer.evaluate_market_phase(current_date)
+        spy_day_row = market_scorer._spy_by_date.get(current_date)
+        spy_close = spy_day_row.get('close') if spy_day_row is not None else None
+        spy_sma200 = spy_day_row.get('sma_200') if spy_day_row is not None else None
+        spy_sma63 = spy_day_row.get('sma_63') if spy_day_row is not None else None
+        ratio = market_scorer.get_vxv_vix_ratio(current_date)
         
-        # Update portfolio with daily score for dynamic hysteresis position allocation
-        if hasattr(portfolio, 'update_market_state'):
-            use_vxv_vix_hyst = False
-            h_type = "trend_follow"
-            for strat_rules in strategies.values():
-                if strat_rules.get('use_vxv_vix_hysteresis'):
-                    use_vxv_vix_hyst = True
-                    h_type = strat_rules.get('vxv_vix_hysteresis_type', 'trend_follow')
-                    break
-            
-            if use_vxv_vix_hyst:
-                ratio = market_scorer.get_vxv_vix_ratio(current_date)
-                portfolio.update_vxv_vix_state(ratio, h_type=h_type)
-            else:
-                portfolio.update_market_state(score)
+        phase = portfolio.update_regime(
+            date=current_date,
+            spy_close=spy_close,
+            spy_sma200=spy_sma200,
+            spy_sma63=spy_sma63,
+            vxv_vix_ratio=ratio,
+            mts_score=score
+        )
         
         # Determine target cash/buying capacity. If we need more cash, we might stop buying.
         # Phase constraints are handled inside portfolio.process_buy_candidate.
@@ -498,6 +502,7 @@ if __name__ == '__main__':
     parser.add_argument('--refresh-cache', action='store_true', help='Force refresh of data from database instead of using parquet cache')
     parser.add_argument('--config-path', type=str, default='data/screener_presets.toml', help='Path to the screener config TOML file')
     parser.add_argument('--use-vxv-vix', action='store_true', help='Use VXV/VIX ratio instead of VIX directly for market sentiment score')
+    parser.add_argument('--regime-model', type=str, default='mts_raw', choices=['mts_raw', 'vxv_vix_ema', 'spy_sma200', 'spy_sma63'], help='Market regime switching model')
     
     args = parser.parse_args()
     
@@ -513,7 +518,8 @@ if __name__ == '__main__':
         output_dir=args.output_dir,
         refresh_cache=args.refresh_cache,
         config_path=args.config_path,
-        use_vxv_vix=args.use_vxv_vix
+        use_vxv_vix=args.use_vxv_vix,
+        regime_model=args.regime_model
     )
     
     print("\nScenario Test Summary:")

@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { EtfSingleBacktestPage } from './EtfSingleBacktestPage';
 import { BacktestResultPage } from './BacktestResultPage';
+import { RegimeComparisonPage } from './RegimeComparisonPage';
 import { appConfig } from '../config';
 
 export const BacktestPage: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'etf' | 'scenario'>('etf');
+  const [activeTab, setActiveTab] = useState<'etf' | 'scenario' | 'comparison'>('etf');
 
   const containerStyle: React.CSSProperties = {
     padding: '20px',
@@ -59,10 +60,11 @@ export const BacktestPage: React.FC = () => {
         {[
           { id: 'etf', label: '📈 ETF Backtest' },
           { id: 'scenario', label: '🧭 Scenario Test' },
+          { id: 'comparison', label: '⚖️ Regime Comparison' },
         ].map((tab) => (
           <button
             key={tab.id}
-            onClick={() => setActiveTab(tab.id as 'etf' | 'scenario')}
+            onClick={() => setActiveTab(tab.id as 'etf' | 'scenario' | 'comparison')}
             style={{
               flex: 1,
               padding: '12px 20px',
@@ -98,6 +100,7 @@ export const BacktestPage: React.FC = () => {
       <div>
         {activeTab === 'etf' && <EtfSingleBacktestPage hideHeader={true} />}
         {activeTab === 'scenario' && <BacktestResultPage hideHeader={true} />}
+        {activeTab === 'comparison' && <RegimeComparisonPage />}
       </div>
     </div>
   );
