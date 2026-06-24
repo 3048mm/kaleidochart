@@ -656,3 +656,4 @@ class ScenarioComparisonEquityPoint(BaseModel):
     equity_vxv_vix_ema: float
     equity_spy_sma200: float
     equity_spy_sma63: float
+    equity_full_position: float

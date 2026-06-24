@@ -49,6 +49,14 @@ def mock_comparison_output_dir(tmp_path, monkeypatch):
                 "win_rate": 0.50,
                 "total_trades": 40,
                 "profit_factor": 1.28
+            },
+            "full_position": {
+                "final_capital": 104000.0,
+                "cagr": 16.55,
+                "max_drawdown": 11.2,
+                "win_rate": 0.51,
+                "total_trades": 42,
+                "profit_factor": 1.35
             }
         }
     }
@@ -58,19 +66,19 @@ def mock_comparison_output_dir(tmp_path, monkeypatch):
         
     # 2. comparison_equity_curve.csv
     equity_content = (
-        "date,spy_equity,equity_mts_raw,equity_vxv_vix_ema,equity_spy_sma200,equity_spy_sma63\n"
-        "2025-01-02,100000.0,100000.0,100000.0,100000.0,100000.0\n"
-        "2025-01-03,101000.0,100500.0,100200.0,100100.0,100300.0\n"
+        "date,spy_equity,equity_mts_raw,equity_vxv_vix_ema,equity_spy_sma200,equity_spy_sma63,equity_full_position\n"
+        "2025-01-02,100000.0,100000.0,100000.0,100000.0,100000.0,100000.0\n"
+        "2025-01-03,101000.0,100500.0,100200.0,100100.0,100300.0,100400.0\n"
     )
     with open(comp_dir / "comparison_equity_curve.csv", "w", encoding="utf-8") as f:
         f.write(equity_content)
         
     # 3. Create mock subdirectories for each model to test progress
-    models = ['mts_raw', 'vxv_vix_ema', 'spy_sma200', 'spy_sma63']
+    models = ['mts_raw', 'vxv_vix_ema', 'spy_sma200', 'spy_sma63', 'full_position']
     for idx, model in enumerate(models):
         model_dir = comp_dir / model
         model_dir.mkdir()
-        # Set progress_pct mock (e.g. 10%, 20%, 30%, 40%)
+        # Set progress_pct mock (e.g. 10%, 20%, 30%, 40%, 50%)
         progress_data = {
             "status": "running",
             "progress_pct": (idx + 1) * 10.0
@@ -118,8 +126,8 @@ def test_get_comparison_progress(client, mock_comparison_output_dir):
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "running"
-    # Average of 10, 20, 30, 40 is 25
-    assert data["progress_pct"] == 25.0
+    # Average of 10, 20, 30, 40, 50 is 30
+    assert data["progress_pct"] == 30.0
 
 def test_post_comparison_run(client, monkeypatch):
     """Test POST /api/backtest/comparison/run triggers the task."""

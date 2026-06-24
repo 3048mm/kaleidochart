@@ -17,6 +17,7 @@ const MODELS = [
   { id: 'vxv_vix_ema', label: 'VXV/VIX EMA', color: '#10b981', icon: '📈' },
   { id: 'spy_sma200', label: 'SPY SMA200', color: '#f59e0b', icon: '🎯' },
   { id: 'spy_sma63',  label: 'SPY SMA63',  color: '#8b5cf6', icon: '⚡' },
+  { id: 'full_position', label: 'Full Position', color: '#ec4899', icon: '💎' },
 ];
 
 // ─── 型 ─────────────────────────────────────────────────────────
@@ -273,7 +274,7 @@ export const RegimeComparisonPage: React.FC = () => {
         .rc-tab-bar::-webkit-scrollbar { display: none; }
         .rc-panel-grid {
           display: grid;
-          grid-template-columns: repeat(4, 1fr);
+          grid-template-columns: repeat(5, 1fr);
           gap: 12px;
         }
         .rc-legend {
@@ -284,6 +285,11 @@ export const RegimeComparisonPage: React.FC = () => {
           font-size: 10px;
           color: #64748b;
           flex-wrap: wrap;
+        }
+        @media (max-width: 1440px) {
+          .rc-panel-grid {
+            grid-template-columns: repeat(3, 1fr);
+          }
         }
         @media (max-width: 1024px) {
           .rc-panel-grid {

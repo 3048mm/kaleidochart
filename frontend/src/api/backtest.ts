@@ -189,6 +189,7 @@ export interface ScenarioComparisonSummary {
     vxv_vix_ema: ScenarioComparisonStrategyMetrics;
     spy_sma200: ScenarioComparisonStrategyMetrics;
     spy_sma63: ScenarioComparisonStrategyMetrics;
+    full_position?: ScenarioComparisonStrategyMetrics;
   };
 }
 
@@ -199,6 +200,7 @@ export interface ScenarioComparisonEquityPoint {
   equity_vxv_vix_ema: number;
   equity_spy_sma200: number;
   equity_spy_sma63: number;
+  equity_full_position?: number;
 }
 
 export interface ScenarioComparisonProgress {
@@ -269,6 +271,7 @@ export interface ScenarioGroupComparisonResult {
     equity_vxv_vix_ema: number;
     equity_spy_sma200: number;
     equity_spy_sma63: number;
+    equity_full_position?: number;
   }[];
 }
 

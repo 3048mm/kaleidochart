@@ -13,7 +13,7 @@ class PortfolioConfig:
     neutral_cash_ratio: float = 0.3   # 30% cash required in NEUTRAL
     bear_cash_ratio: float = 0.6      # 60% cash required in BEAR
     consider_tax: float = 0.0         # tax rate (e.g. 0.2 for 20%)
-    regime_model: str = "mts_raw"     # "mts_raw", "vxv_vix_ema", "spy_sma200", "spy_sma63"
+    regime_model: str = "mts_raw"     # "mts_raw", "vxv_vix_ema", "spy_sma200", "spy_sma63", "full_position"
 
 
 class ScenarioPortfolio:
@@ -387,7 +387,11 @@ class ScenarioPortfolio:
         """
         model = self.config.regime_model
         
-        if model in ("spy_sma200", "spy_sma63"):
+        if model == "full_position":
+            self.dynamic_max_positions = self.config.max_positions
+            return MarketPhase.BULL
+            
+        elif model in ("spy_sma200", "spy_sma63"):
             sma = spy_sma200 if model == "spy_sma200" else spy_sma63
             if spy_close is not None and sma is not None and sma > 0:
                 buy_t = sma * 1.05

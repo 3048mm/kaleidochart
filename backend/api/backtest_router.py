@@ -22,7 +22,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 OUTPUT_DIR = os.path.join(PROJECT_ROOT, "output")
 
 SCENARIO_STRATEGIES = ["A", "B1", "B2", "B3", "B4", "E2"]
-SCENARIO_MODELS = ["mts_raw", "vxv_vix_ema", "spy_sma200", "spy_sma63"]
+SCENARIO_MODELS = ["mts_raw", "vxv_vix_ema", "spy_sma200", "spy_sma63", "full_position"]
 
 
 def _new_scenario_base(strat: str, model: str) -> str:
@@ -1192,7 +1192,7 @@ def get_scenario_comparison_progress():
     """
     Returns the average progress percentage of the ongoing comparison run.
     """
-    models = ['mts_raw', 'vxv_vix_ema', 'spy_sma200', 'spy_sma63']
+    models = ['mts_raw', 'vxv_vix_ema', 'spy_sma200', 'spy_sma63', 'full_position']
     comp_dir = os.path.join(OUTPUT_DIR, "scenario_comparison")
     
     from backend.backtest.scenario_runner import get_scenario_progress
@@ -1255,7 +1255,8 @@ def get_scenario_comparison_equity():
                     equity_mts_raw=float(row.get("equity_mts_raw", 0.0)),
                     equity_vxv_vix_ema=float(row.get("equity_vxv_vix_ema", 0.0)),
                     equity_spy_sma200=float(row.get("equity_spy_sma200", 0.0)),
-                    equity_spy_sma63=float(row.get("equity_spy_sma63", 0.0))
+                    equity_spy_sma63=float(row.get("equity_spy_sma63", 0.0)),
+                    equity_full_position=float(row.get("equity_full_position", 0.0))
                 ))
         return points
     except Exception as e:
@@ -1285,7 +1286,7 @@ def get_group_comparison(group: str):
                     if model_part:
                         detected_models.add(model_part)
                         
-    models = sorted(list(detected_models)) if detected_models else ["mts_raw", "vxv_vix_ema", "spy_sma200", "spy_sma63"]
+    models = sorted(list(detected_models)) if detected_models else ["mts_raw", "vxv_vix_ema", "spy_sma200", "spy_sma63", "full_position"]
     
     strategies_summary = {}
     curves_by_model = {}

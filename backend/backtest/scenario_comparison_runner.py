@@ -26,7 +26,7 @@ def run_comparison(
     concurrently (sequentially in loop) and merges their summaries and equity curves
     for side-by-side comparison.
     """
-    models = ['mts_raw', 'vxv_vix_ema', 'spy_sma200', 'spy_sma63']
+    models = ['mts_raw', 'vxv_vix_ema', 'spy_sma200', 'spy_sma63', 'full_position']
     
     os.makedirs(output_dir, exist_ok=True)
     
@@ -140,7 +140,7 @@ def run_comparison(
         merged_df[cols_to_fill] = merged_df[cols_to_fill].ffill().fillna(initial_capital)
         
     # Ensure all required columns are present
-    required_cols = ['date', 'spy_equity', 'equity_mts_raw', 'equity_vxv_vix_ema', 'equity_spy_sma200', 'equity_spy_sma63']
+    required_cols = ['date', 'spy_equity', 'equity_mts_raw', 'equity_vxv_vix_ema', 'equity_spy_sma200', 'equity_spy_sma63', 'equity_full_position']
     for col in required_cols:
         if col not in merged_df.columns:
             merged_df[col] = initial_capital

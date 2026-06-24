@@ -73,6 +73,7 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
         else if (regimeKey === 'vxv_vix_ema') label = 'VXV/VIX Ratio EMA';
         else if (regimeKey === 'spy_sma200') label = 'SPY from SMA 200';
         else if (regimeKey === 'spy_sma63') label = 'SPY from SMA 63';
+        else if (regimeKey === 'full_position') label = 'Full Position (ポジション制限なし)';
         else {
           label = regimeKey.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
         }

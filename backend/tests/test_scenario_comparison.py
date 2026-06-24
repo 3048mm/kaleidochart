@@ -36,7 +36,7 @@ def test_run_comparison_generates_outputs():
     assert "strategies" in summary_data
     
     strategies = summary_data["strategies"]
-    for model in ['mts_raw', 'vxv_vix_ema', 'spy_sma200', 'spy_sma63']:
+    for model in ['mts_raw', 'vxv_vix_ema', 'spy_sma200', 'spy_sma63', 'full_position']:
         assert model in strategies
         metrics = strategies[model]
         assert "final_capital" in metrics
@@ -48,7 +48,7 @@ def test_run_comparison_generates_outputs():
         
     # 4. Verify comparison_equity_curve.csv columns
     df_equity = pd.read_csv(equity_path)
-    required_cols = ['date', 'spy_equity', 'equity_mts_raw', 'equity_vxv_vix_ema', 'equity_spy_sma200', 'equity_spy_sma63']
+    required_cols = ['date', 'spy_equity', 'equity_mts_raw', 'equity_vxv_vix_ema', 'equity_spy_sma200', 'equity_spy_sma63', 'equity_full_position']
     for col in required_cols:
         assert col in df_equity.columns
         

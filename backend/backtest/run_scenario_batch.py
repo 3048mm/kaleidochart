@@ -148,7 +148,7 @@ def main():
     db_path = os.path.join(project_root_here, "data", "optimization_trials.db")
 
     strategies = ["A", "B1", "B2", "B3", "B4", "E2"]
-    models = ["mts_raw", "vxv_vix_ema", "spy_sma200", "spy_sma63"]
+    models = ["mts_raw", "vxv_vix_ema", "spy_sma200", "spy_sma63", "full_position"]
 
     start_date = "2022-01-01"
     end_date = "2026-03-26"
