@@ -2618,6 +2618,7 @@ def api_add_to_watchlist(
         min_gain_pct=0.0,
         latest_adr_pct=0.0,
         latest_dist_sma50_atr=0.0,
+        latest_sma50_atr_mult=0.0,
         rs_sparkline=[],
         status=wl.status,
         added_at=wl.added_at.isoformat() if wl.added_at else "",
