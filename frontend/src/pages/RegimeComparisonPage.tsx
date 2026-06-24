@@ -4,7 +4,7 @@ import { fetchScenarioSummary, fetchScenarioEquity, BacktestScenarioSummary, Bac
 
 // ─── 定数 ──────────────────────────────────────────────────────
 const STRATEGIES = [
-  { id: 'A',  label: 'A' },
+  { id: 'A', label: 'A' },
   { id: 'B1', label: 'B1' },
   { id: 'B2', label: 'B2' },
   { id: 'B3', label: 'B3' },
@@ -13,11 +13,11 @@ const STRATEGIES = [
 ];
 
 const MODELS = [
-  { id: 'mts_raw',    label: 'MTS Raw',    color: '#3b82f6', icon: '📊' },
-  { id: 'vxv_vix_ema', label: 'VXV/VIX EMA', color: '#10b981', icon: '📈' },
-  { id: 'spy_sma200', label: 'SPY SMA200', color: '#f59e0b', icon: '🎯' },
-  { id: 'spy_sma63',  label: 'SPY SMA63',  color: '#8b5cf6', icon: '⚡' },
   { id: 'full_position', label: 'Full Position', color: '#ec4899', icon: '💎' },
+  { id: 'spy_sma200', label: 'SPY SMA200', color: '#f59e0b', icon: '🎯' },
+  { id: 'spy_sma63', label: 'SPY SMA63', color: '#8b5cf6', icon: '⚡' },
+  { id: 'vxv_vix_ema', label: 'VXV/VIX EMA', color: '#10b981', icon: '📈' },
+  { id: 'mts_raw', label: 'MTS Raw', color: '#3b82f6', icon: '📊' },
 ];
 
 // ─── 型 ─────────────────────────────────────────────────────────
@@ -68,8 +68,8 @@ const PanelCard: React.FC<PanelCardProps> = ({ model, data, initialEquity }) => 
   const cagr = summary?.cagr_avg !== undefined
     ? summary.cagr_avg
     : summary?.cagr !== undefined
-    ? summary.cagr
-    : calcCagrFromEquity(equity, initialEquity);
+      ? summary.cagr
+      : calcCagrFromEquity(equity, initialEquity);
 
   const maxDD = summary?.max_drawdown_avg ?? summary?.max_drawdown;
   const winRate = summary?.win_rate_avg ?? summary?.win_rate;

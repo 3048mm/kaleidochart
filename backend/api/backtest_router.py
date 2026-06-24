@@ -22,7 +22,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 OUTPUT_DIR = os.path.join(PROJECT_ROOT, "output")
 
 SCENARIO_STRATEGIES = ["A", "B1", "B2", "B3", "B4", "E2"]
-SCENARIO_MODELS = ["mts_raw", "vxv_vix_ema", "spy_sma200", "spy_sma63", "full_position"]
+SCENARIO_MODELS = ["full_position", "spy_sma200", "spy_sma63", "vxv_vix_ema", "mts_raw"]
 
 
 def _new_scenario_base(strat: str, model: str) -> str:
@@ -1192,7 +1192,7 @@ def get_scenario_comparison_progress():
     """
     Returns the average progress percentage of the ongoing comparison run.
     """
-    models = ['mts_raw', 'vxv_vix_ema', 'spy_sma200', 'spy_sma63', 'full_position']
+    models = ['full_position', 'spy_sma200', 'spy_sma63', 'vxv_vix_ema', 'mts_raw' ]
     comp_dir = os.path.join(OUTPUT_DIR, "scenario_comparison")
     
     from backend.backtest.scenario_runner import get_scenario_progress
@@ -1252,11 +1252,11 @@ def get_scenario_comparison_equity():
                 points.append(ScenarioComparisonEquityPoint(
                     date=row.get("date", ""),
                     spy_equity=float(row.get("spy_equity", 0.0)),
-                    equity_mts_raw=float(row.get("equity_mts_raw", 0.0)),
-                    equity_vxv_vix_ema=float(row.get("equity_vxv_vix_ema", 0.0)),
+                    equity_full_position=float(row.get("equity_full_position", 0.0)),
                     equity_spy_sma200=float(row.get("equity_spy_sma200", 0.0)),
                     equity_spy_sma63=float(row.get("equity_spy_sma63", 0.0)),
-                    equity_full_position=float(row.get("equity_full_position", 0.0))
+                    equity_vxv_vix_ema=float(row.get("equity_vxv_vix_ema", 0.0)),
+                    equity_mts_raw=float(row.get("equity_mts_raw", 0.0)),
                 ))
         return points
     except Exception as e:

@@ -185,11 +185,11 @@ export interface ScenarioComparisonSummary {
   start_date: string;
   end_date: string;
   strategies: {
-    mts_raw: ScenarioComparisonStrategyMetrics;
-    vxv_vix_ema: ScenarioComparisonStrategyMetrics;
+    full_position?: ScenarioComparisonStrategyMetrics;
     spy_sma200: ScenarioComparisonStrategyMetrics;
     spy_sma63: ScenarioComparisonStrategyMetrics;
-    full_position?: ScenarioComparisonStrategyMetrics;
+    vxv_vix_ema: ScenarioComparisonStrategyMetrics;
+    mts_raw: ScenarioComparisonStrategyMetrics;
   };
 }
 
@@ -223,7 +223,7 @@ export async function runScenarioComparison(params: {
   Object.entries(params).forEach(([key, val]) => {
     if (val !== undefined) query.append(key, String(val));
   });
-  
+
   const response = await fetch(`/api/backtest/comparison/run?${query.toString()}`, {
     method: 'POST'
   });

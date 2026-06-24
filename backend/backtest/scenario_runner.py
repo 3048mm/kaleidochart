@@ -557,7 +557,7 @@ if __name__ == '__main__':
     parser.add_argument('--refresh-cache', action='store_true', help='Force refresh of data from database instead of using parquet cache')
     parser.add_argument('--config-path', type=str, default='data/screener_presets.toml', help='Path to the screener config TOML file')
     parser.add_argument('--use-vxv-vix', action='store_true', help='Use VXV/VIX ratio instead of VIX directly for market sentiment score')
-    parser.add_argument('--regime-model', type=str, default='mts_raw', choices=['mts_raw', 'vxv_vix_ema', 'spy_sma200', 'spy_sma63', 'full_position'], help='Market regime switching model')
+    parser.add_argument('--regime-model', type=str, default='full_position', choices=['full_position', 'spy_sma200', 'spy_sma63', 'vxv_vix_ema', 'mts_raw'], help='Market regime switching model')
     
     args = parser.parse_args()
     

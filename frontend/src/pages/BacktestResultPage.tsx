@@ -25,7 +25,7 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
   const [selectedStrategy, setSelectedStrategy] = useState<string>('latest');
   const [selectedRegime, setSelectedRegime] = useState<string>('default');
   const [selectedSubRun, setSelectedSubRun] = useState<string>('all');
-  
+
   const baseGroups = React.useMemo(() => ["A", "B1", "B2", "B3", "B4", "E2"], []);
   const isGroup = baseGroups.includes(selectedStrategy);
 
@@ -45,7 +45,7 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
   const strategyOptions = React.useMemo(() => {
     const opts = new Set<string>();
     opts.add('latest');
-    
+
     scenarios.forEach(name => {
       const matchedBase = baseGroups.find(bg => name === bg || name.startsWith(bg + '_'));
       if (matchedBase) {
@@ -54,34 +54,34 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
         opts.add(name);
       }
     });
-    
+
     return Array.from(opts);
   }, [scenarios, baseGroups]);
 
   // 第2階層（Regime / トレードシナリオ）の選択肢
   const regimeOptions = React.useMemo(() => {
     if (!baseGroups.includes(selectedStrategy)) return [];
-    
+
     const opts = [{ value: 'default', label: 'デフォルト (レジームなし/単体)' }];
-    
+
     scenarios.forEach(name => {
       if (name.startsWith(selectedStrategy + '_')) {
         const regimeKey = name.substring(selectedStrategy.length + 1);
-        
+
         let label = regimeKey;
-        if (regimeKey === 'mts_raw') label = 'MTS Raw (生データ)';
-        else if (regimeKey === 'vxv_vix_ema') label = 'VXV/VIX Ratio EMA';
+        if (regimeKey === 'full_position') label = 'Full Position (ポジション制限なし)';
         else if (regimeKey === 'spy_sma200') label = 'SPY from SMA 200';
         else if (regimeKey === 'spy_sma63') label = 'SPY from SMA 63';
-        else if (regimeKey === 'full_position') label = 'Full Position (ポジション制限なし)';
+        else if (regimeKey === 'vxv_vix_ema') label = 'VXV/VIX Ratio EMA';
+        else if (regimeKey === 'mts_raw') label = 'MTS Raw (生データ)';
         else {
           label = regimeKey.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
         }
-        
+
         opts.push({ value: regimeKey, label });
       }
     });
-    
+
     return opts;
   }, [scenarios, selectedStrategy, baseGroups]);
 
@@ -120,7 +120,7 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
   useEffect(() => {
     setLoading(true);
     setError('');
-    
+
     Promise.all([
       fetchScenarioSummary(targetRequestScenario),
       fetchScenarioEquity(targetRequestScenario),
@@ -171,17 +171,17 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
   // Helper for KPI styling
   const renderKPICard = (title: string, value: string | number, subtext: string, type: 'good' | 'bad' | 'neutral' = 'neutral', mcInfo?: string) => {
     const color = type === 'good' ? 'var(--accent-green)' : type === 'bad' ? 'var(--accent-red)' : 'var(--text-primary)';
-    
+
     return (
-      <div 
-        className="glass-panel" 
-        style={{ 
-          flex: '1', 
-          minWidth: '200px', 
-          padding: '20px', 
-          display: 'flex', 
-          flexDirection: 'column', 
-          justifyContent: 'center', 
+      <div
+        className="glass-panel"
+        style={{
+          flex: '1',
+          minWidth: '200px',
+          padding: '20px',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
           position: 'relative',
           overflow: 'hidden',
           transition: 'transform 0.2s, box-shadow 0.2s',
@@ -205,7 +205,7 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
           height: '3px',
           background: type === 'good' ? 'linear-gradient(90deg, var(--accent-green), #00ffcc)' : type === 'bad' ? 'linear-gradient(90deg, var(--accent-red), #ff0055)' : 'var(--border)'
         }} />
-        
+
         <div style={{ fontSize: '10px', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '8px' }}>
           {title}
         </div>
@@ -228,7 +228,7 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
   const renderReasonBadge = (reason: string) => {
     let bg = 'rgba(255, 255, 255, 0.08)';
     let color = 'var(--text-secondary)';
-    
+
     if (reason === 'stop_loss' || reason.includes('stop')) {
       bg = 'rgba(244, 63, 94, 0.12)';
       color = 'var(--accent-red)';
@@ -239,7 +239,7 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
       bg = 'rgba(245, 158, 11, 0.12)';
       color = 'var(--accent-yellow)';
     }
-    
+
     return (
       <span style={{
         padding: '3px 8px',
@@ -260,12 +260,12 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
   const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
       const data = payload[0].payload;
-      
+
       // Find the first valid equity data point (simulation start date) to align return calculations
       const startPoint = equityData.find(d => d.equity !== undefined && d.equity !== null);
       const initialEquity = startPoint ? startPoint.equity : 1;
       const totalReturn = (data.equity !== undefined && data.equity !== null) ? ((data.equity - initialEquity) / initialEquity) * 100 : 0;
-      
+
       const initialSpy = startPoint ? startPoint.spy_equity : null;
       const spyReturn = (initialSpy && data.spy_equity) ? ((data.spy_equity - initialSpy) / initialSpy) * 100 : null;
 
@@ -290,7 +290,7 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
           <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '6px', fontWeight: 'bold' }}>
             {data.date}
           </div>
-          
+
           {showEquity && data.equity !== undefined && data.equity !== null && (
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '20px', marginBottom: '4px' }}>
               <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>Strategy (純資産):</span>
@@ -299,7 +299,7 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
               </span>
             </div>
           )}
-          
+
           {showCash && data.cash !== undefined && data.cash !== null && (
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '20px', marginBottom: '4px' }}>
               <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>Cash (手元資金):</span>
@@ -404,7 +404,7 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
 
   return (
     <div className="dashboard-page" style={{ padding: hideHeader ? '0' : '20px', width: '100%', maxWidth: hideHeader ? '100%' : '1200px', margin: '0 auto', boxSizing: 'border-box' }}>
-      
+
       {/* Header section with Dropdown */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '15px' }}>
         {!hideHeader ? (
@@ -415,7 +415,7 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
             <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>シナリオテスト結果</span>
           </div>
         ) : <div />}
-        
+
         {/* Hierarchical selector */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap' }}>
           {/* 1st Level: Strategy / Base Scenario */}
@@ -521,40 +521,40 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
         </div>
       ) : summary ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-          
+
           {/* KPI Metrics Row */}
           <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
             {renderKPICard(
-              summary.is_monte_carlo ? 'CAGR (10回平均)' : 'CAGR (年平均成長率)', 
-              `${(summary.cagr * 100).toFixed(2)}%`, 
+              summary.is_monte_carlo ? 'CAGR (10回平均)' : 'CAGR (年平均成長率)',
+              `${(summary.cagr * 100).toFixed(2)}%`,
               'ベンチマークを凌駕する実質年利換算値',
               summary.cagr >= 0 ? 'good' : 'bad',
               summary.is_monte_carlo ? `(最良: ${(summary.cagr_max * 100).toFixed(1)}% / 最悪: ${(summary.cagr_min * 100).toFixed(1)}%)` : undefined
             )}
             {renderKPICard(
-              summary.is_monte_carlo ? 'PF (10回平均)' : 'Profit Factor', 
-              summary.profit_factor.toFixed(2), 
+              summary.is_monte_carlo ? 'PF (10回平均)' : 'Profit Factor',
+              summary.profit_factor.toFixed(2),
               '総利益 / 総損失の比率（期待値）',
               summary.profit_factor >= 1.0 ? 'good' : 'bad',
               summary.is_monte_carlo ? `(平均: ${summary.profit_factor_avg.toFixed(2)})` : undefined
             )}
             {renderKPICard(
-              summary.is_monte_carlo ? '最大DD (10回平均)' : 'Max Drawdown (最悪下落率)', 
-              `${(summary.max_drawdown * 100).toFixed(2)}%`, 
+              summary.is_monte_carlo ? '最大DD (10回平均)' : 'Max Drawdown (最悪下落率)',
+              `${(summary.max_drawdown * 100).toFixed(2)}%`,
               'ピークからの最大口座下落幅',
               summary.max_drawdown >= -0.2 ? 'neutral' : 'bad',
               summary.is_monte_carlo ? `(最悪: ${(summary.max_drawdown_min * 100).toFixed(1)}% / 最良: ${(summary.max_drawdown_max * 100).toFixed(1)}%)` : undefined
             )}
             {renderKPICard(
-              summary.is_monte_carlo ? '勝率 (10回平均)' : 'Win Rate (勝率)', 
-              `${(summary.win_rate * 100).toFixed(1)}%`, 
+              summary.is_monte_carlo ? '勝率 (10回平均)' : 'Win Rate (勝率)',
+              `${(summary.win_rate * 100).toFixed(1)}%`,
               '全決済取引における利益取引の割合',
               summary.win_rate >= 0.5 ? 'good' : 'neutral',
               summary.is_monte_carlo ? `(平均: ${(summary.win_rate_avg * 100).toFixed(1)}%)` : undefined
             )}
             {renderKPICard(
-              summary.is_monte_carlo ? '総決済数 (10回平均)' : 'Total Trades (総決済回数)', 
-              summary.total_trades, 
+              summary.is_monte_carlo ? '総決済数 (10回平均)' : 'Total Trades (総決済回数)',
+              summary.total_trades,
               '決済が確定した累計ポジション数',
               'neutral',
               summary.is_monte_carlo ? `(代表Run 1のログを表示中)` : undefined
@@ -571,7 +571,7 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
                 </h3>
                 <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>純資産と余力のバランス・推移</span>
               </div>
-              
+
               {/* Premium Glassmorphic Toggle Switches */}
               <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                 <button
@@ -592,13 +592,13 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
                     outline: 'none'
                   }}
                 >
-                  <span style={{ 
-                    width: '6px', 
-                    height: '6px', 
-                    borderRadius: '50%', 
+                  <span style={{
+                    width: '6px',
+                    height: '6px',
+                    borderRadius: '50%',
                     backgroundColor: showEquity ? 'var(--accent-green)' : 'transparent',
                     border: `1px solid ${showEquity ? 'transparent' : 'var(--text-muted)'}`,
-                    display: 'inline-block' 
+                    display: 'inline-block'
                   }} />
                   Strategy Equity
                 </button>
@@ -620,13 +620,13 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
                     outline: 'none'
                   }}
                 >
-                  <span style={{ 
-                    width: '6px', 
-                    height: '6px', 
-                    borderRadius: '50%', 
+                  <span style={{
+                    width: '6px',
+                    height: '6px',
+                    borderRadius: '50%',
                     backgroundColor: showCash ? '#fff' : 'transparent',
                     border: `1px solid ${showCash ? 'transparent' : 'var(--text-muted)'}`,
-                    display: 'inline-block' 
+                    display: 'inline-block'
                   }} />
                   Cash Allocation
                 </button>
@@ -648,13 +648,13 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
                     outline: 'none'
                   }}
                 >
-                  <span style={{ 
-                    width: '6px', 
-                    height: '6px', 
-                    borderRadius: '50%', 
+                  <span style={{
+                    width: '6px',
+                    height: '6px',
+                    borderRadius: '50%',
                     backgroundColor: showSpy ? '#3b82f6' : 'transparent',
                     border: `1px solid ${showSpy ? 'transparent' : 'var(--text-muted)'}`,
-                    display: 'inline-block' 
+                    display: 'inline-block'
                   }} />
                   SPY Benchmark
                 </button>
@@ -676,13 +676,13 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
                     outline: 'none'
                   }}
                 >
-                  <span style={{ 
-                    width: '6px', 
-                    height: '6px', 
-                    borderRadius: '50%', 
+                  <span style={{
+                    width: '6px',
+                    height: '6px',
+                    borderRadius: '50%',
                     backgroundColor: showQqq ? '#f97316' : 'transparent',
                     border: `1px solid ${showQqq ? 'transparent' : 'var(--text-muted)'}`,
-                    display: 'inline-block' 
+                    display: 'inline-block'
                   }} />
                   QQQ Benchmark
                 </button>
@@ -704,13 +704,13 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
                     outline: 'none'
                   }}
                 >
-                  <span style={{ 
-                    width: '6px', 
-                    height: '6px', 
-                    borderRadius: '50%', 
+                  <span style={{
+                    width: '6px',
+                    height: '6px',
+                    borderRadius: '50%',
                     backgroundColor: showTqqq ? '#ec4899' : 'transparent',
                     border: `1px solid ${showTqqq ? 'transparent' : 'var(--text-muted)'}`,
-                    display: 'inline-block' 
+                    display: 'inline-block'
                   }} />
                   TQQQ Benchmark
                 </button>
@@ -732,13 +732,13 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
                     outline: 'none'
                   }}
                 >
-                  <span style={{ 
-                    width: '6px', 
-                    height: '6px', 
-                    borderRadius: '50%', 
+                  <span style={{
+                    width: '6px',
+                    height: '6px',
+                    borderRadius: '50%',
                     backgroundColor: showSoxl ? '#a855f7' : 'transparent',
                     border: `1px solid ${showSoxl ? 'transparent' : 'var(--text-muted)'}`,
-                    display: 'inline-block' 
+                    display: 'inline-block'
                   }} />
                   SOXL Benchmark
                 </button>
@@ -760,19 +760,19 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
                     outline: 'none'
                   }}
                 >
-                  <span style={{ 
-                    width: '6px', 
-                    height: '6px', 
-                    borderRadius: '50%', 
+                  <span style={{
+                    width: '6px',
+                    height: '6px',
+                    borderRadius: '50%',
                     backgroundColor: showTrendScore ? 'var(--accent-yellow)' : 'transparent',
                     border: `1px solid ${showTrendScore ? 'transparent' : 'var(--text-muted)'}`,
-                    display: 'inline-block' 
+                    display: 'inline-block'
                   }} />
                   Market Trend Score
                 </button>
               </div>
             </div>
-            
+
             {equityData.length > 0 ? (
               <div style={{ width: '100%', height: '370px' }}>
                 <ResponsiveContainer width="100%" height="100%">
@@ -782,34 +782,34 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
                   >
                     <defs>
                       <linearGradient id="colorEquity" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="var(--accent-green)" stopOpacity={0.35}/>
-                        <stop offset="95%" stopColor="var(--accent-green)" stopOpacity={0.01}/>
+                        <stop offset="5%" stopColor="var(--accent-green)" stopOpacity={0.35} />
+                        <stop offset="95%" stopColor="var(--accent-green)" stopOpacity={0.01} />
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 255, 255, 0.05)" />
-                    <XAxis 
-                      dataKey="date" 
-                      stroke="var(--text-muted)" 
-                      fontSize={10} 
-                      tickLine={false} 
+                    <XAxis
+                      dataKey="date"
+                      stroke="var(--text-muted)"
+                      fontSize={10}
+                      tickLine={false}
                       dy={10}
                     />
-                    <YAxis 
+                    <YAxis
                       yAxisId="left"
-                      stroke="var(--text-muted)" 
-                      fontSize={10} 
-                      tickLine={false} 
+                      stroke="var(--text-muted)"
+                      fontSize={10}
+                      tickLine={false}
                       axisLine={false}
                       domain={['auto', 'auto']}
                       tickFormatter={(v) => `$${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
                     />
                     {showTrendScore && (
-                      <YAxis 
+                      <YAxis
                         yAxisId="right"
                         orientation="right"
-                        stroke="rgba(245, 158, 11, 0.4)" 
-                        fontSize={10} 
-                        tickLine={false} 
+                        stroke="rgba(245, 158, 11, 0.4)"
+                        fontSize={10}
+                        tickLine={false}
                         axisLine={false}
                         domain={[0, 100]}
                         tickFormatter={(v) => `${v}`}
@@ -834,96 +834,96 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
                     {/* Main average equity line or standard area plot */}
                     {showEquity && (
                       equityData.length > 0 && equityData[0].run_equities ? (
-                        <Line 
+                        <Line
                           yAxisId="left"
                           name="Strategy Equity (平均)"
-                          type="monotone" 
-                          dataKey="equity" 
-                          stroke="var(--accent-green)" 
+                          type="monotone"
+                          dataKey="equity"
+                          stroke="var(--accent-green)"
                           strokeWidth={3}
                           dot={false}
                         />
                       ) : (
-                        <Area 
+                        <Area
                           yAxisId="left"
                           name="Equity (純資産)"
-                          type="monotone" 
-                          dataKey="equity" 
-                          stroke="var(--accent-green)" 
+                          type="monotone"
+                          dataKey="equity"
+                          stroke="var(--accent-green)"
                           strokeWidth={2}
-                          fillOpacity={1} 
-                          fill="url(#colorEquity)" 
+                          fillOpacity={1}
+                          fill="url(#colorEquity)"
                         />
                       )
                     )}
                     {showCash && (
-                      <Line 
+                      <Line
                         yAxisId="left"
                         name="Cash (手元余力キャッシュ)"
-                        type="monotone" 
-                        dataKey="cash" 
-                        stroke="rgba(255, 255, 255, 0.35)" 
-                        strokeDasharray="4 4" 
+                        type="monotone"
+                        dataKey="cash"
+                        stroke="rgba(255, 255, 255, 0.35)"
+                        strokeDasharray="4 4"
                         strokeWidth={1.5}
                         dot={false}
                       />
                     )}
                     {showSpy && (
-                      <Line 
+                      <Line
                         yAxisId="left"
                         name="SPY (S&P 500 ベンチマーク)"
-                        type="monotone" 
-                        dataKey="spy_equity" 
-                        stroke="#3b82f6" 
-                        strokeDasharray="3 3" 
+                        type="monotone"
+                        dataKey="spy_equity"
+                        stroke="#3b82f6"
+                        strokeDasharray="3 3"
                         strokeWidth={1.5}
                         dot={false}
                       />
                     )}
                     {showQqq && (
-                      <Line 
+                      <Line
                         yAxisId="left"
                         name="QQQ (Nasdaq 100 ベンチマーク)"
-                        type="monotone" 
-                        dataKey="qqq_equity" 
-                        stroke="#f97316" 
-                        strokeDasharray="3 3" 
+                        type="monotone"
+                        dataKey="qqq_equity"
+                        stroke="#f97316"
+                        strokeDasharray="3 3"
                         strokeWidth={1.5}
                         dot={false}
                       />
                     )}
                     {showTqqq && (
-                      <Line 
+                      <Line
                         yAxisId="left"
                         name="TQQQ (Nasdaq 100 レバレッジ3倍)"
-                        type="monotone" 
-                        dataKey="tqqq_equity" 
-                        stroke="#ec4899" 
-                        strokeDasharray="3 3" 
+                        type="monotone"
+                        dataKey="tqqq_equity"
+                        stroke="#ec4899"
+                        strokeDasharray="3 3"
                         strokeWidth={1.5}
                         dot={false}
                       />
                     )}
                     {showSoxl && (
-                      <Line 
+                      <Line
                         yAxisId="left"
                         name="SOXL (半導体レバレッジ3倍)"
-                        type="monotone" 
-                        dataKey="soxl_equity" 
-                        stroke="#a855f7" 
-                        strokeDasharray="3 3" 
+                        type="monotone"
+                        dataKey="soxl_equity"
+                        stroke="#a855f7"
+                        strokeDasharray="3 3"
                         strokeWidth={1.5}
                         dot={false}
                       />
                     )}
                     {showTrendScore && (
-                      <Line 
+                      <Line
                         yAxisId="right"
                         name="Market Trend Score"
-                        type="monotone" 
-                        dataKey="trend_score" 
-                        stroke="rgba(245, 158, 11, 0.25)" 
-                        strokeWidth={1} 
+                        type="monotone"
+                        dataKey="trend_score"
+                        stroke="rgba(245, 158, 11, 0.25)"
+                        strokeWidth={1}
                         dot={false}
                       />
                     )}
@@ -946,7 +946,7 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
                 </h3>
                 <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>年度ごとの戦略リターンとS&P 500の対比</span>
               </div>
-              
+
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px', textAlign: 'left' }}>
                   <thead>
@@ -967,22 +967,22 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
                       const item = summary.yearly_performance![year];
                       const isProfit = item.net_pnl > 0;
                       const isLoss = item.net_pnl < 0;
-                      
+
                       const strategyReturn = item.return_pct ?? 0.0;
                       const isStrategyReturnPositive = strategyReturn >= 0;
-                      
+
                       const pnlColor = isProfit ? 'var(--accent-green)' : isLoss ? 'var(--accent-red)' : 'var(--text-primary)';
                       const pfColor = item.profit_factor >= 1.0 ? 'var(--accent-green)' : 'var(--accent-red)';
                       const spyColor = item.spy_return_pct >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
                       const strategyReturnColor = isStrategyReturnPositive ? 'var(--accent-green)' : 'var(--accent-red)';
-                      
+
                       const rowBg = idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)';
-                      
+
                       // Precise outperformance comparison logic (Strategy Return vs SPY Return)
                       let vsSpyLabel = 'GAIN';
                       let vsSpyBg = 'rgba(34, 211, 160, 0.12)';
                       let vsSpyColor = 'var(--accent-green)';
-                      
+
                       if (strategyReturn > item.spy_return_pct) {
                         vsSpyLabel = '🏆 OUTPERFORM';
                         vsSpyBg = 'rgba(0, 255, 136, 0.18)';
@@ -996,12 +996,12 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
                         vsSpyBg = 'rgba(255, 255, 255, 0.08)';
                         vsSpyColor = 'var(--text-secondary)';
                       }
-                      
+
                       return (
-                        <tr 
-                          key={year} 
-                          style={{ 
-                            borderBottom: '1px solid rgba(255,255,255,0.03)', 
+                        <tr
+                          key={year}
+                          style={{
+                            borderBottom: '1px solid rgba(255,255,255,0.03)',
                             backgroundColor: rowBg,
                             transition: 'background-color 0.15s'
                           }}
@@ -1082,17 +1082,17 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
                       const stats = summary.exit_reasons![reason];
                       const totalExitTrades = Object.values(summary.exit_reasons!).reduce((sum, item) => sum + item.count, 0);
                       const sharePct = totalExitTrades > 0 ? (stats.count / totalExitTrades) * 100 : 0;
-                      
+
                       const isProfit = stats.avg_pnl_pct > 0;
                       const isLoss = stats.avg_pnl_pct < 0;
                       const pnlColor = isProfit ? 'var(--accent-green)' : isLoss ? 'var(--accent-red)' : 'var(--text-primary)';
                       const rowBg = idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)';
-                      
+
                       return (
-                        <tr 
-                          key={reason} 
-                          style={{ 
-                            borderBottom: '1px solid rgba(255,255,255,0.03)', 
+                        <tr
+                          key={reason}
+                          style={{
+                            borderBottom: '1px solid rgba(255,255,255,0.03)',
                             backgroundColor: rowBg,
                             transition: 'background-color 0.15s'
                           }}
@@ -1129,7 +1129,7 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
               <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
                 📜 Trade Transaction Logs
               </h3>
-              
+
               {/* Tables filters */}
               <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
                 <input
@@ -1148,7 +1148,7 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
                     width: '100px'
                   }}
                 />
-                
+
                 <div style={{ display: 'flex', alignItems: 'center', background: 'rgba(255,255,255,0.05)', padding: '4px 8px', borderRadius: '6px', border: '1px solid var(--border)' }}>
                   <select
                     value={filterReason}
@@ -1194,12 +1194,12 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
                       const isLoss = trade.pnl_pct < 0;
                       const pnlColor = isProfit ? 'var(--accent-green)' : isLoss ? 'var(--accent-red)' : 'var(--text-primary)';
                       const rowBg = idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)';
-                      
+
                       return (
-                        <tr 
-                          key={idx} 
-                          style={{ 
-                            borderBottom: '1px solid rgba(255,255,255,0.03)', 
+                        <tr
+                          key={idx}
+                          style={{
+                            borderBottom: '1px solid rgba(255,255,255,0.03)',
                             backgroundColor: rowBg,
                             transition: 'background-color 0.15s'
                           }}

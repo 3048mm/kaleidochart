@@ -652,8 +652,8 @@ class ScenarioComparisonSummary(BaseModel):
 class ScenarioComparisonEquityPoint(BaseModel):
     date: str
     spy_equity: float
-    equity_mts_raw: float
-    equity_vxv_vix_ema: float
+    equity_full_position: float
     equity_spy_sma200: float
     equity_spy_sma63: float
-    equity_full_position: float
+    equity_vxv_vix_ema: float
+    equity_mts_raw: float

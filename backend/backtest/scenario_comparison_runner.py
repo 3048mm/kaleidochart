@@ -22,11 +22,11 @@ def run_comparison(
     use_vxv_vix: bool = False
 ):
     """
-    Runs the 4 market regime models (mts_raw, vxv_vix_ema, spy_sma200, spy_sma63)
+    Runs the 5 market regime models (full_position, spy_sma200, spy_sma63, vxv_vix_ema, mts_raw)
     concurrently (sequentially in loop) and merges their summaries and equity curves
     for side-by-side comparison.
     """
-    models = ['mts_raw', 'vxv_vix_ema', 'spy_sma200', 'spy_sma63', 'full_position']
+    models = ['full_position', 'spy_sma200', 'spy_sma63', 'vxv_vix_ema', 'mts_raw']
     
     os.makedirs(output_dir, exist_ok=True)
     
