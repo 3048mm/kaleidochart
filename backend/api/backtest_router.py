@@ -21,28 +21,85 @@ router = APIRouter(tags=["backtest"])
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 OUTPUT_DIR = os.path.join(PROJECT_ROOT, "output")
 
+SCENARIO_STRATEGIES = ["A", "B1", "B2", "B3", "B4", "E2"]
+SCENARIO_MODELS = ["mts_raw", "vxv_vix_ema", "spy_sma200", "spy_sma63"]
+
+
+def _new_scenario_base(strat: str, model: str) -> str:
+    """Returns the base dir for the new 3-tier structure: output/scenario/{strat}/{model}/"""
+    return os.path.join(OUTPUT_DIR, "scenario", strat, model)
+
+
+def _find_run_dirs_new(strat: str, model: str) -> list:
+    """Lists run_N dirs under output/scenario/{strat}/{model}/"""
+    base = _new_scenario_base(strat, model)
+    if not os.path.isdir(base):
+        return []
+    runs = []
+    for item in sorted(os.listdir(base)):
+        d = os.path.join(base, item)
+        if os.path.isdir(d) and item.startswith("run_") and os.path.exists(os.path.join(d, "scenario_summary.json")):
+            runs.append(d)
+    return runs
+
+
+def _find_run_dirs_legacy(group_name: str) -> list:
+    """Lists legacy flat run dirs: output/scenario/{group_name}_run_N/"""
+    sub_dir = os.path.join(OUTPUT_DIR, "scenario")
+    if not os.path.isdir(sub_dir):
+        return []
+    runs = []
+    for i in range(100):
+        d = os.path.join(sub_dir, f"{group_name}_run_{i}")
+        if os.path.isdir(d) and os.path.exists(os.path.join(d, "scenario_summary.json")):
+            runs.append(d)
+        elif i > 0 and not os.path.isdir(d):
+            break
+    return runs
+
+
+def _parse_group_name(name: str):
+    """
+    Parses a group name into (strategy, model).
+    Accepts:
+      - New format: "A__mts_raw" (double underscore separator)
+      - Legacy format: "A_mts_raw" (best-effort parse)
+      - Strategy only: "A" (uses None for model = all models)
+    Returns (strat, model_or_None).
+    """
+    if "__" in name:
+        parts = name.split("__", 1)
+        return parts[0], parts[1]
+    # Legacy format or strategy-only
+    for strat in SCENARIO_STRATEGIES:
+        if name == strat:
+            return strat, None
+        for model in SCENARIO_MODELS:
+            if name == f"{strat}_{model}":
+                return strat, model
+    return name, None
+
+
 def is_monte_carlo_group(name: str) -> bool:
     """
-    Checks if the name represents a Monte Carlo simulation group (e.g. 'A', 'B1', or 'A_mts_raw').
-    It checks if '{name}_run_0' directory exists in 'output/scenario'.
+    Returns True if 'name' is a recognized strategy/model group with MC runs available.
+    Supports both new (A__mts_raw) and legacy (A_mts_raw, A) formats.
     """
-    base_groups = ["A", "B1", "B2", "B3", "B4", "E2"]
-    is_valid_group = False
-    
-    if name in base_groups:
-        is_valid_group = True
+    strat, model = _parse_group_name(name)
+    if strat not in SCENARIO_STRATEGIES:
+        return False
+
+    if model:
+        # New 3-tier or legacy single model
+        return bool(_find_run_dirs_new(strat, model)) or bool(_find_run_dirs_legacy(f"{strat}_{model}"))
     else:
-        for bg in base_groups:
-            if name.startswith(f"{bg}_") and not name.endswith("_run_"):
-                is_valid_group = True
-                break
-                
-    if is_valid_group:
-        sub_dir = os.path.join(OUTPUT_DIR, "scenario")
-        if os.path.exists(sub_dir):
-            if os.path.exists(os.path.join(sub_dir, f"{name}_run_0")):
+        # Strategy-level: check any model
+        for m in SCENARIO_MODELS:
+            if _find_run_dirs_new(strat, m) or _find_run_dirs_legacy(f"{strat}_{m}"):
                 return True
-    return False
+        # Legacy: check old flat strat-only format
+        return bool(_find_run_dirs_legacy(strat))
+
 
 def resolve_scenario_path(name: str) -> str:
     """
@@ -98,50 +155,72 @@ def resolve_scenario_path(name: str) -> str:
 @router.get("/backtest/scenarios", response_model=List[str])
 def get_scenarios():
     """
-    Returns a list of scenario directory names that contain scenario_summary.json.
-    Sorted by modification time (newest first).
-    Injects dynamic Monte Carlo group names (e.g. 'A', 'B1') if their runs exist.
+    Returns a list of scenario group names that have MC runs.
+    New 3-tier structure: enumerates output/scenario/{strat}/{model}/run_* directories.
+    Legacy flat structure: backward compatible enumeration.
+    Sorted newest-first.
     """
     if not os.path.exists(OUTPUT_DIR):
         return []
-        
-    candidates = []
-    # Search output directory
+
+    candidates = []  # (display_name, mtime)
+
+    # --- New 3-tier structure ---
+    new_base = os.path.join(OUTPUT_DIR, "scenario")
+    if os.path.isdir(new_base):
+        for strat in SCENARIO_STRATEGIES:
+            strat_dir = os.path.join(new_base, strat)
+            if not os.path.isdir(strat_dir):
+                continue
+            for model in SCENARIO_MODELS:
+                model_dir = os.path.join(strat_dir, model)
+                if not os.path.isdir(model_dir):
+                    continue
+                run_dirs = _find_run_dirs_new(strat, model)
+                if run_dirs:
+                    mtime = max(os.path.getmtime(d) for d in run_dirs)
+                    candidates.append((f"{strat}__{model}", mtime))
+
+    # --- Legacy flat structure ---
+    sub_scenario_dir = os.path.join(OUTPUT_DIR, "scenario")
+    if os.path.isdir(sub_scenario_dir):
+        legacy_groups = set()
+        for item in os.listdir(sub_scenario_dir):
+            d_path = os.path.join(sub_scenario_dir, item)
+            if not os.path.isdir(d_path):
+                continue
+            if "_run_" in item and os.path.exists(os.path.join(d_path, "scenario_summary.json")):
+                group_name = item.split("_run_")[0]
+                # Only include if not already covered by new structure
+                strat, model = _parse_group_name(group_name)
+                if strat in SCENARIO_STRATEGIES and f"{strat}__{model}" not in [c[0] for c in candidates]:
+                    legacy_groups.add(group_name)
+            elif os.path.exists(os.path.join(d_path, "scenario_summary.json")):
+                # Single non-MC scenario
+                candidates.append((item, os.path.getmtime(d_path)))
+
+        for g in legacy_groups:
+            runs = _find_run_dirs_legacy(g)
+            if runs:
+                mtime = max(os.path.getmtime(d) for d in runs)
+                candidates.append((g, mtime))
+
+    # Single non-MC scenarios from root output dir
     for item in os.listdir(OUTPUT_DIR):
         d_path = os.path.join(OUTPUT_DIR, item)
         if os.path.isdir(d_path) and os.path.exists(os.path.join(d_path, "scenario_summary.json")):
             candidates.append((item, os.path.getmtime(d_path)))
-            
-    # Search output/scenario directory
-    sub_scenario_dir = os.path.join(OUTPUT_DIR, "scenario")
-    groups_detected = set()
-    
-    if os.path.exists(sub_scenario_dir) and os.path.isdir(sub_scenario_dir):
-        for item in os.listdir(sub_scenario_dir):
-            d_path = os.path.join(sub_scenario_dir, item)
-            if os.path.isdir(d_path) and os.path.exists(os.path.join(d_path, "scenario_summary.json")):
-                candidates.append((item, os.path.getmtime(d_path)))
-                if "_run_" in item:
-                    group_name = item.split("_run_")[0]
-                    base_prefixes = ["A", "B1", "B2", "B3", "B4", "E2"]
-                    is_matching_mc = False
-                    if group_name in base_prefixes:
-                        is_matching_mc = True
-                    else:
-                        for bp in base_prefixes:
-                            if group_name.startswith(f"{bp}_"):
-                                is_matching_mc = True
-                                break
-                    if is_matching_mc:
-                        groups_detected.add(group_name)
-            
-    # Sort newest first
+
     candidates.sort(key=lambda x: x[1], reverse=True)
-    sorted_names = [name for name, _ in candidates if "_run_" not in name]
-    
-    # Prepend integrated groups
-    sorted_groups = sorted(list(groups_detected))
-    return sorted_groups + sorted_names
+    # Deduplicate preserving order
+    seen = set()
+    result = []
+    for name, _ in candidates:
+        if name not in seen:
+            seen.add(name)
+            result.append(name)
+    return result
+
 
 @router.get("/backtest/scenario/{name}/summary", response_model=BacktestScenarioSummary)
 def get_scenario_summary(name: str):
@@ -150,21 +229,34 @@ def get_scenario_summary(name: str):
     Supports 'latest' as a dynamic name alias, and Monte Carlo groups as integrated summaries.
     """
     if is_monte_carlo_group(name):
-        sub_scenario_dir = os.path.join(OUTPUT_DIR, "scenario")
+        # Resolve run directories (new 3-tier or legacy flat)
+        strat, model = _parse_group_name(name)
+        run_dirs = []
+        if model:
+            run_dirs = _find_run_dirs_new(strat, model)
+            if not run_dirs:
+                run_dirs = _find_run_dirs_legacy(f"{strat}_{model}")
+        else:
+            # Strategy-only: collect all models
+            for m in SCENARIO_MODELS:
+                run_dirs.extend(_find_run_dirs_new(strat, m))
+            if not run_dirs:
+                for m in SCENARIO_MODELS:
+                    run_dirs.extend(_find_run_dirs_legacy(f"{strat}_{m}"))
+            if not run_dirs:
+                run_dirs = _find_run_dirs_legacy(strat)
+
         run_summaries = []
         run_paths = []
-        for run_idx in range(100):
-            run_path = os.path.join(sub_scenario_dir, f"{name}_run_{run_idx}")
+        for run_path in run_dirs:
             summary_file = os.path.join(run_path, "scenario_summary.json")
-            if not os.path.exists(summary_file):
-                break
             try:
                 with open(summary_file, "r", encoding="utf-8") as f:
                     run_summaries.append(json.load(f))
                     run_paths.append(run_path)
             except Exception:
                 pass
-                
+
         if not run_summaries:
             raise HTTPException(status_code=404, detail=f"No run summaries found for group {name}")
             
@@ -482,15 +574,29 @@ def get_scenario_equity(name: str):
     import numpy as np
     
     if is_monte_carlo_group(name):
-        sub_scenario_dir = os.path.join(OUTPUT_DIR, "scenario")
+        # Resolve run directories (new 3-tier or legacy flat)
+        strat, model = _parse_group_name(name)
+        all_run_dirs = []
+        if model:
+            all_run_dirs = _find_run_dirs_new(strat, model)
+            if not all_run_dirs:
+                all_run_dirs = _find_run_dirs_legacy(f"{strat}_{model}")
+        else:
+            for m in SCENARIO_MODELS:
+                all_run_dirs.extend(_find_run_dirs_new(strat, m))
+            if not all_run_dirs:
+                for m in SCENARIO_MODELS:
+                    all_run_dirs.extend(_find_run_dirs_legacy(f"{strat}_{m}"))
+            if not all_run_dirs:
+                all_run_dirs = _find_run_dirs_legacy(strat)
+
         run_curves = {}
         valid_runs = []
-        
-        for run_idx in range(100):
-            run_path = os.path.join(sub_scenario_dir, f"{name}_run_{run_idx}")
+
+        for run_idx, run_path in enumerate(all_run_dirs):
             csv_file = os.path.join(run_path, "scenario_equity_curve.csv")
             if not os.path.exists(csv_file):
-                break
+                continue
             try:
                 with open(csv_file, "r", encoding="utf-8") as f:
                     reader = csv.DictReader(f)
@@ -498,10 +604,10 @@ def get_scenario_equity(name: str):
                     valid_runs.append(run_idx)
             except Exception:
                 pass
-                
+
         if not valid_runs:
             raise HTTPException(status_code=404, detail=f"No run equity curves found for group {name}")
-            
+
         ref_run = valid_runs[0]
         ref_rows = run_curves[ref_run]
         
@@ -828,8 +934,17 @@ def get_scenario_trades(name: str):
     For groups, returns the trade logs of run_0 as a representative.
     """
     if is_monte_carlo_group(name):
-        sub_scenario_dir = os.path.join(OUTPUT_DIR, "scenario")
-        scenario_path = os.path.join(sub_scenario_dir, f"{name}_run_0")
+        # Use first available run as representative
+        strat, model = _parse_group_name(name)
+        all_run_dirs = []
+        if model:
+            all_run_dirs = _find_run_dirs_new(strat, model) or _find_run_dirs_legacy(f"{strat}_{model}")
+        else:
+            for m in SCENARIO_MODELS:
+                all_run_dirs.extend(_find_run_dirs_new(strat, m))
+            if not all_run_dirs:
+                all_run_dirs = _find_run_dirs_legacy(strat)
+        scenario_path = all_run_dirs[0] if all_run_dirs else os.path.join(OUTPUT_DIR, "scenario")
     else:
         scenario_path = resolve_scenario_path(name)
         

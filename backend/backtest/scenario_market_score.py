@@ -72,8 +72,13 @@ class MarketTrendScorer:
             spy_data = prices_df[prices_df['symbol_id'] == self.spy_id].copy()
             spy_data = spy_data.sort_values('date').reset_index(drop=True)
             
-            # Ensure atr_14 and SMAs are computed
-            if 'atr_14' not in spy_data.columns:
+            # Use pre-computed T3 indicator values if available (merged into prices_df by scenario_runner).
+            # Only fall back to rolling calculation if T3 data is absent (e.g. standalone mode).
+            has_t3_atr  = 'atr_14' in spy_data.columns and spy_data['atr_14'].notna().any()
+            has_t3_sma50  = 'sma_50' in spy_data.columns and spy_data['sma_50'].notna().any()
+            has_t3_sma200 = 'sma_200' in spy_data.columns and spy_data['sma_200'].notna().any()
+
+            if not has_t3_atr:
                 if 'high' in spy_data.columns and 'low' in spy_data.columns:
                     high = spy_data['high']
                     low = spy_data['low']
@@ -86,9 +91,11 @@ class MarketTrendScorer:
                     spy_data['atr_14'] = tr.rolling(14, min_periods=1).mean().ffill().fillna(1.0)
                 else:
                     spy_data['atr_14'] = 1.0
-                
-            spy_data['sma_50'] = spy_data['close'].rolling(50, min_periods=1).mean()
-            spy_data['sma_200'] = spy_data['close'].rolling(200, min_periods=1).mean()
+
+            if not has_t3_sma50:
+                spy_data['sma_50'] = spy_data['close'].rolling(50, min_periods=1).mean()
+            if not has_t3_sma200:
+                spy_data['sma_200'] = spy_data['close'].rolling(200, min_periods=1).mean()
             spy_data['atr_pct_14'] = np.where(spy_data['close'] == 0, 0.0, (spy_data['atr_14'] / spy_data['close']) * 100)
             
             # Calculate distribution days

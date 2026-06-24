@@ -10,7 +10,7 @@ export const BacktestPage: React.FC = () => {
   const containerStyle: React.CSSProperties = {
     padding: '20px',
     width: '100%',
-    maxWidth: '1200px',
+    maxWidth: activeTab === 'comparison' ? '1600px' : '1200px',
     margin: '0 auto',
     boxSizing: 'border-box',
     display: 'flex',

@@ -4,7 +4,8 @@ echo Registering Daily StockTool Update Tasks...
 set SCRIPT_PATH=%~dp0run_daily_update.bat
 
 :: 旧タスクが残っていれば削除
-schtasks /delete /tn "StockTool_DailyUpdate" /f >nul 2>&1
+schtasks /delete /tn "StockTool_DailyUpdate_0700" /f >nul 2>&1
+schtasks /delete /tn "StockTool_DailyUpdate_1300" /f >nul 2>&1
 
 :: 朝の 07:00 更新タスクの登録
 schtasks /create /tn "StockTool_DailyUpdate_0700" /tr "\"%SCRIPT_PATH%\"" /sc daily /st 07:00 /f

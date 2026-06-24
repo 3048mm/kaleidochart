@@ -82,10 +82,19 @@ def sync_phase_t5_signals(db, logger: logging.Logger):
         logger.info("No signals found for the target gap dates.")
         return
 
+    # Build a date-indexed lookup for breadth_sma50
+    breadth_by_date = {}
+    if not metrics_df.empty and 'breadth_sma50' in metrics_df.columns:
+        for _, r in metrics_df.iterrows():
+            d = r['date']
+            d_key = d.date() if hasattr(d, 'date') else d
+            breadth_by_date[d_key] = float(r['breadth_sma50'])
+
     t5_recs = []
     for _, row in ms_df.iterrows():
+        row_date = row['date'].date()
         t5_recs.append(MarketSignal(
-            date=row['date'].date(),
+            date=row_date,
             spy_above_sma200=int(row['spy_above_sma200']),
             spy_sma200_rising=int(row['spy_sma200_rising']) if sanitize_numeric(row, 'spy_sma200_rising') is not None else None,
             distribution_days=int(row['distribution_days']),
@@ -93,7 +102,8 @@ def sync_phase_t5_signals(db, logger: logging.Logger):
             follow_through_day=int(row['follow_through_day']),
             market_phase=row['market_phase'],
             market_trend_score=float(row['market_trend_score']) if sanitize_numeric(row, 'market_trend_score') is not None else None,
-            vxv_vix_ratio=float(row['vxv_vix_ratio']) if sanitize_numeric(row, 'vxv_vix_ratio') is not None else None
+            vxv_vix_ratio=float(row['vxv_vix_ratio']) if sanitize_numeric(row, 'vxv_vix_ratio') is not None else None,
+            breadth_sma50=breadth_by_date.get(row_date)
         ))
     
     db.query(MarketSignal).filter(MarketSignal.date.in_([r.date for r in t5_recs])).delete(synchronize_session=False)

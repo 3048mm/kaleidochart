@@ -190,27 +190,62 @@ def run_scenario_test(
         )
 
     # 1.6 Pre-calculate Daily Market Breadth & Momentum statistics for the Scorer
-    print("  Pre-calculating daily market breadth & momentum...", flush=True)
-    active_stocks = df_symbols[(df_symbols['active'] == 1) & (df_symbols['category'] == '個別')]['id'].unique()
-    active_stocks_set = set(active_stocks)
+    print("  Loading market breadth data (from market_signals + fallback calculation)...", flush=True)
     
-    p_sub = df_prices[df_prices['symbol_id'].isin(active_stocks_set)][['date', 'symbol_id', 'close']].copy()
-    i_sub = df_indicators[df_indicators['symbol_id'].isin(active_stocks_set)][['date', 'symbol_id', 'sma_50']].copy()
+    # --- Try to read pre-computed breadth_sma50 from market_signals (T5) ---
+    db_breadth_by_date = {}
+    try:
+        from backend.db import database as _db_module
+        if _db_module.SessionLocal is not None:
+            with _db_module.get_db() as _db:
+                from backend.db.models import MarketSignal as _MS
+                from sqlalchemy import and_ as _and
+                _ms_rows = _db.query(_MS.date, _MS.breadth_sma50, _MS.vxv_vix_ratio).filter(
+                    _MS.breadth_sma50.isnot(None)
+                ).all()
+                for _r in _ms_rows:
+                    import datetime as _dt
+                    _d = _r.date if isinstance(_r.date, _dt.date) else _r.date.date()
+                    db_breadth_by_date[_d] = float(_r.breadth_sma50)
+    except Exception as _e:
+        print(f"  Warning: Could not load breadth_sma50 from market_signals: {_e}", flush=True)
     
-    merged_metrics = pd.merge(p_sub, i_sub, on=['date', 'symbol_id'], how='inner')
-    merged_metrics['is_above_sma50'] = merged_metrics['close'] > merged_metrics['sma_50']
+    # Dates within simulation range that are NOT in market_signals
+    sim_dates_set = set(dates) if 'dates' in dir() else set()
+    missing_breadth_dates = [d for d in (trading_dates if 'trading_dates' in dir() else []) 
+                             if d not in db_breadth_by_date]
     
-    # Advancing momentum ratio
-    merged_metrics = merged_metrics.sort_values(['symbol_id', 'date'])
-    merged_metrics['prev_close'] = merged_metrics.groupby('symbol_id')['close'].shift(1)
-    merged_metrics['is_up'] = merged_metrics['close'] > merged_metrics['prev_close']
+    # Fallback: compute from scratch only for dates not in market_signals
+    fallback_metrics = {}
+    if missing_breadth_dates:
+        print(f"  Fallback: computing breadth for {len(missing_breadth_dates)} dates not in market_signals...", flush=True)
+        active_stocks = df_symbols[(df_symbols['active'] == 1) & (df_symbols['category'] == '個別')]['id'].unique()
+        active_stocks_set = set(active_stocks)
+        
+        p_sub = df_prices[df_prices['symbol_id'].isin(active_stocks_set)][['date', 'symbol_id', 'close']].copy()
+        i_sub = df_indicators[df_indicators['symbol_id'].isin(active_stocks_set)][['date', 'symbol_id', 'sma_50']].copy()
+        
+        merged_metrics = pd.merge(p_sub, i_sub, on=['date', 'symbol_id'], how='inner')
+        merged_metrics['is_above_sma50'] = merged_metrics['close'] > merged_metrics['sma_50']
+        merged_metrics = merged_metrics.sort_values(['symbol_id', 'date'])
+        merged_metrics['prev_close'] = merged_metrics.groupby('symbol_id')['close'].shift(1)
+        merged_metrics['is_up'] = merged_metrics['close'] > merged_metrics['prev_close']
+        
+        fallback_df = merged_metrics.groupby('date').agg(
+            breadth_sma50=('is_above_sma50', lambda x: x.mean() if not x.isna().all() else 0.5),
+            momentum_ratio=('is_up', lambda x: x.mean() if not x.isna().all() else 0.5)
+        ).reset_index()
+        fallback_metrics = {row['date']: row.to_dict() for _, row in fallback_df.iterrows()}
     
-    daily_metrics_df = merged_metrics.groupby('date').agg(
-        breadth_sma50=('is_above_sma50', lambda x: x.mean() if not x.isna().all() else 0.5),
-        momentum_ratio=('is_up', lambda x: x.mean() if not x.isna().all() else 0.5)
-    ).reset_index()
+    # Merge: market_signals takes priority, fallback fills gaps
+    daily_metrics = {}
+    for d in (trading_dates if 'trading_dates' in dir() else []):
+        if d in db_breadth_by_date:
+            daily_metrics[d] = {'date': d, 'breadth_sma50': db_breadth_by_date[d], 'momentum_ratio': 0.5}
+        elif d in fallback_metrics:
+            daily_metrics[d] = fallback_metrics[d]
     
-    daily_metrics = {row['date']: row.to_dict() for _, row in daily_metrics_df.iterrows()}
+    print(f"  Breadth ready: {len(db_breadth_by_date)} from market_signals, {len(fallback_metrics)} from fallback", flush=True)
 
     # 2. Initialize Components
     mc_rng = None
@@ -234,6 +269,26 @@ def run_scenario_test(
      )
     portfolio = ScenarioPortfolio(port_config)
     portfolio.use_hysteresis = True
+    
+    # --- vxv_vix_ema warmup: pre-fill EMA history from market_signals before start_date ---
+    if regime_model == "vxv_vix_ema" and db_breadth_by_date:
+        try:
+            from backend.db import database as _db2
+            if _db2.SessionLocal is not None:
+                with _db2.get_db() as _db2s:
+                    from backend.db.models import MarketSignal as _MS2
+                    _start_obj = pd.to_datetime(start_date).date()
+                    _warmup_rows = _db2s.query(_MS2.date, _MS2.vxv_vix_ratio).filter(
+                        _MS2.date < _start_obj,
+                        _MS2.vxv_vix_ratio.isnot(None)
+                    ).order_by(_MS2.date.desc()).limit(63).all()
+                    _warmup_ratios = [float(r.vxv_vix_ratio) for r in reversed(_warmup_rows)]
+                    if _warmup_ratios:
+                        portfolio.vxv_vix_history = _warmup_ratios
+                        print(f"  vxv_vix_ema: pre-filled {len(_warmup_ratios)} warmup ratios (EMA seed initialized)", flush=True)
+        except Exception as _we:
+            print(f"  Warning: vxv_vix_ema warmup failed: {_we}", flush=True)
+
     
     simulator = BacktestSimulator(prices_df, symbols_df)
     reporter = ScenarioReporter()

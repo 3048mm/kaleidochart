@@ -219,6 +219,9 @@ class MarketSignal(Base):
     # NEW: VXV/VIX ratio
     vxv_vix_ratio       = Column(Float)
     
+    # Market breadth: fraction of active individual stocks above SMA50 (0.0 - 1.0)
+    breadth_sma50       = Column(Float)
+    
     created_at = Column(DateTime, default=datetime.utcnow)
 
 class PipelineMeta(Base):
