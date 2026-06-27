@@ -280,6 +280,25 @@ def _apply_theme_rs_ratio_e21_gt_e63(q, preset_def, db, latest_date_result, prev
         )
     )
 
+def _apply_theme_rs_ratio_rank_e14_gt_e21(q, preset_def, db, latest_date_result, previous_date_result):
+    _rk_date = db.query(func.max(RelativeRank.date)).filter(RelativeRank.date <= latest_date_result).scalar()
+    if _rk_date:
+        theme_momentum_subq = db.query(RelativeRank.symbol_id).filter(
+            RelativeRank.date == _rk_date,
+            RelativeRank.group_name == "テーマ",
+            RelativeRank.rs_ratio_rank_e14 > RelativeRank.rs_ratio_rank_e21
+        ).subquery()
+        stock_in_leading_themes_subq = db.query(ThemeConstituent.symbol_id).filter(
+            ThemeConstituent.theme_id.in_(theme_momentum_subq)
+        ).subquery()
+        return q.filter(
+            or_(
+                (Symbol.category == "テーマ") & (Symbol.id.in_(theme_momentum_subq)),
+                (Symbol.category == "個別") & (Symbol.id.in_(stock_in_leading_themes_subq))
+            )
+        )
+    return q
+
 def _apply_theme_rs_ratio_rank_e21_gt_e63(q, preset_def, db, latest_date_result, previous_date_result):
     _rk_date = db.query(func.max(RelativeRank.date)).filter(RelativeRank.date <= latest_date_result).scalar()
     if _rk_date:
@@ -299,6 +318,17 @@ def _apply_theme_rs_ratio_rank_e21_gt_e63(q, preset_def, db, latest_date_result,
         )
     return q
 
+def _apply_rs_trend_s21_gt_s63(q, preset_def, db, latest_date_result, previous_date_result):
+    _rk_date = db.query(func.max(RelativeRank.date)).filter(RelativeRank.date <= latest_date_result).scalar()
+    if _rk_date:
+        rank_subq = db.query(RelativeRank.symbol_id).filter(
+            RelativeRank.date == _rk_date,
+            RelativeRank.group_name == "個別",
+            RelativeRank.rs_trend_s21 > RelativeRank.rs_trend_s63
+        ).subquery()
+        return q.filter(Symbol.id.in_(rank_subq))
+    return q
+    
 def _apply_rs_ratio_rank_e21_gt_e63(q, preset_def, db, latest_date_result, previous_date_result):
     _rk_date = db.query(func.max(RelativeRank.date)).filter(RelativeRank.date <= latest_date_result).scalar()
     if _rk_date:
@@ -315,7 +345,9 @@ BOOLEAN_FILTER_HANDLERS = {
     "rrg_lagging_in": _apply_rrg_lagging_in,
     "rrg_improving_in": _apply_rrg_improving_in,
     "is_theme_rs_ratio_e21_gt_e63": _apply_theme_rs_ratio_e21_gt_e63,
+    "is_theme_rs_ratio_rank_e14_gt_e21": _apply_theme_rs_ratio_rank_e14_gt_e21,
     "is_theme_rs_ratio_rank_e21_gt_e63": _apply_theme_rs_ratio_rank_e21_gt_e63,
+    "is_rs_trend_s21_gt_s63": _apply_rs_trend_s21_gt_s63,
     "is_rs_ratio_rank_e21_gt_e63": _apply_rs_ratio_rank_e21_gt_e63,
 }
 

@@ -140,6 +140,24 @@ def resolve_scenario_path(name: str) -> str:
     elif is_monte_carlo_group(name):
         return os.path.join(OUTPUT_DIR, "scenario")
     else:
+        # Check new 3-tier structure for run_N directory (e.g. B4_mts_raw_run_0 or B4__mts_raw__run_0)
+        if "_run_" in name:
+            parts = name.split("_run_", 1)
+            group_part = parts[0]
+            # Strip trailing double underscore if present (e.g. B4__mts_raw__ -> B4__mts_raw)
+            if group_part.endswith("__"):
+                group_part = group_part[:-2]
+            elif group_part.endswith("_"):
+                group_part = group_part[:-1]
+                
+            run_part = "run_" + parts[1]
+            
+            strat, model = _parse_group_name(group_part)
+            if strat and model:
+                new_run_path = os.path.join(OUTPUT_DIR, "scenario", strat, model, run_part)
+                if os.path.exists(new_run_path) and os.path.isdir(new_run_path):
+                    return new_run_path
+
         # Check output directory
         scenario_path = os.path.join(OUTPUT_DIR, name)
         if os.path.exists(scenario_path) and os.path.isdir(scenario_path):

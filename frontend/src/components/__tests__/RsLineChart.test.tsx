@@ -12,8 +12,10 @@ vi.mock('lightweight-charts', () => {
                 applyOptions: vi.fn(),
             })),
             subscribeCrosshairMove: vi.fn(),
+            unsubscribeCrosshairMove: vi.fn(),
             timeScale: vi.fn(() => ({
                 fitContent: vi.fn(),
+                setVisibleRange: vi.fn(),
             })),
             remove: vi.fn(),
             applyOptions: vi.fn(),

@@ -555,6 +555,20 @@ class BacktestScenarioSummary(BaseModel):
     final_capital: Optional[float] = None
     yearly_performance: Optional[dict] = None
     exit_reasons: Optional[dict] = None
+    is_monte_carlo: Optional[bool] = None
+    runs_count: Optional[int] = None
+    cagr_avg: Optional[float] = None
+    cagr_max: Optional[float] = None
+    cagr_min: Optional[float] = None
+    max_drawdown_avg: Optional[float] = None
+    max_drawdown_min: Optional[float] = None
+    max_drawdown_max: Optional[float] = None
+    win_rate_avg: Optional[float] = None
+    total_trades_avg: Optional[int] = None
+    profit_factor_avg: Optional[float] = None
+    final_capital_avg: Optional[float] = None
+    final_capital_max: Optional[float] = None
+    final_capital_min: Optional[float] = None
     # Allow extra fields for safety
     model_config = {
         "extra": "allow"

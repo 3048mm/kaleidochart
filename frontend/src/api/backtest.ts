@@ -16,6 +16,20 @@ export interface BacktestScenarioSummary {
   max_drawdown: number;
   win_rate: number;
   total_trades: number;
+  is_monte_carlo?: boolean;
+  runs_count?: number;
+  cagr_avg?: number;
+  cagr_max?: number;
+  cagr_min?: number;
+  max_drawdown_avg?: number;
+  max_drawdown_min?: number;
+  max_drawdown_max?: number;
+  win_rate_avg?: number;
+  total_trades_avg?: number;
+  profit_factor_avg?: number;
+  final_capital_avg?: number;
+  final_capital_max?: number;
+  final_capital_min?: number;
   yearly_performance?: { [year: string]: YearlyPerformanceItem };
   exit_reasons?: {
     [reason: string]: {

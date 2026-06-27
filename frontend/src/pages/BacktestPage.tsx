@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { EtfSingleBacktestPage } from './EtfSingleBacktestPage';
-import { BacktestResultPage } from './BacktestResultPage';
 import { RegimeComparisonPage } from './RegimeComparisonPage';
 import { appConfig } from '../config';
 
@@ -59,8 +58,7 @@ export const BacktestPage: React.FC = () => {
       <div className="dashboard-tabs" style={tabsStyle}>
         {[
           { id: 'etf', label: '📈 ETF Backtest' },
-          { id: 'scenario', label: '🧭 Scenario Test' },
-          { id: 'comparison', label: '⚖️ Regime Comparison' },
+          { id: 'comparison', label: '⚖️ Scenario Test' },
         ].map((tab) => (
           <button
             key={tab.id}
@@ -99,7 +97,7 @@ export const BacktestPage: React.FC = () => {
       {/* Content Rendering */}
       <div>
         {activeTab === 'etf' && <EtfSingleBacktestPage hideHeader={true} />}
-        {activeTab === 'scenario' && <BacktestResultPage hideHeader={true} />}
+        {activeTab === 'scenario' && <RegimeComparisonPage />}
         {activeTab === 'comparison' && <RegimeComparisonPage />}
       </div>
     </div>

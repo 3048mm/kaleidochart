@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { AreaChart, Area, ResponsiveContainer } from 'recharts';
 import { fetchScenarioSummary, fetchScenarioEquity, BacktestScenarioSummary, BacktestEquityPoint } from '../api/backtest';
+import { ScenarioDetailView } from './ScenarioDetailView';
 
 // ─── 定数 ──────────────────────────────────────────────────────
 const STRATEGIES = [
@@ -32,6 +33,8 @@ interface PanelCardProps {
   model: typeof MODELS[number];
   data: ModelData;
   initialEquity: number;
+  isActive?: boolean;
+  onClick?: () => void;
 }
 
 // ─── ヘルパー ────────────────────────────────────────────────────
@@ -62,7 +65,7 @@ function calcCagrFromEquity(equity: BacktestEquityPoint[], initialCap: number): 
 }
 
 // ─── パネルカード ─────────────────────────────────────────────────
-const PanelCard: React.FC<PanelCardProps> = ({ model, data, initialEquity }) => {
+const PanelCard: React.FC<PanelCardProps> = ({ model, data, initialEquity, isActive, onClick }) => {
   const { summary, equity, loading, error } = data;
 
   const cagr = summary?.cagr_avg !== undefined
@@ -88,18 +91,24 @@ const PanelCard: React.FC<PanelCardProps> = ({ model, data, initialEquity }) => 
 
 
   return (
-    <div style={{
-      background: 'rgba(15, 23, 42, 0.85)',
-      border: `1px solid ${model.color}33`,
-      borderRadius: '12px',
-      padding: '16px',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '12px',
-      backdropFilter: 'blur(12px)',
-      boxShadow: `0 0 20px ${model.color}15`,
-      minWidth: 0,
-    }}>
+    <div 
+      onClick={onClick}
+      style={{
+        background: isActive ? 'rgba(30, 41, 59, 0.95)' : 'rgba(15, 23, 42, 0.85)',
+        border: isActive ? `2px solid ${model.color}` : `1px solid ${model.color}33`,
+        borderRadius: '12px',
+        padding: isActive ? '15px' : '16px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '12px',
+        backdropFilter: 'blur(12px)',
+        boxShadow: isActive ? `0 0 25px ${model.color}30` : `0 0 20px ${model.color}15`,
+        minWidth: 0,
+        cursor: 'pointer',
+        transition: 'all 0.2s ease',
+        transform: isActive ? 'scale(1.02)' : 'none',
+      }}
+    >
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -217,6 +226,7 @@ const PanelCard: React.FC<PanelCardProps> = ({ model, data, initialEquity }) => 
 // ─── メインページ ─────────────────────────────────────────────────
 export const RegimeComparisonPage: React.FC = () => {
   const [selectedStrategy, setSelectedStrategy] = useState('A');
+  const [selectedModel, setSelectedModel] = useState<string>('full_position');
   const [modelData, setModelData] = useState<Record<string, ModelData>>(
     Object.fromEntries(MODELS.map(m => [m.id, { summary: null, equity: [], loading: false, error: null }]))
   );
@@ -335,7 +345,7 @@ export const RegimeComparisonPage: React.FC = () => {
         ))}
       </div>
 
-      {/* 4パネル */}
+      {/* 5パネル */}
       <div className="rc-panel-grid">
         {MODELS.map(m => (
           <PanelCard
@@ -343,9 +353,21 @@ export const RegimeComparisonPage: React.FC = () => {
             model={m}
             data={modelData[m.id]}
             initialEquity={initialEquity}
+            isActive={selectedModel === m.id}
+            onClick={() => setSelectedModel(m.id)}
           />
         ))}
       </div>
+
+      {/* 詳細分析セクション */}
+      {selectedModel && (
+        <div style={{ marginTop: '40px', borderTop: '1px solid rgba(255, 255, 255, 0.1)', paddingTop: '30px' }}>
+          <h2 style={{ fontSize: '16px', fontWeight: 'bold', color: '#fff', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            📊 詳細分析: {selectedStrategy} - {MODELS.find(m => m.id === selectedModel)?.label}
+          </h2>
+          <ScenarioDetailView strategyId={selectedStrategy} modelId={selectedModel} />
+        </div>
+      )}
 
       {/* 凡例 */}
       <div className="rc-legend">

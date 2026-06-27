@@ -529,28 +529,36 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
               `${(summary.cagr * 100).toFixed(2)}%`,
               'ベンチマークを凌駕する実質年利換算値',
               summary.cagr >= 0 ? 'good' : 'bad',
-              summary.is_monte_carlo ? `(最良: ${(summary.cagr_max * 100).toFixed(1)}% / 最悪: ${(summary.cagr_min * 100).toFixed(1)}%)` : undefined
+              summary.is_monte_carlo && summary.cagr_max !== undefined && summary.cagr_min !== undefined
+                ? `(最良: ${(summary.cagr_max * 100).toFixed(1)}% / 最悪: ${(summary.cagr_min * 100).toFixed(1)}%)` 
+                : undefined
             )}
             {renderKPICard(
               summary.is_monte_carlo ? 'PF (10回平均)' : 'Profit Factor',
               summary.profit_factor.toFixed(2),
               '総利益 / 総損失の比率（期待値）',
               summary.profit_factor >= 1.0 ? 'good' : 'bad',
-              summary.is_monte_carlo ? `(平均: ${summary.profit_factor_avg.toFixed(2)})` : undefined
+              summary.is_monte_carlo && summary.profit_factor_avg !== undefined 
+                ? `(平均: ${summary.profit_factor_avg.toFixed(2)})` 
+                : undefined
             )}
             {renderKPICard(
               summary.is_monte_carlo ? '最大DD (10回平均)' : 'Max Drawdown (最悪下落率)',
               `${(summary.max_drawdown * 100).toFixed(2)}%`,
               'ピークからの最大口座下落幅',
               summary.max_drawdown >= -0.2 ? 'neutral' : 'bad',
-              summary.is_monte_carlo ? `(最悪: ${(summary.max_drawdown_min * 100).toFixed(1)}% / 最良: ${(summary.max_drawdown_max * 100).toFixed(1)}%)` : undefined
+              summary.is_monte_carlo && summary.max_drawdown_min !== undefined && summary.max_drawdown_max !== undefined
+                ? `(最悪: ${(summary.max_drawdown_min * 100).toFixed(1)}% / 最良: ${(summary.max_drawdown_max * 100).toFixed(1)}%)` 
+                : undefined
             )}
             {renderKPICard(
               summary.is_monte_carlo ? '勝率 (10回平均)' : 'Win Rate (勝率)',
               `${(summary.win_rate * 100).toFixed(1)}%`,
               '全決済取引における利益取引の割合',
               summary.win_rate >= 0.5 ? 'good' : 'neutral',
-              summary.is_monte_carlo ? `(平均: ${(summary.win_rate_avg * 100).toFixed(1)}%)` : undefined
+              summary.is_monte_carlo && summary.win_rate_avg !== undefined 
+                ? `(平均: ${(summary.win_rate_avg * 100).toFixed(1)}%)` 
+                : undefined
             )}
             {renderKPICard(
               summary.is_monte_carlo ? '総決済数 (10回平均)' : 'Total Trades (総決済回数)',
