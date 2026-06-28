@@ -327,7 +327,7 @@ def objective(trial: optuna.Trial, strategy_type: str, config, config_app, exit_
             metrics, _ = run_single_strategy(
                 strat, df_indicators, df_prices, df_ranks, df_symbols, df_theme_constituents, 
                 trading_dates, exit_rules, show_progress=True, 
-                fast_prune=False, prune_bounds=prune_bounds, consider_tax=consider_tax
+                fast_prune=True, prune_bounds=prune_bounds, consider_tax=consider_tax
             )
             
             # --- Handle directional penalty branching ---
@@ -384,14 +384,34 @@ def objective(trial: optuna.Trial, strategy_type: str, config, config_app, exit_
             trial.set_user_attr("avg_spy_gain", 0.0)
             trial.set_user_attr("alpha", 0.0)
             
-        portfolio_cagr = (overall_strat_mult - 1.0) * 100.0
-        spy_bh_cagr = (overall_spy_mult - 1.0) * 100.0
+        # Calculate total years across all periods to compute true annualized CAGR
+        total_years = 0.0
+        for start_date, end_date in periods:
+            from datetime import datetime, date as dt_date
+            s_dt = datetime.strptime(start_date, "%Y-%m-%d").date() if isinstance(start_date, str) else start_date
+            e_dt = datetime.strptime(end_date, "%Y-%m-%d").date() if isinstance(end_date, str) else end_date
+            total_years += (e_dt - s_dt).days / 365.25
+
+        port_total_return = (overall_strat_mult - 1.0) * 100.0
+        spy_total_return = (overall_spy_mult - 1.0) * 100.0
+
+        if total_years > 0:
+            portfolio_cagr = (overall_strat_mult ** (1.0 / total_years) - 1.0) * 100.0
+            spy_bh_cagr = (overall_spy_mult ** (1.0 / total_years) - 1.0) * 100.0
+        else:
+            portfolio_cagr = 0.0
+            spy_bh_cagr = 0.0
+            
         portfolio_vs_spy = portfolio_cagr - spy_bh_cagr
+        port_vs_spy_total = port_total_return - spy_total_return
 
         trial.set_user_attr("max_drawdown", max_dd_overall)
         trial.set_user_attr("port_cagr", round(portfolio_cagr, 2))
         trial.set_user_attr("spy_cagr", round(spy_bh_cagr, 2))
         trial.set_user_attr("port_vs_spy", round(portfolio_vs_spy, 2))
+        trial.set_user_attr("port_total_return", round(port_total_return, 2))
+        trial.set_user_attr("spy_total_return", round(spy_total_return, 2))
+        trial.set_user_attr("port_vs_spy_total", round(port_vs_spy_total, 2))
 
         # Generate TOML format string for parameters (for easy copy-paste)
         toml_params = []
@@ -411,7 +431,7 @@ def objective(trial: optuna.Trial, strategy_type: str, config, config_app, exit_
         trial.set_system_attr("note", params_toml_str)
 
         # --- Trial Summary Log ---
-        print(f"  [Trial {trial.number}] Score: {avg_score:.2f} | Port vs SPY: {portfolio_vs_spy:+.2f}% | MaxDD: {max_dd_overall:.1f}% | Trades: {total_trades} | WinRate: {trial.user_attrs['win_rate']:.1f}%", flush=True)
+        print(f"  [Trial {trial.number}] Score: {avg_score:.2f} | Port vs SPY: {portfolio_vs_spy:+.2f}% (Total: {port_vs_spy_total:+.1f}%) | MaxDD: {max_dd_overall:.1f}% | Trades: {total_trades} | WinRate: {trial.user_attrs['win_rate']:.1f}%", flush=True)
 
         return avg_score
     except Exception as e:
@@ -517,9 +537,9 @@ def main():
         print(f"  Max Drawdown:   {trial.user_attrs.get('max_drawdown', 0):.1f}%")
         print(f"  Win Rate:       {trial.user_attrs.get('win_rate', 0):.1f}%")
         print(f"  Total Trades:   {trial.user_attrs.get('total_trades', 0)}")
-        print(f"  Port CAGR:      {trial.user_attrs.get('port_cagr', 0):.2f}%")
-        print(f"  SPY B&H CAGR:   {trial.user_attrs.get('spy_cagr', 0):.2f}%")
-        print(f"  Port vs SPY:    {trial.user_attrs.get('port_vs_spy', 0):.2f}%")
+        print(f"  Port CAGR:      {trial.user_attrs.get('port_cagr', 0):.2f}% (Total: {trial.user_attrs.get('port_total_return', 0):.2f}%)")
+        print(f"  SPY B&H CAGR:   {trial.user_attrs.get('spy_cagr', 0):.2f}% (Total: {trial.user_attrs.get('spy_total_return', 0):.2f}%)")
+        print(f"  Port vs SPY:    {trial.user_attrs.get('port_vs_spy', 0):.2f}% (Total: {trial.user_attrs.get('port_vs_spy_total', 0):.2f}%)")
 
 if __name__ == "__main__":
     main()

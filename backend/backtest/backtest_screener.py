@@ -471,6 +471,11 @@ def apply_filters_to_df(
         if 'rs_condition_21_rank' in merged.columns and 'rs_condition_63_rank' in merged.columns:
             mask &= merged['rs_condition_21_rank'] > merged['rs_condition_63_rank']
 
+    # Individual RS Trend raw value comparisons
+    if strategy.get('is_rs_trend_s21_gt_s63'):
+        if 'rs_trend_s21' in merged.columns and 'rs_trend_s63' in merged.columns:
+            mask &= merged['rs_trend_s21'] > merged['rs_trend_s63']
+
     # Theme RS Condition Rank comparisons
     if strategy.get('theme_rs_condition_14_gt_21') or strategy.get('is_theme_rs_trend_rank_s14_gt_s21'):
         if 'rs_condition_14_rank' in merged.columns and 'rs_condition_21_rank' in merged.columns:

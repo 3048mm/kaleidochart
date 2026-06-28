@@ -163,6 +163,9 @@ class DashboardPanelItem(BaseModel):
     rs_ratio_rank_e14: float = 0.0
     rs_momentum_rank_e21: float = 0.0
     rs_momentum_rank_e63: float = 0.0
+    rs_trend_rank_s14: float = 0.0
+    rs_trend_rank_s21: float = 0.0
+    rs_trend_rank_s63: float = 0.0
     rs_ratio_e21: Optional[float] = None
     rs_ratio_e63: Optional[float] = None
     rs_momentum_e21: Optional[float] = None

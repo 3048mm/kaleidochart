@@ -59,6 +59,11 @@ def test_scenario_reporter_generates_summary(mock_trade_history, mock_spy_data):
     expected_spy_return = (spy_end - spy_start) / spy_start * 100
     assert summary['spy_benchmark_return_pct'] == pytest.approx(expected_spy_return)
 
+    # Expected CAGR over 30 days (30 / 365.25 = 0.082135 years)
+    # (1.005) ** (1 / 0.082135) - 1 = ~6.26%
+    assert 'cagr' in summary
+    assert summary['cagr'] == pytest.approx(6.26, abs=0.1)
+
 def test_scenario_reporter_exports_csv(mock_trade_history, tmp_path):
     reporter = ScenarioReporter()
     output_file = tmp_path / "trade_logs.csv"

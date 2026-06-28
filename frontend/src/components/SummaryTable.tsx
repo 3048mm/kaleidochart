@@ -10,9 +10,10 @@ interface SummaryTableProps {
     linkTo?: (item: DashboardPanelItem) => string;
     defaultSortKey?: SortKey;
     defaultSortDirection?: SortDirection;
+    rankType?: 'rs_trend' | 'rs_ratio';
 }
 
-type SortKey = 'ticker' | 'close' | 'change_pct' | 'change_1w_pct' | 'change_1m_pct' | 'dist_21ema_pct' | 'rs_ratio_rank_e14' | 'rs_ratio_rank_e21' | 'rs_ratio_rank_e63';
+type SortKey = 'ticker' | 'close' | 'change_pct' | 'change_1w_pct' | 'change_1m_pct' | 'dist_21ema_pct' | 'rs_ratio_rank_e14' | 'rs_ratio_rank_e21' | 'rs_ratio_rank_e63' | 'rs_trend_rank_s14' | 'rs_trend_rank_s21' | 'rs_trend_rank_s63';
 type SortDirection = 'asc' | 'desc';
 
 export const SummaryTable: React.FC<SummaryTableProps> = ({ 
@@ -20,7 +21,8 @@ export const SummaryTable: React.FC<SummaryTableProps> = ({
     maxPct, 
     linkTo,
     defaultSortKey = 'change_pct',
-    defaultSortDirection = 'desc'
+    defaultSortDirection = 'desc',
+    rankType = 'rs_trend'
 }) => {
     const [sortConfig, setSortConfig] = React.useState<{ key: SortKey, direction: SortDirection }>({
         key: defaultSortKey,
@@ -84,6 +86,15 @@ export const SummaryTable: React.FC<SummaryTableProps> = ({
         </div>
     );
 
+    const isTrend = rankType === 'rs_trend';
+    const r14Key: SortKey = isTrend ? 'rs_trend_rank_s14' : 'rs_ratio_rank_e14';
+    const r21Key: SortKey = isTrend ? 'rs_trend_rank_s21' : 'rs_ratio_rank_e21';
+    const r63Key: SortKey = isTrend ? 'rs_trend_rank_s63' : 'rs_ratio_rank_e63';
+    const r14Label = isTrend ? 'RST14%' : 'RSR14%';
+    const r21Label = isTrend ? 'RST21%' : 'RSR21%';
+    const r63Label = isTrend ? 'RST63%' : 'RSR63%';
+    const miniMapLabel = isTrend ? 'RST21% (30d)' : 'RSR21% (30d)';
+
     return (
         <div className="dashboard-list" style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch', width: '100%', maxWidth: '100%' }}>
             <div style={{ minWidth: '680px' }}>
@@ -111,10 +122,10 @@ export const SummaryTable: React.FC<SummaryTableProps> = ({
                     <HeaderItem label="1W%" column="change_1w_pct" style={{ width: '50px', textAlign: 'center' }} />
                     <HeaderItem label="1M%" column="change_1m_pct" style={{ width: '50px', textAlign: 'center' }} />
                     <HeaderItem label="E21%" column="dist_21ema_pct" style={{ width: '50px', textAlign: 'right', paddingRight: '5px' }} />
-                    <div style={{ width: '60px', textAlign: 'center', flexShrink: 0 }}>RSR21% (30d)</div>
-                    <HeaderItem label="RSR14%" column="rs_ratio_rank_e14" style={{ width: '56px', textAlign: 'right' }} />
-                    <HeaderItem label="RSR21%" column="rs_ratio_rank_e21" style={{ width: '56px', textAlign: 'right' }} />
-                    <HeaderItem label="RSR63%" column="rs_ratio_rank_e63" style={{ width: '56px', textAlign: 'right' }} />
+                    <div style={{ width: '60px', textAlign: 'center', flexShrink: 0 }}>{miniMapLabel}</div>
+                    <HeaderItem label={r14Label} column={r14Key} style={{ width: '56px', textAlign: 'right' }} />
+                    <HeaderItem label={r21Label} column={r21Key} style={{ width: '56px', textAlign: 'right' }} />
+                    <HeaderItem label={r63Label} column={r63Key} style={{ width: '56px', textAlign: 'right' }} />
                 </div>
 
                 {sortedItems.map(item => {
@@ -124,6 +135,10 @@ export const SummaryTable: React.FC<SummaryTableProps> = ({
                         item.change_pct >= 0 ? appConfig.colors.good : appConfig.colors.bad
                     );
                     const textColor = Math.abs(item.change_pct) > maxPct * 0.5 ? '#000' : '#fff';
+
+                    const val14 = item[r14Key] ?? 0;
+                    const val21 = item[r21Key] ?? 0;
+                    const val63 = item[r63Key] ?? 0;
 
                     return (
                         <div key={item.id} className="dashboard-item" style={{
@@ -216,36 +231,36 @@ export const SummaryTable: React.FC<SummaryTableProps> = ({
                                 textAlign: 'right',
                                 fontSize: '11px',
                                 fontVariantNumeric: 'tabular-nums',
-                                color: (item.rs_ratio_rank_e14 || 0) >= 0.7 ? appConfig.colors.good :
-                                    (item.rs_ratio_rank_e14 || 0) <= 0.3 ? appConfig.colors.bad : '#aaa',
+                                color: val14 >= 0.7 ? appConfig.colors.good :
+                                    val14 <= 0.3 ? appConfig.colors.bad : '#aaa',
                                 fontWeight: '600',
                                 flexShrink: 0,
                             }}>
-                                {((item.rs_ratio_rank_e14 || 0) * 100).toFixed(0)}
+                                {(val14 * 100).toFixed(0)}
                             </div>
                             <div style={{
                                 width: '56px',
                                 textAlign: 'right',
                                 fontSize: '11px',
                                 fontVariantNumeric: 'tabular-nums',
-                                color: (item.rs_ratio_rank_e21 || 0) >= 0.7 ? appConfig.colors.good :
-                                    (item.rs_ratio_rank_e21 || 0) <= 0.3 ? appConfig.colors.bad : '#aaa',
+                                color: val21 >= 0.7 ? appConfig.colors.good :
+                                    val21 <= 0.3 ? appConfig.colors.bad : '#aaa',
                                 fontWeight: '600',
                                 flexShrink: 0,
                             }}>
-                                {((item.rs_ratio_rank_e21 || 0) * 100).toFixed(0)}
+                                {(val21 * 100).toFixed(0)}
                             </div>
                             <div style={{
                                 width: '56px',
                                 textAlign: 'right',
                                 fontSize: '11px',
                                 fontVariantNumeric: 'tabular-nums',
-                                color: (item.rs_ratio_rank_e63 || 0) >= 0.7 ? appConfig.colors.good :
-                                    (item.rs_ratio_rank_e63 || 0) <= 0.3 ? appConfig.colors.bad : '#aaa',
+                                color: val63 >= 0.7 ? appConfig.colors.good :
+                                    val63 <= 0.3 ? appConfig.colors.bad : '#aaa',
                                 fontWeight: '600',
                                 flexShrink: 0,
                             }}>
-                                {((item.rs_ratio_rank_e63 || 0) * 100).toFixed(0)}
+                                {(val63 * 100).toFixed(0)}
                             </div>
                         </div>
                     );

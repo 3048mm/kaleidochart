@@ -116,6 +116,9 @@ export interface DashboardPanelItem {
     rs_ratio_e21?: number;
     rs_ratio_e63?: number;
     rs_momentum_e21?: number;
+    rs_trend_rank_s14?: number;
+    rs_trend_rank_s21?: number;
+    rs_trend_rank_s63?: number;
 }
 
 export interface ScreenerResultItem extends DashboardPanelItem {

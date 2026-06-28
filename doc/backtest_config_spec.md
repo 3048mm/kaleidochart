@@ -17,8 +17,10 @@
 
 > **汎用プレフィックス（自動バインディング）および特殊汎用フィルタについて**:
 > 本システムでは、パラメータ名（キー名）の先頭に特定のプレフィックスを付けることで、Python側のコード変更なしに汎用的なフィルタリングを適用できます。
-> * `min_〇〇` : カラム `〇〇` に対して `>=` 評価を行います。
-> * `max_〇〇` : カラム `〇〇` に対して `<=` 評価を行います。
+> * `min_〇〇` : 個別銘柄のカラム `〇〇` に対して `>=` 評価を行います。
+> * `max_〇〇` : 個別銘柄のカラム `〇〇` に対して `<=` 評価を行います。
+> * `min_theme_〇〇` : 当該テーマ自体のカラム `〇〇` に対して `>=` 評価を行い、条件に合致するテーマの構成銘柄（個別銘柄）およびテーマ自体を抽出します（生値・ランク両対応）。
+> * `max_theme_〇〇` : 当該テーマ自体のカラム `〇〇` に対して `<=` 評価を行い、同様に構成銘柄およびテーマ自体を抽出します。
 > * `is_〇〇`, `has_〇〇`, `bool_〇〇` または設定値が boolean 型 : 完全一致 (`==`) 評価を行います。
 > * `close_gt_〇〇` : `close` (終値) が任意の移動平均線 `〇〇` を上回っているか (`close > 〇〇`) の判定を行います。
 >   * 例: `close_gt_ema21 = true` (終値 > EMA21)
@@ -53,9 +55,14 @@
 | :--- | :--- | :--- |
 | `min_market_cap` | `indicators.market_cap` | **時価総額（下限）**: 米ドル単位（例: 1e9 = 1B）。※`category='テーマ'` の銘柄は判定から除外される。 |
 | `min_rs_trend_s21` | `indicators.rs_trend_s21` | **RS Condition**: `rs_value_e5 / SMA21(rs_value)`。RS自体が自身の移動平均を上回っているか（相対的な加速状態）。 |
+| `is_rs_trend_s21_gt_s63` | `indicators.rs_trend_s21`/`s63` | **個別トレンド加速**: 個別銘柄の21日トレンド生値が63日トレンド生値を上回っているか。 |
 | `min_rs_ratio_rank_e21`| `relative_ranks.percent_rank` | **RS 21日ランク**: カテゴリ内でのRS強さのパーセンタイル順位 (0.0~1.0)。`indicator_name='rs_ratio_e21'` を参照。 |
 | `is_rs_ratio_rank_e21_gt_e63` | `relative_ranks.percent_rank` | **RS短期加速**: 21日ランクが63日ランクを上回っているか（短期的な相対強度が向上しているか）。 |
-| `is_theme_rs_ratio_e21_gt_e63` | `indicators.rs_ratio_e21/e63`<br>`theme_constituents` | **テーマ主導**: 所属するテーマ自体のRS21 > RS63であるか。個別銘柄の場合は、その銘柄を構成員に持つテーマのいずれかが合格していれば真。 |
+| `is_theme_rs_ratio_e21_gt_e63` | `indicators.rs_ratio_e21/e63`<br>`theme_constituents` | **テーマ主導 (21 vs 63)**: 所属するテーマ自体のRS21 > RS63であるか。個別銘柄の場合は、その銘柄を構成員に持つテーマのいずれかが合格していれば真。 |
+| `is_theme_rs_ratio_e14_gt_e21` | `indicators.rs_ratio_e14/e21`<br>`theme_constituents` | **テーマ主導 (14 vs 21)**: 所属するテーマ自体のRS14 > RS21であるか。 |
+| `min_theme_rs_ratio_rank_e14` / `min_theme_rs_ratio_rank_e21` | `relative_ranks.percent_rank`<br>`theme_constituents` | **テーマRSランク下限**: 所属するテーマのRS比率ランク (0.0~1.0) が指定値以上か。 |
+| `min_theme_rs_trend_s21` / `min_theme_rs_trend_rank_s21` | `indicators.rs_trend_s21`<br>`relative_ranks.percent_rank`<br>`theme_constituents` | **テーマトレンド下限**: 所属するテーマのトレンド生値 / トレンドランクが指定値以上か。 |
+| `is_theme_rs_trend_rank_s14_gt_s21` | `relative_ranks.percent_rank`<br>`theme_constituents` | **テーマトレンド加速**: 所属するテーマの14日トレンドランクが21日トレンドランクを上回っているか。 |
 
 ### 1.4 RRG (Relative Rotation Graph) 関連
 | 変数名 | DB 参照元 (Table.Column) | 計算論理・説明 |

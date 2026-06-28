@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, BackgroundTasks
 from sqlalchemy.orm import Session, aliased
-from sqlalchemy import desc, func, or_, and_, Column as SAColumn
+from sqlalchemy import desc, func, or_, and_, Column as SAColumn, select
 from typing import List, Optional, Dict, Any
 from datetime import date as dt_date, timedelta
 import os, re, logging, tomli
@@ -243,14 +243,14 @@ def _apply_filter(query, key: str, value, db: Session, latest_date):
                 
                 # Find stocks belonging to those themes
                 stock_in_themes_subq = db.query(ThemeConstituent.symbol_id).filter(
-                    ThemeConstituent.theme_id.in_(theme_subq)
+                    ThemeConstituent.theme_id.in_(select(theme_subq))
                 ).subquery()
                 
                 # Filter original query
                 query = query.filter(
                     or_(
-                        (Symbol.category == "テーマ") & (Symbol.id.in_(theme_subq)),
-                        (Symbol.category == "個別") & (Symbol.id.in_(stock_in_themes_subq))
+                        (Symbol.category == "テーマ") & (Symbol.id.in_(select(theme_subq))),
+                        (Symbol.category == "個別") & (Symbol.id.in_(select(stock_in_themes_subq)))
                     )
                 )
                 return query
@@ -371,12 +371,12 @@ def _apply_theme_rs_ratio_e21_gt_e63(q, preset_def, db, latest_date_result, prev
         Indicator.rs_ratio_e21 > Indicator.rs_ratio_e63
     ).subquery()
     stock_in_leading_themes_subq = db.query(ThemeConstituent.symbol_id).filter(
-        ThemeConstituent.theme_id.in_(theme_momentum_subq)
+        ThemeConstituent.theme_id.in_(select(theme_momentum_subq))
     ).subquery()
     return q.filter(
         or_(
-            (Symbol.category == "テーマ") & (Symbol.id.in_(theme_momentum_subq)),
-            (Symbol.category == "個別") & (Symbol.id.in_(stock_in_leading_themes_subq))
+            (Symbol.category == "テーマ") & (Symbol.id.in_(select(theme_momentum_subq))),
+            (Symbol.category == "個別") & (Symbol.id.in_(select(stock_in_leading_themes_subq)))
         )
     )
 
@@ -386,12 +386,12 @@ def _apply_theme_rs_ratio_e14_gt_e21(q, preset_def, db, latest_date_result, prev
         Indicator.rs_ratio_e14 > Indicator.rs_ratio_e21
     ).subquery()
     stock_in_leading_themes_subq = db.query(ThemeConstituent.symbol_id).filter(
-        ThemeConstituent.theme_id.in_(theme_momentum_subq)
+        ThemeConstituent.theme_id.in_(select(theme_momentum_subq))
     ).subquery()
     return q.filter(
         or_(
-            (Symbol.category == "テーマ") & (Symbol.id.in_(theme_momentum_subq)),
-            (Symbol.category == "個別") & (Symbol.id.in_(stock_in_leading_themes_subq))
+            (Symbol.category == "テーマ") & (Symbol.id.in_(select(theme_momentum_subq))),
+            (Symbol.category == "個別") & (Symbol.id.in_(select(stock_in_leading_themes_subq)))
         )
     )
 
@@ -404,12 +404,12 @@ def _apply_theme_rs_trend_rank_s14_gt_s21(q, preset_def, db, latest_date_result,
             RelativeRank.rs_trend_rank_s14 > RelativeRank.rs_trend_rank_s21
         ).subquery()
         stock_in_leading_themes_subq = db.query(ThemeConstituent.symbol_id).filter(
-            ThemeConstituent.theme_id.in_(theme_momentum_subq)
+            ThemeConstituent.theme_id.in_(select(theme_momentum_subq))
         ).subquery()
         return q.filter(
             or_(
-                (Symbol.category == "テーマ") & (Symbol.id.in_(theme_momentum_subq)),
-                (Symbol.category == "個別") & (Symbol.id.in_(stock_in_leading_themes_subq))
+                (Symbol.category == "テーマ") & (Symbol.id.in_(select(theme_momentum_subq))),
+                (Symbol.category == "個別") & (Symbol.id.in_(select(stock_in_leading_themes_subq)))
             )
         )
     return q
@@ -423,12 +423,12 @@ def _apply_theme_rs_ratio_rank_e14_gt_e21(q, preset_def, db, latest_date_result,
             RelativeRank.rs_ratio_rank_e14 > RelativeRank.rs_ratio_rank_e21
         ).subquery()
         stock_in_leading_themes_subq = db.query(ThemeConstituent.symbol_id).filter(
-            ThemeConstituent.theme_id.in_(theme_momentum_subq)
+            ThemeConstituent.theme_id.in_(select(theme_momentum_subq))
         ).subquery()
         return q.filter(
             or_(
-                (Symbol.category == "テーマ") & (Symbol.id.in_(theme_momentum_subq)),
-                (Symbol.category == "個別") & (Symbol.id.in_(stock_in_leading_themes_subq))
+                (Symbol.category == "テーマ") & (Symbol.id.in_(select(theme_momentum_subq))),
+                (Symbol.category == "個別") & (Symbol.id.in_(select(stock_in_leading_themes_subq)))
             )
         )
     return q
@@ -442,26 +442,18 @@ def _apply_theme_rs_ratio_rank_e21_gt_e63(q, preset_def, db, latest_date_result,
             RelativeRank.rs_ratio_rank_e21 > RelativeRank.rs_ratio_rank_e63
         ).subquery()
         stock_in_leading_themes_subq = db.query(ThemeConstituent.symbol_id).filter(
-            ThemeConstituent.theme_id.in_(theme_momentum_subq)
+            ThemeConstituent.theme_id.in_(select(theme_momentum_subq))
         ).subquery()
         return q.filter(
             or_(
-                (Symbol.category == "テーマ") & (Symbol.id.in_(theme_momentum_subq)),
-                (Symbol.category == "個別") & (Symbol.id.in_(stock_in_leading_themes_subq))
+                (Symbol.category == "テーマ") & (Symbol.id.in_(select(theme_momentum_subq))),
+                (Symbol.category == "個別") & (Symbol.id.in_(select(stock_in_leading_themes_subq)))
             )
         )
     return q
 
 def _apply_rs_trend_s21_gt_s63(q, preset_def, db, latest_date_result, previous_date_result):
-    _rk_date = db.query(func.max(RelativeRank.date)).filter(RelativeRank.date <= latest_date_result).scalar()
-    if _rk_date:
-        rank_subq = db.query(RelativeRank.symbol_id).filter(
-            RelativeRank.date == _rk_date,
-            RelativeRank.group_name == "個別",
-            RelativeRank.rs_trend_s21 > RelativeRank.rs_trend_s63
-        ).subquery()
-        return q.filter(Symbol.id.in_(rank_subq))
-    return q
+    return q.filter(Indicator.rs_trend_s21 > Indicator.rs_trend_s63)
     
 def _apply_rs_ratio_rank_e21_gt_e63(q, preset_def, db, latest_date_result, previous_date_result):
     _rk_date = db.query(func.max(RelativeRank.date)).filter(RelativeRank.date <= latest_date_result).scalar()
@@ -471,7 +463,7 @@ def _apply_rs_ratio_rank_e21_gt_e63(q, preset_def, db, latest_date_result, previ
             RelativeRank.group_name == "個別",
             RelativeRank.rs_ratio_rank_e21 > RelativeRank.rs_ratio_rank_e63
         ).subquery()
-        return q.filter(Symbol.id.in_(rank_subq))
+        return q.filter(Symbol.id.in_(select(rank_subq)))
     return q
 
 BOOLEAN_FILTER_HANDLERS = {
@@ -1501,7 +1493,8 @@ def _get_sparkline_data(db: Session, sym_id: int, target_date: str, period: int 
     return vals
 
 def _build_panel_item(db: Session, sym: Symbol, dp: DailyPrice, rank_val_21: float, rank_val_63: float, target_date: str, 
-                     rank_val_14: float = 0.0, rank_val_mom: float = 0.0, rank_val_mom63: float = 0.0):
+                     rank_val_14: float = 0.0, rank_val_mom: float = 0.0, rank_val_mom63: float = 0.0,
+                     rank_val_trend_14: float = 0.0, rank_val_trend_21: float = 0.0, rank_val_trend_63: float = 0.0):
     sparkline = _get_sparkline_data(db, sym.id, target_date)
     
     history = db.query(DailyPrice.close).filter(
@@ -1557,6 +1550,9 @@ def _build_panel_item(db: Session, sym: Symbol, dp: DailyPrice, rank_val_21: flo
         rs_ratio_rank_e14=float(rank_val_14 or 0.0),
         rs_momentum_rank_e21=float(rank_val_mom or 0.0),
         rs_momentum_rank_e63=float(rank_val_mom63 or 0.0),
+        rs_trend_rank_s14=float(rank_val_trend_14 or 0.0),
+        rs_trend_rank_s21=float(rank_val_trend_21 or 0.0),
+        rs_trend_rank_s63=float(rank_val_trend_63 or 0.0),
         rs_ratio_e21=ind.rs_ratio_e21 if ind else None,
         rs_ratio_e63=ind.rs_ratio_e63 if ind else None,
         rs_momentum_e21=ind.rs_momentum_e21 if ind else None,
@@ -1749,6 +1745,7 @@ def get_available_dates(db: Session = Depends(get_api_db)):
 @router.get("/dashboard", response_model=schemas.DashboardResponse)
 def get_dashboard(
     date: Optional[str] = Query(None, description="ISO Format Date YYYY-MM-DD"),
+    rank_type: str = Query("rs_trend", pattern="^(rs_trend|rs_ratio)$", description="Ranking sort type: rs_trend (default) or rs_ratio"),
     db: Session = Depends(get_api_db)
 ):
     """
@@ -1818,13 +1815,19 @@ def get_dashboard(
         RelativeRank.symbol_id, 
         RelativeRank.rs_ratio_rank_e14, 
         RelativeRank.rs_ratio_rank_e21, 
-        RelativeRank.rs_ratio_rank_e63
+        RelativeRank.rs_ratio_rank_e63,
+        RelativeRank.rs_trend_rank_s14,
+        RelativeRank.rs_trend_rank_s21,
+        RelativeRank.rs_trend_rank_s63
     ).filter(
         RelativeRank.date == target_date
     ).all()
     rank_14_dict = {r.symbol_id: r.rs_ratio_rank_e14 for r in ranks if r.rs_ratio_rank_e14 is not None}
     rank_21_dict = {r.symbol_id: r.rs_ratio_rank_e21 for r in ranks if r.rs_ratio_rank_e21 is not None}
     rank_63_dict = {r.symbol_id: r.rs_ratio_rank_e63 for r in ranks if r.rs_ratio_rank_e63 is not None}
+    trend_rank_14_dict = {r.symbol_id: r.rs_trend_rank_s14 for r in ranks if r.rs_trend_rank_s14 is not None}
+    trend_rank_21_dict = {r.symbol_id: r.rs_trend_rank_s21 for r in ranks if r.rs_trend_rank_s21 is not None}
+    trend_rank_63_dict = {r.symbol_id: r.rs_trend_rank_s63 for r in ranks if r.rs_trend_rank_s63 is not None}
 
     for sym_id, s in sym_dict.items():
         if sym_id not in price_dict:
@@ -1834,23 +1837,38 @@ def get_dashboard(
         r14_rank = rank_14_dict.get(sym_id, 0.0) or 0.0
         r21_rank = rank_21_dict.get(sym_id, 0.0) or 0.0
         r63_rank = rank_63_dict.get(sym_id, 0.0) or 0.0
+        rt14_rank = trend_rank_14_dict.get(sym_id, 0.0) or 0.0
+        rt21_rank = trend_rank_21_dict.get(sym_id, 0.0) or 0.0
+        rt63_rank = trend_rank_63_dict.get(sym_id, 0.0) or 0.0
+        
+        item = _build_panel_item(
+            db, s, dp, r21_rank, r63_rank, target_date, 
+            rank_val_14=r14_rank,
+            rank_val_trend_14=rt14_rank,
+            rank_val_trend_21=rt21_rank,
+            rank_val_trend_63=rt63_rank
+        )
         
         if s.category == "市場":
-            resp.indices.append(_build_panel_item(db, s, dp, r21_rank, r63_rank, target_date, r14_rank))
+            resp.indices.append(item)
         elif s.category == "指標":
             if s.ticker == "SPY":
                 resp.spy_feature = _build_etf_feature(db, s, dp, target_date)
             else:
                 resp.leading.append(_build_leading_item(db, s, dp, target_date))
         elif s.category == "セクタ":
-            resp.sectors.append(_build_panel_item(db, s, dp, r21_rank, r63_rank, target_date, r14_rank))
+            resp.sectors.append(item)
         elif s.category == "テーマ":
-            item = _build_panel_item(db, s, dp, r21_rank, r63_rank, target_date, r14_rank)
             resp.themes_top.append(item)
             
-    # Sort and slice
-    resp.sectors.sort(key=lambda x: x.intensity_score, reverse=True)
-    themes_sorted = sorted(resp.themes_top, key=lambda x: x.intensity_score, reverse=True)
+    # Sort and slice based on rank_type
+    if rank_type == "rs_trend":
+        sort_key = lambda x: x.rs_trend_rank_s21
+    else:
+        sort_key = lambda x: x.rs_ratio_rank_e21
+
+    resp.sectors.sort(key=sort_key, reverse=True)
+    themes_sorted = sorted(resp.themes_top, key=sort_key, reverse=True)
     
     # Calculate VXV/VIX ratio if available (fallback calculation if not in signal)
     vix_item = next((item for item in resp.leading if item.ticker == "^VIX"), None)
@@ -2392,6 +2410,15 @@ def get_screener_dashboard(
                         if old_indicator in _RANK_COLUMN_ALIASES:
                             is_known = True
                     elif _resolve_column(col_name) is not None:
+                        is_known = True
+                elif key.startswith('close_gt_') or key.startswith('is_close_gt_'):
+                    ind_name = key[9:] if key.startswith('close_gt_') else key[12:]
+                    if ind_name in ('sma5', 'sma21', 'sma50', 'sma63', 'sma150', 'sma200', 'ema5', 'ema21', 'ema50', 'ema63', 'ema150', 'ema200'):
+                        for num in ('200', '150', '63', '50', '21', '5'):
+                            if ind_name.endswith(num) and not ind_name.endswith('_' + num):
+                                ind_name = ind_name.replace(num, '_' + num)
+                                break
+                    if _resolve_column(ind_name) is not None:
                         is_known = True
                 elif _resolve_column(key) is not None:
                     is_known = True

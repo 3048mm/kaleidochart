@@ -18,6 +18,7 @@ export const DashboardPage: React.FC = () => {
     const [error, setError] = useState('');
     const [activeTab, setActiveTab] = useState<'indicator' | 'market' | 'sector-theme'>('indicator');
     const [themesVisibleCount, setThemesVisibleCount] = useState(10);
+    const [rankType, setRankType] = useState<'rs_trend' | 'rs_ratio'>('rs_trend');
 
     // Initial load: Fetch available dates
     useEffect(() => {
@@ -60,7 +61,11 @@ export const DashboardPage: React.FC = () => {
         setLoading(true);
         setError('');
 
-        const url = selectedDate ? `/api/dashboard?date=${selectedDate}` : '/api/dashboard';
+        const params = new URLSearchParams();
+        if (selectedDate) params.append('date', selectedDate);
+        params.append('rank_type', rankType);
+
+        const url = `/api/dashboard?${params.toString()}`;
 
         fetch(url)
             .then(res => {
@@ -78,7 +83,7 @@ export const DashboardPage: React.FC = () => {
                 setError(err.message);
             })
             .finally(() => setLoading(false));
-    }, [selectedDate]);
+    }, [selectedDate, rankType]);
 
 
     // Helper component for Leading Indicators
@@ -376,17 +381,59 @@ export const DashboardPage: React.FC = () => {
 
                     {activeTab === 'sector-theme' && (
                         <>
+                            {/* Ranking Type Toggle */}
+                            <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', justifyContent: 'flex-end', width: '100%' }}>
+                                {[
+                                    { id: 'rs_trend', label: 'RS Trend rank' },
+                                    { id: 'rs_ratio', label: 'RS Ratio rank' }
+                                ].map(type => (
+                                    <button
+                                        key={type.id}
+                                        onClick={() => setRankType(type.id as 'rs_trend' | 'rs_ratio')}
+                                        style={{
+                                            padding: '6px 14px',
+                                            borderRadius: '20px',
+                                            background: rankType === type.id ? 'rgba(0, 255, 136, 0.15)' : 'rgba(255, 255, 255, 0.03)',
+                                            border: `1px solid ${rankType === type.id ? appConfig.colors.good : appConfig.colors.glassBorder}`,
+                                            color: rankType === type.id ? '#fff' : '#8b9cc8',
+                                            fontSize: '12px',
+                                            fontWeight: 'bold',
+                                            cursor: 'pointer',
+                                            transition: 'all 0.2s',
+                                            boxShadow: rankType === type.id ? '0 0 10px rgba(0, 255, 136, 0.1)' : 'none'
+                                        }}
+                                        onMouseEnter={e => {
+                                            if (rankType !== type.id) {
+                                                (e.target as HTMLButtonElement).style.background = 'rgba(255, 255, 255, 0.08)';
+                                                (e.target as HTMLButtonElement).style.color = '#fff';
+                                            }
+                                        }}
+                                        onMouseLeave={e => {
+                                            if (rankType !== type.id) {
+                                                (e.target as HTMLButtonElement).style.background = 'rgba(255, 255, 255, 0.03)';
+                                                (e.target as HTMLButtonElement).style.color = '#8b9cc8';
+                                            }
+                                        }}
+                                    >
+                                        {type.id === 'rs_trend' ? '📈 ' : '📊 '}{type.label}
+                                    </button>
+                                ))}
+                            </div>
+
                             {/* Columns: Sectors + Themes */}
                             <div className="sectors-themes-container" style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
                                 {/* Column 1: Sectors */}
                                 <div style={{ flex: '1', minWidth: '280px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
                                     <div className="glass-panel" style={{ padding: '20px' }}>
-                                        <h3 style={{ marginTop: 0, borderBottom: `1px solid ${appConfig.colors.glassBorder}`, paddingBottom: '10px' }}>🏢 Sectors Overview</h3>
+                                        <h3 style={{ marginTop: 0, borderBottom: `1px solid ${appConfig.colors.glassBorder}`, paddingBottom: '10px' }}>
+                                            🏢 Sectors Overview <span style={{ fontSize: '11px', fontWeight: 'normal', color: '#888', marginLeft: '5px' }}>({rankType === 'rs_trend' ? 'Trend Rank' : 'Ratio Rank'})</span>
+                                        </h3>
                                         <SummaryTable 
                                             items={data.sectors} 
                                             maxPct={appConfig.thresholds.sparkline_max_pct_sector} 
                                             linkTo={(item) => `/group/${encodeURIComponent(item.ticker)}${selectedDate ? `?date=${selectedDate}` : ''}`}
-                                            defaultSortKey="rs_ratio_rank_e21"
+                                            defaultSortKey={rankType === 'rs_trend' ? 'rs_trend_rank_s21' : 'rs_ratio_rank_e21'}
+                                            rankType={rankType}
                                         />
                                     </div>
                                 </div>
@@ -394,12 +441,15 @@ export const DashboardPage: React.FC = () => {
                                 {/* Column 2: Themes Top/Bottom */}
                                 <div style={{ flex: '1', minWidth: '280px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
                                     <div className="glass-panel" style={{ padding: '20px' }}>
-                                        <h3 style={{ marginTop: 0, borderBottom: `1px solid ${appConfig.colors.glassBorder}`, paddingBottom: '10px' }}>🔥 Top Themes (1M RS Rank) <span style={{ fontSize: '12px', fontWeight: 'normal', color: '#aaa' }}>Top {Math.min(themesVisibleCount, data.themes_top.length)}</span></h3>
+                                        <h3 style={{ marginTop: 0, borderBottom: `1px solid ${appConfig.colors.glassBorder}`, paddingBottom: '10px' }}>
+                                            🔥 Top Themes ({rankType === 'rs_trend' ? '1M RS Trend Rank' : '1M RS Ratio Rank'}) <span style={{ fontSize: '12px', fontWeight: 'normal', color: '#aaa' }}>Top {Math.min(themesVisibleCount, data.themes_top.length)}</span>
+                                        </h3>
                                         <SummaryTable 
                                             items={data.themes_top.slice(0, themesVisibleCount)} 
                                             maxPct={appConfig.thresholds.sparkline_max_pct_theme} 
                                             linkTo={(item) => `/group/${encodeURIComponent(item.ticker)}${selectedDate ? `?date=${selectedDate}` : ''}`}
-                                            defaultSortKey="rs_ratio_rank_e21"
+                                            defaultSortKey={rankType === 'rs_trend' ? 'rs_trend_rank_s21' : 'rs_ratio_rank_e21'}
+                                            rankType={rankType}
                                         />
                                     </div>
 
@@ -448,13 +498,16 @@ export const DashboardPage: React.FC = () => {
                                     </div>
 
                                     <div className="glass-panel" style={{ padding: '20px' }}>
-                                        <h3 style={{ marginTop: 0, borderBottom: `1px solid ${appConfig.colors.glassBorder}`, paddingBottom: '10px' }}>❄️ Weak Themes (1M RS Rank) <span style={{ fontSize: '12px', fontWeight: 'normal', color: '#aaa' }}>Bottom {Math.min(themesVisibleCount, data.themes_bottom.length)}</span></h3>
+                                        <h3 style={{ marginTop: 0, borderBottom: `1px solid ${appConfig.colors.glassBorder}`, paddingBottom: '10px' }}>
+                                            ❄️ Weak Themes ({rankType === 'rs_trend' ? '1M RS Trend Rank' : '1M RS Ratio Rank'}) <span style={{ fontSize: '12px', fontWeight: 'normal', color: '#aaa' }}>Bottom {Math.min(themesVisibleCount, data.themes_bottom.length)}</span>
+                                        </h3>
                                         <SummaryTable 
                                             items={data.themes_bottom.slice(0, themesVisibleCount)} 
                                             maxPct={appConfig.thresholds.sparkline_max_pct_theme} 
                                             linkTo={(item) => `/group/${encodeURIComponent(item.ticker)}${selectedDate ? `?date=${selectedDate}` : ''}`}
-                                            defaultSortKey="rs_ratio_rank_e21"
+                                            defaultSortKey={rankType === 'rs_trend' ? 'rs_trend_rank_s21' : 'rs_ratio_rank_e21'}
                                             defaultSortDirection="desc"
+                                            rankType={rankType}
                                         />
                                     </div>
                                 </div>

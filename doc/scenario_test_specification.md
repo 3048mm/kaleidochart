@@ -367,6 +367,32 @@ score = (
 | `exit_reason` | 売却理由: `STOP_LOSS`, `TAKE_PROFIT_TRIM`, `TAKE_PROFIT_FULL`, `EMA21_BREAK`, `TIME_STOP`, `EXPOSURE_REDUCTION`, `END_OF_PERIOD` |
 | `capital` | 売却確定後の運用資金（確定損益ベース。含み益・含み損は含まない） |
 
+
+### 6.6 ダッシュボード統合仕様 (Dashboard Integration Specification)
+
+シナリオテスト画面は、従来の「個別結果詳細」と「レジーム比較」を廃止・統合し、**ドリルダウン型統合ダッシュボード (`Scenario Test` タブ)** に刷新されました。
+
+#### 1. 構造と表示モデル
+- **上段: モデル要約カード (Regime Summary Cards)**
+  - 5つのモデル（`Full Position`, `MTS Raw`, `MTS L1`, `MTS L2`, `MTS L3`）を並列表示。
+  - 各カードには該当モデルの主要KPI（CAGR, Win Rate, Max Drawdown, Final Capital）を表示。
+  - デフォルト選択および初期描画モデルは **`Full Position`**。
+- **下段: 詳細分析ビュー (ScenarioDetailView)**
+  - 上段で選択されたモデルのバックテストデータを動的にドリルダウン描画。
+  - **KPI Cards**: CAGR, PF, Max Drawdown, Win Rate, Total Trades, Final Capital を表示。
+  - **Equity Curve & Cash Allocation Chart**: 資産推移（およびSPYやQQQ/TQQQ/SOXLベンチマーク）の折れ線グラフと、現金比率推移の面グラフを同期描画。
+  - **Yearly Returns & Benchmarks**: 年度ごとの戦略リターン、純損益、取引数、勝率、PF、SPYリターン、ベンチマーク比較を表示。
+  - **Exit Reasons Analysis**: 決済（売却）理由ごとの回数、比率、平均損益、平均保有日数をテーブルおよびドーナツチャートで可視化。
+  - **Trade Transaction Logs**: 日次の取引売買ログをテーブル表示。
+
+#### 2. モンテカルロ試行選択
+- シナリオテストがモンテカルロ試行（複数Run）を持つ場合、詳細分析ヘッダーに「全統計（all）」および「個別の試行（Run 0 〜 Run 9）」を切り替えるドロップダウンを表示。
+- ドロップダウンの選択は下段の詳細分析ビューすべてに連動し、データファイルは `output/scenario/{strategy}/{model}/run_{N}` の3階層構造から正しく解決されて再描画されます。
+
+#### 3. 取引ログのソート機能
+- 日次売買ログテーブルには、カラム（Date, Ticker, Action, Price, Size, Exit Reason, PnL%）ごとのインタラクティブなソート機能（昇順/降順）を実装。
+- 上段のモデルカードやドロップダウンの切り替え時には、ソート順は自動的にデフォルト（Date昇順）にリセットされ、UIの整合性を維持します。
+
 ---
 
 ## 7. 将来拡張（現行スコープ外）
@@ -378,6 +404,23 @@ score = (
 - [ ] **Follow Through Day (FTD) / Distribution Day (DD) の統合**: 市場シグナル（FTD, DD）をエクスポージャー管理の追加判断材料として組み込む
 - [ ] **ATRベースの動的ポジションサイジング**: ボラティリティに応じた資金配分
 - [ ] **Optuna による Market Score 重み自動最適化**: 既存 Optuna インフラとの統合
+
+
+### 7.2 手動単体実行と自動一括バッチの役割分担 (Manual Scenario vs. Batch Run)
+
+シナリオテストエンジンには、手動の単体シミュレーションと、自動化された並列バッチシミュレーションの2つの実行モデルがあり、それぞれ目的と使用するデータソースが異なります。
+
+#### 1. 手動単体シナリオテスト (`scenario_runner.py` / `run_scenario_test.bat`)
+- **目的**: 開発者による新しいアイデアや新規フィルター条件（例: `is_rs_trend_s21_gt_s63` 等）の実験、およびパラメータの手動微調整（マニュアルテスト）。
+- **インプットデータソース**: **`data/screener_presets.toml` (手動設定マスタ)**
+  - フロントエンドのスクリーナー表示に使われるプリセット定義をそのまま読み込み、Voting（合算スコアリング）によりシミュレーションを行います。
+- **意義**: 機械学習の自動最適化にありがちな過剰適合（オーバーフィッティング）を回避し、人間の直感に基づいた微調整を「即時かつ安全に」検証する試行錯誤サイクルを高速化します。
+
+#### 2. 自動一括並列バッチシミュレーション (`run_scenario_batch.py` / `run_scenario_batch.bat`)
+- **目的**: 各モデル（レジーム）の効果やロジックの優位性を、統計的かつ客観的に比較・検証する（レジーム検証）。
+- **インプットデータソース**: **`data/optimization_trials.db` (Optuna 探索データベース)**
+  - 自動最適化で算出された「最良パラメータ（Best Trial）」を自動抽出し、一時的なTOML（`tmp/`）を動的に再生成してインプットとして適用します。
+- **意義**: 手動設定用の `screener_presets.toml` を汚すことなく、歴代のベストパラメータ構成で5つのモデル（Full Position, MTS Raw等）を10回モンテカルロ並列実行し、ロジック自体の優位性やレジーム移行の効果を多角的に比較検証します。
 
 ---
 
@@ -395,6 +438,12 @@ python backend/backtest/scenario_runner.py --spy-trend 30 --breadth 30 --momentu
 
 # キャッシュのリフレッシュ（既存バックテストキャッシュを更新）
 python backend/backtest/scenario_runner.py --refresh-cache
+
+# 一括並列バッチ実行（全戦略×5モデル×10回モンテカルロ）
+python backend/backtest/run_scenario_batch.py
+
+# 手動起動用バッチファイル（Windows用）
+.\run\run_scenario_batch.bat
 ```
 
 ---
@@ -493,9 +542,18 @@ MTS v3_B は、上限乖離幅を緩和したことで通常上昇相場にお�
 ---
 
 ## 更新履歴
+- 2026-06-28: テーマのトレンドランク大小比較 (`is_theme_rs_trend_rank_s14_gt_s21`) や、生テーマトレンド数値フィルタ (`min_theme_rs_trend_s21`)、無印テーマRS比率比較 (`is_theme_rs_ratio_e14_gt_e21`) などの実装を完了し、API・インメモリ双方へマッピング。また、SQLAlchemy の暗黙的サブクエリ変換警告 (`SAWarning`) を解消。
+- 2026-06-28: バックテスト・シナリオ・最適化実行の各起動時に、戦略設定ファイルのパラメータ定義やタイポを検証する「自動バリデーター機能」を導入。
+- 2026-06-28: `optimization_runner.py` において、複数期間の合計日数を用いて annualized された正しい CAGR を算出・表示するように修正し、トータルリターン比較パラメータ (`port_total_return` 等) を追加。
+- 2026-06-28: バックエンドに `is_rs_trend_s21_gt_s63` や `is_theme_rs_ratio_rank_e14_gt_e21` などの新規適用ロジックを実装。
+- 2026-06-25: 個別試行（Run 0〜9）選択時のUI状態維持（hasMC）機能の導入、および3階層フォルダ構造への対応（バックエンドでのパス解決の修正）。
+- 2026-06-25: 取引ログテーブル（Trade Transaction Logs）に動的ソート機能（Date, Ticker, Action, Price, Size, Exit Reason, PnL% に対する昇順・降順ソート、メモ化、および状態リセット対応）を追加。
+- 2026-06-24: 画面統合の実施。従来の「シナリオテスト詳細画面」と「レジーム比較画面」を統合し、上段のレジームカード選択と下段の詳細分析ビュー（KPI、資産曲線、年度成績、取引ログ）が動的に連動するドリルダウン型統合ダッシュボードへ一本化。デフォルトの表示モデルは `Full Position` となる。
+- 2026-06-24: APIから返却される100倍済みのパーセント値（return_pct, spy_return_pct, avg_pnl_pct）をフロントエンドで再度100倍して表示していた不具合を修正。
 - 2026-06-19: Market Trend Score v3_B（5要素等価20%、EMA/ATR範囲緩和仕様）の仕様および検証経緯を追加。
 - 2026-06-17: 決済（売却）理由別統計機能を追加。各決済理由の回数・比率・平均損益・平均保有日数をシミュレーションレポート（`scenario_summary.json`）に集計・記録し、フロントエンドに「Exit Reason Statistics」セクションとして統合表示する機能を追加。
 - 2026-06-17: `special` キーを廃止し、RRG系やRS Rank系のカスタムフィルタを `filters` 内の boolean キーに統一（TDDによるリファクタリングの実施）
 - 2026-06-09: QQQ/TQQQ/SOXL ベンチマークとの資産推移スケーリング比較機能の追加
 - 2026-05-09: コメントフィードバック反映（売買ログCSV、SPYリターン比率、special共通化、FTD/DD、関数粒度方針、購入前提条件、確定損益capital）
 - 2026-05-09: 初版作成
+

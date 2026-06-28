@@ -142,6 +142,19 @@ class ScenarioReporter:
                         'avg_holding_days': round(avg_hold, 1)
                     }
 
+        # --- CAGR (Compound Annual Growth Rate) ---
+        cagr = 0.0
+        if initial_capital > 0 and final_capital > 0:
+            try:
+                s_dt = pd.to_datetime(start_date).date()
+                e_dt = pd.to_datetime(end_date).date()
+                days = (e_dt - s_dt).days
+                years = days / 365.25
+                if years > 0:
+                    cagr = ((final_capital / initial_capital) ** (1.0 / years) - 1.0) * 100.0
+            except Exception:
+                pass
+
         summary = {
             'start_date': start_date_str,
             'end_date': end_date_str,
@@ -149,6 +162,7 @@ class ScenarioReporter:
             'final_capital': round(final_capital, 2),
             'net_profit': round(net_profit, 2),
             'total_return_pct': round(total_return_pct, 2),
+            'cagr': round(cagr, 2),
             'spy_benchmark_return_pct': spy_benchmark_return_pct,
             'total_trades': total_trades,
             'winning_trades': winning_trades,

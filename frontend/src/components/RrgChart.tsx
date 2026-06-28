@@ -50,18 +50,30 @@ export const RrgChart: React.FC<RrgChartProps> = ({ data, ticker, series: propSe
     // Extract RRG points per series
     const computedSeries = useMemo(() => {
         return allSeries.map(s => {
-            const ratioKey = `rs_ratio_${rrgTimeframe}` as keyof ChartDataPoint;
-            const momKey = `rs_momentum_${rrgTimeframe}` as keyof ChartDataPoint;
+            const ratioKey = `rs_ratio_e${rrgTimeframe}` as keyof ChartDataPoint;
+            const ratioKeyAlt = `rs_ratio_${rrgTimeframe}` as keyof ChartDataPoint;
+            const momKey = `rs_momentum_e${rrgTimeframe}` as keyof ChartDataPoint;
+            const momKeyAlt = `rs_momentum_${rrgTimeframe}` as keyof ChartDataPoint;
             const condKey = `rs_trend_s${rrgTimeframe}` as keyof ChartDataPoint;
+            const condKeyAlt = `rs_trend_${rrgTimeframe}` as keyof ChartDataPoint;
 
             const sData = s.data || [];
-            const points = sData.filter(d => d[ratioKey] != null && d[momKey] != null).map(d => ({
-                time: d.time as string,
-                x: d[ratioKey] as number,
-                y: d[momKey] as number,
-                cond: d[condKey] as number | undefined,
-                close: d.close,
-            })).slice(-Math.abs(trailLength));
+            const points = sData.filter(d => {
+                const rVal = d[ratioKey] ?? d[ratioKeyAlt];
+                const mVal = d[momKey] ?? d[momKeyAlt];
+                return rVal != null && mVal != null;
+            }).map(d => {
+                const rVal = d[ratioKey] ?? d[ratioKeyAlt];
+                const mVal = d[momKey] ?? d[momKeyAlt];
+                const cVal = d[condKey] ?? d[condKeyAlt];
+                return {
+                    time: d.time as string,
+                    x: rVal as number,
+                    y: mVal as number,
+                    cond: cVal as number | undefined,
+                    close: d.close,
+                };
+            }).slice(-Math.abs(trailLength));
 
             return { ...s, points };
         });

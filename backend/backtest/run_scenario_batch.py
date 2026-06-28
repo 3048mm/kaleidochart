@@ -202,7 +202,7 @@ def main():
                     f"    Done ({len(strat_runs)}/{num_runs} runs). "
                     f"Return (Avg): {df_runs['total_return_pct'].mean():.2f}% | "
                     f"MaxDD (Avg): {df_runs['max_drawdown_pct'].mean():.2f}% | "
-                    f"CAGR (Avg): {df_runs['cagr'].mean()*100:.2f}%"
+                    f"CAGR (Avg): {df_runs['cagr'].mean():.2f}%"
                 )
             else:
                 print(f"    No successful runs for {strat}/{model}.")
