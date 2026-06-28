@@ -67,6 +67,23 @@ _VIRTUAL_COLUMNS = {
     "dist_sma50_pct": lambda: (DailyPrice.close - Indicator.sma_50) / Indicator.sma_50 * 100,
 }
 
+# --- Rank Column Aliases for mapping old naming rules to new RelativeRank columns ---
+_RANK_COLUMN_ALIASES = {
+    "rs_ratio_14": "rs_ratio_rank_e14",
+    "rs_ratio_21": "rs_ratio_rank_e21",
+    "rs_ratio_63": "rs_ratio_rank_e63",
+    "rs_momentum_14": "rs_momentum_rank_e14",
+    "rs_momentum_21": "rs_momentum_rank_e21",
+    "rs_momentum_63": "rs_momentum_rank_e63",
+    "rs_trend_14": "rs_trend_rank_s14",
+    "rs_trend_21": "rs_trend_rank_s21",
+    "rs_trend_63": "rs_trend_rank_s63",
+    "rs_roc_ema_14": "rs_roc_ema_rank_e14",
+    "rs_roc_ema_21": "rs_roc_ema_rank_e21",
+    "rs_roc_ema_63": "rs_roc_ema_rank_e63",
+    "rs_value": "rs_value_rank",
+}
+
 # --- Column category mapping for frontend ---
 _COLUMN_CATEGORIES = {
     "Price & Trend": ["sma_5", "sma_21", "sma_50", "sma_63", "sma_150", "sma_200",
@@ -168,28 +185,111 @@ def _resolve_column(name: str):
 def _apply_filter(query, key: str, value, db: Session, latest_date):
     """Apply a single filter key=value to a query. Returns modified query or original on failure."""
     try:
-        # Rank filters: min_<col>_rank / max_<col>_rank
-        rank_match = re.match(r'^(min|max)_(.+)_rank$', key)
-        if rank_match:
-            direction, indicator = rank_match.group(1), rank_match.group(2)
-            _rk_date = db.query(func.max(RelativeRank.date)).filter(RelativeRank.date <= latest_date).scalar()
-            if not _rk_date:
-                return query
-            col_attr = getattr(RelativeRank, indicator, None)
-            if col_attr is None:
-                return query
-            rank_subq = db.query(
-                RelativeRank.symbol_id,
-                col_attr.label('rank_val')
-            ).filter(
-                RelativeRank.date == _rk_date
-            ).subquery(name=f"rank_{indicator}_{direction}")
-            query = query.join(rank_subq, Symbol.id == rank_subq.c.symbol_id, isouter=False)
-            if direction == 'min':
-                query = query.filter(rank_subq.c.rank_val >= float(value))
+        # Theme numerical filters (Supports both RelativeRank and Indicator columns)
+        # New pattern: min_theme_rs_ratio_rank_e21 (RelativeRank)
+        # New pattern: min_theme_rs_trend_s21 (Indicator)
+        theme_rank_match = re.match(r'^(min|max)_theme_(.+)$', key)
+        if theme_rank_match:
+            direction, col_name = theme_rank_match.group(1), theme_rank_match.group(2)
+            
+            is_theme_filter = False
+            is_rank = False
+            col_attr = getattr(RelativeRank, col_name, None)
+            
+            if col_attr is not None:
+                is_theme_filter = True
+                is_rank = True
             else:
-                query = query.filter(rank_subq.c.rank_val <= float(value))
-            return query
+                if col_name.endswith('_rank'):
+                    old_indicator = col_name[:-5]
+                    mapped_col = _RANK_COLUMN_ALIASES.get(old_indicator)
+                    if mapped_col:
+                        col_attr = getattr(RelativeRank, mapped_col, None)
+                        if col_attr is not None:
+                            is_theme_filter = True
+                            is_rank = True
+                else:
+                    # Check if it's a standard Indicator column (e.g. rs_trend_s21)
+                    col_attr = _resolve_column(col_name)
+                    if col_attr is not None:
+                        is_theme_filter = True
+                        is_rank = False
+                        
+            if is_theme_filter:
+                if is_rank:
+                    _rk_date = db.query(func.max(RelativeRank.date)).filter(RelativeRank.date <= latest_date).scalar()
+                    if not _rk_date:
+                        return query
+                    
+                    theme_q = db.query(RelativeRank.symbol_id).filter(
+                        RelativeRank.date == _rk_date,
+                        RelativeRank.group_name == "テーマ"
+                    )
+                    if direction == 'min':
+                        theme_q = theme_q.filter(col_attr >= float(value))
+                    else:
+                        theme_q = theme_q.filter(col_attr <= float(value))
+                    theme_subq = theme_q.subquery()
+                else:
+                    # Indicator base theme filter
+                    theme_q = db.query(Indicator.symbol_id).filter(
+                        Indicator.date == latest_date
+                    )
+                    if direction == 'min':
+                        theme_q = theme_q.filter(col_attr >= float(value))
+                    else:
+                        theme_q = theme_q.filter(col_attr <= float(value))
+                    theme_subq = theme_q.subquery()
+                
+                # Find stocks belonging to those themes
+                stock_in_themes_subq = db.query(ThemeConstituent.symbol_id).filter(
+                    ThemeConstituent.theme_id.in_(theme_subq)
+                ).subquery()
+                
+                # Filter original query
+                query = query.filter(
+                    or_(
+                        (Symbol.category == "テーマ") & (Symbol.id.in_(theme_subq)),
+                        (Symbol.category == "個別") & (Symbol.id.in_(stock_in_themes_subq))
+                    )
+                )
+                return query
+
+        # Individual RelativeRank filters (Support new & old naming rules)
+        # New pattern: min_rs_ratio_rank_e21
+        # Old pattern: min_rs_ratio_21_rank
+        rank_match = re.match(r'^(min|max)_(.+)$', key)
+        if rank_match:
+            direction, col_name = rank_match.group(1), rank_match.group(2)
+            is_rank_filter = False
+            col_attr = getattr(RelativeRank, col_name, None)
+            if col_attr is not None:
+                is_rank_filter = True
+            else:
+                if col_name.endswith('_rank'):
+                    old_indicator = col_name[:-5]
+                    mapped_col = _RANK_COLUMN_ALIASES.get(old_indicator)
+                    if mapped_col:
+                        col_attr = getattr(RelativeRank, mapped_col, None)
+                        if col_attr is not None:
+                            is_rank_filter = True
+
+            if is_rank_filter:
+                _rk_date = db.query(func.max(RelativeRank.date)).filter(RelativeRank.date <= latest_date).scalar()
+                if not _rk_date:
+                    return query
+                rank_subq = db.query(
+                    RelativeRank.symbol_id,
+                    col_attr.label('rank_val')
+                ).filter(
+                    RelativeRank.date == _rk_date
+                ).subquery(name=f"rank_{col_name}_{direction}")
+                query = query.join(rank_subq, Symbol.id == rank_subq.c.symbol_id, isouter=False)
+                if direction == 'min':
+                    query = query.filter(rank_subq.c.rank_val >= float(value))
+                else:
+                    query = query.filter(rank_subq.c.rank_val <= float(value))
+                return query
 
         # Standard min/max filters
         match = re.match(r'^(min|max)_(.+)$', key)
@@ -280,6 +380,40 @@ def _apply_theme_rs_ratio_e21_gt_e63(q, preset_def, db, latest_date_result, prev
         )
     )
 
+def _apply_theme_rs_ratio_e14_gt_e21(q, preset_def, db, latest_date_result, previous_date_result):
+    theme_momentum_subq = db.query(Indicator.symbol_id).filter(
+        Indicator.date == latest_date_result,
+        Indicator.rs_ratio_e14 > Indicator.rs_ratio_e21
+    ).subquery()
+    stock_in_leading_themes_subq = db.query(ThemeConstituent.symbol_id).filter(
+        ThemeConstituent.theme_id.in_(theme_momentum_subq)
+    ).subquery()
+    return q.filter(
+        or_(
+            (Symbol.category == "テーマ") & (Symbol.id.in_(theme_momentum_subq)),
+            (Symbol.category == "個別") & (Symbol.id.in_(stock_in_leading_themes_subq))
+        )
+    )
+
+def _apply_theme_rs_trend_rank_s14_gt_s21(q, preset_def, db, latest_date_result, previous_date_result):
+    _rk_date = db.query(func.max(RelativeRank.date)).filter(RelativeRank.date <= latest_date_result).scalar()
+    if _rk_date:
+        theme_momentum_subq = db.query(RelativeRank.symbol_id).filter(
+            RelativeRank.date == _rk_date,
+            RelativeRank.group_name == "テーマ",
+            RelativeRank.rs_trend_rank_s14 > RelativeRank.rs_trend_rank_s21
+        ).subquery()
+        stock_in_leading_themes_subq = db.query(ThemeConstituent.symbol_id).filter(
+            ThemeConstituent.theme_id.in_(theme_momentum_subq)
+        ).subquery()
+        return q.filter(
+            or_(
+                (Symbol.category == "テーマ") & (Symbol.id.in_(theme_momentum_subq)),
+                (Symbol.category == "個別") & (Symbol.id.in_(stock_in_leading_themes_subq))
+            )
+        )
+    return q
+
 def _apply_theme_rs_ratio_rank_e14_gt_e21(q, preset_def, db, latest_date_result, previous_date_result):
     _rk_date = db.query(func.max(RelativeRank.date)).filter(RelativeRank.date <= latest_date_result).scalar()
     if _rk_date:
@@ -344,11 +478,13 @@ BOOLEAN_FILTER_HANDLERS = {
     "rrg_leading_in": _apply_rrg_leading_in,
     "rrg_lagging_in": _apply_rrg_lagging_in,
     "rrg_improving_in": _apply_rrg_improving_in,
+    "is_theme_rs_ratio_e14_gt_e21": _apply_theme_rs_ratio_e14_gt_e21,
     "is_theme_rs_ratio_e21_gt_e63": _apply_theme_rs_ratio_e21_gt_e63,
     "is_theme_rs_ratio_rank_e14_gt_e21": _apply_theme_rs_ratio_rank_e14_gt_e21,
     "is_theme_rs_ratio_rank_e21_gt_e63": _apply_theme_rs_ratio_rank_e21_gt_e63,
     "is_rs_trend_s21_gt_s63": _apply_rs_trend_s21_gt_s63,
     "is_rs_ratio_rank_e21_gt_e63": _apply_rs_ratio_rank_e21_gt_e63,
+    "is_theme_rs_trend_rank_s14_gt_s21": _apply_theme_rs_trend_rank_s14_gt_s21,
 }
 
 # --- Expression parser for OR/complex conditions ---
@@ -2237,13 +2373,25 @@ def get_screener_dashboard(
                 is_known = False
                 if key == "expression":
                     is_known = True
-                elif re.match(r'^(min|max)_(.+)_rank$', key):
-                    direction, indicator = re.match(r'^(min|max)_(.+)_rank$', key).groups()
-                    if hasattr(RelativeRank, indicator):
+                elif re.match(r'^(min|max)_theme_(.+)$', key):
+                    direction, col_name = re.match(r'^(min|max)_theme_(.+)$', key).groups()
+                    if hasattr(RelativeRank, col_name):
+                        is_known = True
+                    elif col_name.endswith('_rank'):
+                        old_indicator = col_name[:-5]
+                        if old_indicator in _RANK_COLUMN_ALIASES:
+                            is_known = True
+                    elif _resolve_column(col_name) is not None:
                         is_known = True
                 elif re.match(r'^(min|max)_(.+)$', key):
                     direction, col_name = re.match(r'^(min|max)_(.+)$', key).groups()
-                    if _resolve_column(col_name) is not None:
+                    if hasattr(RelativeRank, col_name):
+                        is_known = True
+                    elif col_name.endswith('_rank'):
+                        old_indicator = col_name[:-5]
+                        if old_indicator in _RANK_COLUMN_ALIASES:
+                            is_known = True
+                    elif _resolve_column(col_name) is not None:
                         is_known = True
                 elif _resolve_column(key) is not None:
                     is_known = True

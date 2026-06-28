@@ -170,6 +170,22 @@ def run_scenario_test(
     indicators_df = df_indicators
     ranks_df = df_ranks
     theme_constituents = df_theme_constituents
+
+    # Validate configuration parameters in presets
+    try:
+        from backend.backtest.backtest_runner import validate_strategies_config, print_validation_warnings
+        scenario_config = load_scenario_config(config_path)
+        strat_list = []
+        for name, filters in scenario_config.get("strategies", {}).items():
+            strat_dict = filters.copy()
+            strat_dict["name"] = name
+            strat_list.append(strat_dict)
+        
+        warnings = validate_strategies_config(strat_list, df_indicators, df_prices, df_ranks, df_theme_constituents)
+        if warnings:
+            print_validation_warnings(warnings)
+    except Exception as ve:
+        print(f"Warning during scenario config validation: {ve}")
     
     if prices_df.empty:
         raise ValueError("No price data loaded for the specified date range.")

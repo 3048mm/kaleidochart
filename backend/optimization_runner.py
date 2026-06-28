@@ -430,6 +430,16 @@ def main():
     with open(config_path, 'rb') as f:
         config = tomli.load(f)
     exit_rules = ExitRules.from_config(config)
+
+    # Validate strategy parameters in configuration
+    try:
+        from backtest.backtest_runner import validate_strategies_config, print_validation_warnings
+        dummy_df = pd.DataFrame()
+        warnings = validate_strategies_config(config.get('strategy', []), dummy_df, dummy_df)
+        if warnings:
+            print_validation_warnings(warnings)
+    except Exception as e:
+        print(f"Warning during config validation: {e}")
     
     # Init DB
     project_root = os.path.dirname(backend_dir)

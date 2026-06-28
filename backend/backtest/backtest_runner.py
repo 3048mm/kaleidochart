@@ -339,6 +339,11 @@ def run_backtest(config: dict, strategy_filter: str = None, refresh_cache: bool 
     df_symbols, df_prices, df_indicators, df_ranks, df_theme_constituents, trading_dates = \
         preload_data(database.engine, start_date, end_date, refresh_cache=refresh_cache)
 
+    # Validate configuration parameters
+    warnings = validate_strategies_config(strategies, df_indicators, df_prices, df_ranks, df_theme_constituents)
+    if warnings:
+        print_validation_warnings(warnings)
+
     # Calculate VXV/VIX Ratio (using ^VIX3M and ^VIX)
     vxv_vix_series = {}
     vix_row = df_symbols[df_symbols['ticker'] == '^VIX']
@@ -385,6 +390,142 @@ def run_backtest(config: dict, strategy_filter: str = None, refresh_cache: bool 
     # Save results
     results_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
     save_results_json(all_results, all_trades, results_dir, start_date, end_date)
+
+    # Print warnings again at the very end
+    if warnings:
+        print_validation_warnings(warnings)
+
+
+def print_validation_warnings(warnings: list):
+    """Print validation warnings in a prominent visual block."""
+    if not warnings:
+        return
+    print()
+    print("=" * 75)
+    print("WARNING: Invalid or unsupported strategy parameters detected in config!")
+    print("=" * 75)
+    for w in warnings:
+        print(f"  - {w}")
+    print("=" * 75)
+    print()
+
+
+def validate_strategies_config(strategies: list, df_ind: pd.DataFrame, df_prices: pd.DataFrame, df_ranks: pd.DataFrame = None, df_theme_constituents: pd.DataFrame = None) -> list:
+    """Validate parameters in strategies configuration against schema and preloaded data."""
+    import re
+    from backend.db.models import RelativeRank
+
+    try:
+        from backend.api.routers import BOOLEAN_FILTER_HANDLERS, _INDICATOR_COLUMNS, _VIRTUAL_COLUMNS
+    except ImportError:
+        BOOLEAN_FILTER_HANDLERS = {}
+        _INDICATOR_COLUMNS = {}
+        _VIRTUAL_COLUMNS = {}
+
+    warnings = []
+
+    # Metadata, execution, and validation controller params
+    METADATA_KEYS = {
+        'name', 'description', 'max_hits_per_day', 'sort_column', 'sort_ascending', 'expression', '_use_hysteresis',
+        'min_avg_hits_per_day', 'min_hit_rate_pct', 'max_allowed_dd',
+        # Scenario runner internal parameters
+        'use_vxv_vix_hysteresis', 'vxv_vix_hysteresis_type'
+    }
+
+    # Allowed rank indicators from RelativeRank
+    rank_column_names = {
+        'rs_value_rank',
+        'rs_ratio_rank_e14', 'rs_ratio_rank_e21', 'rs_ratio_rank_e63',
+        'rs_momentum_rank_e14', 'rs_momentum_rank_e21', 'rs_momentum_rank_e63',
+        'rs_trend_rank_s14', 'rs_trend_rank_s21', 'rs_trend_rank_s63',
+        'rs_roc_ema_rank_e14', 'rs_roc_ema_rank_e21', 'rs_roc_ema_rank_e63',
+    }
+
+    # Aliases in backtest_screener.py
+    alias_map = {
+        'change_intraday_pct', 'rs_ratio_21_rank', 'rs21_rank', 'rs_ratio_63_rank', 'rs63_rank',
+        'trend_template_ok', 'rs_condition_14_rank', 'rs_condition_21_rank', 'rs_condition_63_rank'
+    }
+
+    for strat in strategies:
+        strat_name = strat.get('name', 'Unknown')
+        for key, value in strat.items():
+            if key in METADATA_KEYS:
+                continue
+
+            # 1. Custom boolean / RRG filters
+            if key in BOOLEAN_FILTER_HANDLERS:
+                continue
+            if key == 'rrg_intensity_threshold':
+                continue
+
+            # Normalize theme-based keys for standard validation checks (e.g. min_theme_rs_trend_s21 -> min_rs_trend_s21)
+            eval_key = key
+            if key.startswith('min_theme_'):
+                eval_key = 'min_' + key[10:]
+            elif key.startswith('max_theme_'):
+                eval_key = 'max_' + key[10:]
+            elif key.startswith('is_theme_'):
+                eval_key = 'is_' + key[9:]
+
+            # 2. Moving average cross-above (is_close_gt_* / close_gt_*)
+            if eval_key.startswith('close_gt_') or eval_key.startswith('is_close_gt_'):
+                ind_name = eval_key[9:] if eval_key.startswith('close_gt_') else eval_key[12:]
+                if ind_name in ('sma5', 'sma21', 'sma50', 'sma63', 'sma150', 'sma200', 'ema5', 'ema21', 'ema50', 'ema63', 'ema150', 'ema200'):
+                    for num in ('200', '150', '63', '50', '21', '5'):
+                        if ind_name.endswith(num) and not ind_name.endswith('_' + num):
+                            ind_name = ind_name.replace(num, '_' + num)
+                            break
+                if ind_name in _INDICATOR_COLUMNS or ind_name in df_ind.columns:
+                    continue
+                else:
+                    warnings.append(f"Strategy '{strat_name}': Invalid moving average parameter '{key}'.")
+                    continue
+
+            # 3. Specific rank parameter bounds (min/max_<col>_rank)
+            rank_match = re.match(r'^(min|max)_(.+)_rank$', eval_key)
+            if rank_match:
+                direction, indicator = rank_match.group(1), rank_match.group(2)
+                if hasattr(RelativeRank, indicator) or indicator in rank_column_names:
+                    continue
+                else:
+                    warnings.append(f"Strategy '{strat_name}': Unknown rank parameter '{key}'.")
+                    continue
+
+            # 4. Standard prefixes (min_, max_, bool_, is_, has_)
+            col_name = eval_key
+            op = None
+            if eval_key.startswith('min_'):
+                col_name = eval_key[4:]; op = '>='
+            elif eval_key.startswith('max_'):
+                col_name = eval_key[4:]; op = '<='
+            elif isinstance(value, bool) or eval_key.startswith('bool_') or eval_key.startswith('is_') or eval_key.startswith('has_'):
+                op = '=='
+                if eval_key.startswith('bool_'): col_name = eval_key[5:]
+                elif eval_key.startswith('is_'): col_name = eval_key[3:]
+                elif eval_key.startswith('has_'): col_name = eval_key[4:]
+
+            if not op:
+                warnings.append(f"Strategy '{strat_name}': Parameter '{key}' has no valid prefix (min_/max_/is_/bool_).")
+                continue
+
+            # Resolve check
+            is_valid_col = (
+                col_name in _INDICATOR_COLUMNS or 
+                col_name in df_ind.columns or 
+                col_name in _VIRTUAL_COLUMNS or 
+                col_name in alias_map or 
+                hasattr(RelativeRank, col_name) or
+                col_name in rank_column_names or
+                col_name in df_prices.columns or
+                eval_key in _INDICATOR_COLUMNS or
+                eval_key in df_ind.columns
+            )
+
+            if not is_valid_col:
+                warnings.append(f"Strategy '{strat_name}': Unknown parameter '{key}'.")
+
+    return warnings
 
 
 def main():
