@@ -1,7 +1,8 @@
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 import pandas as pd
 import optuna
+import sys
 from optimization_runner import objective
 from backend.backtest.backtest_simulator import ExitRules
 
@@ -24,13 +25,11 @@ def test_objective_calculates_cagr_correctly():
                 'min_change_1d_pct': 7.0,
                 'min_avg_hits_per_day': 0.0, # Disable pruning
                 'min_hit_rate_pct': 0.0,
+                'optimization': {
+                    'min_change_1d_pct': {'type': 'float', 'min': 1.0, 'max': 10.0, 'step': 1.0},
+                }
             }
         ],
-        'optimization': {
-            'B': {
-                'min_change_1d_pct': {'type': 'float', 'min': 1.0, 'max': 10.0, 'step': 1.0},
-            }
-        }
     }
     
     config_app = {'system': {'db_path': 'dummy'}}

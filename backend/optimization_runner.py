@@ -124,31 +124,61 @@ def calculate_prune_penalty(avg_hits: float, hit_rate_pct: float, bounds: tuple)
 # TOML-driven parameter parsing functions (testable, pure)
 # =============================================================
 
-def parse_optimization_params(config, strategy_short):
+def resolve_strategy(config, strategy_name):
+    """
+    Find the strategy configuration dict and actual name in backtest_config.toml.
+    Supports both exact match (full name) and legacy short code/prefix fallback.
+    """
+    strategies = config.get('strategy', [])
+    
+    # 1. Exact match
+    strat = next((s for s in strategies if s.get('name') == strategy_name), None)
+    if strat:
+        return strat, strategy_name
+        
+    # 2. Legacy short code fallback mapping
+    full_names = {
+        'A': 'A_momentum_breakout',
+        'B': 'B_theme_momentum',
+        'C1': 'C1_rrg_leading_in',
+        'C2': 'C2_rrg_improving_in',
+        'D': 'D_ema21_pullback',
+        'E': 'E1_vcp',  # Map legacy 'E' to 'E1_vcp'
+        'F': 'F_elite_momentum97'
+    }
+    legacy_name = full_names.get(strategy_name)
+    if legacy_name:
+        strat = next((s for s in strategies if s.get('name') == legacy_name), None)
+        if strat:
+            return strat, legacy_name
+            
+    # 3. Wildcard prefix check (e.g., strategy_name='B4' matches 'B4_rs_trend_with_theme')
+    found_name = next((s['name'] for s in strategies if s.get('name', '').startswith(strategy_name + "_")), None)
+    if found_name:
+        strat = next((s for s in strategies if s.get('name') == found_name), None)
+        return strat, found_name
+        
+    return None, None
+
+
+def parse_optimization_params(config, strategy_name):
     """Parse optimization parameter definitions from TOML config.
     
     Args:
-        config: Parsed TOML config dict (must contain 'optimization' section).
-        strategy_short: Short strategy name (e.g. 'B', 'D', 'F').
+        config: Parsed TOML config dict.
+        strategy_name: Strategy name (e.g. 'B4_rs_trend_with_theme').
     
     Returns:
-        List of parameter definition dicts, each containing:
-        - name: parameter name
-        - type: 'float', 'int', or 'categorical'
-        - For float/int: min, max, step
-        - For categorical: choices (with 'none' strings converted to Python None)
+        List of parameter definition dicts.
     
     Raises:
-        ValueError: If strategy_short is not defined in [optimization.*] section.
+        ValueError: If strategy is not found in config.
     """
-    opt_section = config.get('optimization', {})
-    if strategy_short not in opt_section:
-        raise ValueError(
-            f"No [optimization.{strategy_short}] section found in config. "
-            f"Available: {list(opt_section.keys())}"
-        )
-    
-    raw_params = opt_section[strategy_short]
+    strat_base, actual_name = resolve_strategy(config, strategy_name)
+    if not strat_base:
+        raise ValueError(f"Strategy '{strategy_name}' not found in backtest config.")
+        
+    raw_params = strat_base.get('optimization', {})
     result = []
     for param_name, param_def in raw_params.items():
         entry = {'name': param_name, 'type': param_def['type']}
@@ -167,13 +197,7 @@ def parse_optimization_params(config, strategy_short):
 
 
 def apply_trial_params(trial, param_defs, strat):
-    """Apply Optuna trial suggestions to strategy dict based on param definitions.
-    
-    Args:
-        trial: Optuna Trial object.
-        param_defs: List of parameter definitions from parse_optimization_params().
-        strat: Strategy dict to update in-place.
-    """
+    """Apply Optuna trial suggestions to strategy dict based on param definitions."""
     for p in param_defs:
         name = p['name']
         if p['type'] == 'float':
@@ -185,17 +209,7 @@ def apply_trial_params(trial, param_defs, strat):
 
 
 def parse_optimization_periods(config):
-    """Parse optimization evaluation periods from TOML config.
-    
-    Args:
-        config: Parsed TOML config dict.
-    
-    Returns:
-        List of (start_date, end_date) tuples.
-    
-    Raises:
-        ValueError: If optimization_periods section is missing.
-    """
+    """Parse optimization evaluation periods from TOML config."""
     if 'optimization_periods' not in config:
         raise ValueError(
             "No [optimization_periods] section found in config. "
@@ -205,45 +219,18 @@ def parse_optimization_periods(config):
     return [(p['start'], p['end']) for p in raw_periods]
 
 
-def enqueue_baseline_trial(study, config: dict, strategy_short: str) -> bool:
+def enqueue_baseline_trial(study, config: dict, strategy_name: str) -> bool:
     """
     Extract baseline default parameters for a strategy from TOML config
     and enqueue them as the first trial in the study.
-    
-    Args:
-        study: The Optuna Study object.
-        config: The parsed TOML config dict.
-        strategy_short: Short strategy name/code (e.g., 'B1', 'B2', 'B', 'D').
-        
-    Returns:
-        bool: True if trial was successfully enqueued, False otherwise.
     """
-    full_names = {
-        'A': 'A_momentum_breakout',
-        'B': 'B_theme_momentum',
-        'C1': 'C1_rrg_leading_in',
-        'C2': 'C2_rrg_improving_in',
-        'D': 'D_ema21_pullback',
-        'E': 'E_vcp',
-        'F': 'F_elite_momentum97'
-    }
-    
-    # Try to find the actual name
-    if strategy_short in full_names:
-        actual_name = full_names[strategy_short]
-    else:
-        strategies = config.get('strategy', [])
-        found = next((s['name'] for s in strategies if s['name'] == strategy_short or s['name'].startswith(strategy_short + "_")), None)
-        actual_name = found if found else strategy_short
-        
-    # Extract the base strategy configuration
-    strat_base = next((s for s in config.get('strategy', []) if s.get('name') == actual_name), None)
+    strat_base, actual_name = resolve_strategy(config, strategy_name)
     if not strat_base:
-        raise ValueError(f"Strategy '{actual_name}' not found in backtest config.")
+        raise ValueError(f"Strategy '{strategy_name}' not found in backtest config.")
         
     # Parse optimization params from TOML
     try:
-        param_defs = parse_optimization_params(config, strategy_short)
+        param_defs = parse_optimization_params(config, actual_name)
     except ValueError:
         return False
         
@@ -264,40 +251,20 @@ def enqueue_baseline_trial(study, config: dict, strategy_short: str) -> bool:
 # Optuna objective function (TOML-driven)
 # =============================================================
 
-def objective(trial: optuna.Trial, strategy_type: str, config, config_app, exit_rules: ExitRules, periods: list):
+def objective(trial: optuna.Trial, strategy_name: str, config, config_app, exit_rules: ExitRules, periods: list):
     import traceback
     try:
-        # Mapping for short codes (fallback to searching config if not in map)
-        full_names = {
-            'A': 'A_momentum_breakout',
-            'B': 'B_theme_momentum',
-            'C1': 'C1_rrg_leading_in',
-            'C2': 'C2_rrg_improving_in',
-            'D': 'D_ema21_pullback',
-            'E': 'E_vcp',
-            'F': 'F_elite_momentum97'
-        }
-        
-        # Try to find the actual name from the mapping or searching the strategy list
-        if strategy_type in full_names:
-            actual_name = full_names[strategy_type]
-        else:
-            # Search for a strategy that matches exactly or starts with "STRATEGY_"
-            strategies = config.get('strategy', [])
-            found = next((s['name'] for s in strategies if s['name'] == strategy_type or s['name'].startswith(strategy_type + "_")), None)
-            actual_name = found if found else strategy_type
-        
-        # Extract the base strategy configuration from the list in config['strategy']
-        strat_base = next((s for s in config.get('strategy', []) if s.get('name') == actual_name), None)
+        # Resolve strategy config
+        strat_base, actual_name = resolve_strategy(config, strategy_name)
         if not strat_base:
-            raise ValueError(f"Strategy '{actual_name}' not found in backtest config.")
-            
-        # Copy strategy config to preserve baseline settings (like market_cap etc)
+            raise ValueError(f"Strategy '{strategy_name}' not found in backtest config.")
+        
+        # Copy strategy config to preserve baseline settings
         strat = strat_base.copy()
         strat['name'] = f"{actual_name}_Trial_{trial.number}"
 
         # Parse optimization params from TOML and apply via Optuna trial
-        param_defs = parse_optimization_params(config, strategy_type)
+        param_defs = parse_optimization_params(config, actual_name)
         apply_trial_params(trial, param_defs, strat)
         # Extract prune bounds from config if available (allow strategy-specific overrides)
         prune_conf = config.get('optimization_pruning', {})
@@ -486,10 +453,16 @@ def main():
             "connect_args": {"timeout": 60.0} # Extend timeout from default 5s to 60s
         }
     )
-    study_name = f"opt_strategy_{args.strategy}_multi_period"
+    # Resolve actual strategy name from configuration
+    strat_base, actual_name = resolve_strategy(config, args.strategy)
+    if not strat_base:
+        print(f"Error: Strategy '{args.strategy}' not found in backtest config.")
+        return
+
+    study_name = actual_name
     
     print("=" * 60)
-    print(f"  Optuna Optimization Runner: Strategy {args.strategy}")
+    print(f"  Optuna Optimization Runner: Strategy {actual_name} (from: {args.strategy})")
     print(f"  Periods: {periods}")
     print("=" * 60)
     
@@ -501,14 +474,14 @@ def main():
     )
     
     try:
-        enqueued = enqueue_baseline_trial(study, config, args.strategy)
+        enqueued = enqueue_baseline_trial(study, config, actual_name)
         if enqueued:
             print("  Enqueued baseline trial from default config values.")
     except Exception as e:
         print(f"  Warning: Could not enqueue baseline trial: {e}")
         
     study.optimize(
-        lambda t: objective(t, args.strategy, config, config_app, exit_rules, periods),
+        lambda t: objective(t, actual_name, config, config_app, exit_rules, periods),
         n_trials=args.trials
     )
     

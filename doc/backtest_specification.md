@@ -12,10 +12,10 @@
 | テストの分類 | 実行コマンド / スクリプト | 主要なインプット | 主な評価アプローチと目的 |
 | :--- | :--- | :--- | :--- |
 | **① バックテスト<br>(スクリーンパラメータ単体実行)** | `backtest_runner.py` /<br>`run_backtest.bat` | `backtest_config.toml` | 単一の戦略・固定パラメータに対して、**単利・加算ベース（Additive PnL）**でアラート（シグナル）そのものの純粋なエッジ（優位性）を検証する。 |
-| **② バックテスト<br>(スクリーンパラメータ最適化)** | `optimization_runner.py` /<br>`run_optimization.bat` | `backtest_config.toml` | **Optuna（ベイズ最適化）**を用いて、ブル・ベアの複数期間において総合的にパフォーマンスが高くなるパラメータの組み合わせを自動探索する。 |
+| **② バックテスト<br>(スクリーンパラメータ最適化)** | `optimization_runner.py` /<br>`run_optimization.bat` | `backtest_config.toml` | **Optuna（ベイズ最適化）**を用いて、ブル・ベアの複数期間において総合的にパフォーマンスが高くなるパラメータの組み合わせを自動探索する。 ポジション管理は行わず無限に資産があったと仮定して純粋にスクリーン条件としての最適化を行う。 |
 | **③ ETFシナリオテスト** | `etf_scenario_runner.py` | `etf_scenario_config.toml` | VXV/VIX EMA や SPY SMA200 などの市場レジームシグナルに基づき、指数ETF（SPY, QQQ, TQQQ 等）を切り替えるポートフォリオ運用の長期複利シミュレーション。 |
 | **④ 個別銘柄シナリオテスト<br>(単体実行)** | `scenario_runner.py` /<br>`run_scenario_test.bat` | `screener_presets.toml`<br>`scenario_config.toml` | 手動調整用プリセットから Voting（合算スコア）で銘柄を動的選別し、最大ポジション数等の制約下で**複利（Portfolio compounding）運用**の推移をマニュアル検証する。 |
-| **⑤ 個別銘柄シナリオテスト<br>(並列バッチ実行)** | `run_scenario_batch.py` /<br>`run_scenario_batch.bat` | `optimization_trials.db` | 最適化された各戦略に対し、5つのレジームモデルとモンテカルロ試行（各10回）を並列実行して、ロジック自体の優位性やドローダウンの分布を**統計的・客観的に一括評価**する。 |
+| **⑤ 個別銘柄シナリオテスト<br>(並列バッチ実行)** | `run_scenario_batch.py` /<br>`run_scenario_batch.bat` | `optimization_trials.db` | 最適化された各戦略に対し、5つのトレードルールのレジームモデルとモンテカルロ試行（各10回）を並列実行して、ロジック自体の優位性やドローダウンの分布を**統計的・客観的に一括評価**する。 |
 
 ### 各テストの使い分けと開発サイクル
 

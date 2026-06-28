@@ -18,9 +18,6 @@
 
 
 
-- [ ] **一括バッチスクリプトの動的Study検出と出力マッピング**
-  - `run_scenario_batch.py` における戦略のハードコーディング（A, B4等）を廃止し、`optimization_trials.db` 内のStudy名（`opt_strategy_<名前>_multi_period`）を動的に自動スキャン・実行するよう改善する。
-  - 出力フォルダ名もStudy名に連動（例: `B4_with_adr`）させ、パラメータ変更前後の並行比較や上書き衝突回避、フロントエンド側での自動認識表示を実現する。
 
 - [ ] **ポートフォリオ機能（将来フェーズ）**
   - [ ] **moomoo 証券 API 連携**: `portfolios.source = 'moomoo_api'` のポートフォリオで保有銘柄を OpenD (Python SDK / WebSocket) 経由で自動同期。API Doc: https://openapi.moomoo.com/moomoo-api-doc/
@@ -43,3 +40,9 @@
 - [x] 改行コードの統一（`.gitattributes` の導入と正規化）- 2026-04-11
 - [x] 評価指標 of 既存バックテストの刷新（Expectancy, Alpha, 加算ドローダウンへの切り替え）- 2026-04-10
 
+
+- [x] **一括バッチスクリプトの動的Study検出と出力マッピング**
+  - [x] `run_scenario_batch.py` における戦略のハードコーディング（A, B4等）を廃止し、`data/scenario_batch_jobs.toml` に定義されたカスタムジョブに従って並列モンテカルロシミュレーションを実行する仕様に移行。
+  - [x] 最適化パラメータの探索スペースを `backtest_config.toml` 内の `[strategy.optimization]` ブロックとして戦略自体に内包し、二重管理を排除。任意の戦略フルネームによる並行最適化（別Study・別名での登録）を実現。
+  - [x] 手動でパラメータを一部だけ上書きしてシナリオテストに流し、最適化パラメータと並行比較できる `manual` ソース（オーバーライド）機能を実装。
+  2026-6-29

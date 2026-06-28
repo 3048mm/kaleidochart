@@ -36,25 +36,33 @@ from backend.backtest.backtest_runner import preload_data
 _child_preloaded_data = None
 
 
-def get_best_params_from_db(db_path: str, strategy_code: str) -> dict:
+def load_scenario_batch_jobs(toml_path: str) -> list:
+    """data/scenario_batch_jobs.toml を読み込み、ジョブのリストを返す。"""
+    if not os.path.exists(toml_path):
+        return []
+    with open(toml_path, "rb") as f:
+        config = tomli.load(f)
+    return config.get("job", [])
+
+
+def get_best_params_from_db(db_path: str, study_name: str) -> dict:
     """Optuna DB から best trial のパラメータを取得する。"""
     storage_url = f"sqlite:///{db_path}"
-    study_name = f"opt_strategy_{strategy_code}_multi_period"
     try:
         study = optuna.load_study(study_name=study_name, storage=storage_url)
         return study.best_trial.params
     except Exception as e:
-        print(f"Error loading study for {strategy_code}: {e}")
+        print(f"Error loading study '{study_name}': {e}")
         return None
 
 
-def generate_preset_toml(strategy_code: str, best_params: dict, toml_path: str):
+def generate_preset_toml(strategy_name: str, best_params: dict, toml_path: str):
     """Optuna best params から screener_presets.toml 形式のファイルを生成する。"""
-    toml_str = f'active_rise_ids = ["{strategy_code}_opt"]\nactive_fall_ids = []\n\n'
+    toml_str = f'active_rise_ids = ["{strategy_name}_opt"]\nactive_fall_ids = []\n\n'
     toml_str += '[[rise]]\n'
-    toml_str += f'id = "{strategy_code}_opt"\n'
-    toml_str += f'name = "{strategy_code}_opt"\n'
-    toml_str += f'subname = "Optuna Best for {strategy_code}"\n'
+    toml_str += f'id = "{strategy_name}_opt"\n'
+    toml_str += f'name = "{strategy_name}_opt"\n'
+    toml_str += f'subname = "Optuna Best for {strategy_name}"\n'
     toml_str += 'group = "Check"\n'
     toml_str += 'use_vxv_vix_hysteresis = true\n'
     toml_str += 'vxv_vix_hysteresis_type = "vxv_vix_ema"\n'
@@ -146,8 +154,13 @@ def main():
     _s = os.path.dirname(os.path.abspath(__file__))
     project_root_here = os.path.dirname(os.path.dirname(_s))  # stocktool/
     db_path = os.path.join(project_root_here, "data", "optimization_trials.db")
+    jobs_path = os.path.join(project_root_here, "data", "scenario_batch_jobs.toml")
 
-    strategies = ["A", "B1", "B2", "B3", "B4", "E2"]
+    jobs = load_scenario_batch_jobs(jobs_path)
+    if not jobs:
+        print(f"No jobs found in {jobs_path}. Exiting.")
+        return
+
     models = ["full_position", "spy_sma200", "spy_sma63", "vxv_vix_ema", "mts_raw"]
 
     start_date = "2022-01-01"
@@ -156,21 +169,48 @@ def main():
     max_workers = 3
 
     print("=" * 60)
-    print("Scenario Batch: 6 strategies × 4 models × 10 MC runs")
+    print(f"Scenario Batch: {len(jobs)} jobs x {len(models)} models x {num_runs} MC runs")
     print(f"Period: {start_date} to {end_date}")
-    print(f"Output: output/scenario/{{strategy}}/{{model}}/run_{{N}}/")
+    print(f"Jobs file: {jobs_path}")
     print("=" * 60)
 
-    for strat in strategies:
-        print(f"\n>>> Strategy: {strat} ...")
-        best_params = get_best_params_from_db(db_path, strat)
-        if not best_params:
-            print(f"  Skipping {strat}: Optuna params not found.")
+    for job in jobs:
+        strat_name = job["name"]
+        strategy_code = job["strategy_code"]
+        source = job.get("source", "optuna")
+
+        print(f"\n>>> Job: {strat_name} (Base Strategy: {strategy_code}, Source: {source}) ...")
+
+        # Load parameters
+        best_params = {}
+        if source == "optuna":
+            study_name = job.get("study_name")
+            if not study_name:
+                print(f"  Skipping {strat_name}: 'study_name' is missing for optuna source.")
+                continue
+            best_params = get_best_params_from_db(db_path, study_name)
+        elif source == "manual":
+            base_study_name = job.get("base_study_name")
+            if base_study_name:
+                best_params = get_best_params_from_db(db_path, base_study_name)
+                if not best_params:
+                    best_params = {}
+            else:
+                best_params = {}
+
+        if source == "optuna" and not best_params:
+            print(f"  Skipping {strat_name}: Optuna params not found in study '{job.get('study_name')}'")
             continue
 
+        # Apply manual parameter overrides
+        override_params = job.get("override_params", {})
+        if override_params:
+            print(f"  Applying parameter overrides: {override_params}")
+            best_params.update(override_params)
+
         # Preset TOML を tmp/ に書き出す（実行ごとに再生成）
-        preset_toml_path = os.path.join(project_root_here, "tmp", f"preset_{strat}_opt.toml")
-        generate_preset_toml(strat, best_params, preset_toml_path)
+        preset_toml_path = os.path.join(project_root_here, "tmp", f"preset_{strat_name}_opt.toml")
+        generate_preset_toml(strategy_code, best_params, preset_toml_path)
 
         for model in models:
             print(f"  > Regime Model: {model} ...")
@@ -180,7 +220,7 @@ def main():
                 futures = {
                     executor.submit(
                         run_single_mc_scenario,
-                        strat, model, run_idx,
+                        strat_name, model, run_idx,
                         start_date, end_date,
                         preset_toml_path, project_root_here
                     ): run_idx
@@ -205,10 +245,10 @@ def main():
                     f"CAGR (Avg): {df_runs['cagr'].mean():.2f}%"
                 )
             else:
-                print(f"    No successful runs for {strat}/{model}.")
+                print(f"    No successful runs for {strat_name}/{model}.")
 
     print("\n" + "=" * 60)
-    print("ALL STRATEGIES & REGIMES COMPLETE")
+    print("ALL JOBS & REGIMES COMPLETE")
     print("=" * 60)
 
 

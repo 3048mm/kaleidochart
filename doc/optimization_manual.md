@@ -33,12 +33,11 @@
 
 ```bash
 # 特定の戦略を指定し、探索回数を 500 回にする場合
-python backend/optimization_runner.py --strategy F_elite_momentum97 --trials 500
+python backend/optimization_runner.py --strategy B4_rs_trend_with_theme --trials 500
 ```
 **対象にできる戦略:**
-- `B_theme_momentum`
-- `D_ema21_pullback`
-- `F_elite_momentum97`
+`backtest_config.toml` 内の `[[strategy]]` の `name`（フルネーム、例: `B4_rs_trend_with_theme` や `A_momentum_breakout` など任意の定義名）を指定します。
+(従来の短縮コード `A`, `B1` 等もプレフィックス一致で自動的に解決されます)
 
 ### ステップ 2: 探索結果を可視化する (ダッシュボード)
 最適化が走っている最中、または完了した後に、別のターミナルを開いて以下のスクリプトを実行します。
@@ -59,7 +58,7 @@ python backend/optimization_runner.py --strategy F_elite_momentum97 --trials 500
 探索パラメータのレンジ（範囲・刻み幅）やマルチ期間設定は、**`backtest_config.toml`** に一元定義されており、Pythonコードの変更は不要です。
 
 ### 3.1 探索パラメータの追加・変更について
-`backtest_config.toml` の `[optimization.<戦略短縮名>]` セクションで、探索するパラメータの「型」「範囲」「刻み幅」を定義します。
+各 `[[strategy]]` ブロックの下の **`[strategy.optimization]`** サブセクションで、探索するパラメータの「型」「範囲」「刻み幅」を定義します。
 
 #### 記法一覧
 
@@ -76,7 +75,13 @@ python backend/optimization_runner.py --strategy F_elite_momentum97 --trials 500
 ```toml
 # backtest_config.toml
 
-[optimization.D]
+[[strategy]]
+name = "D_ema21_pullback"
+# (中略: 通常の実行で使う初期値・固定パラメータ)
+min_rs_ratio_rank_e21 = 0.7
+
+# 最適化探索範囲を strategy 内に内包する
+[strategy.optimization]
 # 変更前: min = 0.50, max = 0.90
 # 変更後: より厳しい範囲に絞り込み
 min_rs_ratio_rank_e21 = { type = "float", min = 0.70, max = 0.95, step = 0.05 }
@@ -85,16 +90,19 @@ min_rs_ratio_rank_e21 = { type = "float", min = 0.70, max = 0.95, step = 0.05 }
 新しいフィルタ条件（例: 出来高急増 `min_vol_surge_21`）を最適化対象に追加する場合：
 
 ```toml
-[optimization.D]
+[[strategy]]
+name = "D_ema21_pullback"
+# (中略)
+
+[strategy.optimization]
 # 既存のパラメータ...
-min_dist_21ema_pct   = { type = "float", min = -4.0, max = -1.0, step = 0.5 }
-# (省略)
+min_dist_ema21_pct   = { type = "float", min = -4.0, max = -1.0, step = 0.5 }
 
 # 新規追加: 出来高急増も探索対象にする
 min_vol_surge_21     = { type = "float", min = 0.5, max = 3.0, step = 0.5 }
 ```
 
-`[optimization.D]` に書かれていないパラメータ（例: `description` 等）は、`[[strategy]]` セクションのベース値がそのまま継承されるため、変更せずとも動作します。
+`[strategy.optimization]` に書かれていないパラメータ（例: `description` 等）は、`[[strategy]]` セクションのデフォルトのパラメータがそのまま継承されるため、変更せずとも動作します。
 
 ### 3.2 マルチ期間設定の変更
 最適化時のバックテスト対象期間（ベア／ブル相場）も `backtest_config.toml` で管理しています。

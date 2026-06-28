@@ -1,0 +1,65 @@
+# =============================================================
+# Scenario Test Batch Jobs Configuration
+# =============================================================
+#
+# このファイルは、並列シナリオテストバッチ（run_scenario_batch.py）の実行対象ジョブを定義します。
+# フォルダ名やパラメータの競合を避け、並行比較を行うことができます。
+#
+# ジョブの属性:
+# - name:           出力フォルダ名 (output/scenario/{name}/) および画面表示名。
+# - strategy_code:  backtest_config.toml 内の [[strategy]] の name。
+# - source:         パラメータの取得元。 "optuna" または "manual"。
+# - study_name:     (source="optuna" の場合必須) 最良パラメータを取得する Optuna の Study 名。
+# - base_study_name: (source="manual" の場合任意) 上書きパラメータのベースとなる Optuna の Study 名。
+# - override_params: (source="manual" または "optuna" で上書きしたい場合任意) 手動で上書きするパラメータ辞書。
+
+[[job]]
+name = "A"
+strategy_code = "A_momentum_breakout"
+source = "optuna"
+study_name = "A_momentum_breakout"
+
+[[job]]
+name = "B1"
+strategy_code = "B1_theme_momentum"
+source = "optuna"
+study_name = "B1_theme_momentum"
+
+[[job]]
+name = "B2"
+strategy_code = "B2_theme_rsrank_momentum"
+source = "optuna"
+study_name = "B2_theme_rsrank_momentum"
+
+[[job]]
+name = "B3"
+strategy_code = "B3_theme_rs_rank_14_gt_21_momentum"
+source = "optuna"
+study_name = "B3_theme_rs_rank_14_gt_21_momentum"
+
+[[job]]
+name = "B4"
+strategy_code = "B4_rs_trend_with_theme"
+source = "optuna"
+study_name = "B4_rs_trend_with_theme"
+
+[[job]]
+name = "B5"
+strategy_code = "B5_rs_trend_with_theme"
+source = "optuna"
+study_name = "B5_rs_trend_with_theme"
+
+[[job]]
+name = "E2"
+strategy_code = "E2_vcp_basic"
+source = "optuna"
+study_name = "E2_vcp_basic"
+
+# 記述例（手動変更パラメータの比較テスト用）:
+# [[job]]
+# name = "B4_manual_vol_surge_2.0"
+# strategy_code = "B4_rs_trend_with_theme"
+# source = "manual"
+# base_study_name = "opt_strategy_B4_rs_trend_with_theme_multi_period"
+# [job.override_params]
+# min_vol_surge_21 = 2.0

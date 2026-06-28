@@ -24,7 +24,7 @@ from optimization_runner import (
 
 @pytest.fixture
 def sample_config():
-    """Minimal config dict simulating parsed backtest_config.toml."""
+    """Minimal config dict simulating parsed backtest_config.toml with embedded optimization."""
     return {
         "strategy": [
             {
@@ -32,6 +32,10 @@ def sample_config():
                 "description": "Strong theme momentum",
                 "min_1d_gain_pct": 2.0,
                 "min_market_cap": 1e8,
+                "optimization": {
+                    "min_1d_gain_pct": {"type": "float", "min": 1.0, "max": 5.0, "step": 0.5},
+                    "min_market_cap": {"type": "categorical", "choices": [1e7, 1e8, 5e8]},
+                }
             },
             {
                 "name": "D_ema21_pullback",
@@ -40,20 +44,14 @@ def sample_config():
                 "max_dist_21ema_pct": 2.0,
                 "min_market_cap": 1e9,
                 "trend_template_ok": 1,
+                "optimization": {
+                    "min_dist_21ema_pct": {"type": "float", "min": -4.0, "max": -1.0, "step": 0.5},
+                    "max_dist_21ema_pct": {"type": "float", "min": 0.5, "max": 4.0, "step": 0.5},
+                    "min_market_cap": {"type": "categorical", "choices": [1e8, 5e8, 1e9]},
+                    "trend_template_ok": {"type": "categorical", "choices": [1]},
+                }
             },
         ],
-        "optimization": {
-            "B": {
-                "min_1d_gain_pct": {"type": "float", "min": 1.0, "max": 5.0, "step": 0.5},
-                "min_market_cap": {"type": "categorical", "choices": [1e7, 1e8, 5e8]},
-            },
-            "D": {
-                "min_dist_21ema_pct": {"type": "float", "min": -4.0, "max": -1.0, "step": 0.5},
-                "max_dist_21ema_pct": {"type": "float", "min": 0.5, "max": 4.0, "step": 0.5},
-                "min_market_cap": {"type": "categorical", "choices": [1e8, 5e8, 1e9]},
-                "trend_template_ok": {"type": "categorical", "choices": [1]},
-            },
-        },
         "optimization_periods": {
             "periods": [
                 {"start": "2022-01-01", "end": "2022-12-31", "label": "Bear 2022"},
@@ -68,13 +66,14 @@ def config_with_int():
     """Config with an int-type parameter for testing."""
     return {
         "strategy": [
-            {"name": "X_test", "some_flag": 0},
-        ],
-        "optimization": {
-            "X": {
-                "some_flag": {"type": "int", "min": 0, "max": 10, "step": 2},
+            {
+                "name": "X_test",
+                "some_flag": 0,
+                "optimization": {
+                    "some_flag": {"type": "int", "min": 0, "max": 10, "step": 2},
+                }
             },
-        },
+        ],
     }
 
 
@@ -83,13 +82,14 @@ def config_with_none():
     """Config with categorical containing 'none' (maps to Python None)."""
     return {
         "strategy": [
-            {"name": "F_elite_momentum97", "trend_template_ok": 1},
-        ],
-        "optimization": {
-            "F": {
-                "trend_template_ok": {"type": "categorical", "choices": [1, "none"]},
+            {
+                "name": "F_elite_momentum97",
+                "trend_template_ok": 1,
+                "optimization": {
+                    "trend_template_ok": {"type": "categorical", "choices": [1, "none"]},
+                }
             },
-        },
+        ],
     }
 
 
@@ -129,7 +129,7 @@ class TestParseOptimizationParams:
 
     def test_undefined_strategy_raises_error(self, sample_config):
         """Requesting an undefined strategy raises ValueError."""
-        with pytest.raises(ValueError, match="optimization"):
+        with pytest.raises(ValueError, match="not found"):
             parse_optimization_params(sample_config, "Z")
 
     def test_returns_all_params_for_strategy(self, sample_config):

@@ -43,6 +43,15 @@ min_avg_hits_per_day = 0.1
 min_hit_rate_pct = 1.0
 max_allowed_dd = 20.0
 
+[strategy.optimization]
+min_change_1d_pct  = { type = "float", min = 2.0, max = 10.0, step = 1.0 }
+min_change_oc_pct = { type = "float", min = -8.0, max = 8.0, step = 1.0 }
+min_vol_surge_21   = { type = "float", min = 1.0, max = 3.0, step = 0.2 }
+min_adr_pct_21     = { type = "float", min = 2.0, max = 6.0, step = 0.5 }
+max_sma50_atr_mult = { type = "float", min = 4.0, max = 10.0, step = 0.5 }
+min_market_cap     = { type = "categorical", choices = [1e8, 3e8, 1e9] }
+is_rs_ratio_rank_e21_gt_e63   = { type = "categorical", choices = [true] }
+
 
 [[strategy]]
 name = "B1_theme_momentum"
@@ -57,6 +66,14 @@ max_sma50_atr_mult = 7.0
 min_market_cap = 5e6
 is_theme_rs_ratio_e21_gt_e63 = true
 max_allowed_dd = 25.0
+
+[strategy.optimization]
+min_change_1d_pct  = { type = "float", min = 2.0, max = 10.0, step = 1.0 }
+min_vol_surge_21   = { type = "float", min = 0.5, max = 3.0, step = 0.1 }
+min_adr_pct_21     = { type = "float", min = 1.0, max = 6.0, step = 0.5 }
+max_sma50_atr_mult = { type = "float", min = 2.0, max = 8.0, step = 0.5 }
+min_market_cap     = { type = "categorical", choices = [1e5, 5e5, 1e6, 5e6, 1e7, 5e7, 1e8, 3e8, 1e9] }
+is_theme_rs_ratio_e21_gt_e63   = { type = "categorical", choices = [true] }
 
 #min_rs_ratio_rank_e21 = 0.5
 #is_close_gt_ema63 = true
@@ -73,6 +90,16 @@ min_adr_pct_21 = 6.0
 max_sma50_atr_mult = 4.5
 min_market_cap = 1e7
 is_theme_rs_ratio_rank_e21_gt_e63 = true
+
+[strategy.optimization]
+min_change_1d_pct  = { type = "float", min = 2.0, max = 10.0, step = 1.0 }
+min_vol_surge_21   = { type = "float", min = 0.5, max = 3.0, step = 0.1 }
+min_adr_pct_21     = { type = "float", min = 1.0, max = 6.0, step = 0.5 }
+max_sma50_atr_mult = { type = "float", min = 2.0, max = 8.0, step = 0.5 }
+min_market_cap     = { type = "categorical", choices = [1e5, 5e5, 1e6, 5e6, 1e7, 5e7, 1e8, 3e8, 1e9] }
+is_theme_rs_ratio_rank_e21_gt_e63   = { type = "categorical", choices = [true] }
+min_rs_ratio_rank_e21 = { type = "float", min = 0.3, max = 0.7, step = 0.1 }
+is_close_gt_ema63 = { type = "categorical", choices = [true] }
 #min_rs_ratio_rank_e21 = 0.5
 #is_close_gt_ema63 = true
 
@@ -92,6 +119,17 @@ is_theme_rs_ratio_rank_e14_gt_e21 = true
 min_rs_ratio_rank_e14 = 0.5
 is_close_gt_ema63 = true
 
+[strategy.optimization]
+min_change_1d_pct    = { type = "float", min = 2.0, max = 10.0, step = 1.0 }
+min_dist_ema21_pct   = { type = "float", min = -1.0, max = 20.0, step = 1.0 }
+min_vol_surge_21   = { type = "float", min = 0.5, max = 3.0, step = 0.1 }
+min_adr_pct_21     = { type = "float", min = 1.0, max = 6.0, step = 0.5 }
+max_sma50_atr_mult = { type = "float", min = 2.0, max = 8.0, step = 0.5 }
+min_market_cap     = { type = "categorical", choices = [1e5, 5e5, 1e6, 5e6, 1e7, 5e7, 1e8, 3e8, 1e9] }
+is_theme_rs_ratio_rank_e14_gt_e21   = { type = "categorical", choices = [true] }
+min_rs_ratio_rank_e21 = { type = "float", min = 0.2, max = 0.5, step = 0.1 }
+is_close_gt_ema63 = { type = "categorical", choices = [true] }
+
 [[strategy]]
 name = "B4_rs_trend_with_theme"
 description = "相対トレンドが強く、上昇テーマにも属する銘柄"
@@ -109,6 +147,19 @@ is_rs_trend_s21_gt_s63 = true
 min_theme_rs_ratio_rank_e21 = 0.6
 is_theme_rs_ratio_rank_e14_gt_e21 = true
 is_close_gt_ema63 = true
+
+[strategy.optimization]
+min_change_1d_pct    = { type = "float", min = 2.0, max = 10.0, step = 1.0 }
+min_dist_ema21_pct   = { type = "float", min = -1.0, max = 20.0, step = 1.0 }
+min_vol_surge_21   = { type = "float", min = 0.5, max = 3.0, step = 0.1 }
+min_adr_pct_21     = { type = "float", min = 1.0, max = 6.0, step = 0.5 }
+max_sma50_atr_mult = { type = "float", min = 2.0, max = 8.0, step = 0.5 }
+min_market_cap     = { type = "categorical", choices = [1e5, 5e5, 1e6, 5e6, 1e7, 5e7, 1e8, 3e8, 1e9] }
+min_rs_trend_s21 = { type = "float", min = 0.8, max = 2.0, step = 0.1 }
+min_theme_rs_ratio_rank_e21 = { type = "float", min = 0.4, max = 0.9, step = 0.1 }
+is_rs_trend_s21_gt_s63   = { type = "categorical", choices = [true] }
+is_theme_rs_ratio_rank_e14_gt_e21   = { type = "categorical", choices = [true] }
+is_close_gt_ema63 = { type = "categorical", choices = [true] }
 
 [[strategy]]
 name = "B5_rs_trend_with_theme"
@@ -131,6 +182,22 @@ min_theme_rs_trend_rank_s21 = 0.5
 is_theme_rs_trend_rank_s14_gt_s21 = true
 is_close_gt_ema63 = true
 
+[strategy.optimization]
+min_change_1d_pct    = { type = "float", min = 2.0, max = 10.0, step = 1.0 }
+min_dist_ema21_pct   = { type = "float", min = -1.0, max = 20.0, step = 1.0 }
+min_vol_surge_21   = { type = "float", min = 0.5, max = 5.0, step = 0.1 }
+vol_surge_rel_spy_21 = { type = "float", min = 0.5, max = 5.0, step = 0.1 }
+min_adr_pct_21     = { type = "float", min = 1.0, max = 6.0, step = 0.5 }
+max_sma50_atr_mult = { type = "float", min = 2.0, max = 8.0, step = 0.5 }
+min_market_cap     = { type = "categorical", choices = [1e5, 5e5, 1e6, 5e6, 1e7, 5e7, 1e8, 3e8, 1e9] }
+min_rs_trend_s21 = { type = "float", min = 0.8, max = 2.0, step = 0.1 }
+min_rs_trend_rank_s21 = { type = "float", min = 0.3, max = 1.0, step = 0.1 }
+min_theme_rs_trend_s21 = { type = "float", min = 0.9, max = 2.0, step = 0.1 }
+min_theme_rs_trend_rank_s21 = { type = "float", min = 0.4, max = 0.9, step = 0.1 }
+is_rs_trend_s21_gt_s63   = { type = "categorical", choices = [true] }
+is_theme_rs_trend_rank_s14_gt_s21   = { type = "categorical", choices = [true] }
+is_close_gt_ema63 = { type = "categorical", choices = [true] }
+
 [[strategy]]
 name = "C1_rrg_leading_in"
 description = "RRG Leading象限に転換した銘柄"
@@ -143,6 +210,14 @@ min_vol_surge_21 = 1.0
 min_adr_pct_21 = 4.0
 max_sma50_atr_mult = 6.0
 min_market_cap = 1e9
+
+[strategy.optimization]
+min_change_1d_pct  = { type = "categorical", choices = [0.0] }
+rrg_leading_in     = { type = "categorical", choices = [true] }
+min_vol_surge_21   = { type = "float", min = 0.5, max = 2.0, step = 0.1 }
+min_adr_pct_21     = { type = "float", min = 2.0, max = 6.0, step = 0.5 }
+max_sma50_atr_mult = { type = "float", min = 4.0, max = 8.0, step = 0.5 }
+min_market_cap     = { type = "categorical", choices = [1e8, 3e8, 1e9] }
 
 [[strategy]]
 name = "C2_rrg_improving_in"
@@ -157,6 +232,14 @@ min_adr_pct_21 = 3.5
 max_sma50_atr_mult = 5.0 
 min_market_cap = 1e8
 
+[strategy.optimization]
+rrg_improving_in     = { type = "categorical", choices = [true] }
+min_change_1d_pct    = { type = "float", min = 1.0, max = 4.0, step = 1.0 }
+min_vol_surge_21   = { type = "float", min = 0.5, max = 2.0, step = 0.1 }
+min_adr_pct_21     = { type = "float", min = 2.0, max = 6.0, step = 0.5 }
+max_sma50_atr_mult = { type = "float", min = 4.0, max = 8.0, step = 0.5 }
+min_market_cap     = { type = "categorical", choices = [1e5, 5e5, 1e6, 5e6, 1e7, 5e7, 1e8, 3e8, 1e9] }
+
 [[strategy]]
 name = "D_ema21_pullback"
 description = "上昇トレンド中のEMA21押し目買い"
@@ -170,8 +253,17 @@ max_sma50_atr_mult = 4.0
 min_rs_ratio_rank_e21 = 0.7
 min_up_down_vol_ratio_50 = 1.2
 max_vol_surge_21 = 0.8
-min_market_cap = 1e9
 is_trend_template = true
+
+[strategy.optimization]
+min_dist_ema21_pct   = { type = "float", min = -4.0, max = -1.0, step = 0.5 }
+max_dist_ema21_pct   = { type = "float", min = 0.5,  max = 4.0,  step = 0.5 }
+max_sma50_atr_mult   = { type = "float", min = 2.0,  max = 6.0,  step = 0.5 }
+min_rs_ratio_rank_e21 = { type = "float", min = 0.50, max = 0.90, step = 0.05 }
+min_market_cap       = { type = "categorical", choices = [1e8, 3e8, 5e8, 1e9] }
+is_trend_template    = { type = "categorical", choices = [true] }
+max_vol_surge_21     = { type = "float", min = 0.6,  max = 1.2,  step = 0.1 }
+min_up_down_vol_ratio_50 = { type = "float", min = 1.0, max = 1.5, step = 0.1 }
 
 
 [[strategy]]
@@ -185,7 +277,15 @@ max_vcr = 0.7                   # 収縮度合い（0.5に近いほどタイト�
 max_adr_pct_21 = 1.5            # 21日平均の値幅が3.5%以内（静かな動き）
 max_dist_52w_high_pct = 0.0     # 52週高値から10%以内の位置
 min_up_down_vol_ratio_50 = 1.5  # 出来高比率（買い集め傾向）
-min_market_cap = 1e9            # 時価総額300Mドル以上
+min_market_cap = 1e9
+
+[strategy.optimization]
+is_trend_template    = { type = "categorical", choices = [true] }  
+max_vcr              = { type = "float", min = 0.5, max = 0.8, step = 0.05 } 
+max_adr_pct_21       = { type = "float", min = 1.5, max = 4.5, step = 0.5 }  
+max_dist_52w_high_pct = { type = "float", min = -20.0, max = 10.0, step = 5.0 } 
+min_up_down_vol_ratio_50 = { type = "float", min = 1.0, max = 3.0, step = 0.5 }  
+min_market_cap       = { type = "categorical", choices = [1e8, 3e8, 1e9] }            # 時価総額300Mドル以上
 
 [[strategy]]
 name = "E2_vcp_basic"
@@ -204,6 +304,15 @@ min_avg_hits_per_day = 0.05
 min_hit_rate_pct = 0.5
 max_allowed_dd = 15.0
 
+[strategy.optimization]
+is_trend_template    = { type = "categorical", choices = [true] }  
+max_vcr              = { type = "float", min = 0.5, max = 0.8, step = 0.05 } 
+max_adr_pct_21       = { type = "float", min = 1.5, max = 6.0, step = 0.5 }  
+max_dist_52w_high_pct = { type = "float", min = -20.0, max = 15.0, step = 5.0 } 
+min_up_down_vol_ratio_50 = { type = "float", min = 1.0, max = 3.0, step = 0.5 }  
+min_market_cap       = { type = "categorical", choices = [1e7, 5e7, 1e8, 3e8, 1e9] }  
+is_close_gt_ema63 = { type = "categorical", choices = [true] }
+
 [[strategy]]
 name = "F_elite_momentum97"
 description = "RS上位3%のエリート銘柄"
@@ -217,6 +326,14 @@ min_market_cap = 3e8
 max_sma50_atr_mult = 6.0
 min_vol_accum_days_5 = 3
 
+[strategy.optimization]
+min_rs_ratio_rank_e21 = { type = "float", min = 0.97, max = 0.99, step = 0.01 }
+min_market_cap       = { type = "categorical", choices = [3e8, 5e8, 1e9] }
+min_adr_pct_21       = { type = "float", min = 2.0, max = 3.5, step = 0.5 }
+is_trend_template    = { type = "categorical", choices = [true] }
+max_sma50_atr_mult   = { type = "float", min = 4.0, max = 8.0, step = 1.0 }
+min_vol_accum_days_5   = { type = "categorical", choices = [3] }
+
 
 # =============================================================
 # Optimization Parameter Search Ranges (Optuna)
@@ -225,135 +342,7 @@ min_vol_accum_days_5 = 3
 # categorical: choices  (use "none" for Python None)
 # =============================================================
 
-[optimization.A]
-min_change_1d_pct  = { type = "float", min = 2.0, max = 10.0, step = 1.0 }
-min_change_oc_pct = { type = "float", min = -8.0, max = 8.0, step = 1.0 }
-min_vol_surge_21   = { type = "float", min = 1.0, max = 3.0, step = 0.2 }
-min_adr_pct_21     = { type = "float", min = 2.0, max = 6.0, step = 0.5 }
-max_sma50_atr_mult = { type = "float", min = 4.0, max = 10.0, step = 0.5 }
-min_market_cap     = { type = "categorical", choices = [1e8, 3e8, 1e9] }
-is_rs_ratio_rank_e21_gt_e63   = { type = "categorical", choices = [true] }
-#min_vol_accum_days_5 = { type = "int", min = 1, max = 5, step = 1 }
-#min_rs_value_e5       = { type = "float", min = 0.1, max = 0.9, step = 0.1 }
 
-[optimization.B1]
-min_change_1d_pct  = { type = "float", min = 2.0, max = 10.0, step = 1.0 }
-min_vol_surge_21   = { type = "float", min = 0.5, max = 3.0, step = 0.1 }
-min_adr_pct_21     = { type = "float", min = 1.0, max = 6.0, step = 0.5 }
-max_sma50_atr_mult = { type = "float", min = 2.0, max = 8.0, step = 0.5 }
-min_market_cap     = { type = "categorical", choices = [1e5, 5e5, 1e6, 5e6, 1e7, 5e7, 1e8, 3e8, 1e9] }
-is_theme_rs_ratio_e21_gt_e63   = { type = "categorical", choices = [true] }
-#min_rs_ratio_rank_e21 = { type = "float", min = 0.3, max = 1.0, step = 0.1 }
-#is_close_gt_ema63 = { type = "categorical", choices = [true] }
-#min_vol_accum_days_5 = { type = "int", min = 1, max = 5, step = 1 }
-#min_rs_value_e5       = { type = "float", min = 0.1, max = 0.9, step = 0.1 }
-
-[optimization.B2]
-min_change_1d_pct  = { type = "float", min = 2.0, max = 10.0, step = 1.0 }
-min_vol_surge_21   = { type = "float", min = 0.5, max = 3.0, step = 0.1 }
-min_adr_pct_21     = { type = "float", min = 1.0, max = 6.0, step = 0.5 }
-max_sma50_atr_mult = { type = "float", min = 2.0, max = 8.0, step = 0.5 }
-min_market_cap     = { type = "categorical", choices = [1e5, 5e5, 1e6, 5e6, 1e7, 5e7, 1e8, 3e8, 1e9] }
-is_theme_rs_ratio_rank_e21_gt_e63   = { type = "categorical", choices = [true] }
-min_rs_ratio_rank_e21 = { type = "float", min = 0.3, max = 0.7, step = 0.1 }
-is_close_gt_ema63 = { type = "categorical", choices = [true] }
-#min_vol_accum_days_5 = { type = "int", min = 1, max = 5, step = 1 }
-#min_rs_value_e5       = { type = "float", min = 0.1, max = 0.9, step = 0.1 }
-
-[optimization.B3]
-min_change_1d_pct    = { type = "float", min = 2.0, max = 10.0, step = 1.0 }
-min_dist_ema21_pct   = { type = "float", min = -1.0, max = 20.0, step = 1.0 }
-min_vol_surge_21   = { type = "float", min = 0.5, max = 3.0, step = 0.1 }
-min_adr_pct_21     = { type = "float", min = 1.0, max = 6.0, step = 0.5 }
-max_sma50_atr_mult = { type = "float", min = 2.0, max = 8.0, step = 0.5 }
-min_market_cap     = { type = "categorical", choices = [1e5, 5e5, 1e6, 5e6, 1e7, 5e7, 1e8, 3e8, 1e9] }
-is_theme_rs_ratio_rank_e14_gt_e21   = { type = "categorical", choices = [true] }
-min_rs_ratio_rank_e21 = { type = "float", min = 0.2, max = 0.5, step = 0.1 }
-is_close_gt_ema63 = { type = "categorical", choices = [true] }
-
-[optimization.B4]
-min_change_1d_pct    = { type = "float", min = 2.0, max = 10.0, step = 1.0 }
-min_dist_ema21_pct   = { type = "float", min = -1.0, max = 20.0, step = 1.0 }
-min_vol_surge_21   = { type = "float", min = 0.5, max = 3.0, step = 0.1 }
-min_adr_pct_21     = { type = "float", min = 1.0, max = 6.0, step = 0.5 }
-max_sma50_atr_mult = { type = "float", min = 2.0, max = 8.0, step = 0.5 }
-min_market_cap     = { type = "categorical", choices = [1e5, 5e5, 1e6, 5e6, 1e7, 5e7, 1e8, 3e8, 1e9] }
-min_rs_trend_s21 = { type = "float", min = 0.8, max = 2.0, step = 0.1 }
-min_theme_rs_ratio_rank_e21 = { type = "float", min = 0.4, max = 0.9, step = 0.1 }
-is_rs_trend_s21_gt_s63   = { type = "categorical", choices = [true] }
-is_theme_rs_ratio_rank_e14_gt_e21   = { type = "categorical", choices = [true] }
-is_close_gt_ema63 = { type = "categorical", choices = [true] }
-
-[optimization.B5]
-min_change_1d_pct    = { type = "float", min = 2.0, max = 10.0, step = 1.0 }
-min_dist_ema21_pct   = { type = "float", min = -1.0, max = 20.0, step = 1.0 }
-min_vol_surge_21   = { type = "float", min = 0.5, max = 5.0, step = 0.1 }
-vol_surge_rel_spy_21 = { type = "float", min = 0.5, max = 5.0, step = 0.1 }
-min_adr_pct_21     = { type = "float", min = 1.0, max = 6.0, step = 0.5 }
-max_sma50_atr_mult = { type = "float", min = 2.0, max = 8.0, step = 0.5 }
-min_market_cap     = { type = "categorical", choices = [1e5, 5e5, 1e6, 5e6, 1e7, 5e7, 1e8, 3e8, 1e9] }
-min_rs_trend_s21 = { type = "float", min = 0.8, max = 2.0, step = 0.1 }
-min_rs_trend_rank_s21 = { type = "float", min = 0.3, max = 1.0, step = 0.1 }
-min_theme_rs_trend_s21 = { type = "float", min = 0.9, max = 2.0, step = 0.1 }
-min_theme_rs_trend_rank_s21 = { type = "float", min = 0.4, max = 0.9, step = 0.1 }
-is_rs_trend_s21_gt_s63   = { type = "categorical", choices = [true] }
-is_theme_rs_trend_rank_s14_gt_s21   = { type = "categorical", choices = [true] }
-is_close_gt_ema63 = { type = "categorical", choices = [true] }
-
-[optimization.C1]
-min_change_1d_pct  = { type = "categorical", choices = [0.0] }
-rrg_leading_in     = { type = "categorical", choices = [true] }
-min_vol_surge_21   = { type = "float", min = 0.5, max = 2.0, step = 0.1 }
-min_adr_pct_21     = { type = "float", min = 2.0, max = 6.0, step = 0.5 }
-max_sma50_atr_mult = { type = "float", min = 4.0, max = 8.0, step = 0.5 }
-min_market_cap     = { type = "categorical", choices = [1e8, 3e8, 1e9] }
-
-[optimization.C2]
-rrg_improving_in     = { type = "categorical", choices = [true] }
-min_change_1d_pct    = { type = "float", min = 1.0, max = 4.0, step = 1.0 }
-min_vol_surge_21   = { type = "float", min = 0.5, max = 2.0, step = 0.1 }
-min_adr_pct_21     = { type = "float", min = 2.0, max = 6.0, step = 0.5 }
-max_sma50_atr_mult = { type = "float", min = 4.0, max = 8.0, step = 0.5 }
-min_market_cap     = { type = "categorical", choices = [1e5, 5e5, 1e6, 5e6, 1e7, 5e7, 1e8, 3e8, 1e9] }
-
-
-[optimization.D]
-#is_close_gt_sma50 = { type = "categorical", choices = [true, false] }
-min_dist_ema21_pct   = { type = "float", min = -4.0, max = -1.0, step = 0.5 }
-max_dist_ema21_pct   = { type = "float", min = 0.5,  max = 4.0,  step = 0.5 }
-max_sma50_atr_mult   = { type = "float", min = 2.0,  max = 6.0,  step = 0.5 }
-min_rs_ratio_rank_e21 = { type = "float", min = 0.50, max = 0.90, step = 0.05 }
-min_market_cap       = { type = "categorical", choices = [1e8, 3e8, 5e8, 1e9] }
-is_trend_template    = { type = "categorical", choices = [true] }
-max_vol_surge_21     = { type = "float", min = 0.6,  max = 1.2,  step = 0.1 }
-min_up_down_vol_ratio_50 = { type = "float", min = 1.0, max = 1.5, step = 0.1 }
-
-[optimization.E1]
-is_trend_template    = { type = "categorical", choices = [true] }  
-max_vcr              = { type = "float", min = 0.5, max = 0.8, step = 0.05 } 
-max_adr_pct_21       = { type = "float", min = 1.5, max = 4.5, step = 0.5 }  
-max_dist_52w_high_pct = { type = "float", min = -20.0, max = 10.0, step = 5.0 } 
-min_up_down_vol_ratio_50 = { type = "float", min = 1.0, max = 3.0, step = 0.5 }  
-min_market_cap       = { type = "categorical", choices = [1e8, 3e8, 1e9] }  
-
-
-[optimization.E2]
-is_trend_template    = { type = "categorical", choices = [true] }  
-max_vcr              = { type = "float", min = 0.5, max = 0.8, step = 0.05 } 
-max_adr_pct_21       = { type = "float", min = 1.5, max = 6.0, step = 0.5 }  
-max_dist_52w_high_pct = { type = "float", min = -20.0, max = 15.0, step = 5.0 } 
-min_up_down_vol_ratio_50 = { type = "float", min = 1.0, max = 3.0, step = 0.5 }  
-min_market_cap       = { type = "categorical", choices = [1e7, 5e7, 1e8, 3e8, 1e9] }  
-is_close_gt_ema63 = { type = "categorical", choices = [true] }
-
-
-[optimization.F]
-min_rs_ratio_rank_e21 = { type = "float", min = 0.97, max = 0.99, step = 0.01 }
-min_market_cap       = { type = "categorical", choices = [3e8, 5e8, 1e9] }
-min_adr_pct_21       = { type = "float", min = 2.0, max = 3.5, step = 0.5 }
-is_trend_template    = { type = "categorical", choices = [true] }
-max_sma50_atr_mult   = { type = "float", min = 4.0, max = 8.0, step = 1.0 }
-min_vol_accum_days_5   = { type = "categorical", choices = [3] }
 
 
 # =============================================================

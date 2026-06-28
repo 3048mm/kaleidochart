@@ -429,7 +429,9 @@ def validate_strategies_config(strategies: list, df_ind: pd.DataFrame, df_prices
         'name', 'description', 'max_hits_per_day', 'sort_column', 'sort_ascending', 'expression', '_use_hysteresis',
         'min_avg_hits_per_day', 'min_hit_rate_pct', 'max_allowed_dd',
         # Scenario runner internal parameters
-        'use_vxv_vix_hysteresis', 'vxv_vix_hysteresis_type'
+        'use_vxv_vix_hysteresis', 'vxv_vix_hysteresis_type',
+        # Optimization configuration
+        'optimization'
     }
 
     # Allowed rank indicators from RelativeRank
