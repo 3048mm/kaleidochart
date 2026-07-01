@@ -36,17 +36,20 @@ def calc_relative_strength(df: pd.DataFrame, df_spy: pd.DataFrame = None) -> pd.
     df['rs_value_e5'] = rs_ema_5
 
     # rs_trend_sN = rs_value_e5 / SMA(rs_value, N)
-    for n in [14, 21, 63]:
+    for n in [5, 14, 21, 63, 200]:
         rs_sma = rs.rolling(window=n, min_periods=max(1, n//2)).mean()
         df[f'rs_trend_s{n}'] = np.where(
             rs_sma.isna() | (rs_sma == 0), np.nan, rs_ema_5 / rs_sma
         )
 
     # rs_value_eN, rs_ratio_eN, rs_momentum_eN (Refined JdK methodology)
-    for n in [14, 21, 63]:
+    for n in [5, 14, 21, 63, 200]:
         # 1. rs_value_eN (Smoothing of rs_value)
-        rs_ema = calculate_ema_tv(rs, n)
-        df[f'rs_value_e{n}'] = rs_ema
+        if n == 5:
+            rs_ema = rs_ema_5
+        else:
+            rs_ema = calculate_ema_tv(rs, n)
+            df[f'rs_value_e{n}'] = rs_ema
         
         # 2. rs_ratio_eN (Z-score of rs_value_eN over n days)
         rs_mean = rs_ema.rolling(window=n, min_periods=max(1, n//2)).mean()
@@ -92,5 +95,10 @@ def calc_relative_strength(df: pd.DataFrame, df_spy: pd.DataFrame = None) -> pd.
         0,
         np.where((rs <= rs_252_low) & (close > close_252_low), 1, 0)
     )
+
+    # --- RS-MACD(5, 21, 5) ---
+    df['rs_macd_line_21'] = df['rs_value_e5'] - df['rs_value_e21']
+    df['rs_macd_signal_21'] = calculate_ema_tv(df['rs_macd_line_21'], 5)
+    df['rs_macd_hist_21'] = df['rs_macd_line_21'] - df['rs_macd_signal_21']
 
     return df

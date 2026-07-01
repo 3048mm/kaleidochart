@@ -49,19 +49,31 @@ class ChartDataPoint(BaseModel):
     sma50_atr_mult: Optional[float] = None
     
     rs_value: Optional[float] = None
+    rs_trend_s5: Optional[float] = None
     rs_trend_s14: Optional[float] = None
     rs_trend_s21: Optional[float] = None
     rs_trend_s63: Optional[float] = None
+    rs_trend_s200: Optional[float] = None
+    rs_momentum_e5: Optional[float] = None
     rs_momentum_e14: Optional[float] = None
     rs_momentum_e21: Optional[float] = None
     rs_momentum_e63: Optional[float] = None
+    rs_momentum_e200: Optional[float] = None
     rs_value_e5: Optional[float] = None
     rs_value_e14: Optional[float] = None
     rs_value_e21: Optional[float] = None
     rs_value_e63: Optional[float] = None
+    rs_value_e200: Optional[float] = None
+    rs_ratio_e5: Optional[float] = None
     rs_ratio_e14: Optional[float] = None
     rs_ratio_e21: Optional[float] = None
     rs_ratio_e63: Optional[float] = None
+    rs_ratio_e200: Optional[float] = None
+    
+    # RS-MACD
+    rs_macd_line_21: Optional[float] = None
+    rs_macd_signal_21: Optional[float] = None
+    rs_macd_hist_21: Optional[float] = None
     
     vol_surge_21: Optional[float] = None
     vol_surge_rel_spy_21: Optional[float] = None
@@ -332,18 +344,31 @@ class ThemeDetailResponse(BaseModel):
     dist_sma21_pct: float = 0.0
     dist_sma63_pct: float = 0.0
     sma21_sma63_pct: float = 0.0
+    rs_ratio_e5: Optional[float] = None
     rs_ratio_e14: Optional[float] = None
     rs_ratio_e21: Optional[float] = None
     rs_ratio_e63: Optional[float] = None
+    rs_ratio_e200: Optional[float] = None
+    rs_roc_ema_5: Optional[float] = None
     rs_roc_ema_14: Optional[float] = None
     rs_roc_ema_21: Optional[float] = None
     rs_roc_ema_63: Optional[float] = None
+    rs_roc_ema_200: Optional[float] = None
+    rs_momentum_e5: Optional[float] = None
     rs_momentum_e14: Optional[float] = None
     rs_momentum_e21: Optional[float] = None
     rs_momentum_e63: Optional[float] = None
+    rs_momentum_e200: Optional[float] = None
+    rs_trend_s5: Optional[float] = None
     rs_trend_s14: Optional[float] = None
     rs_trend_s21: Optional[float] = None
     rs_trend_s63: Optional[float] = None
+    rs_trend_s200: Optional[float] = None
+    
+    # RS-MACD
+    rs_macd_line_21: Optional[float] = None
+    rs_macd_signal_21: Optional[float] = None
+    rs_macd_hist_21: Optional[float] = None
     rs_value_e5: Optional[float] = None
     rs_value_e14: Optional[float] = None
     rs_value_e21: Optional[float] = None
@@ -355,15 +380,22 @@ class ThemeDetailResponse(BaseModel):
     rs21_sparkline: List[float] = []
     rs63_sparkline: List[float] = []
     # Ranks for the theme ETF itself
+    rs_ratio_rank_e5: Optional[float] = None
     rs_ratio_rank_e14: Optional[float] = None
     rs_ratio_rank_e21: Optional[float] = None
     rs_ratio_rank_e63: Optional[float] = None
+    rs_ratio_rank_e200: Optional[float] = None
+    rs_momentum_rank_e5: Optional[float] = None
     rs_momentum_rank_e14: Optional[float] = None
     rs_momentum_rank_e21: Optional[float] = None
     rs_momentum_rank_e63: Optional[float] = None
+    rs_momentum_rank_e200: Optional[float] = None
+    rs_trend_rank_s5: Optional[float] = None
     rs_trend_rank_s14: Optional[float] = None
     rs_trend_rank_s21: Optional[float] = None
     rs_trend_rank_s63: Optional[float] = None
+    rs_trend_rank_s200: Optional[float] = None
+    rs_macd_hist_rank_21: Optional[float] = None
     chart_data: List[ChartDataPoint] = []  # 6-month OHLCV for MiniChart
     constituents: List[ThemeConstituentItem] = []
 

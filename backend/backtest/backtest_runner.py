@@ -117,12 +117,17 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
         # Ensure df_ranks wide percent_ranks is properly melted to narrow format if it is still wide
         # (Though parquet_cache_manager keeps relative_ranks narrow, we ensure 100% safety)
         if not df_ranks.empty and 'indicator_name' not in df_ranks.columns:
+            available_vars = [
+                col for col in [
+                    'rs_ratio_rank_e5', 'rs_ratio_rank_e14', 'rs_ratio_rank_e21', 'rs_ratio_rank_e63', 'rs_ratio_rank_e200',
+                    'rs_trend_rank_s5', 'rs_trend_rank_s14', 'rs_trend_rank_s21', 'rs_trend_rank_s63', 'rs_trend_rank_s200',
+                    'rs_momentum_rank_e5', 'rs_momentum_rank_e14', 'rs_momentum_rank_e21', 'rs_momentum_rank_e63', 'rs_momentum_rank_e200',
+                    'rs_macd_hist_rank_21'
+                ] if col in df_ranks.columns
+            ]
             df_ranks = df_ranks.melt(
                 id_vars=['symbol_id', 'date'],
-                value_vars=[
-                    'rs_ratio_rank_e14', 'rs_ratio_rank_e21', 'rs_ratio_rank_e63',
-                    'rs_trend_rank_s14', 'rs_trend_rank_s21', 'rs_trend_rank_s63'
-                ],
+                value_vars=available_vars,
                 var_name='indicator_name',
                 value_name='percent_rank'
             ).dropna(subset=['percent_rank'])
@@ -156,6 +161,24 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
     except Exception as e:
         log(f"  Critical Error: Failed to preload Parquet cache: {e}")
         raise e
+_GROUPBY_CACHE = {}
+
+def get_groupby_cache(df, col_name='date'):
+    """
+    Cache pandas groupby('date') dictionary to prevent memory allocation explosion
+    and dramatic overhead reduction during Optuna optimization runs.
+    """
+    global _GROUPBY_CACHE
+    df_id = id(df)
+    meta_key = (df_id, len(df), len(df.columns))
+    
+    if meta_key not in _GROUPBY_CACHE:
+        # Prevent cache leak over multiple optimization scenarios
+        if len(_GROUPBY_CACHE) >= 30:
+            _GROUPBY_CACHE.clear()
+        _GROUPBY_CACHE[meta_key] = {d: group for d, group in df.groupby(col_name)}
+        
+    return _GROUPBY_CACHE[meta_key]
 
 
 def run_single_strategy(strat_dict: dict, df_indicators, df_prices, df_ranks, df_symbols, df_theme_constituents, trading_dates, exit_rules, show_progress=True, fast_prune=False, prune_bounds=(1.0, 15.0, 5.0), consider_tax=0.0):
@@ -177,9 +200,9 @@ def run_single_strategy(strat_dict: dict, df_indicators, df_prices, df_ranks, df
     df_ranks.attrs = {}
 
     # --- Pre-build groupby caches (PP1) ---
-    ind_day_cache = {d: group for d, group in df_indicators.groupby('date')}
-    price_day_cache = {d: group for d, group in df_prices.groupby('date')}
-    ranks_day_cache = {d: group for d, group in df_ranks.groupby('date')}
+    ind_day_cache = get_groupby_cache(df_indicators, 'date')
+    price_day_cache = get_groupby_cache(df_prices, 'date')
+    ranks_day_cache = get_groupby_cache(df_ranks, 'date')
     ranks_dates_sorted = sorted(ranks_day_cache.keys())
     
     # --- PHASE 1: Fast Pre-Scan ---
@@ -437,10 +460,11 @@ def validate_strategies_config(strategies: list, df_ind: pd.DataFrame, df_prices
     # Allowed rank indicators from RelativeRank
     rank_column_names = {
         'rs_value_rank',
-        'rs_ratio_rank_e14', 'rs_ratio_rank_e21', 'rs_ratio_rank_e63',
-        'rs_momentum_rank_e14', 'rs_momentum_rank_e21', 'rs_momentum_rank_e63',
-        'rs_trend_rank_s14', 'rs_trend_rank_s21', 'rs_trend_rank_s63',
-        'rs_roc_ema_rank_e14', 'rs_roc_ema_rank_e21', 'rs_roc_ema_rank_e63',
+        'rs_ratio_rank_e5', 'rs_ratio_rank_e14', 'rs_ratio_rank_e21', 'rs_ratio_rank_e63', 'rs_ratio_rank_e200',
+        'rs_momentum_rank_e5', 'rs_momentum_rank_e14', 'rs_momentum_rank_e21', 'rs_momentum_rank_e63', 'rs_momentum_rank_e200',
+        'rs_trend_rank_s5', 'rs_trend_rank_s14', 'rs_trend_rank_s21', 'rs_trend_rank_s63', 'rs_trend_rank_s200',
+        'rs_roc_ema_rank_e5', 'rs_roc_ema_rank_e14', 'rs_roc_ema_rank_e21', 'rs_roc_ema_rank_e63', 'rs_roc_ema_rank_e200',
+        'rs_macd_hist_rank_21',
     }
 
     # Aliases in backtest_screener.py

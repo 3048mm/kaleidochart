@@ -50,6 +50,12 @@ source = "optuna"
 study_name = "B5_rs_trend_with_theme"
 
 [[job]]
+name = "B6"
+strategy_code = "B6_rs_macd_and_theme"
+source = "optuna"
+study_name = "B6_rs_macd_and_theme"
+
+[[job]]
 name = "E2"
 strategy_code = "E2_vcp_basic"
 source = "optuna"

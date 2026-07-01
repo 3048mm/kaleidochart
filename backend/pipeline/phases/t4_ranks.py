@@ -39,18 +39,27 @@ def sync_phase_t4_ranks(db, spy_latest_date: Optional[date], logger: logging.Log
     # (indicator_col, rank_col) の順
     indicators_to_rank = [
         ('rs_value',       'rs_value_rank'),
+        ('rs_ratio_e5',    'rs_ratio_rank_e5'),
         ('rs_ratio_e14',   'rs_ratio_rank_e14'),
         ('rs_ratio_e21',   'rs_ratio_rank_e21'),
         ('rs_ratio_e63',   'rs_ratio_rank_e63'),
+        ('rs_ratio_e200',  'rs_ratio_rank_e200'),
+        ('rs_momentum_e5', 'rs_momentum_rank_e5'),
         ('rs_momentum_e14','rs_momentum_rank_e14'),
         ('rs_momentum_e21','rs_momentum_rank_e21'),
         ('rs_momentum_e63','rs_momentum_rank_e63'),
+        ('rs_momentum_e200','rs_momentum_rank_e200'),
+        ('rs_trend_s5',    'rs_trend_rank_s5'),
         ('rs_trend_s14',   'rs_trend_rank_s14'),
         ('rs_trend_s21',   'rs_trend_rank_s21'),
         ('rs_trend_s63',   'rs_trend_rank_s63'),
+        ('rs_trend_s200',  'rs_trend_rank_s200'),
+        ('rs_roc_ema_5',   'rs_roc_ema_rank_e5'),
         ('rs_roc_ema_14',  'rs_roc_ema_rank_e14'),
         ('rs_roc_ema_21',  'rs_roc_ema_rank_e21'),
         ('rs_roc_ema_63',  'rs_roc_ema_rank_e63'),
+        ('rs_roc_ema_200', 'rs_roc_ema_rank_e200'),
+        ('rs_macd_hist_21','rs_macd_hist_rank_21'),
     ]
     
     # Optimize for massive DML on SATA HDD:

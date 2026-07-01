@@ -185,6 +185,8 @@ def apply_filters_to_df(
         or 'min_rs_ratio_rank_e21' in strategy
         or 'min_theme_rs_ratio_21_rank' in strategy
         or 'min_theme_rs_ratio_rank_e21' in strategy
+        or 'min_rs_macd_hist_rank_21' in strategy
+        or strategy.get('is_rs_macd_hist_rising_21')
         or strategy.get('rs_rank_21_gt_63')
         or strategy.get('is_rs_ratio_rank_e21_gt_e63')
         or strategy.get('theme_rs_rank_21_gt_63')
@@ -201,7 +203,7 @@ def apply_filters_to_df(
         or strategy.get('rs_condition_14_gt_21')
         or strategy.get('theme_rs_condition_14_gt_21')
         or strategy.get('rs_condition_21_gt_63')
-        or strategy.get('is_rs_trend_s21_gt_s63')
+        or strategy.get('is_rs_trend_s21_lt_s63')
         or strategy.get('theme_rs_condition_21_gt_63')
         or strategy.get('is_theme_rs_trend_rank_s14_gt_s21')
         or strategy.get('is_theme_rs_trend_rank_s21_gt_s63')
@@ -219,7 +221,7 @@ def apply_filters_to_df(
         or 'min_theme_rs_condition_63_rank' in strategy
         or 'min_theme_rs_trend_rank_s63' in strategy
         or strategy.get('rs_condition_21_gt_63')
-        or strategy.get('is_rs_trend_s21_gt_s63')
+        or strategy.get('is_rs_trend_s21_lt_s63')
         or strategy.get('theme_rs_condition_21_gt_63')
         or strategy.get('is_theme_rs_trend_rank_s21_gt_s63')
     )
@@ -304,23 +306,33 @@ def apply_filters_to_df(
                 or 'min_theme_rs_trend_rank_s63' in strategy
                 or strategy.get('rs_condition_14_gt_21')
                 or strategy.get('rs_condition_21_gt_63')
-                or strategy.get('is_rs_trend_s21_gt_s63')
+                or strategy.get('is_rs_trend_s21_lt_s63')
                 or strategy.get('theme_rs_condition_14_gt_21')
                 or strategy.get('theme_rs_condition_21_gt_63')
+                or 'min_rs_macd_hist_rank_21' in strategy
             ):
                 return pd.DataFrame(columns=merged.columns)
 
-    # --- RRG merges ---
-    if (strategy.get('rrg_leading_in') or strategy.get('rrg_lagging_in') or strategy.get('rrg_improving_in')) and prev_date is not None:
+    # --- RRG or RS-MACD merges ---
+    if (
+        strategy.get('rrg_leading_in')
+        or strategy.get('rrg_lagging_in')
+        or strategy.get('rrg_improving_in')
+        or strategy.get('is_rs_macd_hist_rising_21')
+    ) and prev_date is not None:
         if ind_day_cache is not None:
             ind_prev_all = ind_day_cache.get(prev_date)
         else:
             ind_prev_all = df_ind[df_ind['date'] == prev_date]
             
         if ind_prev_all is not None:
-            ind_prev = ind_prev_all[['symbol_id', 'rs_ratio_e21', 'rs_momentum_e21']].rename(
-                columns={'rs_ratio_e21': 'prev_rs_ratio_e21', 'rs_momentum_e21': 'prev_rs_momentum_e21'}
-            )
+            cols_to_use = ['symbol_id']
+            rename_dict = {}
+            for c in ['rs_ratio_e21', 'rs_momentum_e21', 'rs_macd_hist_21']:
+                if c in ind_prev_all.columns:
+                    cols_to_use.append(c)
+                    rename_dict[c] = f'prev_{c}'
+            ind_prev = ind_prev_all[cols_to_use].rename(columns=rename_dict)
             merged = merged.merge(ind_prev, on='symbol_id', how='left').reset_index(drop=True)
 
     # --- Build the mask ---
@@ -472,9 +484,14 @@ def apply_filters_to_df(
             mask &= merged['rs_condition_21_rank'] > merged['rs_condition_63_rank']
 
     # Individual RS Trend raw value comparisons
-    if strategy.get('is_rs_trend_s21_gt_s63'):
+    if strategy.get('is_rs_trend_s21_lt_s63'):
         if 'rs_trend_s21' in merged.columns and 'rs_trend_s63' in merged.columns:
-            mask &= merged['rs_trend_s21'] > merged['rs_trend_s63']
+            mask &= merged['rs_trend_s21'] < merged['rs_trend_s63']
+
+    # RS-MACD acceleration filter
+    if strategy.get('is_rs_macd_hist_rising_21'):
+        if 'rs_macd_hist_21' in merged.columns and 'prev_rs_macd_hist_21' in merged.columns:
+            mask &= (merged['rs_macd_hist_21'] > 0) & (merged['rs_macd_hist_21'] > merged['prev_rs_macd_hist_21'])
 
     # Theme RS Condition Rank comparisons
     if strategy.get('theme_rs_condition_14_gt_21') or strategy.get('is_theme_rs_trend_rank_s14_gt_s21'):

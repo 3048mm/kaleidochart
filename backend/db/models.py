@@ -118,22 +118,36 @@ class Indicator(Base):
     
     # --- Relative Strength (vs SPY) ---
     rs_value          = Column(Float)     # Raw RS: close / spy_close
+    rs_trend_s5       = Column(Float)     # RS Trend: rs_value_e5 / SMA(rs_value, 5)
     rs_trend_s14      = Column(Float)     # RS Trend: rs_value_e5 / SMA(rs_value, 14)
     rs_trend_s21      = Column(Float)     # RS Trend: rs_value_e5 / SMA(rs_value, 21)
     rs_trend_s63      = Column(Float)     # RS Trend: rs_value_e5 / SMA(rs_value, 63)
+    rs_trend_s200     = Column(Float)     # RS Trend: rs_value_e5 / SMA(rs_value, 200)
     rs_value_e5       = Column(Float)     # 5-day EMA of rs_value (smoothing for rs_trend)
     rs_value_e14      = Column(Float)     # 14-day EMA of rs_value (RRG pre-processing)
     rs_value_e21      = Column(Float)     # 21-day EMA of rs_value (RRG pre-processing)
     rs_value_e63      = Column(Float)     # 63-day EMA of rs_value (RRG pre-processing)
-    rs_momentum_e14  = Column(Float)     # RRG RS-Momentum (Z-score of smoothed RS-Ratio, EMA-14)
-    rs_momentum_e21  = Column(Float)     # RRG RS-Momentum (Z-score of smoothed RS-Ratio, EMA-21)
-    rs_momentum_e63  = Column(Float)     # RRG RS-Momentum (Z-score of smoothed RS-Ratio, EMA-63)
+    rs_value_e200     = Column(Float)     # 200-day EMA of rs_value (RRG pre-processing)
+    rs_momentum_e5    = Column(Float)     # RRG RS-Momentum (EMA-5)
+    rs_momentum_e14   = Column(Float)     # RRG RS-Momentum (Z-score of smoothed RS-Ratio, EMA-14)
+    rs_momentum_e21   = Column(Float)     # RRG RS-Momentum (Z-score of smoothed RS-Ratio, EMA-21)
+    rs_momentum_e63   = Column(Float)     # RRG RS-Momentum (Z-score of smoothed RS-Ratio, EMA-63)
+    rs_momentum_e200  = Column(Float)     # RRG RS-Momentum (EMA-200)
+    rs_ratio_e5       = Column(Float)     # RS-Ratio: Z-score of rs_value_e5 (5d)
     rs_ratio_e14     = Column(Float)     # RS-Ratio: Z-score of rs_value_e14 (RRG X-axis, 14d)
     rs_ratio_e21     = Column(Float)     # RS-Ratio: Z-score of rs_value_e21 (RRG X-axis, 21d)
     rs_ratio_e63     = Column(Float)     # RS-Ratio: Z-score of rs_value_e63 (RRG X-axis, 63d)
+    rs_ratio_e200    = Column(Float)     # RS-Ratio: Z-score of rs_value_e200 (200d)
+    rs_roc_ema_5     = Column(Float)     # EMA of the 14-day ROC of rs_ratio_e5
     rs_roc_ema_14    = Column(Float)     # EMA of the 14-day ROC of rs_ratio_e14 (intermediate)
     rs_roc_ema_21    = Column(Float)     # EMA of the 14-day ROC of rs_ratio_e21 (intermediate)
     rs_roc_ema_63    = Column(Float)     # EMA of the 14-day ROC of rs_ratio_e63 (intermediate)
+    rs_roc_ema_200   = Column(Float)     # EMA of the 14-day ROC of rs_ratio_e200
+    
+    # --- RS-MACD(5, 21, 5) ---
+    rs_macd_line_21   = Column(Float)     # rs_value_e5 - rs_value_e21
+    rs_macd_signal_21 = Column(Float)     # EMA(rs_macd_line_21, 5)
+    rs_macd_hist_21   = Column(Float)     # rs_macd_line_21 - rs_macd_signal_21
     
     # --- Volume ---
     vol_surge_21          = Column(Float)    # Volume / SMA(Volume, 21)
@@ -171,18 +185,29 @@ class RelativeRank(Base):
     
     # Percentile ranks (0.00 to 1.00) within the group
     rs_value_rank        = Column(Float)  # rank of rs_value
+    rs_ratio_rank_e5     = Column(Float)  # rank of rs_ratio_e5
     rs_ratio_rank_e14    = Column(Float)  # rank of rs_ratio_e14
     rs_ratio_rank_e21    = Column(Float)  # rank of rs_ratio_e21
     rs_ratio_rank_e63    = Column(Float)  # rank of rs_ratio_e63
+    rs_ratio_rank_e200   = Column(Float)  # rank of rs_ratio_e200
+    rs_momentum_rank_e5  = Column(Float)  # rank of rs_momentum_e5
     rs_momentum_rank_e14 = Column(Float)  # rank of rs_momentum_e14
     rs_momentum_rank_e21 = Column(Float)  # rank of rs_momentum_e21
     rs_momentum_rank_e63 = Column(Float)  # rank of rs_momentum_e63
+    rs_momentum_rank_e200 = Column(Float) # rank of rs_momentum_e200
+    rs_trend_rank_s5     = Column(Float)  # rank of rs_trend_s5
     rs_trend_rank_s14    = Column(Float)  # rank of rs_trend_s14
     rs_trend_rank_s21    = Column(Float)  # rank of rs_trend_s21
     rs_trend_rank_s63    = Column(Float)  # rank of rs_trend_s63
+    rs_trend_rank_s200   = Column(Float)  # rank of rs_trend_s200
+    rs_roc_ema_rank_e5   = Column(Float)  # rank of rs_roc_ema_5
     rs_roc_ema_rank_e14  = Column(Float)  # rank of rs_roc_ema_14
     rs_roc_ema_rank_e21  = Column(Float)  # rank of rs_roc_ema_21
     rs_roc_ema_rank_e63  = Column(Float)  # rank of rs_roc_ema_63
+    rs_roc_ema_rank_e200 = Column(Float)  # rank of rs_roc_ema_200
+    
+    # --- RS-MACD Ranks ---
+    rs_macd_hist_rank_21 = Column(Float)  # rank of rs_macd_hist_21
     
     __table_args__ = (
         UniqueConstraint('symbol_id', 'date', 'group_name', name='uq_relative_ranks_symbol_date_group'),

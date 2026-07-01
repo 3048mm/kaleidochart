@@ -12,6 +12,8 @@ export const MiniChart: React.FC<MiniChartProps> = ({ data, height = 200 }) => {
     const chartContainerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+    const sma63SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+    const sma200SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
 
     useEffect(() => {
         if (!chartContainerRef.current) return;
@@ -55,6 +57,20 @@ export const MiniChart: React.FC<MiniChartProps> = ({ data, height = 200 }) => {
 
         candleSeriesRef.current = candleSeries;
 
+        const sma63Series = chart.addLineSeries({
+            color: '#8b5cf6',
+            lineWidth: 1,
+            priceLineVisible: false,
+        });
+        sma63SeriesRef.current = sma63Series;
+
+        const sma200Series = chart.addLineSeries({
+            color: '#f59e0b',
+            lineWidth: 1,
+            priceLineVisible: false,
+        });
+        sma200SeriesRef.current = sma200Series;
+
         // Handle resize
         const resizeObserver = new ResizeObserver(entries => {
             if (entries.length === 0 || !chartRef.current) return;
@@ -84,6 +100,20 @@ export const MiniChart: React.FC<MiniChartProps> = ({ data, height = 200 }) => {
             close: d.close,
         }));
 
+        const sma63Data = data
+            .filter(d => d.sma_63 !== null && d.sma_63 !== undefined)
+            .map(d => ({
+                time: d.time,
+                value: d.sma_63 as number,
+            }));
+
+        const sma200Data = data
+            .filter(d => d.sma_200 !== null && d.sma_200 !== undefined)
+            .map(d => ({
+                time: d.time,
+                value: d.sma_200 as number,
+            }));
+
         // Add horizontal center line if data exists
         if (data.length > 0) {
             const highs = data.map(d => d.high);
@@ -103,6 +133,8 @@ export const MiniChart: React.FC<MiniChartProps> = ({ data, height = 200 }) => {
         }
         
         candleSeriesRef.current.setData(chartData as any);
+        sma63SeriesRef.current?.setData(sma63Data);
+        sma200SeriesRef.current?.setData(sma200Data);
         chartRef.current?.timeScale().fitContent();
         
     }, [data]);

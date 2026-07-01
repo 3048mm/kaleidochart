@@ -452,8 +452,8 @@ def _apply_theme_rs_ratio_rank_e21_gt_e63(q, preset_def, db, latest_date_result,
         )
     return q
 
-def _apply_rs_trend_s21_gt_s63(q, preset_def, db, latest_date_result, previous_date_result):
-    return q.filter(Indicator.rs_trend_s21 > Indicator.rs_trend_s63)
+def _apply_rs_trend_s21_lt_s63(q, preset_def, db, latest_date_result, previous_date_result):
+    return q.filter(Indicator.rs_trend_s21 < Indicator.rs_trend_s63)
     
 def _apply_rs_ratio_rank_e21_gt_e63(q, preset_def, db, latest_date_result, previous_date_result):
     _rk_date = db.query(func.max(RelativeRank.date)).filter(RelativeRank.date <= latest_date_result).scalar()
@@ -466,6 +466,19 @@ def _apply_rs_ratio_rank_e21_gt_e63(q, preset_def, db, latest_date_result, previ
         return q.filter(Symbol.id.in_(select(rank_subq)))
     return q
 
+def _apply_rs_macd_hist_rising_21(q, preset_def, db, latest_date_result, previous_date_result):
+    if previous_date_result:
+        from sqlalchemy.orm import aliased
+        IndPrev = aliased(Indicator)
+        return q.join(
+            IndPrev,
+            (Indicator.symbol_id == IndPrev.symbol_id) & (IndPrev.date == previous_date_result)
+        ).filter(
+            Indicator.rs_macd_hist_21 > 0.0,
+            Indicator.rs_macd_hist_21 > IndPrev.rs_macd_hist_21
+        )
+    return q.filter(Indicator.rs_macd_hist_21 > 0.0)
+
 BOOLEAN_FILTER_HANDLERS = {
     "rrg_leading_in": _apply_rrg_leading_in,
     "rrg_lagging_in": _apply_rrg_lagging_in,
@@ -474,9 +487,10 @@ BOOLEAN_FILTER_HANDLERS = {
     "is_theme_rs_ratio_e21_gt_e63": _apply_theme_rs_ratio_e21_gt_e63,
     "is_theme_rs_ratio_rank_e14_gt_e21": _apply_theme_rs_ratio_rank_e14_gt_e21,
     "is_theme_rs_ratio_rank_e21_gt_e63": _apply_theme_rs_ratio_rank_e21_gt_e63,
-    "is_rs_trend_s21_gt_s63": _apply_rs_trend_s21_gt_s63,
+    "is_rs_trend_s21_lt_s63": _apply_rs_trend_s21_lt_s63,
     "is_rs_ratio_rank_e21_gt_e63": _apply_rs_ratio_rank_e21_gt_e63,
     "is_theme_rs_trend_rank_s14_gt_s21": _apply_theme_rs_trend_rank_s14_gt_s21,
+    "is_rs_macd_hist_rising_21": _apply_rs_macd_hist_rising_21,
 }
 
 # --- Expression parser for OR/complex conditions ---
@@ -1143,19 +1157,30 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db), full_range
                         "change_1w_pct": val_or_none("change_1w_pct", "calc_change_1w_pct", force_calc=True),
                         "change_1m_pct": val_or_none("change_1m_pct", "calc_change_1m_pct", force_calc=True),
                         "rs_value": val_or_none("rs_value"),
+                        "rs_trend_s5": val_or_none("rs_trend_s5"),
                         "rs_trend_s14": val_or_none("rs_trend_s14"),
                         "rs_trend_s21": val_or_none("rs_trend_s21"),
                         "rs_trend_s63": val_or_none("rs_trend_s63"),
+                        "rs_trend_s200": val_or_none("rs_trend_s200"),
+                        "rs_macd_line_21": val_or_none("rs_macd_line_21"),
+                        "rs_macd_signal_21": val_or_none("rs_macd_signal_21"),
+                        "rs_macd_hist_21": val_or_none("rs_macd_hist_21"),
                         "rs_value_e5": val_or_none("rs_value_e5"),
                         "rs_value_e14": val_or_none("rs_value_e14"),
                         "rs_value_e21": val_or_none("rs_value_e21"),
                         "rs_value_e63": val_or_none("rs_value_e63"),
+                        "rs_value_e200": val_or_none("rs_value_e200"),
+                        "rs_momentum_e5": val_or_none("rs_momentum_e5"),
                         "rs_momentum_e14": val_or_none("rs_momentum_e14"),
                         "rs_momentum_e21": val_or_none("rs_momentum_e21"),
                         "rs_momentum_e63": val_or_none("rs_momentum_e63"),
+                        "rs_momentum_e200": val_or_none("rs_momentum_e200"),
+                        "rs_ratio_e5": val_or_none("rs_ratio_e5"),
                         "rs_ratio_e14": val_or_none("rs_ratio_e14"),
                         "rs_ratio_e21": val_or_none("rs_ratio_e21"),
                         "rs_ratio_e63": val_or_none("rs_ratio_e63"),
+                        "rs_ratio_e200": val_or_none("rs_ratio_e200"),
+                        "rs_roc_ema_5": val_or_none("rs_roc_ema_5"),
                         "rs_roc_ema_14": val_or_none("rs_roc_ema_14"),
                         "rs_roc_ema_21": val_or_none("rs_roc_ema_21"),
                         "rs_roc_ema_63": val_or_none("rs_roc_ema_63"),
@@ -1304,12 +1329,17 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db), full_range
                 "change_1m_pct": ind.change_1m_pct,
                 "rs_value": ind.rs_value,
                 "relative_strength_spy": ind.rs_value, # Legacy compat
+                "rs_trend_s5": ind.rs_trend_s5,
                 "rs_trend_s14": ind.rs_trend_s14,
                 "rs_condition_14": ind.rs_trend_s14, # Legacy compat
                 "rs_trend_s21": ind.rs_trend_s21,
                 "rs_condition_21": ind.rs_trend_s21, # Legacy compat
                 "rs_trend_s63": ind.rs_trend_s63,
                 "rs_condition_63": ind.rs_trend_s63, # Legacy compat
+                "rs_trend_s200": ind.rs_trend_s200,
+                "rs_macd_line_21": ind.rs_macd_line_21,
+                "rs_macd_signal_21": ind.rs_macd_signal_21,
+                "rs_macd_hist_21": ind.rs_macd_hist_21,
                 "rs_value_e5": ind.rs_value_e5,
                 "rs_value_e14": ind.rs_value_e14,
                 "rs_ema_14": ind.rs_value_e14, # Legacy compat
@@ -1317,17 +1347,22 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db), full_range
                 "rs_ema_21": ind.rs_value_e21, # Legacy compat
                 "rs_value_e63": ind.rs_value_e63,
                 "rs_ema_63": ind.rs_value_e63, # Legacy compat
+                "rs_value_e200": ind.rs_value_e200,
+                "rs_momentum_e5": ind.rs_momentum_e5,
                 "rs_momentum_e14": ind.rs_momentum_e14,
                 "rs_momentum_14": ind.rs_momentum_e14, # Legacy compat
                 "rs_momentum_e21": ind.rs_momentum_e21,
                 "rs_momentum_21": ind.rs_momentum_e21, # Legacy compat
                 "rs_momentum_e63": ind.rs_momentum_e63,
                 "rs_momentum_63": ind.rs_momentum_e63, # Legacy compat
+                "rs_momentum_e200": ind.rs_momentum_e200,
+                "rs_ratio_e5": ind.rs_ratio_e5,
                 "rs_ratio_e14": ind.rs_ratio_e14,
                 "rs_ratio_14": ind.rs_ratio_e14, # Legacy compat
                 "rs_ratio_e21": ind.rs_ratio_e21,
                 "rs_ratio_21": ind.rs_ratio_e21, # Legacy compat
                 "rs_ratio_e63": ind.rs_ratio_e63,
+                "rs_ratio_e200": ind.rs_ratio_e200,
                 "rs_ratio_63": ind.rs_ratio_e63, # Legacy compat
                 "rs_roc_ema_14": ind.rs_roc_ema_14,
                 "rs_roc_ema_21": ind.rs_roc_ema_21,
@@ -1689,6 +1724,8 @@ def _build_etf_feature(db: Session, sym: Symbol, dp: DailyPrice, target_date: st
             low=h.low or 0.0,
             close=h.close,
             volume=int(round(h.volume)) if h.volume else 0,
+            sma_63=i.sma_63 if i else None,
+            sma_200=i.sma_200 if i else None,
             rs_value=i.rs_value if i else None,
             rs_value_e5=i.rs_value_e5 if i else None,
             rs_value_e14=i.rs_value_e14 if i else None,
