@@ -29,8 +29,8 @@ class ScenarioPortfolio:
         self.active_positions: List[Dict[str, Any]] = []
         self.trade_history: List[Dict[str, Any]] = []
         self.equity_curve: List[Dict[str, Any]] = []
+        self.exited_today = set()
 
-        
         # New: Tracking market score and direction for hysteresis-based dynamic allocation
         self.current_market_score = 50.0
         self.prev_market_score = 50.0
@@ -41,6 +41,10 @@ class ScenarioPortfolio:
         self.current_vxv_vix_ratio = 1.10
         self.prev_vxv_vix_ratio = 1.10
         self.vxv_vix_hysteresis_type = "trend_follow" # default
+
+    def start_of_day(self, date: datetime.date):
+        """Called at the beginning of each trading day to reset daily states."""
+        self.exited_today = set()
         
     def update_vxv_vix_state(self, ratio: Optional[float], h_type: str = "trend_follow"):
         """
@@ -245,8 +249,14 @@ class ScenarioPortfolio:
         if len(self.active_positions) >= self.dynamic_max_positions:
             return False
             
-        # Check if already hold
-        if any(pos['symbol_id'] == candidate['symbol_id'] for pos in self.active_positions):
+        # Check if already hold (using both symbol_id and ticker for safety)
+        candidate_sid = candidate['symbol_id']
+        candidate_ticker = candidate.get('ticker')
+        if any(pos['symbol_id'] == candidate_sid or (candidate_ticker and pos.get('ticker') == candidate_ticker) for pos in self.active_positions):
+            return False
+            
+        # Check if exited today to prevent immediate re-entry
+        if candidate_sid in self.exited_today or (candidate_ticker and candidate_ticker in self.exited_today):
             return False
             
         price = candidate.get('close')
@@ -356,6 +366,11 @@ class ScenarioPortfolio:
                     'capital_after': self.capital
                 }
                 self.trade_history.append(trade_record)
+                
+                # Record exited ticker/symbol_id for today to prevent same-day re-entry
+                self.exited_today.add(symbol_id)
+                if pos.get('ticker'):
+                    self.exited_today.add(pos['ticker'])
                 
                 # Remove from active
                 self.active_positions = [p for p in self.active_positions if p['symbol_id'] != symbol_id]

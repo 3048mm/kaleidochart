@@ -374,6 +374,7 @@ def run_scenario_test(
             )
             
         # Step A: Evaluate Exits for active positions using simulator
+        portfolio.start_of_day(current_date)
         simulator.positions = portfolio.active_positions
         exits_triggered = simulator.evaluate_exit_for_day(current_date, exit_rules)
         portfolio.apply_exits(exits_triggered)

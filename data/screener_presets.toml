@@ -45,28 +45,31 @@ subname = "RSTrend & Theme Momentum"
 group = "Check"
 use_hysteresis = false
 [rise.filters]
-min_change_1d_pct = 10.0 
-min_dist_ema21_pct = 9.0 
-min_vol_surge_21 = 2.8 
+min_change_1d_pct = 7.0 
+min_dist_ema21_pct = 8.0 
+min_vol_surge_21 = 0.6 
 min_adr_pct_21 = 6.0 
-max_sma50_atr_mult = 3.0 
-min_market_cap = 1e7 
-min_rs_trend_s21 = 0.7 
-min_theme_rs_ratio_rank_e14 = 0.7
-is_theme_rs_ratio_e14_gt_e21 = true
+max_sma50_atr_mult = 4.0 
+min_market_cap = 1e6 
+min_rs_trend_s21 = 1.0 
+min_theme_rs_ratio_rank_e21 = 0.6
 is_rs_trend_s21_lt_s63 = true 
+is_theme_rs_ratio_rank_e14_gt_e21 = true 
 is_close_gt_ema63 = true
 # [backtest results]
-# alpha 3.711
-# avg_gain 3.783
-# avg_spy_gain 0.072
-# expectancy 3.783
-# max_drawdown -39.33522766708483
-# port_cagr 1738.73
-# port_vs_spy 1731.36
-# spy_cagr 7.37
-# total_trades 1759
-# win_rate 32.57532689027857
+#alpha 3.068
+#avg_gain 3.15
+#avg_spy_gain 0.081
+#expectancy 3.15
+#max_drawdown -27.58646386615293
+#port_cagr 110.61
+#port_total_return 582.8
+#port_vs_spy 107.82
+#port_vs_spy_total 575.42
+#spy_cagr 2.8
+#spy_total_return 7.37
+#total_trades 694
+#win_rate 36.59942363112392
 #------------------------------
 #min_change_1d_pct = 7.0 
 #min_dist_ema21_pct = 1.0 
