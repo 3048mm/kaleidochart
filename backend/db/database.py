@@ -1,6 +1,6 @@
 import os
 from contextlib import contextmanager
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from db.models import Base
 
@@ -39,8 +39,21 @@ def init_db(db_path: str):
     database_url = f"sqlite:///{db_path}"
     
     # Creates engine. connect_args check_same_thread is for SQLite
-    # journal_mode defaults to DELETE unless WAL is explicitly enabled (which we won't do)
+    # timeout=3600 provides busy_timeout for long pipeline operations (seconds)
     engine = create_engine(database_url, connect_args={"check_same_thread": False, "timeout": 3600})
+    
+    # WAL mode + synchronous=NORMAL for concurrent read/write (architecture.md §10)
+    @event.listens_for(engine, "connect")
+    def _set_sqlite_pragma(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.close()
+    
+    # BEGIN IMMEDIATE prevents deadlocks from lock upgrade (DEFERRED → EXCLUSIVE)
+    @event.listens_for(engine, "begin")
+    def _do_begin_immediate(conn):
+        conn.exec_driver_sql("BEGIN IMMEDIATE")
     
     # Create session factory
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

@@ -21,7 +21,7 @@ router = APIRouter(tags=["backtest"])
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 OUTPUT_DIR = os.path.join(PROJECT_ROOT, "output")
 
-SCENARIO_STRATEGIES = ["A", "B1", "B2", "B3", "B4", "E2"]
+SCENARIO_STRATEGIES = ["A", "B1", "B2", "B3", "B4", "B5", "B6", "E2"]
 SCENARIO_MODELS = ["full_position", "spy_sma200", "spy_sma63", "vxv_vix_ema", "mts_raw"]
 
 

@@ -124,6 +124,10 @@ def run_local_rebuild(category=None):
             cursor.execute("PRAGMA journal_mode = MEMORY")
             cursor.executemany(query, records)
             connection.commit()
+            
+            # Restore WAL mode after bulk insert (match production conditions)
+            cursor.execute("PRAGMA journal_mode = WAL")
+            cursor.execute("PRAGMA synchronous = NORMAL")
             logger.info(f"   ✓ Bulk-inserted {len(records)} rows into {table_name}")
         except Exception as e:
             connection.rollback()

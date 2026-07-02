@@ -293,12 +293,12 @@ def get_positions_with_metrics(db: Session, user_db: Session, portfolio_id: int)
 # ============================================================
 # 2-3: Sell / Trim Flow
 # ============================================================
-def delete_position(db: Session, position_id: int) -> bool:
-    pos = db.query(PortfolioPosition).filter(PortfolioPosition.id == position_id).first()
+def delete_position(user_db: Session, position_id: int) -> bool:
+    pos = user_db.query(PortfolioPosition).filter(PortfolioPosition.id == position_id).first()
     if not pos:
         return False
-    db.delete(pos)
-    db.commit()
+    user_db.delete(pos)
+    user_db.commit()
     return True
 
 def sell_position(

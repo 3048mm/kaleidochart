@@ -26,7 +26,7 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
   const [selectedRegime, setSelectedRegime] = useState<string>('default');
   const [selectedSubRun, setSelectedSubRun] = useState<string>('all');
 
-  const baseGroups = React.useMemo(() => ["A", "B1", "B2", "B3", "B4", "E2"], []);
+  const baseGroups = React.useMemo(() => ["A", "B1", "B2", "B3", "B4", "B5", "B6", "E2"], []);
   const isGroup = baseGroups.includes(selectedStrategy);
 
   // 実質的なベースシナリオ名 (グループ + レジーム)
@@ -530,7 +530,7 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
               'ベンチマークを凌駕する実質年利換算値',
               summary.cagr >= 0 ? 'good' : 'bad',
               summary.is_monte_carlo && summary.cagr_max !== undefined && summary.cagr_min !== undefined
-                ? `(最良: ${(summary.cagr_max * 100).toFixed(1)}% / 最悪: ${(summary.cagr_min * 100).toFixed(1)}%)` 
+                ? `(最良: ${(summary.cagr_max * 100).toFixed(1)}% / 最悪: ${(summary.cagr_min * 100).toFixed(1)}%)`
                 : undefined
             )}
             {renderKPICard(
@@ -538,8 +538,8 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
               summary.profit_factor.toFixed(2),
               '総利益 / 総損失の比率（期待値）',
               summary.profit_factor >= 1.0 ? 'good' : 'bad',
-              summary.is_monte_carlo && summary.profit_factor_avg !== undefined 
-                ? `(平均: ${summary.profit_factor_avg.toFixed(2)})` 
+              summary.is_monte_carlo && summary.profit_factor_avg !== undefined
+                ? `(平均: ${summary.profit_factor_avg.toFixed(2)})`
                 : undefined
             )}
             {renderKPICard(
@@ -548,7 +548,7 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
               'ピークからの最大口座下落幅',
               summary.max_drawdown >= -0.2 ? 'neutral' : 'bad',
               summary.is_monte_carlo && summary.max_drawdown_min !== undefined && summary.max_drawdown_max !== undefined
-                ? `(最悪: ${(summary.max_drawdown_min * 100).toFixed(1)}% / 最良: ${(summary.max_drawdown_max * 100).toFixed(1)}%)` 
+                ? `(最悪: ${(summary.max_drawdown_min * 100).toFixed(1)}% / 最良: ${(summary.max_drawdown_max * 100).toFixed(1)}%)`
                 : undefined
             )}
             {renderKPICard(
@@ -556,8 +556,8 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
               `${(summary.win_rate * 100).toFixed(1)}%`,
               '全決済取引における利益取引の割合',
               summary.win_rate >= 0.5 ? 'good' : 'neutral',
-              summary.is_monte_carlo && summary.win_rate_avg !== undefined 
-                ? `(平均: ${(summary.win_rate_avg * 100).toFixed(1)}%)` 
+              summary.is_monte_carlo && summary.win_rate_avg !== undefined
+                ? `(平均: ${(summary.win_rate_avg * 100).toFixed(1)}%)`
                 : undefined
             )}
             {renderKPICard(

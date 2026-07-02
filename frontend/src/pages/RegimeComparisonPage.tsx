@@ -10,6 +10,8 @@ const STRATEGIES = [
   { id: 'B2', label: 'B2' },
   { id: 'B3', label: 'B3' },
   { id: 'B4', label: 'B4' },
+  { id: 'B5', label: 'B5' },
+  { id: 'B6', label: 'B6' },
   { id: 'E2', label: 'E2' },
 ];
 
@@ -91,7 +93,7 @@ const PanelCard: React.FC<PanelCardProps> = ({ model, data, initialEquity, isAct
 
 
   return (
-    <div 
+    <div
       onClick={onClick}
       style={{
         background: isActive ? 'rgba(30, 41, 59, 0.95)' : 'rgba(15, 23, 42, 0.85)',

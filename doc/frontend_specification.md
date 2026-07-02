@@ -11,7 +11,7 @@
 *   **ルーティング**: React Router DOM (複数画面のSPA遷移)
 *   **グラフィック・チャート**: `lightweight-charts` (軽量かつ高性能な TradingView 互換チャート)
 *   **スタイリング**: CSS Modules または TailwindCSS 相当のユーティリティ（実態: モジュラーCSSベース）
-*   **バックエンド通信**: Axios/Fetch による `http://localhost:8001/api/...` との通信。ViteのProxy設定で `/api` を自動転送。
+*   **バックエンド通信**: Axios/Fetch による `http://localhost:8000/api/...` との通信。ViteのProxy設定で `/api` を自動転送。
 
 ## 2.1 共通レイアウトとサイドバー (Common Layout & Sidebar)
 アプリケーション全体を包むレイアウトとして、レスポンシブなヘッダーおよび折りたたみ可能なサイドバー（`app-sidebar`）が実装されています。

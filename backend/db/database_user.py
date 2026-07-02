@@ -1,6 +1,6 @@
 import os
 from contextlib import contextmanager
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from db.models_user import BaseUser
 
@@ -12,7 +12,7 @@ def get_active_user_db_path():
     return _active_user_db_path
 
 def init_user_db(db_path: str):
-    global engine_user, SessionLocalUser
+    global engine_user, SessionLocalUser, _active_user_db_path
     
     # Allow override via environment variable (e.g. for testing)
     env_db_path = os.getenv("STOCKTOOL_USER_DB_PATH")
@@ -33,6 +33,19 @@ def init_user_db(db_path: str):
     database_url = f"sqlite:///{db_path}"
     
     engine_user = create_engine(database_url, connect_args={"check_same_thread": False, "timeout": 3600})
+    
+    # WAL mode + synchronous=NORMAL for concurrent read/write (same policy as stocktool.db)
+    @event.listens_for(engine_user, "connect")
+    def _set_sqlite_pragma(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.close()
+    
+    # BEGIN IMMEDIATE prevents deadlocks from lock upgrade
+    @event.listens_for(engine_user, "begin")
+    def _do_begin_immediate(conn):
+        conn.exec_driver_sql("BEGIN IMMEDIATE")
     
     SessionLocalUser = sessionmaker(autocommit=False, autoflush=False, bind=engine_user)
     

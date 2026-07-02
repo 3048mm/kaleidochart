@@ -388,6 +388,10 @@ def restore_sqlite_cache_from_parquet(db, db_path: str, logger: logging.Logger):
             
             cursor.executemany(query, records)
             connection.commit()
+            
+            # Restore WAL mode after bulk insert (critical when called with active API server)
+            cursor.execute("PRAGMA journal_mode = WAL")
+            cursor.execute("PRAGMA synchronous = NORMAL")
         except Exception as e:
             connection.rollback()
             logger.error(f"Failed bulk insert into {table_name}: {e}")
