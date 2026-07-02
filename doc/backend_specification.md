@@ -43,6 +43,8 @@
 | `theme_type` | STRING | 詳細タイプ（`etf`: 実在ETF, `virtual`: 仮想指数, `sector`: セクタ指標）。 |
 | `tags` | STRING | カンマ区切りの属性タグ。仮想テーマの構成銘柄紐付けに利用。 |
 | `active` | SMALLINT| ソフトデリートフラグ（1:有効, 0:無効）。 |
+| `next_earnings_date` | DATE | 次回決算発表予定日。 |
+| `updated_at` | DATETIME | 最終更新日時。 |
 
 ### 3.2 構成銘柄連携 (`theme_constituents`)
 
@@ -75,6 +77,20 @@ yfinance等から取得した生の日足データ、または合成された仮
 | `close` | FLOAT | 終値。すべてのテクニカル指標計算のベース。 |
 | `volume` | BIGINT | 出来高。出来高急増（`vol_surge`）の計算に使用。 |
 | `market_cap` | FLOAT | 日次時価総額（米ドル）。yfinance から取得。スクリーナーでのサイズ制限に使用。 |
+
+#### 3.3.1 四半期決算データ (`earnings`)
+
+個別銘柄の四半期ごとの財務データ（ファンダメンタルズ）です。
+
+| カラム名 | 型 | 説明・用途 |
+| :--- | :--- | :--- |
+| `id` | INTEGER | 主キー。 |
+| `symbol_id` | INTEGER | `symbols.id` への外部キー。 |
+| `period_date` | DATE | 決算期の基準日。 |
+| `eps_basic` | FLOAT | 基本一株当たり利益（EPS）。 |
+| `eps_diluted` | FLOAT | 希薄化後一株当たり利益（EPS）。 |
+| `revenue` | FLOAT | 売上高。 |
+| `net_income` | FLOAT | 純利益。 |
 
 ### 3.4 T3: インジケータデータ (`indicators`)
 
@@ -117,14 +133,18 @@ T2の価格データを元に算出される各種テクニカル・モメンタ
 同一カテゴリ内で特定指標（RSスコア等）を横並び比較し、パーセンタイル(0〜1)で順位付けしたデータです。
 *※本番 SQLite データベース内には、**直近2年分（730日）のみ**がホットキャッシュとして保持され、それ以前の歴史データは Parquet マスターに永続退避された後、パージされます。*
 
-| カラム名 | 型 | 説明・用途 | 計算式 / 論理 |
-| :--- | :--- | :--- | :--- |
-| `id` | INTEGER | 主キー。 | |
-| `symbol_id` | INTEGER | `symbols.id` への外部キー。 | |
-| `date` | DATE | 評価日。 | |
-| `group_name` | STRING | 比較対象のグループ（`個別`, `テーマ` などの種類ごと）。 | |
-| `indicator_name` | STRING | ランク付けの対象指標名。<br>現在、以下の T3 指標が対象：<br> - `rs_value`<br> - `rs_ratio_e5 / e14 / e21 / e63 / e200`<br> - `rs_momentum_e5 / e14 / e21 / e63 / e200`<br> - `rs_trend_s5 / s14 / s21 / s63 / s200`<br> - `rs_macd_hist_21` | |
-| `percent_rank` | FLOAT | そのグループ内でのパーセンタイル順位 (0.00 〜 1.00)。 | `group.rank(pct=True)`。1.0が最強。 |
+| カラム名 | 型 | 説明・用途 |
+| :--- | :--- | :--- |
+| `id` | INTEGER | 主キー。 |
+| `symbol_id` | INTEGER | `symbols.id` への外部キー。 |
+| `date` | DATE | 評価日。 |
+| `group_name` | STRING | 比較対象のグループ（`個別`, `テーマ` などの種類ごと）。 |
+| `rs_value_rank` | FLOAT | `rs_value` のグループ内パーセンタイル順位 (0.00 〜 1.00)。 |
+| `rs_ratio_rank_eN` | FLOAT | `rs_ratio_e5 / e14 / e21 / e63 / e200` のグループ内パーセンタイル順位。 |
+| `rs_momentum_rank_eN` | FLOAT | `rs_momentum_e5 / e14 / e21 / e63 / e200` のグループ内パーセンタイル順位。 |
+| `rs_trend_rank_sN` | FLOAT | `rs_trend_s5 / s14 / s21 / s63 / s200` のグループ内パーセンタイル順位。 |
+| `rs_roc_ema_rank_eN` | FLOAT | `rs_roc_ema_e5 / e14 / e21 / e63 / e200` のグループ内パーセンタイル順位。 |
+| `rs_macd_hist_rank_21` | FLOAT | `rs_macd_hist_21` のグループ内パーセンタイル順位。 |
 
 ### 3.6 T5: マーケットシグナル (`market_signals`)
 
@@ -257,8 +277,8 @@ S&P500（SPY）の動向や市場全体の統計から算出される、市場�
     *   `symbol_id` (FK → symbols.id): 銘柄ID
     *   `entry_date` (DATE): 購入日
     *   `entry_price` (FLOAT): 購入価格（指定日の終値）
-    *   `shares` (INT): 現在の保有株数（Trimで減少）
-    *   `original_shares` (INT): 購入時の株数
+    *   `shares` (FLOAT): 現在の保有株数（Trimで減少）
+    *   `original_shares` (FLOAT): 購入時の株数
     *   `stop_loss_pct` (FLOAT, NULL): 個別損切%（NULLはポートフォリオデフォルト継承）
     *   `custom_take_profit_pct` (FLOAT, NULL): 個別利確%
     *   `status` (STRING): `'open'` | `'partially_closed'`
@@ -272,9 +292,9 @@ S&P500（SPY）の動向や市場全体の統計から算出される、市場�
     *   `portfolio_id` (FK → portfolios.id): ポートフォリオID
     *   `symbol_id` (FK → symbols.id): 銘柄ID
     *   `entry_date` (DATE), `entry_price` (FLOAT): 購入情報
-    *   `entry_shares` (INT): この売却分の元株数
+    *   `entry_shares` (FLOAT): この売却分の元株数
     *   `exit_date` (DATE), `exit_price` (FLOAT): 売却情報
-    *   `exit_shares` (INT): 売却株数
+    *   `exit_shares` (FLOAT): 売却株数
     *   `exit_reason` (STRING): `'stop_loss'` | `'take_profit_trim'` | `'take_profit_full'` | `'trailing_stop'` | `'manual'`
     *   `pnl_pct` (FLOAT): 損益率
     *   `pnl_amount` (FLOAT): 損益額
@@ -302,7 +322,7 @@ S&P500（SPY）の動向や市場全体の統計から算出される、市場�
 | **Phase 3** | `indicators` | `daily_prices` | T2 最新日 | **銘柄別計算**: `T2.MAX(date) > T3.MAX(date)` 的差分を算出。RS計算のため SPY の T3 を最優先。 |
 | **Phase 4** | `relative_ranks` | `indicators` | T3 最新日 | **日付別計算**: `T3.MAX(date) > T4.MAX(date)` 的不足日を **Delete-Insert** で一括生成。 |
 | **Phase 5** | `market_signals` | T3/T4 | T4 最新日 | **日付別概況**: 市場フェーズ・スコア等を算出。NULL欠損時は過去に遡りバックフィルを実施。 |
-| **Phase 6** | `fundamental_data` | yfinance API | - | **定期リフレッシュ**: 前回の取得から 24時間以上経過した銘柄の `market_cap` 等を取得。 |
+| **Phase 6** | `fundamental_data` (未実装) | yfinance API | - | **定期リフレッシュ (未実装)**: `market_cap` 等は `DailyPrice` テーブルに直接統合され日次更新されており、独立した T6 フェーズとしては未実装。 |
 
 ### 4.2 堅牢性とパフォーマンスの設計 (Key Design Principles)
 - **べき等性 (Idempotency)**: T4/T5 等の集計テーブルは、不整合回避のために対象日を一度物理削除してから挿入することで、重複エラー (`IntegrityError`) を防止し、ジョブの再試行を常に安全にします。また、新規指標（カラム）の追加時には NULL レコードを自動検知して補完するロジックを備えています。
@@ -346,8 +366,8 @@ S&P500（SPY）の動向や市場全体の統計から算出される、市場�
 | Method | Path | 説明 |
 | :--- | :--- | :--- |
 | `GET` | `/api/watchlist` | 全ウォッチリスト取得（active/removed 両方 + メトリクス算出） |
-| `POST` | `/api/watchlist` | 登録（3日ルール付き） |
-| `DELETE` | `/api/watchlist/{ticker}` | 解除（当日登録分は物理削除、それ以外は論理削除） |
+| `POST` | `/api/watchlist` | 登録（1時間ルール付き） |
+| `DELETE` | `/api/watchlist/{ticker}` | 解除（1時間以内は物理削除、それ以外は論理削除） |
 | `PUT` | `/api/watchlist/{ticker}` | 指定日変更（entry_date と entry_price を更新） |
 | `DELETE` | `/api/watchlist/removed/clear` | 解除済みの一括物理削除 |
 | `GET` | `/api/watchlist/tickers` | active な ticker リストのみ返却（★ボタン状態判定用、軽量） |

@@ -10,7 +10,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 # Ensure backend directory is in sys.path and backend/tests is removed to avoid 'indicators' import collision
-_backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import sys
 sys.path = [p for p in sys.path if not p.endswith('backend\\tests') and not p.endswith('backend/tests')]
 if _backend_dir not in sys.path:

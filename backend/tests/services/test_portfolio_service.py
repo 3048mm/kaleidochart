@@ -183,6 +183,18 @@ class TestPositionManagement:
         assert pos.original_shares == 100
         assert pos.status == "open"
 
+    def test_add_position_duplicate(self, seed_data):
+        db, user_db = seed_data
+        pf = self._make_pf(user_db)
+        pos1 = add_position(db, user_db, portfolio_id=pf.id, ticker="AAPL",
+                            entry_date=date(2026, 5, 1), shares=100)
+        assert pos1 is not None
+
+        # Duplicate should return None
+        pos2 = add_position(db, user_db, portfolio_id=pf.id, ticker="AAPL",
+                            entry_date=date(2026, 5, 2), shares=50)
+        assert pos2 is None
+
     def test_add_position_invalid_ticker(self, seed_data):
         db, user_db = seed_data
         pf = self._make_pf(user_db)

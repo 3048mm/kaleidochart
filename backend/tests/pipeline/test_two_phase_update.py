@@ -6,8 +6,8 @@ import pytz
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-# Add backend and project root to path prioritizing local packages
-test_dir = os.path.dirname(os.path.abspath(__file__))
+# Add backend and project root to path prioritizing local packages (tests -> pipeline -> backend -> project_root と4段階上に遡る)
+test_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 backend_dir = os.path.dirname(test_dir)
 project_root = os.path.dirname(backend_dir)
 

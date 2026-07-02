@@ -7,8 +7,8 @@ from sqlalchemy.exc import IntegrityError
 import sys
 import os
 
-# プロジェクトのルートとbackendディレクトリをパスに追加 (tests -> backend -> project_root と3段階上に遡る)
-project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# プロジェクトのルートとbackendディレクトリをパスに追加 (tests -> pipeline -> backend -> project_root と4段階上に遡る)
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 backend_dir = os.path.join(project_root, "backend")

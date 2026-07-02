@@ -63,12 +63,11 @@ $env:PYTHONPATH="backend"; python backend/backtest/verify_db_vs_cache.py
 
 ### 5.2 テスト配置規約
 
-| テスト対象 | テストファイル |
+| テスト対象 | テストファイル名・配置場所 |
 | :--- | :--- |
-| `backtest_screener.py` | `backend/tests/test_backtest_screener.py` |
-| `backtest_simulator.py` | `backend/tests/test_backtest_simulator.py` |
-| `optimization_runner.py` | `backend/tests/test_optimization_runner.py` |
-| `backtest_runner.py` | `backend/tests/test_backtest_runner.py` |
+| `backtest_screener.py` | `backend/tests/backtest/test_backtest_screener_refactoring.py` |
+| `optimization_runner.py` | `backend/tests/backtest/test_optimization_runner.py` |
+| `scenario_comparison.py` | `backend/tests/backtest/test_scenario_comparison.py` |
 
 ### 5.3 テスト実行コマンド
 ```powershell

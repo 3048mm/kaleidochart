@@ -81,13 +81,19 @@ stop_loss_pct = -8.0             # 固定損切率 (%) ※ポジションサイ�
 source = "data/screener_presets.toml"
 group = "Check"                  # Rise セクションの group="Check" のみを対象
 # 各プリセットの重み（キー = プリセットのid, 値 = 重み）
-# 未定義のプリセットはデフォルト重み 1.0 が適用される
+# 未定義 of プリセットはデフォルト重み 1.0 が適用される
 [presets.weights]
 # thema_momentum = 1.0
 # momentum_breakout = 1.0
 # check_1d_gain = 1.0
 # (初期値は全て 1.0 のため、コメントアウトで省略可能)
 ```
+
+> **NOTE: プリセットの有効化 (`active_rise_ids` / `active_fall_ids`) について**
+>
+> `screener_presets.toml` 内に定義される `active_rise_ids` (および `active_fall_ids`) は、シミュレーション対象とする戦略を絞り込むためのリストである。
+>
+> リストが定義されている場合、ここに登録された ID の戦略のみがスクリーニングおよび Voting の評価対象となり、リストに含まれない戦略は自動的にスキップされる。
 
 > **NOTE: `special` フィールドの廃止と boolean フィルタの統合について**
 >

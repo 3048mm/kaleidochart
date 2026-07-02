@@ -179,6 +179,7 @@ def apply_filters_to_df(
         or strategy.get('rs_condition_14_gt_21')
         or strategy.get('theme_rs_condition_14_gt_21')
         or strategy.get('is_theme_rs_trend_rank_s14_gt_s21')
+        or strategy.get('is_rs_trend_s14_lt_s21')
     )
     needs_rs21 = (
         'min_rs_ratio_21_rank' in strategy
@@ -207,6 +208,7 @@ def apply_filters_to_df(
         or strategy.get('theme_rs_condition_21_gt_63')
         or strategy.get('is_theme_rs_trend_rank_s14_gt_s21')
         or strategy.get('is_theme_rs_trend_rank_s21_gt_s63')
+        or strategy.get('is_rs_trend_s14_lt_s21')
     )
     needs_rs63 = (
         strategy.get('rs_rank_21_gt_63')
@@ -307,6 +309,7 @@ def apply_filters_to_df(
                 or strategy.get('rs_condition_14_gt_21')
                 or strategy.get('rs_condition_21_gt_63')
                 or strategy.get('is_rs_trend_s21_lt_s63')
+                or strategy.get('is_rs_trend_s14_lt_s21')
                 or strategy.get('theme_rs_condition_14_gt_21')
                 or strategy.get('theme_rs_condition_21_gt_63')
                 or 'min_rs_macd_hist_rank_21' in strategy
@@ -487,6 +490,10 @@ def apply_filters_to_df(
     if strategy.get('is_rs_trend_s21_lt_s63'):
         if 'rs_trend_s21' in merged.columns and 'rs_trend_s63' in merged.columns:
             mask &= merged['rs_trend_s21'] < merged['rs_trend_s63']
+
+    if strategy.get('is_rs_trend_s14_lt_s21'):
+        if 'rs_trend_s14' in merged.columns and 'rs_trend_s21' in merged.columns:
+            mask &= merged['rs_trend_s14'] < merged['rs_trend_s21']
 
     # RS-MACD acceleration filter
     if strategy.get('is_rs_macd_hist_rising_21'):

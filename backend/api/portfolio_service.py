@@ -180,6 +180,15 @@ def add_position(
     if sym is None:
         return None
 
+    # Check for duplicate open position for the same ticker
+    existing = user_db.query(PortfolioPosition).filter(
+        PortfolioPosition.portfolio_id == portfolio_id,
+        PortfolioPosition.ticker == sym.ticker,
+        PortfolioPosition.status.in_(["open", "partially_closed"])
+    ).first()
+    if existing:
+        return None
+
     if entry_price is None:
         entry_price = _get_close_price(db, sym.id, entry_date)
     if entry_price is None:

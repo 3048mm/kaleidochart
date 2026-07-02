@@ -33,19 +33,22 @@
 ### 1.1 価格・トレンド関連
 | 変数名 | DB 参照元 (Table.Column) | 計算論理・説明 |
 | :--- | :--- | :--- |
-| `min_change_1d_pct` | `indicators.change_1d_pct` | **1日騰落率（下限）**: 前日終値に対する当日終値の上昇率(%)。 |
-| `max_change_1d_pct` | 同上 | **1日騰落率（上限）**。急騰しすぎた銘柄を除外する場合などに使用。 |
-| `min_change_intraday_pct` | `daily_prices.open/close` | **当日中騰落率（下限）**: 当日始値に対する終値の上昇率(%)。旧 `1d_gain_pct`。 |
-| `min_dist_21ema_pct` | `indicators.ema_21`<br>`daily_prices.close` | **EMA21乖離率（下限）**: `(close - ema_21) / ema_21 * 100`。 |
-| `max_dist_21ema_pct` | 同上 | **EMA21乖離率（上限）**。 |
-| `close_gt_〇〇` | `indicators.〇〇`<br>`daily_prices.close` | **動的・移動平均線の上抜け**: `close > 〇〇` の場合に真。利用可能な移動平均の全主要バリエーションに対して動的に動作（例: `close_gt_ema21`, `close_gt_ema50`, `close_gt_ema63`, `close_gt_sma50`, `close_gt_sma200` 等）。 |
-| `is_trend_template` | `indicators.is_trend_template` | **トレンドテンプレート適合**: ミネルヴィニのトレンドテンプレート（SMA200の上昇、SMA50/150/200の位置等）を全合格しているか（1 or 0）。 |
-
-### 1.2 ボラティリティ・出来高関連
+| `min_change_1d_pct` | `indicators.change_1d_pct` | **1�### 1.3 時価総額・相対強度 (RS) 関連
 | 変数名 | DB 参照元 (Table.Column) | 計算論理・説明 |
 | :--- | :--- | :--- |
-| `min_vol_surge_21` | `indicators.vol_surge_21` | **出来高急増**: 当日の出来高が過去21日間の平均出来高の何倍か。 |
-| `min_adr_pct_21` | `indicators.adr_pct_21` | **平均日次レンジ％**: 過去21日間の `(High-Low)/Close` の平均値。銘柄固有のボラティリティを示す。 |
+| `min_market_cap` | `indicators.market_cap` | **時価総額（下限）**: 米ドル単位（例: 1e9 = 1B）。※`category='テーマ'` の銘柄は判定から除外される。 |
+| `min_rs_trend_s21` | `indicators.rs_trend_s21` | **RS Condition**: `rs_value_e5 / SMA21(rs_value)`。RS自体が自身の移動平均を上回っているか（相対的な加速状態）。 |
+| `is_rs_trend_s21_gt_s63` | `indicators.rs_trend_s21`/`s63` | **個別トレンド加速 (21 vs 63)**: 個別銘柄の21日トレンド生値が63日トレンド生値を上回っているか。 |
+| `is_rs_trend_s14_lt_s21` | `indicators.rs_trend_s14`/`s21` | **個別トレンド加速 (14 vs 21)**: 個別銘柄の14日トレンド生値が21日トレンド生値を下回っているか。※期間別比較の場合、他のRSと異なり **`s14 < s21`** の場合に上昇傾向であることに注意。 |
+| `min_rs_ratio_rank_e21`| `relative_ranks.percent_rank` | **RS 21日ランク**: カテゴリ内でのRS強さのパーセンタイル順位 (0.0~1.0)。`indicator_name='rs_ratio_e21'` を参照。 |
+| `is_rs_ratio_rank_e21_gt_e63` | `relative_ranks.percent_rank` | **RS短期加速**: 21日ランクが63日ランクを上回っているか（短期的な相対強度が向上しているか）。 |
+| `min_rs_macd_hist_21` | `indicators.rs_macd_hist_21` | **RS-MACDヒストグラム下限**: 相対強度MACDのヒストグラム生値が指定値以上か。0.0以上で強気（ゴールデンクロス）状態を示す。 |
+| `is_rs_macd_hist_rising_21` | `indicators.rs_macd_hist_21` (当日・前日比) | **RS-MACDヒストグラム加速**: 当日のヒストグラム値が 0.0 以上であり、かつ前日の値を上回って加速しているか。 |
+| `is_theme_rs_ratio_e21_gt_e63` | `indicators.rs_ratio_e21/e63`<br>`theme_constituents` | **テーマ主導 (21 vs 63)**: 所属するテーマ自体のRS21 > RS63であるか。個別銘柄の場合は、その銘柄を構成員に持つテーマのいずれかが合格していれば真。 |
+| `is_theme_rs_ratio_e14_gt_e21` | `indicators.rs_ratio_e14/e21`<br>`theme_constituents` | **テーマ主導 (14 vs 21)**: 所属するテーマ自体のRS14 > RS21であるか。 |
+| `min_theme_rs_ratio_rank_e14` / `min_theme_rs_ratio_rank_e21` | `relative_ranks.percent_rank`<br>`theme_constituents` | **テーマRSランク下限**: 所属するテーマのRS比率ランク (0.0~1.0) が指定値以上か。 |
+| `min_theme_rs_trend_s21` / `min_theme_rs_trend_rank_s21` | `indicators.rs_trend_s21`<br>`relative_ranks.percent_rank`<br>`theme_constituents` | **テーマトレンド下限**: 所属するテーマのトレンド生値 / トレンドランクが指定値以上か。 |
+| `is_theme_rs_trend_rank_s14_gt_s21` | `relative_ranks.percent_rank`<br>`theme_constituents` | **テーマトレンド加速**: 所属するテーマの14日トレンドランクが21日トレンドランクを上回っているか。 |ow)/Close` の平均値。銘柄固有のボラティリティを示す。 |
 | `max_adr_pct_21` | 同上 | **平均日次レンジ％（上限）**。 |
 | `min_sma50_atr_mult` | `indicators.sma50_atr_mult` | **SMA50距離(ATR調整済み)**: `(Close - SMA50) / ATR14`。SMA50から平均的な値動きの何倍離れているか。 |
 | `max_sma50_atr_mult` | 同上 | **SMA50距離（上限）**。離れすぎ（過熱）を防ぐために使用。 |

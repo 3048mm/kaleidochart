@@ -467,7 +467,10 @@ def _apply_theme_rs_ratio_rank_e21_gt_e63(q, preset_def, db, latest_date_result,
 
 def _apply_rs_trend_s21_lt_s63(q, preset_def, db, latest_date_result, previous_date_result):
     return q.filter(Indicator.rs_trend_s21 < Indicator.rs_trend_s63)
-    
+
+def _apply_rs_trend_s14_lt_s21(q, preset_def, db, latest_date_result, previous_date_result):
+    return q.filter(Indicator.rs_trend_s14 < Indicator.rs_trend_s21)
+
 def _apply_rs_ratio_rank_e21_gt_e63(q, preset_def, db, latest_date_result, previous_date_result):
     _rk_date = db.query(func.max(RelativeRank.date)).filter(RelativeRank.date <= latest_date_result).scalar()
     if _rk_date:
@@ -501,6 +504,7 @@ BOOLEAN_FILTER_HANDLERS = {
     "is_theme_rs_ratio_rank_e14_gt_e21": _apply_theme_rs_ratio_rank_e14_gt_e21,
     "is_theme_rs_ratio_rank_e21_gt_e63": _apply_theme_rs_ratio_rank_e21_gt_e63,
     "is_rs_trend_s21_lt_s63": _apply_rs_trend_s21_lt_s63,
+    "is_rs_trend_s14_lt_s21": _apply_rs_trend_s14_lt_s21,
     "is_rs_ratio_rank_e21_gt_e63": _apply_rs_ratio_rank_e21_gt_e63,
     "is_theme_rs_trend_rank_s14_gt_s21": _apply_theme_rs_trend_rank_s14_gt_s21,
     "is_rs_macd_hist_rising_21": _apply_rs_macd_hist_rising_21,

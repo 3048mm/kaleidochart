@@ -10,8 +10,8 @@ import numpy as np
 # Force UTF-8 environment
 sys.stdout.reconfigure(encoding='utf-8') if hasattr(sys.stdout, 'reconfigure') else None
 
-# Set up project path
-project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Set up project path (tests -> backtest -> backend -> project_root と4段階上に遡る)
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 sys.path.append(project_root)
 
 from backend.backtest.scenario_market_score import MarketTrendScorer, MarketPhase

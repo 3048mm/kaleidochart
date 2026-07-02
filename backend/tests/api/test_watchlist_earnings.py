@@ -6,8 +6,8 @@ from unittest.mock import patch, MagicMock
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-# Add backend and project root to path prioritizing local packages
-test_dir = os.path.dirname(os.path.abspath(__file__))
+# Add backend and project root to path prioritizing local packages (tests -> api -> backend -> project_root と4段階上に遡る)
+test_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 backend_dir = os.path.dirname(test_dir)
 project_root = os.path.dirname(backend_dir)
 
@@ -42,8 +42,8 @@ def db_session():
         # Seed mock symbols
         session.add_all([
             Symbol(id=1, ticker="AAPL", name="Apple Inc.", exchange="NASDAQ", category="個別", active=1, next_earnings_date=None),
-            Symbol(id=2, ticker="NVDA", name="NVIDIA Corp.", exchange="NASDAQ", category="個別", active=1, next_earnings_date=date(2026, 5, 20)), # Past (needs update)
-            Symbol(id=3, ticker="TSLA", name="Tesla Inc.", exchange="NASDAQ", category="個別", active=1, next_earnings_date=date(2026, 6, 30)), # Future (skip)
+            Symbol(id=2, ticker="NVDA", name="NVIDIA Corp.", exchange="NASDAQ", category="個別", active=1, next_earnings_date=date(2020, 5, 20)), # Past (needs update)
+            Symbol(id=3, ticker="TSLA", name="Tesla Inc.", exchange="NASDAQ", category="個別", active=1, next_earnings_date=date(2030, 6, 30)), # Future (skip)
             Symbol(id=4, ticker="MSFT", name="Microsoft Corp.", exchange="NASDAQ", category="個別", active=0, next_earnings_date=None),             # Inactive (skip)
         ])
         session.commit()
@@ -154,10 +154,10 @@ def test_api_get_watchlist_triggers_background_tasks(db_session):
         nvda_item = next(item for item in active_items if item["ticker"] == "NVDA")
         tsla_item = next(item for item in active_items if item["ticker"] == "TSLA")
         
-        # NVDA has next_earnings_date "2026-05-20" in Symbol seed
-        assert nvda_item["next_earnings_date"] == "2026-05-20"
-        # TSLA has next_earnings_date "2026-06-30" in Symbol seed
-        assert tsla_item["next_earnings_date"] == "2026-06-30"
+        # NVDA has next_earnings_date "2020-05-20" in Symbol seed
+        assert nvda_item["next_earnings_date"] == "2020-05-20"
+        # TSLA has next_earnings_date "2030-06-30" in Symbol seed
+        assert tsla_item["next_earnings_date"] == "2030-06-30"
         
         # Background task should be added because NVDA is expired (past date 2026-05-20 relative to today 2026-05-24)
         mock_add_task.assert_called_once()
