@@ -7,7 +7,7 @@ import hashlib
 from typing import Optional, List
 from sqlalchemy import func
 
-from db.database import init_db, get_db, get_active_db_path
+from db.database import init_db, get_db, get_write_db, get_active_db_path
 from db.models import Symbol, DailyPrice, Indicator, RelativeRank, MarketSignal, ThemeConstituent
 from data_collection.spreadsheet_sync import fetch_symbols_from_sheet
 
@@ -504,7 +504,7 @@ def run_pipeline(config, db_path, logger: logging.Logger, rebuild_from: Optional
             logger.warning(f"Could not perform autonomous pre-check of SPY date: {e}")
 
         if spy_latest_date:
-            with get_db() as db:
+            with get_write_db() as db:
                 should_run, run_mode = should_run_pipeline_for_date(db, start_time_utc, spy_latest_date)
                 
             if not should_run:
@@ -514,7 +514,7 @@ def run_pipeline(config, db_path, logger: logging.Logger, rebuild_from: Optional
             if run_mode == "confirm":
                 logger.info(f"Pipeline triggered in Autonomous VOLUME CONFIRMATION Mode for date: {spy_latest_date}")
                 logger.info(f"Clearing old morning data for date {spy_latest_date} to prepare for clean overwrite...")
-                with get_db() as db:
+                with get_write_db() as db:
                     clear_pipeline_data_for_date(db, spy_latest_date)
             else:
                 logger.info(f"Pipeline triggered in Autonomous PROMPT Mode for new trading day: {spy_latest_date}")
@@ -524,7 +524,7 @@ def run_pipeline(config, db_path, logger: logging.Logger, rebuild_from: Optional
     if recalculate_all: active_lvl = 2
 
     try:
-        with get_db() as db:
+        with get_write_db() as db:
             if not skip_sync:
                 logger.info("Starting T1: Symbol Sync...")
                 t_start = time.time()

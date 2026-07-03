@@ -22,7 +22,7 @@ backend_dir = os.path.join(project_root, "backend")
 if backend_dir not in sys.path:
     sys.path.insert(0, backend_dir)
 
-from backend.db.database import init_db, get_db, get_active_db_path
+from backend.db.database import init_db, get_db, get_write_db, get_active_db_path
 from backend.db.models import Symbol, DailyPrice
 from backend.pipeline.parquet_cache_manager import rotate_and_archive_to_parquet, purge_sqlite_cache_older_than_2_years
 
@@ -37,7 +37,7 @@ def rebuild_data():
     logger.info(f"Rebuilding backtest historical data in DB: {db_path}")
     init_db(db_path)
 
-    with get_db() as db:
+    with get_write_db() as db:
         # 1. Resolve / Create symbols in DB
         symbol_ids = {}
         for ticker in TARGET_TICKERS:

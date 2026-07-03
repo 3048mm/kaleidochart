@@ -306,7 +306,7 @@ S&P500（SPY）の動向や市場全体の統計から算出される、市場�
 本プロジェクトの SQLite は、多数の API リクエストと大量のバッチ処理を並行させるため、以下の設定を適用している。
 
 *   **Journal Mode: `WAL` (Write-Ahead Logging)**: 読み取りと書き込みの競合を大幅に軽減。
-*   **Busy Timeout: `3600000` (1時間)**: `OperationalError: database is locked` を回避し、ロックが解放されるまで待機するように設定。
+*   **読み取り/書き込みエンジンの分離**: 読み取り（API, `get_db()`）は `DEFERRED` + busy_timeout 30秒、書き込み（パイプライン, `get_write_db()`）は `BEGIN IMMEDIATE` + busy_timeout 3600秒。SELECT が書き込みロックを要求して長時間バッチにブロックされる事故を構造的に防止（詳細: architecture.md §10.2）。
 *   **Synchronous: `NORMAL` (or `OFF` during bulk)**: ディスク I/O 負荷を軽減し、特に HDD 環境での書き込み速度を確保。
 
 ## 4. バッチ処理フロー (Pipeline Logic)

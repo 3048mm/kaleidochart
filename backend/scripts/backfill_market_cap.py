@@ -10,7 +10,7 @@ backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if backend_dir not in sys.path:
     sys.path.append(backend_dir)
 
-from db.database import init_db, get_db
+from db.database import init_db, get_write_db
 from db.models import Symbol, Indicator
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
@@ -20,7 +20,7 @@ def backfill_market_cap():
     db_path = "data/stocktool.db"
     init_db(db_path)
     
-    with get_db() as db:
+    with get_write_db() as db:
         # Get active real symbols
         symbols = db.query(Symbol).filter(
             Symbol.active == 1,

@@ -12,7 +12,7 @@ if backend_dir not in sys.path: sys.path.append(backend_dir)
 project_root = os.path.dirname(backend_dir)
 if project_root not in sys.path: sys.path.append(project_root)
 
-from db.database import init_db, get_db
+from db.database import init_db, get_write_db
 from db.models import Symbol, Earning
 from sqlalchemy import text, or_
 
@@ -27,7 +27,7 @@ def run_backfill():
     db_path = config["system"]["db_path"]
     init_db(db_path)
     
-    with get_db() as db:
+    with get_write_db() as db:
         # Get all non-virtual symbols that don't already have earnings data
         target_tickers = ['AAPL', 'NKE', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'GOOGL', 'META']
         symbols = db.query(Symbol).filter(Symbol.ticker.in_(target_tickers)).all()

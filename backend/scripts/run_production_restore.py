@@ -78,7 +78,7 @@ def run_production_restore():
     try:
         # Re-import db module to get fresh sessionlocal
         import backend.db.database as db_module
-        with db_module.get_db() as db:
+        with db_module.get_write_db() as db:
             restore_sqlite_cache_from_parquet(db, prod_db_path, logger)
         logger.info("  SQLite Cache successfully restored from Parquet master!")
     except Exception as e:
@@ -90,7 +90,7 @@ def run_production_restore():
         from backend.pipeline.utils import update_pipeline_meta
         from datetime import datetime
         # Fetch max date in DailyPrice to align last SPY date
-        with db_module.get_db() as db:
+        with db_module.get_write_db() as db:
             from backend.db.models import DailyPrice
             from sqlalchemy import func
             max_date_val = db.query(func.max(DailyPrice.date)).scalar()
