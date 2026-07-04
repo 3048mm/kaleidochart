@@ -34,19 +34,35 @@ export interface ChartDataPoint {
     adr_pct_21?: number | null
     sma50_atr_mult?: number | null
     rs_value?: number | null
+    rs_trend_s5?: number | null
     rs_trend_s14?: number | null
     rs_trend_s21?: number | null
     rs_trend_s63?: number | null
+    rs_trend_s200?: number | null
     rs_value_e5?: number | null
     rs_value_e14?: number | null
     rs_value_e21?: number | null
     rs_value_e63?: number | null
+    rs_value_e200?: number | null
+    rs_momentum_e5?: number | null
     rs_momentum_e14?: number | null
     rs_momentum_e21?: number | null
     rs_momentum_e63?: number | null
+    rs_momentum_e200?: number | null
+    rs_ratio_e5?: number | null
     rs_ratio_e14?: number | null
     rs_ratio_e21?: number | null
     rs_ratio_e63?: number | null
+    rs_ratio_e200?: number | null
+    rs_roc_ema_5?: number | null
+    rs_roc_ema_14?: number | null
+    rs_roc_ema_21?: number | null
+    rs_roc_ema_63?: number | null
+    rs_roc_ema_200?: number | null
+    rs_macd_line_21?: number | null
+    rs_macd_signal_21?: number | null
+    rs_macd_hist_21?: number | null
+    vol_accum_days_5?: number | null
     vol_surge_21?: number | null
     vol_surge_rel_spy_21?: number | null
     dist_63d_high_pct?: number | null
@@ -63,15 +79,28 @@ export interface ChartDataPoint {
     bb_lower?: number | null
 
     // Relative Ranks
+    rs_value_rank?: number | null
+    rs_ratio_rank_e5?: number | null
     rs_ratio_rank_e14?: number | null
     rs_ratio_rank_e21?: number | null
     rs_ratio_rank_e63?: number | null
+    rs_ratio_rank_e200?: number | null
+    rs_momentum_rank_e5?: number | null
     rs_momentum_rank_e14?: number | null
     rs_momentum_rank_e21?: number | null
     rs_momentum_rank_e63?: number | null
+    rs_momentum_rank_e200?: number | null
+    rs_trend_rank_s5?: number | null
     rs_trend_rank_s14?: number | null
     rs_trend_rank_s21?: number | null
     rs_trend_rank_s63?: number | null
+    rs_trend_rank_s200?: number | null
+    rs_roc_ema_rank_e5?: number | null
+    rs_roc_ema_rank_e14?: number | null
+    rs_roc_ema_rank_e21?: number | null
+    rs_roc_ema_rank_e63?: number | null
+    rs_roc_ema_rank_e200?: number | null
+    rs_macd_hist_rank_21?: number | null
 }
 
 export interface ChartSymbolMeta {

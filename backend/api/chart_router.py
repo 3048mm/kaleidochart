@@ -354,10 +354,11 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db), full_range
                     if not df_r.empty:
                         df_r['date_str'] = pd.to_datetime(df_r['date']).dt.strftime('%Y-%m-%d')
                         rank_indicators = [
-                            'rs_ratio_rank_e14', 'rs_ratio_rank_e21', 'rs_ratio_rank_e63',
-                            'rs_momentum_rank_e14', 'rs_momentum_rank_e21', 'rs_momentum_rank_e63',
-                            'rs_trend_rank_s14', 'rs_trend_rank_s21', 'rs_trend_rank_s63',
-                            'rs_value_rank'
+                            'rs_ratio_rank_e5', 'rs_ratio_rank_e14', 'rs_ratio_rank_e21', 'rs_ratio_rank_e63', 'rs_ratio_rank_e200',
+                            'rs_momentum_rank_e5', 'rs_momentum_rank_e14', 'rs_momentum_rank_e21', 'rs_momentum_rank_e63', 'rs_momentum_rank_e200',
+                            'rs_trend_rank_s5', 'rs_trend_rank_s14', 'rs_trend_rank_s21', 'rs_trend_rank_s63', 'rs_trend_rank_s200',
+                            'rs_roc_ema_rank_e5', 'rs_roc_ema_rank_e14', 'rs_roc_ema_rank_e21', 'rs_roc_ema_rank_e63', 'rs_roc_ema_rank_e200',
+                            'rs_macd_hist_rank_21', 'rs_value_rank'
                         ]
                         df_r['is_kobetsu'] = df_r['group_name'] == '個別'
                         df_r = df_r.sort_values('is_kobetsu', ascending=True)
@@ -530,6 +531,7 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db), full_range
                         "rs_roc_ema_14": val_or_none("rs_roc_ema_14"),
                         "rs_roc_ema_21": val_or_none("rs_roc_ema_21"),
                         "rs_roc_ema_63": val_or_none("rs_roc_ema_63"),
+                        "rs_roc_ema_200": val_or_none("rs_roc_ema_200"),
                         "vol_surge_21": val_or_none("vol_surge_21"),
                         "vol_surge_rel_spy_21": val_or_none("vol_surge_rel_spy_21"),
                         "up_down_vol_ratio_50": val_or_none("up_down_vol_ratio_50"),
@@ -620,10 +622,11 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db), full_range
     # Organize ranks by date and indicator. 
     # If multiple groups exist for a symbol, prioritize '個別' or just take the latest found.
     rank_indicators = [
-        'rs_ratio_rank_e14', 'rs_ratio_rank_e21', 'rs_ratio_rank_e63',
-        'rs_momentum_rank_e14', 'rs_momentum_rank_e21', 'rs_momentum_rank_e63',
-        'rs_trend_rank_s14', 'rs_trend_rank_s21', 'rs_trend_rank_s63',
-        'rs_value_rank'
+        'rs_ratio_rank_e5', 'rs_ratio_rank_e14', 'rs_ratio_rank_e21', 'rs_ratio_rank_e63', 'rs_ratio_rank_e200',
+        'rs_momentum_rank_e5', 'rs_momentum_rank_e14', 'rs_momentum_rank_e21', 'rs_momentum_rank_e63', 'rs_momentum_rank_e200',
+        'rs_trend_rank_s5', 'rs_trend_rank_s14', 'rs_trend_rank_s21', 'rs_trend_rank_s63', 'rs_trend_rank_s200',
+        'rs_roc_ema_rank_e5', 'rs_roc_ema_rank_e14', 'rs_roc_ema_rank_e21', 'rs_roc_ema_rank_e63', 'rs_roc_ema_rank_e200',
+        'rs_macd_hist_rank_21', 'rs_value_rank'
     ]
     rank_map_nested = {}
     for r in ranks:
@@ -710,9 +713,11 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db), full_range
                 "rs_ratio_e63": ind.rs_ratio_e63,
                 "rs_ratio_e200": ind.rs_ratio_e200,
                 "rs_ratio_63": ind.rs_ratio_e63, # Legacy compat
+                "rs_roc_ema_5": ind.rs_roc_ema_5,
                 "rs_roc_ema_14": ind.rs_roc_ema_14,
                 "rs_roc_ema_21": ind.rs_roc_ema_21,
                 "rs_roc_ema_63": ind.rs_roc_ema_63,
+                "rs_roc_ema_200": ind.rs_roc_ema_200,
                 "vol_surge_21": ind.vol_surge_21,
                 "vol_surge_rel_spy_21": ind.vol_surge_rel_spy_21,
                 "rel_vol_vs_spy_21": ind.vol_surge_rel_spy_21, # Legacy compat

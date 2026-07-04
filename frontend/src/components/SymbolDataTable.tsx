@@ -89,10 +89,13 @@ export const SymbolDataTable: React.FC<SymbolDataTableProps> = ({ data }) => {
                         
                         {/* Technicals */}
                         <th style={{ width: '40px', padding: '8px', textAlign: 'center', borderLeft: '1px solid #333' }}>TD9</th>
+                        <th style={{ width: '45px', padding: '8px', textAlign: 'center' }}>Trend</th>
                         <th style={{ width: '55px', padding: '8px', textAlign: 'right' }}>ADR%</th>
                         <th style={{ width: '55px', padding: '8px', textAlign: 'right' }}>ATR%</th>
                         <th style={{ width: '60px', padding: '8px', textAlign: 'right' }}>50/ATR</th>
                         <th style={{ width: '55px', padding: '8px', textAlign: 'right' }}>VCR</th>
+                        <th style={{ width: '55px', padding: '8px', textAlign: 'right' }}>-63D%</th>
+                        <th style={{ width: '55px', padding: '8px', textAlign: 'right' }}>-52W%</th>
  
                         {/* Moving Averages */}
                         <th style={{ width: '60px', padding: '8px', textAlign: 'right', borderLeft: '1px solid #333' }}>SMA5</th>
@@ -112,31 +115,45 @@ export const SymbolDataTable: React.FC<SymbolDataTableProps> = ({ data }) => {
                         <th style={{ width: '55px', padding: '8px', textAlign: 'center', borderLeft: '1px solid #333', color: '#ffb74d' }}>RS<br />Value</th>
  
                         {/* RS EMA (Smoothed) */}
-                        <th style={{ width: '60px', padding: '8px', textAlign: 'center', borderLeft: '1px solid #333' }}>RS<br />Value<br />EMA14</th>
+                        <th style={{ width: '60px', padding: '8px', textAlign: 'center', borderLeft: '1px solid #333' }}>RS<br />Value<br />EMA5</th>
+                        <th style={{ width: '60px', padding: '8px', textAlign: 'center' }}>RS<br />Value<br />EMA14</th>
                         <th style={{ width: '60px', padding: '8px', textAlign: 'center' }}>RS<br />Value<br />EMA21</th>
                         <th style={{ width: '60px', padding: '8px', textAlign: 'center' }}>RS<br />Value<br />EMA63</th>
+                        <th style={{ width: '60px', padding: '8px', textAlign: 'center' }}>RS<br />Value<br />EMA200</th>
  
                         {/* RS Ratio */}
-                        <th style={{ width: '60px', padding: '8px', textAlign: 'center', borderLeft: '1px solid #333' }}>RS<br />Ratio<br />EMA14</th>
+                        <th style={{ width: '60px', padding: '8px', textAlign: 'center', borderLeft: '1px solid #333' }}>RS<br />Ratio<br />EMA5</th>
+                        <th style={{ width: '60px', padding: '8px', textAlign: 'center' }}>RS<br />Ratio<br />EMA14</th>
                         <th style={{ width: '60px', padding: '8px', textAlign: 'center' }}>RS<br />Ratio<br />EMA21</th>
                         <th style={{ width: '60px', padding: '8px', textAlign: 'center' }}>RS<br />Ratio<br />EMA63</th>
+                        <th style={{ width: '60px', padding: '8px', textAlign: 'center' }}>RS<br />Ratio<br />EMA200</th>
                         
                         {/* RS Momentum */}
-                        <th style={{ width: '60px', padding: '8px', textAlign: 'center', borderLeft: '1px solid #333' }}>RS<br />Mom<br />EMA14</th>
+                        <th style={{ width: '60px', padding: '8px', textAlign: 'center', borderLeft: '1px solid #333' }}>RS<br />Mom<br />EMA5</th>
+                        <th style={{ width: '60px', padding: '8px', textAlign: 'center' }}>RS<br />Mom<br />EMA14</th>
                         <th style={{ width: '60px', padding: '8px', textAlign: 'center' }}>RS<br />Mom<br />EMA21</th>
                         <th style={{ width: '60px', padding: '8px', textAlign: 'center' }}>RS<br />Mom<br />EMA63</th>
+                        <th style={{ width: '60px', padding: '8px', textAlign: 'center' }}>RS<br />Mom<br />EMA200</th>
  
                         {/* RS Trend */}
-                        <th style={{ width: '60px', padding: '8px', textAlign: 'center', borderLeft: '1px solid #333' }}>RS<br />Trend<br />SMA14</th>
+                        <th style={{ width: '60px', padding: '8px', textAlign: 'center', borderLeft: '1px solid #333' }}>RS<br />Trend<br />SMA5</th>
+                        <th style={{ width: '60px', padding: '8px', textAlign: 'center' }}>RS<br />Trend<br />SMA14</th>
                         <th style={{ width: '60px', padding: '8px', textAlign: 'center' }}>RS<br />Trend<br />SMA21</th>
                         <th style={{ width: '60px', padding: '8px', textAlign: 'center' }}>RS<br />Trend<br />SMA63</th>
+                        <th style={{ width: '60px', padding: '8px', textAlign: 'center' }}>RS<br />Trend<br />SMA200</th>
                         <th style={{ width: '45px', padding: '8px', textAlign: 'center', color: '#00ff88' }}>Blue</th>
                         <th style={{ width: '45px', padding: '8px', textAlign: 'center', color: '#ff4444' }}>Red</th>
+ 
+                        {/* RS MACD */}
+                        <th style={{ width: '60px', padding: '8px', textAlign: 'center', borderLeft: '1px solid #333' }}>RS MACD<br />Line</th>
+                        <th style={{ width: '60px', padding: '8px', textAlign: 'center' }}>RS MACD<br />Signal</th>
+                        <th style={{ width: '60px', padding: '8px', textAlign: 'center' }}>RS MACD<br />Hist</th>
  
                         {/* Volume Analysis */}
                         <th style={{ width: '65px', padding: '8px', textAlign: 'center', borderLeft: '1px solid #333' }}>Vol<br />Surge<br />SMA21</th>
                         <th style={{ width: '65px', padding: '8px', textAlign: 'center' }}>Vol<br />Rel/SPY<br />SMA21</th>
                         <th style={{ width: '60px', padding: '8px', textAlign: 'center' }}>Vol<br />U/D<br />50D</th>
+                        <th style={{ width: '55px', padding: '8px', textAlign: 'center' }}>Vol Accum<br />5D</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -176,6 +193,12 @@ export const SymbolDataTable: React.FC<SymbolDataTableProps> = ({ data }) => {
                                     color: d.td9 && d.td9 > 0 ? appConfig.colors.bad : appConfig.colors.good,
                                     background: getTd9Color(d.td9)
                                 }}>{d.td9 || ''}</td>
+                                <td style={{ 
+                                    padding: '6px 8px', textAlign: 'center',
+                                    fontWeight: 'bold',
+                                    color: d.is_trend_template ? '#00ff88' : '#888',
+                                    background: d.is_trend_template ? 'rgba(0, 255, 136, 0.1)' : 'transparent'
+                                }}>{d.is_trend_template ? '★' : '-'}</td>
                                 <td style={{ padding: '6px 8px', textAlign: 'right' }}>{formatN(d.adr_pct_21, 2)}%</td>
                                 <td style={{ padding: '6px 8px', textAlign: 'right' }}>{formatN(d.atr_pct_14, 2)}%</td>
                                 <td style={{ 
@@ -187,7 +210,9 @@ export const SymbolDataTable: React.FC<SymbolDataTableProps> = ({ data }) => {
                                     padding: '6px 8px', textAlign: 'right',
                                     color: getVcrColor(d.vcr)
                                 }}>{formatN(d.vcr, 2)}</td>
-
+                                <td style={{ padding: '6px 8px', textAlign: 'right', color: '#ffcc80' }}>{formatN(d.dist_63d_high_pct, 1)}%</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', color: '#ffab91' }}>{formatN(d.dist_52w_high_pct, 1)}%</td>
+ 
                                 {/* MAs */}
                                 <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)' }}>{formatN(d.sma_5)}</td>
                                 <td style={{ padding: '6px 8px', textAlign: 'right' }}>{formatN(d.sma_21)}</td>
@@ -204,26 +229,34 @@ export const SymbolDataTable: React.FC<SymbolDataTableProps> = ({ data }) => {
                                 
                                 {/* Raw RS */}
                                 <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: '#ffb74d' }}>{formatN(d.rs_value, 4)}</td>
-
+ 
                                 {/* RS EMA (Smoothed) */}
-                                <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: '#888' }}>{formatN(d.rs_value_e14, 4)}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: '#888' }}>{formatN(d.rs_value_e5, 4)}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', color: '#888' }}>{formatN(d.rs_value_e14, 4)}</td>
                                 <td style={{ padding: '6px 8px', textAlign: 'right', color: '#888' }}>{formatN(d.rs_value_e21, 4)}</td>
                                 <td style={{ padding: '6px 8px', textAlign: 'right', color: '#888' }}>{formatN(d.rs_value_e63, 4)}</td>
-
+                                <td style={{ padding: '6px 8px', textAlign: 'right', color: '#bbb', fontWeight: 'bold' }}>{formatN(d.rs_value_e200, 4)}</td>
+ 
                                 {/* RS Ratio */}
-                                <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: getChgColor(d.rs_ratio_e14) }}>{formatN(d.rs_ratio_e14)}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: getChgColor(d.rs_ratio_e5) }}>{formatN(d.rs_ratio_e5)}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', color: getChgColor(d.rs_ratio_e14) }}>{formatN(d.rs_ratio_e14)}</td>
                                 <td style={{ padding: '6px 8px', textAlign: 'right', color: getChgColor(d.rs_ratio_e21) }}>{formatN(d.rs_ratio_e21)}</td>
                                 <td style={{ padding: '6px 8px', textAlign: 'right', color: getChgColor(d.rs_ratio_e63) }}>{formatN(d.rs_ratio_e63)}</td>
-
+                                <td style={{ padding: '6px 8px', textAlign: 'right', color: getChgColor(d.rs_ratio_e200), fontWeight: 'bold' }}>{formatN(d.rs_ratio_e200)}</td>
+ 
                                 {/* RS Momentum */}
-                                <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: getChgColor(d.rs_momentum_e14) }}>{formatN(d.rs_momentum_e14)}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: getChgColor(d.rs_momentum_e5) }}>{formatN(d.rs_momentum_e5)}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', color: getChgColor(d.rs_momentum_e14) }}>{formatN(d.rs_momentum_e14)}</td>
                                 <td style={{ padding: '6px 8px', textAlign: 'right', color: getChgColor(d.rs_momentum_e21) }}>{formatN(d.rs_momentum_e21)}</td>
                                 <td style={{ padding: '6px 8px', textAlign: 'right', color: getChgColor(d.rs_momentum_e63) }}>{formatN(d.rs_momentum_e63)}</td>
-
+                                <td style={{ padding: '6px 8px', textAlign: 'right', color: getChgColor(d.rs_momentum_e200), fontWeight: 'bold' }}>{formatN(d.rs_momentum_e200)}</td>
+ 
                                 {/* RS Condition */}
-                                <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: getConditionColor(d.rs_trend_s14) }}>{formatN(d.rs_trend_s14, 2)}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: getConditionColor(d.rs_trend_s5) }}>{formatN(d.rs_trend_s5, 2)}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', color: getConditionColor(d.rs_trend_s14) }}>{formatN(d.rs_trend_s14, 2)}</td>
                                 <td style={{ padding: '6px 8px', textAlign: 'right', color: getConditionColor(d.rs_trend_s21) }}>{formatN(d.rs_trend_s21, 2)}</td>
                                 <td style={{ padding: '6px 8px', textAlign: 'right', color: getConditionColor(d.rs_trend_s63) }}>{formatN(d.rs_trend_s63, 2)}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', color: getConditionColor(d.rs_trend_s200) }}>{formatN(d.rs_trend_s200, 2)}</td>
                                 <td style={{ 
                                     padding: '6px 8px', textAlign: 'center', 
                                     background: d.is_rs_blue_dot === 1 ? 'rgba(0, 255, 136, 0.15)' : 'transparent',
@@ -234,7 +267,12 @@ export const SymbolDataTable: React.FC<SymbolDataTableProps> = ({ data }) => {
                                     background: d.is_rs_red_dot === 1 ? 'rgba(255, 68, 68, 0.15)' : 'transparent',
                                     color: '#ff4444', fontSize: '14px'
                                 }}>{d.is_rs_red_dot === 1 ? '●' : ''}</td>
-
+ 
+                                {/* RS MACD */}
+                                <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: '#888' }}>{formatN(d.rs_macd_line_21, 4)}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', color: '#888' }}>{formatN(d.rs_macd_signal_21, 4)}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', color: getChgColor(d.rs_macd_hist_21) }}>{formatN(d.rs_macd_hist_21, 4)}</td>
+ 
                                 {/* Volume */}
                                 <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: (d.vol_surge_21 || 0) > 2 ? appConfig.colors.good : 'inherit' }}>{formatN(d.vol_surge_21, 2)}</td>
                                 <td style={{ padding: '6px 8px', textAlign: 'right', color: (d.vol_surge_rel_spy_21 || 0) > 1.2 ? appConfig.colors.good : 'inherit' }}>{formatN(d.vol_surge_rel_spy_21, 2)}</td>
@@ -242,6 +280,11 @@ export const SymbolDataTable: React.FC<SymbolDataTableProps> = ({ data }) => {
                                     padding: '6px 8px', textAlign: 'right', 
                                     color: (d.up_down_vol_ratio_50 || 0) > 1.5 ? appConfig.colors.good : (d.up_down_vol_ratio_50 || 0) < 0.7 ? appConfig.colors.bad : 'inherit'
                                 }}>{formatN(d.up_down_vol_ratio_50, 2)}</td>
+                                <td style={{ 
+                                    padding: '6px 8px', textAlign: 'center', 
+                                    color: (d.vol_accum_days_5 || 0) >= 3 ? appConfig.colors.good : 'inherit',
+                                    fontWeight: (d.vol_accum_days_5 || 0) >= 3 ? 'bold' : 'normal'
+                                }}>{d.vol_accum_days_5 != null ? `${d.vol_accum_days_5}d` : '-'}</td>
                             </tr>
                         );
                     })}

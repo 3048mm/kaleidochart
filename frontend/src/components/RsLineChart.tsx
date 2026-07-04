@@ -123,6 +123,45 @@ export const RsLineChart: React.FC<RsLineChartProps> = ({ data, height }) => {
             value: d.rs_value_e63 as number,
         })));
 
+        const ema200Series = chart.addLineSeries({
+            color: '#f43f5e',
+            lineWidth: 1,
+            lineStyle: 2,
+            lastValueVisible: false,
+            priceFormat: {
+                type: 'price',
+                precision: 4,
+                minMove: 0.0001,
+            },
+        });
+        ema200Series.setData(data.filter(d => d.rs_value_e200 != null).map(d => ({
+            time: d.time as any,
+            value: d.rs_value_e200 as number,
+        })));
+
+        // RS Volume histogram series (Relative volume vs SPY)
+        const rsVolSeries = chart.addHistogramSeries({
+            color: 'rgba(99, 120, 180, 0.3)',
+            priceFormat: {
+                type: 'custom',
+                formatter: (val: number) => val.toFixed(2),
+            },
+            priceScaleId: 'rs_vol',
+        });
+        chart.priceScale('rs_vol').applyOptions({
+            scaleMargins: {
+                top: 0.75,
+                bottom: 0,
+            },
+            visible: true,
+            borderColor: 'rgba(255, 255, 255, 0.1)',
+        });
+        rsVolSeries.setData(data.filter(d => d.vol_surge_rel_spy_21 != null).map(d => ({
+            time: d.time as any,
+            value: d.vol_surge_rel_spy_21 as number,
+            color: (d.vol_surge_rel_spy_21 as number) >= 1.2 ? 'rgba(0, 255, 136, 0.35)' : 'rgba(99, 120, 180, 0.25)',
+        })));
+
         // Set default visible range to last 6 months (exact replica from ChartPage logic)
         if (data.length > 0) {
             const lastDate = new Date(data[data.length - 1].time);
@@ -219,6 +258,17 @@ export const RsLineChart: React.FC<RsLineChartProps> = ({ data, height }) => {
                         <div style={{ width: '10px', height: '2px', background: '#E040FB' }} />
                         <span style={{ color: '#aaa' }}>EMA63:</span>
                         <strong style={{ color: '#E040FB' }}>{formatValue(activePoint?.rs_value_e63)}</strong>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                        <div style={{ width: '10px', height: '2px', background: '#f43f5e' }} />
+                        <span style={{ color: '#aaa' }}>EMA200:</span>
+                        <strong style={{ color: '#f43f5e' }}>{formatValue(activePoint?.rs_value_e200)}</strong>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginLeft: '5px' }}>
+                        <span style={{ color: '#aaa' }}>RS Vol (vs SPY):</span>
+                        <strong style={{ color: (activePoint?.vol_surge_rel_spy_21 || 0) >= 1.2 ? '#00ff88' : '#aaa' }}>
+                            {activePoint?.vol_surge_rel_spy_21 != null ? activePoint.vol_surge_rel_spy_21.toFixed(2) : '-'}
+                        </strong>
                     </div>
                 </div>
             </div>
