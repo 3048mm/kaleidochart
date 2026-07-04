@@ -190,7 +190,13 @@ def build_all_virtual_indexes_prices(db, virtual_items: list[dict], symbol_id_ma
         
     c_ids_str = ",".join(map(str, c_ids_list))
     query = f"SELECT symbol_id, date, open, high, low, close, volume FROM daily_prices WHERE symbol_id IN ({c_ids_str}) AND close IS NOT NULL AND close > 0"
-    all_prices_df = pd.read_sql_query(query, db.bind)
+    # 外側 write セッションの未コミット分を確定してロックを解放してから、
+    # 読み取り専用エンジンでロードする。write エンジン (db.bind) 経由で read_sql
+    # すると新規接続が BEGIN IMMEDIATE を要求し、自セッションの RESERVED ロックと
+    # 自己デッドロックする（休場日=FX 同期が commit しない日にハングしていた根本原因）
+    db.commit()
+    from db.database import get_read_engine_for
+    all_prices_df = pd.read_sql_query(query, get_read_engine_for(db))
     if all_prices_df.empty:
         return
         

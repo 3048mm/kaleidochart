@@ -106,6 +106,21 @@ def get_db():
     with get_db_session() as db:
         yield db
 
+def get_read_engine_for(session):
+    """pandas read_sql 等の読み取り用に、セッションと同じ DB を指す読み取りエンジンを返す。
+
+    write エンジン (BEGIN IMMEDIATE) 経由で read_sql すると、pandas が開く新規接続が
+    自プロセスの write セッションの RESERVED ロックと自己デッドロックするため、
+    読み取りには DEFERRED の読み取りエンジンを使う。
+    テスト等で読み取りエンジンが未初期化、またはセッションが別 DB を指す場合は
+    session.get_bind() にフォールバックする（テストのエンジンには IMMEDIATE リスナーが
+    無いためデッドロックしない）。
+    """
+    session_engine = session.get_bind()
+    if engine is not None and str(engine.url) == str(session_engine.url):
+        return engine
+    return session_engine
+
 @contextmanager
 def get_write_db():
     """

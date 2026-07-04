@@ -184,17 +184,22 @@ def test_api_get_watchlist_with_unresolvable_ticker_returns_200(db_session):
 
     user_db = _UserTestSession()
     user_db.add_all([
-        # NVDA は symbols に存在（正常系）
+        # AAPL/NVDA/TSLA は symbols に存在（正常系）。GHOST は 1/4 = 25% <= 30% なので
+        # 安全弁（symbol_heal.HEAL_MAX_UNRESOLVED_RATIO）は発動せず、正当な解決不能として NULL 化される
+        Watchlist(symbol_id=1, ticker="AAPL", exchange="NASDAQ", entry_date=date(2026, 5, 10), entry_price=180.0, status="active", added_at=datetime.utcnow()),
         Watchlist(symbol_id=2, ticker="NVDA", exchange="NASDAQ", entry_date=date(2026, 5, 10), entry_price=100.0, status="active", added_at=datetime.utcnow()),
+        Watchlist(symbol_id=3, ticker="TSLA", exchange="NASDAQ", entry_date=date(2026, 5, 10), entry_price=200.0, status="active", added_at=datetime.utcnow()),
         # GHOST は symbols に存在しない（heal で symbol_id=None になる）
         Watchlist(symbol_id=999, ticker="GHOST", exchange="NASDAQ", entry_date=date(2026, 5, 10), entry_price=50.0, status="active", added_at=datetime.utcnow()),
     ])
     user_db.commit()
     user_db.close()
 
-    dp = DailyPrice(symbol_id=2, date=date(2026, 5, 24), open=100, high=105, low=95, close=102, volume=1000)
-    ind = Indicator(symbol_id=2, date=date(2026, 5, 24), ema_21=101, adr_pct_21=2.5, sma50_atr_mult=3.0)
-    db_session.add_all([dp, ind])
+    for sid in (1, 2, 3):
+        db_session.add_all([
+            DailyPrice(symbol_id=sid, date=date(2026, 5, 24), open=100, high=105, low=95, close=102, volume=1000),
+            Indicator(symbol_id=sid, date=date(2026, 5, 24), ema_21=101, adr_pct_21=2.5, sma50_atr_mult=3.0),
+        ])
     db_session.commit()
 
     app = _create_app(db_session)
@@ -205,7 +210,7 @@ def test_api_get_watchlist_with_unresolvable_ticker_returns_200(db_session):
 
     active = response.json()["active"]
     tickers = {item["ticker"] for item in active}
-    assert tickers == {"NVDA", "GHOST"}
+    assert tickers == {"AAPL", "NVDA", "TSLA", "GHOST"}
 
     ghost = next(item for item in active if item["ticker"] == "GHOST")
     assert ghost["symbol_id"] is None

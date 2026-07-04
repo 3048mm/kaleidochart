@@ -361,6 +361,19 @@ S&P500（SPY）の動向や市場全体の統計から算出される、市場�
 
 これらの関数は内部で **None 安全な数値変換 (float coercion)** を行い、フロントエンドでのレンダリングエラーを防止しています。
 
+### 5.1.1 symbol_id 自己修復 (heal) の共通仕様
+
+ウォッチリスト・ポートフォリオの各項目は ticker/exchange を永続キーとし、`symbol_id` は「接続中の stocktool DB に対するキャッシュ」として扱われます。T1 再同期で symbols.id が変わった場合、読み取り API が自動修復（heal）します。実体は `backend/api/symbol_heal.py` の共通コアです（2026-07-04 導入）。
+
+| 機構 | 仕様 |
+| :--- | :--- |
+| **修復** | `symbol_id` が現行 symbols と不一致の項目を、ticker+exchange（フォールバック: ticker のみ）で再解決。解決不能は `symbol_id=NULL`（API レスポンスでは `symbol_id: null` として返り、リスト全体は 200 を維持） |
+| **安全弁** | 解決不能率が **30% (`HEAL_MAX_UNRESOLVED_RATIO`) を超えた場合、一切書き込まず WARNING ログ**を出す。大量解決不能は「接続先 symbols が不完全」（Sandbox 誤接続・T1 同期途中）のシグナルであり、NULL 化も再マッピングも破壊的になるため |
+| **スロットル** | 前回の heal が clean（修復ゼロ・安全弁非発動）だった場合、**60分 (`HEAL_CLEAN_TTL_SECONDS`) 間は再実行をスキップ**。修復発生直後・安全弁発動中は毎回実行される。キーは（種別, stocktool DB, user DB）の組で、接続先を切り替えると独立にカウント |
+
+> [!WARNING]
+> Sandbox 検証時は `STOCKTOOL_DB_PATH` と `STOCKTOOL_USER_DB_PATH` を**必ずセットで**指定すること（片方だけだと heal が本番 user_data.db に向く）。安全弁はこの誤設定に対する最終防衛線であり、頼る前提で運用しないこと。
+
 ### 5.2 ウォッチリスト API
 
 | Method | Path | 説明 |

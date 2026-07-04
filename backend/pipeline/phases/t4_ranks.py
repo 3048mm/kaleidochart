@@ -63,8 +63,11 @@ def sync_phase_t4_ranks(db, spy_latest_date: Optional[date], logger: logging.Log
     ]
     
     # Optimize for massive DML on SATA HDD:
+    # NOTE: `PRAGMA synchronous` はトランザクション内で変更できない
+    # ("Safety level may not be changed inside a transaction")。
+    # write セッションは BEGIN IMMEDIATE で autobegin するためここでは設定せず、
+    # 接続時の synchronous=NORMAL（WAL では fsync は checkpoint 時のみで十分軽い）のまま実行する。
     db.execute(text("PRAGMA cache_size = -4000000;"))
-    db.execute(text("PRAGMA synchronous = OFF;"))
     db.execute(text("PRAGMA temp_store = MEMORY;"))
     
     # Build single query to insert all indicators at once (wide format)

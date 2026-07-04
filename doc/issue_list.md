@@ -16,13 +16,26 @@
 - [ ] **追加インジケーターのバックテスト検証**
   - いろいろ追加した割に未検証になっている。前提だった D-2（フィルタ共通化）が完了したため**着手可能**。
 - [ ] **パイプライン異常終了時の T3 以降の欠損と自動復旧**
-  - DB更新中のエラー（メモリクラッシュ・PC再起動等）で T3 以降が未更新のまま残る事象が発生（2026-07-02 のデータで AAPL 等多数）。
-  - DB欠損の自動復旧策（`db_health_check` の NG 検知 → 該当日の `--rebuild-from` 自動実行など）。
-  - メモリ使用量の抑制策（T3 並列計算のワーカー数・チャンクサイズ見直し）。
-- [ ] **`heal_*_ids()` の安全弁と実行タイミング見直し**（audit D-3 + 2026-07-04 発見の設計課題を統合）
-  - 【安全性】読み取り GET が user_data.db を無条件に UPDATE・commit する設計。接続先の symbols が不完全だと watchlist/portfolio の symbol_id を静かに NULL 化する（2026-07-04 に Sandbox 検証中の環境変数設定漏れで実際に発生、復旧済み。詳細: `doc/current_in_development/screener_refactoring_d1_d2.md` I-7）。
-    - 対策案: 「解決不能が一定割合（例: 30%）を超えたら healing をスキップして警告ログ」の安全弁を実装する。
-  - 【性能】GET リクエストのたびに全件整合性チェックが走る（audit D-3）。起動時1回 or 最終チェック日時キャッシュへ変更する。
+  - 【事象】2026-07-02 の T3/T4/T5 が全欠損、T2 も仮想指数165件欠け。6/30(SEM)・7/1(4銘柄) にも末尾穴（2026-07-04 調査で確定）。
+  - 【確定した原因チェーン（2026-07-04 調査・復旧時に真因特定）】
+    1. 7/2 13:39: Phase3-5 完了後の `VACUUM` 実行中に `disk I/O error` → WAL 巻き戻りでコミット済み成果が消失
+    2. 7/3 の `database is locked` 2回と 7/4 のハングの真因は**休場日限定の自己デッドロック**: 休場日は FX 同期が commit せずに終わり、パイプラインの write セッションが RESERVED ロックを保持したまま `pd.read_sql_query(query, db.bind)` に入る → pandas の新規接続が BEGIN IMMEDIATE を要求して自プロセスとデッドロック（busy_timeout 1時間）
+    3. BEGIN IMMEDIATE 化（audit A-2）で顕在化した休眠バグが他に2つ: T4 の `PRAGMA synchronous=OFF`（トランザクション内変更不可）、パージの `VACUUM`（トランザクション内実行不可）
+    4. Phase 1 (Sheets 同期) の SSL エラーで**例外を握りつぶして exit 0** を返すため、タスクスケジューラからも失敗が見えない
+  - 【実施済み（2026-07-04 復旧時に修正・全て回帰テスト付き）】
+    - ✅ データ復旧完了: 7/2 の T2/T3/T4/T5 全復旧 + 6/30(SEM)・7/1(4銘柄) の末尾穴解消。Parquet アーカイブ成功。全テスト 280 passed（本番DB依存テストも正常化）
+    - ✅ 自己デッドロック修正: `db/database.py` に `get_read_engine_for()` を新設し、パイプラインの pandas 読み取り3箇所（Virtual Index Build / T5 / Parquet アーカイブ）を「commit 後に読み取りエンジンで読む」方式へ
+    - ✅ T4 の `PRAGMA synchronous=OFF` を削除（WAL+NORMAL で十分。disk I/O error 時の被害拡大要因でもあった）
+    - ✅ VACUUM を素の sqlite3 接続（トランザクション外）で実行するよう修正
+  - 【対策案（優先順）】
+    - A: パイプライン末尾に整合性検証（T2=T3 行数一致・SPY同期）を組み込み、NG なら失敗として終了（exit code 非0 + 明示ログ）※Phase1 SSL 失敗時の exit 0 もここで修正
+    - B: フロントに「データ最終更新日」を常時表示し、古い場合は警告色（P2「DB更新中表示」と統合）
+    - C: 起動時に直近 N 営業日の日付×銘柄突合を行い、不整合日を自動 Delete-Insert 再計算（現行の max 日付比較は中間穴を検出できない）
+    - D: VACUUM を毎日実行しない（週1 or サイズ閾値超過時のみ）。パージと VACUUM を分離し、失敗しても当日成果を巻き添えにしない
+    - E: Phase 完了ごとに `wal_checkpoint(TRUNCATE)` を実行し、I/O エラー時の WAL 巻き戻り被害を最小化
+    - F: run_daily_update.bat 冒頭で残留パイプラインプロセスをチェック
+    - G: backend コード変更後の API サーバー再起動を運用手順化
+    - H: Virtual Index Build のチャンク化 + テーマごとの進行ログ（無音死の特定を可能に）+ メモリ抑制
 - [ ] **ティッカー変更・株式分割統合の対応検討**
   - 分割未調整の価格履歴は指標・バックテスト結果を静かに歪める。まず影響範囲の調査・方針検討から。
 
@@ -71,6 +84,7 @@
 
 ## 完了済みタスク (Completed)
 
+- [x] **`heal_*_ids()` の安全弁と実行タイミング見直し（audit D-3 + I-7 再発防止）**: 共通コア `api/symbol_heal.py` を新設し watchlist/portfolio の二重実装を一本化。①安全弁: 解決不能率が30%超なら一切書き込まず警告（I-7 と同一の誤設定を再現し、47件が無傷で守られることを実証済み）②スロットル: 前回 clean なら60分間スキップ（通常運用の GET から全件走査が消える）③N+1 解消: 項目ごとの Symbol クエリを廃止し1クエリ+カラム射影に。ユニットテスト8件 + conftest 新設。詳細: `doc/current_in_development/heal_ids_hardening_plan.md` - 2026-07-04
 - [x] **フィルタ二重実装の共通化（audit D-2 / 旧P0）+ routers.py 分割（audit D-1 / 旧P1）**: 特殊フィルタ14種の実体を `indicators/screener_filters.py` に一本化し、API は `screener_cross_section.py` 経由でバックテストと同一関数を使用（同値性テストで新旧一致を証明）。routers.py は 2,944→67行、責務別5ルーター（screener/chart/dashboard/watchlist + panel_builders/deps）に分割。付随して既存バグ2件も修正: ①expression パーサの true/false 非対応（trend_breakdown プリセットが無フィルタ表示になっていた）②解決不能 ticker で watchlist API 全体が 500 になる問題。詳細: `doc/current_in_development/screener_refactoring_d1_d2.md` - 2026-07-04
 - [x] **T4テーブル更新中に dashboard が表示できない問題の修正**: 原因はグローバル `BEGIN IMMEDIATE` が API の SELECT にも適用され書き込みロックを奪い合っていたこと。`database.py` で読み取り用（DEFERRED/30s）と書き込み用（`get_write_db()`, BEGIN IMMEDIATE/3600s）のエンジンを分離。回帰テスト `backend/tests/db/test_database.py`（5件）と Sandbox E2E（ロック保持中に 0.41s で応答）で検証済み。 - 2026-07-03
 - [x] **skills の追加/更新**: `.claude/skills/` に9スキルを整備（既存6個の移行 + `parquet-data-quality` / `sandbox-workflow` / `pipeline-debugging` を新規作成）。CLAUDE.md にスキル一覧を記載。 - 2026-07-03

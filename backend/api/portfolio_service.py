@@ -37,75 +37,13 @@ def heal_portfolio_ids(db: Session, user_db: Session) -> None:
     """
     Heal symbol_ids in portfolio_positions and position_history tables by matching
     ticker and exchange with stocktool.db symbols.
+
+    実体は api/symbol_heal.py の共通コア（安全弁 + clean 時 TTL スロットル付き）。
+    解決不能率はポジション+履歴の合算で判定する。
     """
-    positions = user_db.query(PortfolioPosition).all()
-    history = user_db.query(PositionHistory).all()
-    
-    if not positions and not history:
-        return
-
-    # Fetch all active symbols to optimize matching
-    symbols = db.query(Symbol).all()
-    sym_map = {}
-    for s in symbols:
-        sym_map[(s.ticker, s.exchange)] = s
-        if s.ticker not in sym_map:
-            sym_map[s.ticker] = s
-
-    modified = False
-
-    # 1. Heal portfolio_positions
-    for pos in positions:
-        current_sym = None
-        if pos.symbol_id is not None:
-            current_sym = db.query(Symbol).filter_by(id=pos.symbol_id).first()
-        
-        is_valid = (
-            current_sym is not None 
-            and current_sym.ticker == pos.ticker 
-            and current_sym.exchange == pos.exchange
-        )
-        
-        if not is_valid:
-            target_sym = sym_map.get((pos.ticker, pos.exchange))
-            if not target_sym:
-                target_sym = sym_map.get(pos.ticker)
-                
-            if target_sym:
-                pos.symbol_id = target_sym.id
-                modified = True
-            else:
-                if pos.symbol_id is not None:
-                    pos.symbol_id = None
-                    modified = True
-
-    # 2. Heal position_history
-    for hist in history:
-        current_sym = None
-        if hist.symbol_id is not None:
-            current_sym = db.query(Symbol).filter_by(id=hist.symbol_id).first()
-            
-        is_valid = (
-            current_sym is not None 
-            and current_sym.ticker == hist.ticker 
-            and current_sym.exchange == hist.exchange
-        )
-        
-        if not is_valid:
-            target_sym = sym_map.get((hist.ticker, hist.exchange))
-            if not target_sym:
-                target_sym = sym_map.get(hist.ticker)
-                
-            if target_sym:
-                hist.symbol_id = target_sym.id
-                modified = True
-            else:
-                if hist.symbol_id is not None:
-                    hist.symbol_id = None
-                    modified = True
-
-    if modified:
-        user_db.commit()
+    from api.symbol_heal import heal_symbol_references
+    items = user_db.query(PortfolioPosition).all() + user_db.query(PositionHistory).all()
+    heal_symbol_references(db, user_db, items, kind="portfolio")
 
 
 # ============================================================

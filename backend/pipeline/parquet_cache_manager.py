@@ -117,7 +117,11 @@ def rotate_and_archive_to_parquet(db, db_path: str, logger: logging.Logger) -> d
     }
     
     latest_pointers = get_latest_master_files(pointer_file)
-    engine = db.bind
+    # 自己デッドロック防止: commit してロック解放後、読み取りエンジンで全量読み込む
+    # （db.bind = write エンジン経由の read_sql は BEGIN IMMEDIATE で自セッションと衝突する）
+    db.commit()
+    from db.database import get_read_engine_for
+    engine = get_read_engine_for(db)
     
     def process_and_merge_table(table_name: str, key_columns: list[str], df_sql: pd.DataFrame, old_parquet_path: str | None) -> pd.DataFrame:
         """Helper to load old parquet, append new SQL data, and drop duplicates safely."""
@@ -257,9 +261,19 @@ def purge_sqlite_cache_older_than_2_years(db, db_path: str, logger: logging.Logg
     logger.info(f"    RelativeRanks: {ranks_after} left (Deleted {deleted_ranks} records)")
     
     # Reclaim SQLite unused pages physically via VACUUM
+    # VACUUM はトランザクション内で実行できない（write セッションは autobegin で
+    # BEGIN IMMEDIATE を発行するため "cannot VACUUM from within a transaction" になる）。
+    # セッションを commit した後、SQLAlchemy を迂回した素の sqlite3 接続
+    # （トランザクション・イベント層なし）で実行する。
     logger.info("  Executing database VACUUM...")
-    db.execute(text("VACUUM"))
     db.commit()
+    import sqlite3 as _sqlite3
+    vacuum_conn = _sqlite3.connect(db_path)
+    try:
+        vacuum_conn.execute("PRAGMA busy_timeout = 60000")
+        vacuum_conn.execute("VACUUM")
+    finally:
+        vacuum_conn.close()
     
     final_db_size = os.path.getsize(db_path)
     reclaimed = initial_db_size - final_db_size

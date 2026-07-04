@@ -32,46 +32,12 @@ def _resolve_symbol(db: Session, ticker: str) -> Symbol | None:
 def heal_watchlist_ids(db: Session, user_db: Session) -> None:
     """
     Heal symbol_ids in watchlist table by matching ticker and exchange with stocktool.db symbols.
+
+    実体は api/symbol_heal.py の共通コア（安全弁 + clean 時 TTL スロットル付き）。
     """
+    from api.symbol_heal import heal_symbol_references
     items = user_db.query(Watchlist).all()
-    if not items:
-        return
-
-    # Fetch all active symbols to optimize
-    symbols = db.query(Symbol).all()
-    sym_map = {}
-    for s in symbols:
-        sym_map[(s.ticker, s.exchange)] = s
-        if s.ticker not in sym_map:
-            sym_map[s.ticker] = s
-
-    modified = False
-    for wl in items:
-        current_sym = None
-        if wl.symbol_id is not None:
-            current_sym = db.query(Symbol).filter_by(id=wl.symbol_id).first()
-        
-        is_valid = (
-            current_sym is not None 
-            and current_sym.ticker == wl.ticker 
-            and current_sym.exchange == wl.exchange
-        )
-        
-        if not is_valid:
-            target_sym = sym_map.get((wl.ticker, wl.exchange))
-            if not target_sym:
-                target_sym = sym_map.get(wl.ticker)
-                
-            if target_sym:
-                wl.symbol_id = target_sym.id
-                modified = True
-            else:
-                if wl.symbol_id is not None:
-                    wl.symbol_id = None
-                    modified = True
-
-    if modified:
-        user_db.commit()
+    heal_symbol_references(db, user_db, items, kind="watchlist")
 
 
 def add_to_watchlist(db: Session, user_db: Session, ticker: str, entry_date: date) -> Watchlist | None:

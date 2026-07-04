@@ -56,7 +56,10 @@ def sync_phase_t5_signals(db, logger: logging.Logger):
             WHERE s.active = 1 AND s.category = '個別'
             ORDER BY dp.symbol_id, dp.date
         """
-        raw_df = pd.read_sql(query_metrics, db.bind)
+        # 自己デッドロック防止: commit してロック解放後、読み取りエンジンで読む
+        db.commit()
+        from db.database import get_read_engine_for
+        raw_df = pd.read_sql(query_metrics, get_read_engine_for(db))
         
         if not raw_df.empty:
             raw_df['date'] = pd.to_datetime(raw_df['date'])
