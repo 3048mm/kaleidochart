@@ -19,7 +19,7 @@
   - 背景: 2026-07-02 の障害（T3以降全欠損）。データ復旧と直接原因のバグ3件は修正済み（完了済みセクション「7/2 データ欠損の復旧」参照）。本項目は**再発時に自動で検知・復旧するための恒久対策**。
   - 【検知（最優先）】
     - [ ] A: パイプライン末尾に整合性検証（T2=T3 行数一致・SPY同期）を組み込み、NG なら失敗として終了（exit code 非0 + 明示ログ）。Phase1 の SSL 失敗時に exit 0 を返す問題もここで修正
-    - [ ] B: フロントに「データ最終更新日」を常時表示し、古い場合は警告色（P2「DB更新中表示」と統合）
+    - [ ] B: フロントに「データ最終更新日」を常時表示し、古い場合は警告色 → **P2「②システム健全性の可視化」で実装予定**
   - 【自動復旧】
     - [ ] C: 起動時に直近 N 営業日の日付×銘柄突合を行い、不整合日を自動 Delete-Insert 再計算（現行の max 日付比較は中間穴を検出できない）
   - 【堅牢化】
@@ -35,14 +35,18 @@
 
 ## P2 — 中（体感改善・保守性・運用安全性）
 
-- [ ] **dashboard 初回表示が重い**
-  - `panel_builders.py` の `_build_panel_item` 等が銘柄ごとにスパークライン用クエリを発行しており（N+1 パターン）、ダッシュボードで数百回のクエリが走る。プロファイリング → 一括取得化。
+- [ ] 🎯 **②システム健全性の可視化**（次期着手。「DB更新中の表示」+「プリセット TOML のロード時検証」を統合）
+  - **課題の本質**: DB の欠損・更新中・設定ファイル不正などバックエンドの異常状態がフロントに一切伝わらず、サイレント失敗になる。実例: ①7/2 のデータ欠損に3日間気づけなかった ②`trend_breakdown` プリセットが expression 破損で長期間無フィルタ表示（I-6）③T4 更新中の一時的なデータ欠けが「壊れた」ように見える。
+  - **バックエンド**: `/api/system/health` を新設し以下を集約:
+    1. データ鮮度: T2〜T5 の最新日付、SPY 最新日と本日の乖離（何営業日古いか)
+    2. 整合性: 最新日の T2=T3 行数一致（軽量クエリ）
+    3. パイプライン実行状態: 実行中か / 前回実行の成否（`pipeline_meta` + ロックファイル）
+    4. プリセット検証: `screener_presets.toml` の全キー・全 expression の検証結果（バックテスト側 `validate_strategies_config` との非対称解消）
+  - **フロントエンド**: ヘッダーに常設ステータス（既存の Sandbox 警告バッジと同居・同思想）: 🟢 正常（最新データ日付を常時表示）/ 🟡 更新中・データが古い / 🔴 整合性NG・プリセット定義エラー（クリックで詳細）。
+  - P1「パイプライン堅牢化」の**対策B の実装を兼ねる**（対策A のパイプライン側検証とは producer/consumer の補完関係）。
 - [ ] **Sandbox 切替を単一スイッチにする**（2026-07-04 発見）
   - 現状 `STOCKTOOL_DB_PATH` と `STOCKTOOL_USER_DB_PATH` を**別々に**設定する必要があり、片方の設定漏れが I-7 事故（watchlist NULL 化）の引き金になった。
   - `STOCKTOOL_ENV=sandbox` のような単一環境変数で stocktool.db / user_data.db / Parquet の接続先が一貫して切り替わる設計へ変更する。
-- [ ] **スクリーナープリセット TOML のロード時検証**（2026-07-04 発見）
-  - expression のパース失敗が実行時警告で握りつぶされ、画面は正常に見えるため、`trend_breakdown` プリセットが長期間無フィルタ表示になっていた（I-6 で修正済み）。同種の再発を防ぐ。
-  - バックテスト側には `validate_strategies_config` があるのに API 側プリセットには検証がない非対称を解消: サーバー起動時（または pytest）に `screener_presets.toml` の全キー・全 expression を検証し、不正を起動ログで明示する。
 - [ ] **フィルタキー命名の新旧エイリアスの正規化層**（2026-07-04 発見）
   - `rs_ratio_21_rank`（旧）/`rs_ratio_rank_e21`（新）等の別名が `backtest_screener.py` の `needs_rs*` 判定（各30行超の or 連鎖）や `alias_map` に散在。指標追加のたびに複数箇所の更新が必要で、漏れると**フィルタが黙って素通しになる**（I-6 と同じ静かな失敗パターン）。
   - 対策: TOML ロード直後にキーを正規名へ一括変換する正規化層を1つ設け、以降のコードは新名のみ扱う。
@@ -50,8 +54,6 @@
 - [ ] **テストスイートの本番 DB 依存の解消**（2026-07-04 発見）
   - `test_rs_data_availability` は本番 DB の DUOL 銘柄の状態に依存し、データ次第で落ちる flaky テスト（現に失敗し続けており All Green ルールを形骸化させている）。フィクスチャ化 or 削除。
   - `backend/tests/db/test_db.py` は pytest ではなく手動確認スクリプトが紛れ込んでいる状態。`tools/` へ移動 or 削除。
-- [ ] **データベースが更新中か frontend で表示**
-  - パイプライン実行中であることを画面に表示（更新中の一時的なデータ欠けへの UX 緩和策）。
 - [ ] **`get_db_session()` に commit がない**（audit D-4）
   - 呼び出し側の commit 書き忘れによるデータロストの芽。修正コスト小。
 - [ ] **スプレッドシートの銘柄・テーマ紐づけの整理と自動化**
@@ -64,6 +66,8 @@
 - [ ] **スクリーナーの完全 DataFrame 化（D-2 の最終形）**（2026-07-04 発見）
   - 特殊フィルタは共通化済みだが、数値 min/max フィルタは SQL のままで、特殊フィルタ使用時は Indicator を2回読む（1日分のため実害は小）。
   - スクリーナー全体をクロスセクション DataFrame ベースに寄せて SQL は取得のみにすると、バックテストとの一致範囲が min/max まで広がりコードも単純になる。
+- [ ] **`/theme/{id}` の構成銘柄ループに残る per-constituent クエリの一括化**（2026-07-04 dashboard 高速化から切り出し）
+  - sparkline は一括化済みだが、価格履歴・indicator・126日チャート・ランクで銘柄あたり約6クエリが残る。構成銘柄数が少なく（数件〜50件）実害は小さい。`panel_builders.py` の既存プリロード機構（`build_panel_preload`）で対応可能。
 - [ ] **ポートフォリオ機能（将来フェーズ）**
   - [ ] **moomoo 証券 API 連携**: `portfolios.source = 'moomoo_api'` のポートフォリオで保有銘柄を OpenD (Python SDK / WebSocket) 経由で自動同期。API Doc: https://openapi.moomoo.com/moomoo-api-doc/
   - [ ] **チャート画面へのポジション情報統合**: 個別チャート画面 (`ChartPage`) に購入価格（青）、損切ライン（赤）、利確ライン（緑）の水平ラインを描画し、テクニカル分析と保有管理を一体化。
@@ -78,6 +82,7 @@
 
 ## 完了済みタスク (Completed)
 
+- [x] **dashboard 初回表示の高速化（旧P2①）**: `GET /api/dashboard` を **4.66秒/9,685クエリ → 0.30秒/16クエリ** に改善（レスポンス JSON は修正前と完全一致を本番DBで確認）。2段階で実施: ①Plan A: 全アクティブ銘柄（個別株約2,800件含む）に panel item を作ってからカテゴリ分岐で捨てていた構造を、表示4カテゴリ（市場/指標/セクタ/テーマ）への事前絞り込みに変更（→0.55s/958クエリ）②Plan B: `panel_builders.py` に一括プリロード（sparkline/価格履歴/indicator を3クエリで取得、`ROW_NUMBER() OVER` + 直近90日窓 + 不足銘柄のみ per-symbol フォールバックで厳密等価を保証）を新設し `/dashboard`・`/group_data`・`/theme`(sparkline) に適用。教訓: 日付下限なしの窓関数は590万行テーブル×コールドHDDで360秒に達した（実測）ため、大テーブルへの窓関数は必ず日付窓で読む範囲を絞ること。テスト9件追加（クエリ数スケーリング検証 + プリロード等価性）。詳細: `doc/completed/dashboard_performance_plan.md` - 2026-07-04
 - [x] **パイプライン異常終了時の T3 以降の欠損（旧P1・事故対応）= 7/2 データ欠損の復旧と write セッション休眠バグ3件の修正**: 7/2 の T2/T3/T4/T5 全復旧 + 6/30・7/1 の末尾穴解消（全テスト 280 passed、本番DB依存テストも正常化）。復旧過程で BEGIN IMMEDIATE 化により顕在化した休眠バグ3件を TDD で修正: ①休場日限定の自己デッドロック（`pd.read_sql(q, db.bind)` → `get_read_engine_for()` 新設で3箇所修正）②T4 の `PRAGMA synchronous=OFF`（トランザクション内変更不可）③パージの `VACUUM`（素の sqlite3 接続化）。教訓は architecture.md §10.2「write セッションの3つの制約」と sqlite-wal-handling スキルに文書化。恒久対策 A〜H は P1 に残存。 - 2026-07-04
 - [x] **`heal_*_ids()` の安全弁と実行タイミング見直し（audit D-3 + I-7 再発防止）**: 共通コア `api/symbol_heal.py` を新設し watchlist/portfolio の二重実装を一本化。①安全弁: 解決不能率が30%超なら一切書き込まず警告（I-7 と同一の誤設定を再現し、47件が無傷で守られることを実証済み）②スロットル: 前回 clean なら60分間スキップ（通常運用の GET から全件走査が消える）③N+1 解消: 項目ごとの Symbol クエリを廃止し1クエリ+カラム射影に。ユニットテスト8件 + conftest 新設。詳細: `doc/completed/heal_ids_hardening_plan.md` - 2026-07-04
 - [x] **フィルタ二重実装の共通化（audit D-2 / 旧P0）+ routers.py 分割（audit D-1 / 旧P1）**: 特殊フィルタ14種の実体を `indicators/screener_filters.py` に一本化し、API は `screener_cross_section.py` 経由でバックテストと同一関数を使用（同値性テストで新旧一致を証明）。routers.py は 2,944→67行、責務別5ルーター（screener/chart/dashboard/watchlist + panel_builders/deps）に分割。付随して既存バグ2件も修正: ①expression パーサの true/false 非対応（trend_breakdown プリセットが無フィルタ表示になっていた）②解決不能 ticker で watchlist API 全体が 500 になる問題。詳細: `doc/completed/screener_refactoring_d1_d2.md` - 2026-07-04

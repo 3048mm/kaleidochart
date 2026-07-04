@@ -12,7 +12,10 @@ from api.deps import get_api_db, get_api_user_db
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-from api.panel_builders import _get_sparkline_data, _build_panel_item, _build_leading_item, _build_etf_feature
+from api.panel_builders import (
+    _get_sparkline_data, _build_panel_item, _build_leading_item, _build_etf_feature,
+    build_panel_preload, preload_sparklines,
+)
 
 @router.get("/ranking", response_model=List[schemas.RankingResponse])
 def get_rankings(db: Session = Depends(get_api_db), limit: int = 20, asc: bool = False):
@@ -146,7 +149,13 @@ def get_dashboard(
     # --- Dashboard Data fetching logic follows ---
 
     # 3. Get Indices, Sectors, Themes
-    symbols = db.query(Symbol).filter(Symbol.active == 1).all()
+    # ダッシュボードに表示するカテゴリのみ取得する（個別株 約2,800件を含む全銘柄を
+    # ループして panel item を作ってから捨てると 9,000 クエリ超になる）
+    DASHBOARD_CATEGORIES = ["市場", "指標", "セクタ", "テーマ"]
+    symbols = db.query(Symbol).filter(
+        Symbol.active == 1,
+        Symbol.category.in_(DASHBOARD_CATEGORIES)
+    ).all()
     sym_dict = {s.id: s for s in symbols}
     
     # Get Prices for target date
@@ -172,33 +181,43 @@ def get_dashboard(
     trend_rank_21_dict = {r.symbol_id: r.rs_trend_rank_s21 for r in ranks if r.rs_trend_rank_s21 is not None}
     trend_rank_63_dict = {r.symbol_id: r.rs_trend_rank_s63 for r in ranks if r.rs_trend_rank_s63 is not None}
 
+    # 全パネルアイテムぶんの sparkline / 価格履歴 / indicator を 3 クエリで一括取得
+    # （per-symbol だと 1 アイテム 3 クエリの N+1 になる）
+    panel_ids = [sym_id for sym_id in sym_dict if sym_id in price_dict]
+    preload = build_panel_preload(db, panel_ids, target_date)
+
     for sym_id, s in sym_dict.items():
         if sym_id not in price_dict:
             continue
-            
+
         dp = price_dict[sym_id]
+
+        # 「指標」カテゴリは panel item を使わない（leading / SPY feature 専用ビルダー）
+        if s.category == "指標":
+            if s.ticker == "SPY":
+                resp.spy_feature = _build_etf_feature(db, s, dp, target_date)
+            else:
+                resp.leading.append(_build_leading_item(db, s, dp, target_date, preload=preload))
+            continue
+
         r14_rank = rank_14_dict.get(sym_id, 0.0) or 0.0
         r21_rank = rank_21_dict.get(sym_id, 0.0) or 0.0
         r63_rank = rank_63_dict.get(sym_id, 0.0) or 0.0
         rt14_rank = trend_rank_14_dict.get(sym_id, 0.0) or 0.0
         rt21_rank = trend_rank_21_dict.get(sym_id, 0.0) or 0.0
         rt63_rank = trend_rank_63_dict.get(sym_id, 0.0) or 0.0
-        
+
         item = _build_panel_item(
-            db, s, dp, r21_rank, r63_rank, target_date, 
+            db, s, dp, r21_rank, r63_rank, target_date,
             rank_val_14=r14_rank,
             rank_val_trend_14=rt14_rank,
             rank_val_trend_21=rt21_rank,
-            rank_val_trend_63=rt63_rank
+            rank_val_trend_63=rt63_rank,
+            preload=preload
         )
-        
+
         if s.category == "市場":
             resp.indices.append(item)
-        elif s.category == "指標":
-            if s.ticker == "SPY":
-                resp.spy_feature = _build_etf_feature(db, s, dp, target_date)
-            else:
-                resp.leading.append(_build_leading_item(db, s, dp, target_date))
         elif s.category == "セクタ":
             resp.sectors.append(item)
         elif s.category == "テーマ":
@@ -346,6 +365,10 @@ def get_theme_detail(
             Symbol.tags.like(f'%{sym.ticker}%')
         ).order_by(Symbol.ticker).all()
 
+    # 構成銘柄の sparkline を一括取得。上限日付なし = 「各銘柄の全期間から最新30件」であり、
+    # ランク行は価格行より新しい日付を持たないため per-symbol の date <= c_dp.date と等価
+    c_spark_preload = preload_sparklines(db, [s.id for s in constituent_symbols], None)
+
     constituents = []
     for c_sym in constituent_symbols:
         c_id = c_sym.id
@@ -371,7 +394,7 @@ def get_theme_detail(
         c_rs21 = c_ind.rs_ratio_e21 if c_ind else None
         c_rs63 = c_ind.rs_ratio_e63 if c_ind else None
         c_rsmom21 = c_ind.rs_momentum_e21 if c_ind else None
-        c_rs_spark = _get_sparkline_data(db, c_id, str(c_dp.date), 21)
+        c_rs_spark = _get_sparkline_data(db, c_id, str(c_dp.date), 21, preloaded=c_spark_preload)
 
         # short history for RRG
         c_full_hist = db.query(DailyPrice).filter(
@@ -595,16 +618,22 @@ def get_group_data(
         c_rank_mom63_dict = {r.symbol_id: r.rs_momentum_rank_e63 for r in c_ranks if r.rs_momentum_rank_e63 is not None}
 
         c_symbols = db.query(Symbol).filter(Symbol.id.in_(child_ids)).all()
+
+        # 構成銘柄全件ぶんを 3 クエリで一括取得（per-symbol N+1 回避）
+        c_panel_ids = [cs.id for cs in c_symbols if cs.id in c_price_dict]
+        c_preload = build_panel_preload(db, c_panel_ids, target_date)
+
         for cs in c_symbols:
             if cs.id in c_price_dict:
                 constituents.append(_build_panel_item(
-                    db, cs, c_price_dict[cs.id], 
-                    c_rank_21_dict.get(cs.id, 0.0), 
-                    c_rank_63_dict.get(cs.id, 0.0), 
+                    db, cs, c_price_dict[cs.id],
+                    c_rank_21_dict.get(cs.id, 0.0),
+                    c_rank_63_dict.get(cs.id, 0.0),
                     target_date,
                     rank_val_14=c_rank_14_dict.get(cs.id, 0.0),
                     rank_val_mom=c_rank_mom_dict.get(cs.id, 0.0),
-                    rank_val_mom63=c_rank_mom63_dict.get(cs.id, 0.0)
+                    rank_val_mom63=c_rank_mom63_dict.get(cs.id, 0.0),
+                    preload=c_preload
                 ))
 
     # Sort constituents by intensity score (default)
