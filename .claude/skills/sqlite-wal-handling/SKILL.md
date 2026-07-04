@@ -124,6 +124,10 @@ SQLite を扱うコードを修正する際は、以下のチェックリスト�
 - [ ]  **`synchronous = NORMAL` になっているか？**（`FULL` だと書き込み時にフリーズしたようになります）
 - [ ]  **書き込みが発生するトランザクションは、`BEGIN IMMEDIATE` で開始されているか？**（デフォルトの `BEGIN` はデッドロックの元）
 - [ ]  **読み取り専用のセッションに `BEGIN IMMEDIATE` を適用していないか？**（SELECT が書き込みロックを要求してしまい、長時間バッチにブロックされて WAL の並行読み取りの利点が失われる。本プロジェクトでは `database.py` で読み取り用 `get_db()`＝DEFERRED と書き込み用 `get_write_db()`＝IMMEDIATE のエンジンを分離している）
+- [ ]  **BEGIN IMMEDIATE セッション（write セッション）内で以下の3つを実行していないか？**（2026-07-04 のパイプライン障害の実例。いずれも autobegin で「トランザクション内」になるため発火する）
+    1. `pd.read_sql(query, db.bind)` — pandas の新規接続も IMMEDIATE を発行し、自セッションの RESERVED ロックと**自己デッドロック**（busy_timeout まで無音ハング）。→ `db.commit()` 後に読み取りエンジン（`get_read_engine_for(db)`）で読む
+    2. `PRAGMA synchronous` の変更 — "Safety level may not be changed inside a transaction" → 接続確立時（connect イベント）でのみ設定
+    3. `VACUUM` — "cannot VACUUM from within a transaction" → `db.commit()` 後に素の `sqlite3.connect(db_path)` で実行
 - [ ]  **トランザクションは `with` ブロックや `finally` を使って、処理終了後ただちに `commit/rollback` または `close` されているか？**（開きっぱなしのリード接続は WAL チェックポイントを阻害します）
 - [ ]  **DBファイルが OneDrive 等の同期フォルダ配下にある場合は、環境上の警告メッセージを出すか、同期除外を推奨するドキュメントがあるか？**
 

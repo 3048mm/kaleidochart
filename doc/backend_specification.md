@@ -307,6 +307,7 @@ S&P500（SPY）の動向や市場全体の統計から算出される、市場�
 
 *   **Journal Mode: `WAL` (Write-Ahead Logging)**: 読み取りと書き込みの競合を大幅に軽減。
 *   **読み取り/書き込みエンジンの分離**: 読み取り（API, `get_db()`）は `DEFERRED` + busy_timeout 30秒、書き込み（パイプライン, `get_write_db()`）は `BEGIN IMMEDIATE` + busy_timeout 3600秒。SELECT が書き込みロックを要求して長時間バッチにブロックされる事故を構造的に防止（詳細: architecture.md §10.2）。
+*   **write セッションの3つの禁止事項**: ① `pd.read_sql(query, db.bind)`（自己デッドロック。`get_read_engine_for(db)` を使う）② `PRAGMA synchronous` の実行 ③ `VACUUM` の実行（素の sqlite3 接続で行う）。詳細と根拠: architecture.md §10.2。
 *   **Synchronous: `NORMAL` (or `OFF` during bulk)**: ディスク I/O 負荷を軽減し、特に HDD 環境での書き込み速度を確保。
 
 ## 4. バッチ処理フロー (Pipeline Logic)

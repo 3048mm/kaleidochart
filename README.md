@@ -100,6 +100,8 @@ npm run dev
 2.  PCとスマホそれぞれでTailscaleにログインし、自分のTailscaleネットワークに参加する。
 3.  スマホに表示されている PC のドメイン (....ts.net)とポート番号(5173)をブラウザに入力する。
     例： `http://xxxx.ts.net:5173`
+    * Optuna Dashboard も同様にアクセス可能（`run_optuna_dashboard.bat` は `--host 0.0.0.0` で起動するため）。例： `http://xxxx.ts.net:8080`
+      ※初回起動時に Windows ファイアウォールの許可ダイアログが出たら「アクセスを許可」すること。
     * スマホのVPNは一定時間で切断される為、つながらない場合は TailScale アプリを再度起動後にアクセス
 
 

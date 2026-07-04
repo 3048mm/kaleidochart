@@ -190,7 +190,11 @@ graph TD
 
 *   **分離の理由**: `BEGIN IMMEDIATE` を全トランザクションに適用すると、API の SELECT までもが書き込みロックを要求し、T4 等の長時間書き込みトランザクション中に読み取りが 1 時間待機（＝ダッシュボードが無限ローディング）してしまうため。WAL の「読み取りは書き込みをブロックされない」という利点を活かすには、読み取りセッションはデフォルトの `DEFERRED` でなければなりません。
 *   **使い分けルール**: `stocktool.db` へ書き込むコード（パイプライン、メンテナンススクリプト）は必ず `get_write_db()` を使用する。読み取りのみのコード（API、バックテストのキャッシュ生成）は `get_db()` を使用する。
-*   **回帰テスト**: `backend/tests/db/test_database.py` が「書き込みトランザクション保持中でも読み取りがブロックされない」ことを恒常的に検証します。
+*   **write セッション（BEGIN IMMEDIATE）の3つの制約**（2026-07-04 のパイプライン障害復旧で確立。違反すると休眠バグになる）:
+    1. **`pd.read_sql` に `db.bind` を渡さない**: pandas が開く新規接続も BEGIN IMMEDIATE を発行するため、自セッションの RESERVED ロックと**自己デッドロック**する（busy_timeout の1時間ハング）。必ず `db.commit()` でロックを解放した後、`db.database.get_read_engine_for(db)` が返す読み取りエンジンで読むこと。
+    2. **`PRAGMA synchronous` を実行しない**: autobegin でトランザクション内になるため "Safety level may not be changed inside a transaction" で失敗する。synchronous は接続確立時（connect イベント）でのみ設定する。
+    3. **`db.execute(text("VACUUM"))` を実行しない**: 同様に "cannot VACUUM from within a transaction" で失敗する。`db.commit()` 後に素の `sqlite3.connect(db_path)` で実行する（`parquet_cache_manager.purge_sqlite_cache_older_than_2_years` 参照）。
+*   **回帰テスト**: `backend/tests/db/test_database.py` が「書き込みトランザクション保持中でも読み取りがブロックされない」こと、および上記3制約の回避パターンを恒常的に検証します。
 
 ### 10.3 注意事項・トラブルシューティング
 *   **Database is locked エラー**:

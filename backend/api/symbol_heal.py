@@ -7,7 +7,7 @@ watchlist / portfolio の heal_*_ids から呼ばれ、以下を一元的に提�
 2. **安全弁**: 解決不能率が閾値（30%）を超えた場合は一切書き込まない。
    大量解決不能は「接続先 symbols が不完全」（Sandbox 誤接続・T1 同期途中）の
    シグナルであり、NULL 化も再マッピングも破壊的になるため（2026-07-04 の
-   I-7 事故の再発防止。詳細: doc/current_in_development/heal_ids_hardening_plan.md）。
+   I-7 事故の再発防止。詳細: doc/completed/heal_ids_hardening_plan.md）。
 3. **スロットル**: 前回の heal が clean（修復ゼロ・安全弁非発動）だった場合のみ、
    TTL 内の再実行をスキップする。通常運用では GET のたびの全件走査が
    事実上なくなる一方、修復発生直後や異常検知中は毎回実行される。
