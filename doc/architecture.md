@@ -53,7 +53,15 @@ graph TD
 全てのソースコードは役割別に `backend/` または `frontend/` 配下に集約されています。
 
 *   **`backend/`**: Python関連の全ソースコード・パッケージを集約する親ディレクトリ。
-    *   **`api/`**: バックエンドAPIサーバー（FastAPI）のロジック。
+    *   **`api/`**: バックエンドAPIサーバー（FastAPI）のロジック。責務別ルーターに分割（2026-07-04 audit D-1 対応）。
+        *   `routers.py`: コア（/ping, /system/info, /symbols + 後方互換 re-export）。
+        *   `screener_router.py`: スクリーナーエンジンと /screener* エンドポイント。
+        *   `screener_cross_section.py`: 基準日クロスセクション構築と特殊フィルタ評価（実体は `indicators/screener_filters.py` の純関数＝バックテストと同一。audit D-2 対応）。
+        *   `chart_router.py`: /chart, /earnings。
+        *   `dashboard_router.py`: /dashboard, /available_dates, /theme, /group_data, /ranking。
+        *   `panel_builders.py`: ダッシュボード系画面の共通アイテムビルダー。
+        *   `watchlist_router.py`: /watchlist 系エンドポイント。
+        *   `deps.py`: FastAPI 依存性（`get_api_db`, `get_api_user_db`）。
         *   `portfolio_router.py`: ポートフォリオ管理のAPIエンドポイント。
         *   `portfolio_service.py`: ポートフォリオのビジネスロジック（サービス層）。
         *   `portfolio_logic.py`: ポジションサイジング・損切/利確の純粋計算関数。

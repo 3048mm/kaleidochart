@@ -19,6 +19,11 @@ DBスキーマ変更・新規指標の追加・パイプラインロジック変
 - 切り替えは環境変数 `STOCKTOOL_DB_PATH` で行う。Parquet ディレクトリは DB パスから自動解決される（`parquet_cache_manager.get_parquet_master_dir()` — DB と同じディレクトリの `parquet_master/`）ため、Sandbox 用 DB パスを指定すれば Parquet も分離される。
 - `user_data.db`（ウォッチリスト・ポートフォリオ）はユーザー永続データであり、Sandbox 検証の対象外。**絶対にクリア・再構築しない。**
 
+> [!CAUTION]
+> **`STOCKTOOL_DB_PATH` を設定するときは、必ず `STOCKTOOL_USER_DB_PATH="data/user_data_sandbox.db"` も併せて設定すること。**
+> API サーバーの watchlist/portfolio には `heal_*_ids()` という自己修復処理があり、GET のたびに ticker→symbol_id を接続中の stocktool DB と突合して **user_data.db を破壊的に UPDATE・commit する**。
+> stocktool 側だけ Sandbox に向けると、Sandbox に存在しない銘柄の symbol_id が本番 `user_data.db` で全て NULL 化される事故が起きる（2026-07-04 に実際に発生。ticker 列は無傷のため本番 DB に対する heal 再実行で復旧済み）。
+
 ## 2. 検証フロー（5ステップ）
 
 ### Step 1: Sandbox データ準備

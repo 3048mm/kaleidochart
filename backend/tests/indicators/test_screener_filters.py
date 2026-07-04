@@ -375,3 +375,109 @@ class TestRrgLaggingIn:
         # 既存実装: prev_date=None だと rrg_lagging_in フィルタがスキップされるため、
         # 基本条件を満たす銘柄は通過する
         assert len(signals) >= 0, "Behavior with no prev_date is defined by implementation"
+
+
+# ============================================================
+# 新規共通化フィルタ（D-2 リファクタリング）の純関数ユニットテスト
+# ============================================================
+from indicators.screener_filters import (
+    filter_rs_macd_hist_rising_21,
+    filter_rs_trend_s21_lt_s63,
+    filter_rs_trend_s14_lt_s21,
+    filter_theme_rs_trend_rank_s14_gt_s21,
+    filter_theme_rs_trend_rank_s21_gt_s63,
+    SPECIAL_FILTER_KEYS,
+)
+
+
+class TestRsMacdHistRising21:
+    def test_rising_and_positive_passes(self):
+        merged = pd.DataFrame({
+            "symbol_id": [1, 2, 3, 4],
+            "rs_macd_hist_21":      [0.5,  0.5, -0.1, 0.5],
+            "prev_rs_macd_hist_21": [0.2,  0.8,  -0.2, None],
+        })
+        mask = filter_rs_macd_hist_rising_21(merged)
+        # 1: 正かつ上昇 → 通過, 2: 正だが下降 → 除外, 3: 負 → 除外, 4: prev NaN → 比較 False → 除外
+        assert list(mask) == [True, False, False, False]
+
+    def test_without_prev_column_falls_back_to_positive_only(self):
+        merged = pd.DataFrame({
+            "symbol_id": [1, 2],
+            "rs_macd_hist_21": [0.5, -0.5],
+        })
+        mask = filter_rs_macd_hist_rising_21(merged)
+        assert list(mask) == [True, False]
+
+    def test_missing_columns_passthrough(self):
+        merged = pd.DataFrame({"symbol_id": [1, 2]})
+        mask = filter_rs_macd_hist_rising_21(merged)
+        assert list(mask) == [True, True]
+
+
+class TestRsTrendComparisons:
+    def test_s21_lt_s63(self):
+        merged = pd.DataFrame({
+            "symbol_id": [1, 2],
+            "rs_trend_s21": [1.0, 2.0],
+            "rs_trend_s63": [1.5, 1.5],
+        })
+        assert list(filter_rs_trend_s21_lt_s63(merged)) == [True, False]
+
+    def test_s14_lt_s21(self):
+        merged = pd.DataFrame({
+            "symbol_id": [1, 2],
+            "rs_trend_s14": [0.9, 1.2],
+            "rs_trend_s21": [1.0, 1.0],
+        })
+        assert list(filter_rs_trend_s14_lt_s21(merged)) == [True, False]
+
+    def test_missing_columns_passthrough(self):
+        merged = pd.DataFrame({"symbol_id": [1]})
+        assert list(filter_rs_trend_s21_lt_s63(merged)) == [True]
+        assert list(filter_rs_trend_s14_lt_s21(merged)) == [True]
+
+
+class TestThemeRsTrendRankComparisons:
+    def _fixture(self):
+        # テーマ10(14>21で強い), テーマ11(弱い), 個別1(テーマ10所属), 個別2(テーマ11所属)
+        merged = pd.DataFrame({
+            "symbol_id": [10, 11, 1, 2],
+            "category":  ["テーマ", "テーマ", "個別", "個別"],
+            "rs_condition_14_rank": [0.9, 0.2, 0.5, 0.5],
+            "rs_condition_21_rank": [0.5, 0.6, 0.5, 0.5],
+            "rs_condition_63_rank": [0.1, 0.9, 0.5, 0.5],
+        })
+        tc = pd.DataFrame({"theme_id": [10, 11], "symbol_id": [1, 2]})
+        return merged, tc
+
+    def test_theme_s14_gt_s21(self):
+        merged, tc = self._fixture()
+        mask = filter_theme_rs_trend_rank_s14_gt_s21(merged, tc)
+        # テーマ10(0.9>0.5)通過 → 構成銘柄1も通過。テーマ11(0.2>0.6=False)除外 → 銘柄2除外
+        assert list(mask) == [True, False, True, False]
+
+    def test_theme_s21_gt_s63(self):
+        merged, tc = self._fixture()
+        mask = filter_theme_rs_trend_rank_s21_gt_s63(merged, tc)
+        # テーマ10(0.5>0.1)通過 → 銘柄1通過。テーマ11(0.6>0.9=False)除外 → 銘柄2除外
+        assert list(mask) == [True, False, True, False]
+
+    def test_missing_columns_passthrough(self):
+        merged = pd.DataFrame({"symbol_id": [1], "category": ["個別"]})
+        tc = pd.DataFrame({"theme_id": [], "symbol_id": []})
+        assert list(filter_theme_rs_trend_rank_s14_gt_s21(merged, tc)) == [True]
+
+
+class TestSpecialFilterKeysRegistry:
+    def test_registry_contains_all_special_boolean_keys(self):
+        expected = {
+            "rrg_leading_in", "rrg_lagging_in", "rrg_improving_in",
+            "is_theme_rs_ratio_e14_gt_e21", "is_theme_rs_ratio_e21_gt_e63",
+            "is_theme_rs_ratio_rank_e14_gt_e21", "is_theme_rs_ratio_rank_e21_gt_e63",
+            "is_rs_trend_s21_lt_s63", "is_rs_trend_s14_lt_s21",
+            "is_rs_ratio_rank_e21_gt_e63",
+            "is_theme_rs_trend_rank_s14_gt_s21",
+            "is_rs_macd_hist_rising_21",
+        }
+        assert expected <= SPECIAL_FILTER_KEYS

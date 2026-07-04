@@ -439,9 +439,10 @@ def validate_strategies_config(strategies: list, df_ind: pd.DataFrame, df_prices
     from backend.db.models import RelativeRank
 
     try:
-        from backend.api.routers import BOOLEAN_FILTER_HANDLERS, _INDICATOR_COLUMNS, _VIRTUAL_COLUMNS
+        from backend.indicators.screener_filters import SPECIAL_FILTER_KEYS
+        from backend.api.screener_router import _INDICATOR_COLUMNS, _VIRTUAL_COLUMNS
     except ImportError:
-        BOOLEAN_FILTER_HANDLERS = {}
+        SPECIAL_FILTER_KEYS = set()
         _INDICATOR_COLUMNS = {}
         _VIRTUAL_COLUMNS = {}
 
@@ -480,7 +481,7 @@ def validate_strategies_config(strategies: list, df_ind: pd.DataFrame, df_prices
                 continue
 
             # 1. Custom boolean / RRG filters
-            if key in BOOLEAN_FILTER_HANDLERS:
+            if key in SPECIAL_FILTER_KEYS:
                 continue
             if key == 'rrg_intensity_threshold':
                 continue

@@ -18,8 +18,9 @@ if backend_dir not in sys.path:
 from db.models import Base, Symbol, DailyPrice, FxRate
 from db.database import init_db, SessionLocal
 
-# テスト用のデータベース（Sandbox）のパス
-SANDBOX_DB_PATH = os.path.join(project_root, "data", "stocktool_sandbox.db")
+# テスト専用の使い捨てDB（開発用 Sandbox data/stocktool_sandbox.db を
+# drop_all で破壊しないよう、専用ファイルに分離している）
+SANDBOX_DB_PATH = os.path.join(project_root, "data", "stocktool_pytest_fx.db")
 engine = create_engine(f"sqlite:///{SANDBOX_DB_PATH}")
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

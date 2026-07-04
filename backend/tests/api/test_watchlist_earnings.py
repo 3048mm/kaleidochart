@@ -97,6 +97,7 @@ def test_update_earnings_dates_sync(mock_fetch, db_session):
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from api.routers import router, get_api_db, get_api_user_db
+from api.watchlist_router import router as watchlist_api_router
 from db.models_user import Watchlist
 
 def _get_test_user_db():
@@ -109,6 +110,7 @@ def _get_test_user_db():
 def _create_app(db_session_fixture):
     app = FastAPI()
     app.include_router(router, prefix="/api")
+    app.include_router(watchlist_api_router, prefix="/api")
     app.dependency_overrides[get_api_db] = lambda: db_session_fixture
     app.dependency_overrides[get_api_user_db] = _get_test_user_db
     return app
@@ -168,3 +170,42 @@ def test_api_get_watchlist_triggers_background_tasks(db_session):
         assert "NVDA" in args[2]
         assert "TSLA" not in args[2]  # TSLA is in the future, so not expired
 
+
+
+def test_api_get_watchlist_with_unresolvable_ticker_returns_200(db_session):
+    """symbols に存在しない ticker（上場廃止・ticker変更等）が watchlist にあっても
+    API 全体が 500 にならず、該当項目は symbol_id=None で返ること。
+
+    背景: heal_watchlist_ids は解決できない ticker の symbol_id を NULL に更新する。
+    schema が int 必須だと watchlist 全体が ValidationError で 500 になる。
+    """
+    BaseUser.metadata.drop_all(_user_engine)
+    BaseUser.metadata.create_all(_user_engine)
+
+    user_db = _UserTestSession()
+    user_db.add_all([
+        # NVDA は symbols に存在（正常系）
+        Watchlist(symbol_id=2, ticker="NVDA", exchange="NASDAQ", entry_date=date(2026, 5, 10), entry_price=100.0, status="active", added_at=datetime.utcnow()),
+        # GHOST は symbols に存在しない（heal で symbol_id=None になる）
+        Watchlist(symbol_id=999, ticker="GHOST", exchange="NASDAQ", entry_date=date(2026, 5, 10), entry_price=50.0, status="active", added_at=datetime.utcnow()),
+    ])
+    user_db.commit()
+    user_db.close()
+
+    dp = DailyPrice(symbol_id=2, date=date(2026, 5, 24), open=100, high=105, low=95, close=102, volume=1000)
+    ind = Indicator(symbol_id=2, date=date(2026, 5, 24), ema_21=101, adr_pct_21=2.5, sma50_atr_mult=3.0)
+    db_session.add_all([dp, ind])
+    db_session.commit()
+
+    app = _create_app(db_session)
+    client = TestClient(app)
+
+    response = client.get("/api/watchlist")
+    assert response.status_code == 200, response.text
+
+    active = response.json()["active"]
+    tickers = {item["ticker"] for item in active}
+    assert tickers == {"NVDA", "GHOST"}
+
+    ghost = next(item for item in active if item["ticker"] == "GHOST")
+    assert ghost["symbol_id"] is None

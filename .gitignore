@@ -35,6 +35,8 @@ output/*
 frontend/node_modules/
 frontend/dist/
 frontend/.eslintcache
+# Vite が vite.config.ts 読込時に生成する一時ファイル（プロセス異常終了時に残留する）
+frontend/vite.config.ts.timestamp-*.mjs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

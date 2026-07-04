@@ -491,7 +491,8 @@ class WatchlistBulkDeleteRequest(BaseModel):
 
 class WatchlistItem(BaseModel):
     id: int
-    symbol_id: int
+    # 上場廃止・ticker変更等で symbols から解決できない場合は None（heal_watchlist_ids が NULL 化する）
+    symbol_id: Optional[int] = None
     ticker: str
     name: str
     entry_date: str           # YYYY-MM-DD

@@ -3,31 +3,46 @@
 本ドキュメントは、プロジェクト全体の「保留事項」「今後の課題」「継続的なタスク」を一元管理するためのものです。
 会話中に発生した「後回し」の指示や、中長期的な改善項目をここに集約します。
 
-優先度は P0（最優先）〜 P3（将来）の4段階。`audit_report.md` の残存課題（D-1〜D-4）も本リストに統合済み。
+優先度は P0（最優先）〜 P3（将来）の4段階。D-1/D-2 リファクタリング（2026-07-04 完了）の際に発見された設計課題を統合済み。
 
 ---
 
 ## P0 — 最優先（データ信頼性・ツールの根幹に直結）
 
-- [ ] **フィルタ二重実装の共通化**（audit D-2）
-  - スクリーナー（`routers.py` の SQLAlchemy 版 `BOOLEAN_FILTER_HANDLERS`）とバックテスト（`indicators/screener_filters.py` の Pandas 版）に同じロジック（RRG Leading In 等）が二重実装されており、片方だけ修正すると結果が食い違うリスクがある。
-  - 「スクリーナー条件をバックテストで検証して実運用する」というツールの根幹に関わるため最優先。
-  - **P1 の「インジケーター検証」の前提タスク**（共通化前に検証しても本番スクリーナーと同じ挙動の検証にならない）。
+（現在なし — D-2 は 2026-07-04 完了、完了済みセクション参照）
 
-## P1 — 高（正確性の担保。P0 の次）
+## P1 — 高（正確性・データ保全。P0 の次）
 
 - [ ] **追加インジケーターのバックテスト検証**
-  - いろいろ追加した割に未検証になっている。⚠️ **D-2（フィルタ共通化）完了後に着手すること**。
+  - いろいろ追加した割に未検証になっている。前提だった D-2（フィルタ共通化）が完了したため**着手可能**。
+- [ ] **パイプライン異常終了時の T3 以降の欠損と自動復旧**
+  - DB更新中のエラー（メモリクラッシュ・PC再起動等）で T3 以降が未更新のまま残る事象が発生（2026-07-02 のデータで AAPL 等多数）。
+  - DB欠損の自動復旧策（`db_health_check` の NG 検知 → 該当日の `--rebuild-from` 自動実行など）。
+  - メモリ使用量の抑制策（T3 並列計算のワーカー数・チャンクサイズ見直し）。
+- [ ] **`heal_*_ids()` の安全弁と実行タイミング見直し**（audit D-3 + 2026-07-04 発見の設計課題を統合）
+  - 【安全性】読み取り GET が user_data.db を無条件に UPDATE・commit する設計。接続先の symbols が不完全だと watchlist/portfolio の symbol_id を静かに NULL 化する（2026-07-04 に Sandbox 検証中の環境変数設定漏れで実際に発生、復旧済み。詳細: `doc/current_in_development/screener_refactoring_d1_d2.md` I-7）。
+    - 対策案: 「解決不能が一定割合（例: 30%）を超えたら healing をスキップして警告ログ」の安全弁を実装する。
+  - 【性能】GET リクエストのたびに全件整合性チェックが走る（audit D-3）。起動時1回 or 最終チェック日時キャッシュへ変更する。
 - [ ] **ティッカー変更・株式分割統合の対応検討**
   - 分割未調整の価格履歴は指標・バックテスト結果を静かに歪める。まず影響範囲の調査・方針検討から。
-- [ ] **`routers.py` の分割**（audit D-1）
-  - 2,944行に肥大化。責務ごとにルーターを分離（`screener_router.py`, `dashboard_router.py`, `chart_router.py`, `watchlist_router.py` 等）。
-  - **D-2 でスクリーナーロジックを共通化する際に screener 部分の切り出しを同時に行うと効率的**。
 
-## P2 — 中（体感改善・保守性・運用負荷）
+## P2 — 中（体感改善・保守性・運用安全性）
 
-- [ ] **dashboard 初回表示が重い**（+ audit D-3: `heal_*_ids()` の毎回全件走査）
-  - GET リクエストのたびに全ウォッチリスト/全ポジションの `symbol_id` 整合性を全件チェックしている問題とセットでプロファイリング → 対策（起動時1回チェック or 最終チェック日時キャッシュ）。
+- [ ] **dashboard 初回表示が重い**
+  - `panel_builders.py` の `_build_panel_item` 等が銘柄ごとにスパークライン用クエリを発行しており（N+1 パターン）、ダッシュボードで数百回のクエリが走る。プロファイリング → 一括取得化。
+- [ ] **Sandbox 切替を単一スイッチにする**（2026-07-04 発見）
+  - 現状 `STOCKTOOL_DB_PATH` と `STOCKTOOL_USER_DB_PATH` を**別々に**設定する必要があり、片方の設定漏れが I-7 事故（watchlist NULL 化）の引き金になった。
+  - `STOCKTOOL_ENV=sandbox` のような単一環境変数で stocktool.db / user_data.db / Parquet の接続先が一貫して切り替わる設計へ変更する。
+- [ ] **スクリーナープリセット TOML のロード時検証**（2026-07-04 発見）
+  - expression のパース失敗が実行時警告で握りつぶされ、画面は正常に見えるため、`trend_breakdown` プリセットが長期間無フィルタ表示になっていた（I-6 で修正済み）。同種の再発を防ぐ。
+  - バックテスト側には `validate_strategies_config` があるのに API 側プリセットには検証がない非対称を解消: サーバー起動時（または pytest）に `screener_presets.toml` の全キー・全 expression を検証し、不正を起動ログで明示する。
+- [ ] **フィルタキー命名の新旧エイリアスの正規化層**（2026-07-04 発見）
+  - `rs_ratio_21_rank`（旧）/`rs_ratio_rank_e21`（新）等の別名が `backtest_screener.py` の `needs_rs*` 判定（各30行超の or 連鎖）や `alias_map` に散在。指標追加のたびに複数箇所の更新が必要で、漏れると**フィルタが黙って素通しになる**（I-6 と同じ静かな失敗パターン）。
+  - 対策: TOML ロード直後にキーを正規名へ一括変換する正規化層を1つ設け、以降のコードは新名のみ扱う。
+  - 併せて `ScreenerResultItem` 等の API レスポンスに重複する新旧フィールドも、フロントの参照を新名に統一して旧名を廃止する。
+- [ ] **テストスイートの本番 DB 依存の解消**（2026-07-04 発見）
+  - `test_rs_data_availability` は本番 DB の DUOL 銘柄の状態に依存し、データ次第で落ちる flaky テスト（現に失敗し続けており All Green ルールを形骸化させている）。フィクスチャ化 or 削除。
+  - `backend/tests/db/test_db.py` は pytest ではなく手動確認スクリプトが紛れ込んでいる状態。`tools/` へ移動 or 削除。
 - [ ] **データベースが更新中か frontend で表示**
   - パイプライン実行中であることを画面に表示（更新中の一時的なデータ欠けへの UX 緩和策）。
 - [ ] **`get_db_session()` に commit がない**（audit D-4）
@@ -39,6 +54,9 @@
 
 ## P3 — 低（将来フェーズ・プロセス系）
 
+- [ ] **スクリーナーの完全 DataFrame 化（D-2 の最終形）**（2026-07-04 発見）
+  - 特殊フィルタは共通化済みだが、数値 min/max フィルタは SQL のままで、特殊フィルタ使用時は Indicator を2回読む（1日分のため実害は小）。
+  - スクリーナー全体をクロスセクション DataFrame ベースに寄せて SQL は取得のみにすると、バックテストとの一致範囲が min/max まで広がりコードも単純になる。
 - [ ] **ポートフォリオ機能（将来フェーズ）**
   - [ ] **moomoo 証券 API 連携**: `portfolios.source = 'moomoo_api'` のポートフォリオで保有銘柄を OpenD (Python SDK / WebSocket) 経由で自動同期。API Doc: https://openapi.moomoo.com/moomoo-api-doc/
   - [ ] **チャート画面へのポジション情報統合**: 個別チャート画面 (`ChartPage`) に購入価格（青）、損切ライン（赤）、利確ライン（緑）の水平ラインを描画し、テクニカル分析と保有管理を一体化。
@@ -53,6 +71,7 @@
 
 ## 完了済みタスク (Completed)
 
+- [x] **フィルタ二重実装の共通化（audit D-2 / 旧P0）+ routers.py 分割（audit D-1 / 旧P1）**: 特殊フィルタ14種の実体を `indicators/screener_filters.py` に一本化し、API は `screener_cross_section.py` 経由でバックテストと同一関数を使用（同値性テストで新旧一致を証明）。routers.py は 2,944→67行、責務別5ルーター（screener/chart/dashboard/watchlist + panel_builders/deps）に分割。付随して既存バグ2件も修正: ①expression パーサの true/false 非対応（trend_breakdown プリセットが無フィルタ表示になっていた）②解決不能 ticker で watchlist API 全体が 500 になる問題。詳細: `doc/current_in_development/screener_refactoring_d1_d2.md` - 2026-07-04
 - [x] **T4テーブル更新中に dashboard が表示できない問題の修正**: 原因はグローバル `BEGIN IMMEDIATE` が API の SELECT にも適用され書き込みロックを奪い合っていたこと。`database.py` で読み取り用（DEFERRED/30s）と書き込み用（`get_write_db()`, BEGIN IMMEDIATE/3600s）のエンジンを分離。回帰テスト `backend/tests/db/test_database.py`（5件）と Sandbox E2E（ロック保持中に 0.41s で応答）で検証済み。 - 2026-07-03
 - [x] **skills の追加/更新**: `.claude/skills/` に9スキルを整備（既存6個の移行 + `parquet-data-quality` / `sandbox-workflow` / `pipeline-debugging` を新規作成）。CLAUDE.md にスキル一覧を記載。 - 2026-07-03
 - [x] **仕様・実装 総合監査（audit_report.md）の A/B/C 全項目**: 実装バグ（A-1〜A-4）、仕様と実装の乖離（B-1〜B-11）、仕様書不整合（C-1〜C-5）、一時スクリプト残留（D-5）を修正完了。残存する構造課題 D-1〜D-4 は本リストの P0〜P2 に転記済み。

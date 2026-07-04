@@ -305,7 +305,8 @@ export interface EarningData {
 
 export interface WatchlistItem {
     id: number;
-    symbol_id: number;
+    // 上場廃止・ticker変更等で symbols から解決できない場合は null
+    symbol_id: number | null;
     ticker: string;
     name: string;
     entry_date: string;

@@ -100,7 +100,7 @@ Each phase catches up independently by comparing max dates between source and ta
 `update_pipeline.py --rebuild-from T3` cascades to T4/T5 automatically to preserve consistency. Phase modules live in `backend/pipeline/phases/`.
 
 ### Backend layout
-- `backend/api/` — FastAPI: `server.py` (app + DB init + CORS), `routers.py` (main data endpoints), `portfolio_router.py`/`portfolio_service.py`/`portfolio_logic.py` (portfolio: router → service → pure-function logic layering), `backtest_router.py`, `schemas.py`
+- `backend/api/` — FastAPI: `server.py` (app + DB init + CORS), routers split by responsibility: `screener_router.py` (+`screener_cross_section.py` adapter), `chart_router.py`, `dashboard_router.py` (+`panel_builders.py`), `watchlist_router.py`, `portfolio_router.py`/`portfolio_service.py`/`portfolio_logic.py` (router → service → pure-function layering), `backtest_router.py`, `routers.py` (core: /ping, /system/info, /symbols), `deps.py`, `schemas.py`. Screener special filters live in `indicators/screener_filters.py` — the SAME functions the backtest uses; never re-implement them in SQL.
 - `backend/db/` — SQLAlchemy models/engine: `database.py`+`models.py` for `stocktool.db`, `database_user.py`+`models_user.py` for `user_data.db`
 - `backend/indicators/` — pure calculation modules (moving averages, volatility, relative strength, volume/trend, market signals, screener filters) — split by responsibility
 - `backend/pipeline/` — orchestrator + phases + `parquet_cache_manager.py` (MVCC read/write of the Parquet master)
@@ -117,7 +117,7 @@ Each phase catches up independently by comparing max dates between source and ta
 ### Sandbox workflow for schema/pipeline changes
 Never test schema or indicator-logic changes against production data directly:
 1. Copy production Parquet to `data/parquet_master_sandbox/`
-2. Point at sandbox via env var: `$env:STOCKTOOL_DB_PATH="data/stocktool_sandbox.db"` before running pipeline/API
+2. Point at sandbox via env vars: `$env:STOCKTOOL_DB_PATH="data/stocktool_sandbox.db"` **AND** `$env:STOCKTOOL_USER_DB_PATH="data/user_data_sandbox.db"` — setting only the former lets the API's `heal_*_ids()` destructively NULL out symbol_ids in the production `user_data.db` (see `.claude/skills/sandbox-workflow/SKILL.md`)
 3. Verify visually — the frontend shows an orange warning badge when connected to a non-production DB
 4. Promote: swap `parquet_master_sandbox/` → `data/parquet_master/`, then clear+restore the SQLite hot cache from the new Parquet master (`restore_sqlite_cache_from_parquet`)
 

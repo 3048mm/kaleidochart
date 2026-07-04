@@ -13,6 +13,10 @@ if backend_dir not in sys.path:
 project_root = os.path.dirname(backend_dir)
 
 from api import routers
+from api import screener_router
+from api import chart_router
+from api import dashboard_router
+from api import watchlist_router
 from api import portfolio_router
 from api import backtest_router
 from db.database import init_db
@@ -45,6 +49,12 @@ app.add_middleware(
 
 # Include the main API router
 app.include_router(routers.router, prefix="/api")
+# Include screener API router
+app.include_router(screener_router.router, prefix="/api")
+# Include chart / dashboard / watchlist API routers
+app.include_router(chart_router.router, prefix="/api")
+app.include_router(dashboard_router.router, prefix="/api")
+app.include_router(watchlist_router.router, prefix="/api")
 # Include portfolio API router
 app.include_router(portfolio_router.router, prefix="/api")
 # Include backtest API router

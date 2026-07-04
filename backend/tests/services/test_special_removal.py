@@ -20,6 +20,7 @@ from sqlalchemy.orm import sessionmaker
 
 from db.models import Base, Symbol, DailyPrice, Indicator, RelativeRank, ThemeConstituent
 from api.routers import router, get_api_db
+from api.screener_router import router as screener_api_router
 
 
 # =====================================================
@@ -44,6 +45,7 @@ def _get_test_db():
 def _create_app():
     app = FastAPI()
     app.include_router(router, prefix="/api")
+    app.include_router(screener_api_router, prefix="/api")
     app.dependency_overrides[get_api_db] = _get_test_db
     return app
 
@@ -187,7 +189,7 @@ class TestBooleanFiltersInDashboard:
             "fall": []
         }
 
-        with patch("api.routers._load_presets", return_value=mock_presets):
+        with patch("api.screener_router._load_presets", return_value=mock_presets):
             resp = client.get("/api/screener/dashboard?target_date=2026-06-10")
             assert resp.status_code == 200
             data = resp.json()
@@ -219,7 +221,7 @@ class TestBooleanFiltersInDashboard:
             "fall": []
         }
 
-        with patch("api.routers._load_presets", return_value=mock_presets):
+        with patch("api.screener_router._load_presets", return_value=mock_presets):
             resp = client.get("/api/screener/dashboard?target_date=2026-06-10")
             assert resp.status_code == 200
             data = resp.json()
@@ -249,7 +251,7 @@ class TestBooleanFiltersInDashboard:
             }]
         }
 
-        with patch("api.routers._load_presets", return_value=mock_presets):
+        with patch("api.screener_router._load_presets", return_value=mock_presets):
             resp = client.get("/api/screener/dashboard?target_date=2026-06-10")
             assert resp.status_code == 200
             data = resp.json()
@@ -274,7 +276,7 @@ class TestBooleanFiltersInDashboard:
             "fall": []
         }
 
-        with patch("api.routers._load_presets", return_value=mock_presets):
+        with patch("api.screener_router._load_presets", return_value=mock_presets):
             resp = client.get("/api/screener/dashboard?target_date=2026-06-10")
             assert resp.status_code == 200
             data = resp.json()
@@ -305,7 +307,7 @@ class TestBooleanFiltersInDashboard:
             "fall": []
         }
 
-        with patch("api.routers._load_presets", return_value=mock_presets):
+        with patch("api.screener_router._load_presets", return_value=mock_presets):
             resp = client.get("/api/screener/dashboard?target_date=2026-06-10")
             assert resp.status_code == 200
             data = resp.json()
@@ -337,7 +339,7 @@ class TestBooleanFiltersInDashboard:
             "fall": []
         }
 
-        with patch("api.routers._load_presets", return_value=mock_presets):
+        with patch("api.screener_router._load_presets", return_value=mock_presets):
             resp = client.get("/api/screener/dashboard?target_date=2026-06-10")
             assert resp.status_code == 200
             data = resp.json()
@@ -383,11 +385,11 @@ class TestBooleanFiltersInDashboard:
             "fall": []
         }
 
-        with patch("api.routers._load_presets", return_value=unfiltered_presets):
+        with patch("api.screener_router._load_presets", return_value=unfiltered_presets):
             resp1 = client.get("/api/screener/dashboard?target_date=2026-06-10")
             unfiltered_count = len(resp1.json()["rise"][0]["items"])
 
-        with patch("api.routers._load_presets", return_value=filtered_presets):
+        with patch("api.screener_router._load_presets", return_value=filtered_presets):
             resp2 = client.get("/api/screener/dashboard?target_date=2026-06-10")
             filtered_count = len(resp2.json()["rise"][0]["items"])
 

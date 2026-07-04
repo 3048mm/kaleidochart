@@ -12,6 +12,7 @@ from sqlalchemy.orm import sessionmaker
 
 from db.models import Base, Symbol, DailyPrice, Indicator, RelativeRank, ThemeConstituent
 from api.routers import router, get_api_db
+from api.screener_router import router as screener_api_router
 
 # Create shared in-memory SQLite DB
 _engine = create_engine(
@@ -33,6 +34,7 @@ def _get_test_db():
 def _create_app():
     app = FastAPI()
     app.include_router(router, prefix="/api")
+    app.include_router(screener_api_router, prefix="/api")
     app.dependency_overrides[get_api_db] = _get_test_db
     return app
 

@@ -23,6 +23,11 @@ try:
         filter_rrg_leading_in,
         filter_rrg_improving_in,
         filter_rrg_lagging_in,
+        filter_rs_macd_hist_rising_21,
+        filter_rs_trend_s21_lt_s63,
+        filter_rs_trend_s14_lt_s21,
+        filter_theme_rs_trend_rank_s14_gt_s21,
+        filter_theme_rs_trend_rank_s21_gt_s63,
     )
 except ModuleNotFoundError:
     from backend.indicators.screener_filters import (
@@ -35,6 +40,11 @@ except ModuleNotFoundError:
         filter_rrg_leading_in,
         filter_rrg_improving_in,
         filter_rrg_lagging_in,
+        filter_rs_macd_hist_rising_21,
+        filter_rs_trend_s21_lt_s63,
+        filter_rs_trend_s14_lt_s21,
+        filter_theme_rs_trend_rank_s14_gt_s21,
+        filter_theme_rs_trend_rank_s21_gt_s63,
     )
 
 
@@ -488,46 +498,21 @@ def apply_filters_to_df(
 
     # Individual RS Trend raw value comparisons
     if strategy.get('is_rs_trend_s21_lt_s63'):
-        if 'rs_trend_s21' in merged.columns and 'rs_trend_s63' in merged.columns:
-            mask &= merged['rs_trend_s21'] < merged['rs_trend_s63']
+        mask &= filter_rs_trend_s21_lt_s63(merged)
 
     if strategy.get('is_rs_trend_s14_lt_s21'):
-        if 'rs_trend_s14' in merged.columns and 'rs_trend_s21' in merged.columns:
-            mask &= merged['rs_trend_s14'] < merged['rs_trend_s21']
+        mask &= filter_rs_trend_s14_lt_s21(merged)
 
     # RS-MACD acceleration filter
     if strategy.get('is_rs_macd_hist_rising_21'):
-        if 'rs_macd_hist_21' in merged.columns and 'prev_rs_macd_hist_21' in merged.columns:
-            mask &= (merged['rs_macd_hist_21'] > 0) & (merged['rs_macd_hist_21'] > merged['prev_rs_macd_hist_21'])
+        mask &= filter_rs_macd_hist_rising_21(merged)
 
     # Theme RS Condition Rank comparisons
     if strategy.get('theme_rs_condition_14_gt_21') or strategy.get('is_theme_rs_trend_rank_s14_gt_s21'):
-        if 'rs_condition_14_rank' in merged.columns and 'rs_condition_21_rank' in merged.columns:
-            theme_rows = merged[merged['category'] == 'テーマ']
-            leading_themes = theme_rows[
-                theme_rows['rs_condition_14_rank'] > theme_rows['rs_condition_21_rank']
-            ]['symbol_id'].values
-            stocks_in_themes = df_theme_constituents[
-                df_theme_constituents['theme_id'].isin(leading_themes)
-            ]['symbol_id'].values
-            mask &= (
-                ((merged['category'] == 'テーマ') & (merged['symbol_id'].isin(leading_themes))) |
-                ((merged['category'] == '個別') & (merged['symbol_id'].isin(stocks_in_themes)))
-            )
+        mask &= filter_theme_rs_trend_rank_s14_gt_s21(merged, df_theme_constituents)
 
     if strategy.get('theme_rs_condition_21_gt_63') or strategy.get('is_theme_rs_trend_rank_s21_gt_s63'):
-        if 'rs_condition_21_rank' in merged.columns and 'rs_condition_63_rank' in merged.columns:
-            theme_rows = merged[merged['category'] == 'テーマ']
-            leading_themes = theme_rows[
-                theme_rows['rs_condition_21_rank'] > theme_rows['rs_condition_63_rank']
-            ]['symbol_id'].values
-            stocks_in_themes = df_theme_constituents[
-                df_theme_constituents['theme_id'].isin(leading_themes)
-            ]['symbol_id'].values
-            mask &= (
-                ((merged['category'] == 'テーマ') & (merged['symbol_id'].isin(leading_themes))) |
-                ((merged['category'] == '個別') & (merged['symbol_id'].isin(stocks_in_themes)))
-            )
+        mask &= filter_theme_rs_trend_rank_s21_gt_s63(merged, df_theme_constituents)
 
     # Dynamic Theme Indicator numerical filters (e.g. min_theme_rs_trend_s21)
     for key, value in strategy.items():
@@ -561,11 +546,16 @@ def apply_filters_to_df(
     expression = strategy.get('expression')
     if expression and isinstance(expression, str) and expression.strip():
         try:
+            # 小文字の true/false リテラルを pandas.query が解釈できる形へ正規化
+            # (API 側 _parse_expression_to_filter と同一の式を受け付けるため)
+            import re as _re
+            expr_normalized = _re.sub(r'true', 'True', expression)
+            expr_normalized = _re.sub(r'false', 'False', expr_normalized)
             # We use query() which is generally safe for simple filters
             # Ensure we only keep rows where expression is true
             merged = merged[mask].copy()
             # reset index to make query simpler
-            merged = merged.query(expression)
+            merged = merged.query(expr_normalized)
             mask = pd.Series(True, index=merged.index) # reset mask as we already filtered
         except Exception as e:
             print(f"Warning: Failed to evaluate expression '{expression}': {e}")
