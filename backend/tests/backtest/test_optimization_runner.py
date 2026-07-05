@@ -431,50 +431,7 @@ class TestEvaluateHoldout:
                          ("2023-01-01", "2023-12-31")]
 
 
-# ============================================================
-# Tests for calculate_custom_score() — LCB 化（修正3）
-# ============================================================
-
-def _score_metrics(expectancy, lcb=None, trades=50, dd=-5.0):
-    m = {
-        "total_trades": trades,
-        "expectancy": expectancy,
-        "max_drawdown_pct": dd,
-    }
-    if lcb is not None:
-        m["expectancy_lcb"] = lcb
-    return m
-
-
-class TestCustomScoreUsesLcb:
-    """スコアの主指標は expectancy ではなく expectancy_lcb（期待値 − 2×SE）であること。
-
-    少数トレード×高分散の「まぐれ」パラメータが、安定して稼ぐパラメータより
-    高評価になるのを防ぐ（doc/completed/backtest_optimization_hardening_plan.md 修正3）。
-    """
-
-    def test_score_uses_lcb_not_raw_expectancy(self):
-        from optimization_runner import calculate_custom_score
-
-        # 期待値 5.0 だが分散が大きく LCB=1.0 のケースは、
-        # 期待値 1.0（=LCB 1.0）の安定ケースと同スコアであるべき
-        lumpy = calculate_custom_score(_score_metrics(5.0, lcb=1.0), 252)
-        stable = calculate_custom_score(_score_metrics(1.0, lcb=1.0), 252)
-        assert lumpy == pytest.approx(stable)
-
-    def test_negative_lcb_scores_negative_even_if_expectancy_positive(self):
-        from optimization_runner import calculate_custom_score
-
-        # 期待値はプラスでも LCB がマイナス（統計的にゼロと区別できない）なら
-        # マイナス期待値の分岐で罰する
-        score = calculate_custom_score(_score_metrics(2.0, lcb=-1.0), 252)
-        assert score < 0
-
-    def test_fallback_to_expectancy_when_lcb_missing(self):
-        from optimization_runner import calculate_custom_score
-
-        # 後方互換: expectancy_lcb が無い metrics（旧呼び出し元）では expectancy を使う
-        with_lcb = calculate_custom_score(_score_metrics(3.0, lcb=3.0), 252)
-        without = calculate_custom_score(_score_metrics(3.0), 252)
-        assert without == pytest.approx(with_lcb)
+# calculate_custom_score() のスコアリング・テストは 2026-07-06 の目的関数再設計
+# （主指標: expectancy_lcb → 期間CAGR × DDペナルティ × 検出件数帯）に伴い
+# test_optimization_score.py へ移設した。
 

@@ -43,19 +43,43 @@ def get_cached_data(config_app, start_date, end_date):
     print("Data preload complete.", flush=True)
     return res
 
-def calculate_custom_score(metrics, total_trading_days, max_allowed_dd: float = 20.0):
+def detect_adequacy(avg_hits_per_day: float, detect_band: tuple = (1.0, 12.0, 0.4)) -> float:
+    """検出件数の「実用帯」係数（0〜1）を返す。多すぎず少なすぎずを緩やかに選好する。
+
+    型1は無限資金だが、そのスクリーンは型3（有限資産）で使われる。日に多数ヒットしても
+    有限資産では取り切れず、逆に枯れると枠が遊ぶ。そこで avg件/日 を実用帯に収めるための
+    ソフトな選好係数を CAGR スコアに掛ける。ハードな門番は prune 境界（min/max_avg_hits_per_day）
+    が担うため、ここは帯外でも floor 未満には割り引かない（優秀なスクリーンを件数だけで抹殺しない）。
+
+    detect_band = (lo, hi, floor):
+      - lo <= x <= hi : 1.0（減点なし）
+      - x < lo        : max(floor, x/lo)（過少。線形に減衰、floor が下限）
+      - x > hi        : max(floor, hi/x)（過多。反比例で減衰、floor が下限）
     """
-    Calculate optimization score. Higher = Better.
+    lo, hi, floor = detect_band
+    if lo <= avg_hits_per_day <= hi:
+        return 1.0
+    if avg_hits_per_day < lo:
+        return max(floor, avg_hits_per_day / lo) if lo > 0 else 1.0
+    return max(floor, hi / avg_hits_per_day) if avg_hits_per_day > 0 else floor
 
-    Primary metric: expectancy_lcb（期待値の下側信頼限界 = expectancy − 2×SE）。
-    少数トレード×高分散の「まぐれ」は SE 増大で自動的に沈み、
-    件数を伴って安定して勝つパラメータほど高スコアになる。
-    （metrics に expectancy_lcb が無い旧呼び出し元では expectancy にフォールバック）
 
-    Penalties:
-    - Less than 5 trades (too rare to be statistically meaningful)
-    - More than 25 trades per day on average (too noisy / over-fitted)
-    - Threshold-based squared penalty for drawdowns exceeding max_allowed_dd
+def calculate_custom_score(metrics, total_trading_days, max_allowed_dd: float = 20.0,
+                           detect_band: tuple = (1.0, 12.0, 0.4)):
+    """最適化スコアを計算する（高いほど良い）。2026-07-06 再設計。
+
+    score = period_CAGR / dd_penalty × detect_adequacy(avg_hits_per_day)
+
+    主指標を expectancy_lcb（1トレード単価）から **期間CAGR（複利での資産成長）** へ差し替えた。
+    「1トレードで勝つ」ではなく「資産をどこまで伸ばしつつ DD を抑えるか」を最適化する（実質 Calmar 型）。
+    CAGR は無限資金・avg_slots 正規化のまま（strat_multiplier）。年率化して学習期間の長さ差を公平化する。
+    検出件数は detect_adequacy でソフトに実用帯へ寄せる。詳細: doc/in_progress/objective_redesign_plan.md
+
+    ゲート/ペナルティ:
+    - トレード5件未満（統計的に無意味）: 勾配ゲート
+    - CAGR<=0（成長がマイナス）: DD の深さでさらに沈める（detect係数は掛けない）
+    - max_allowed_dd 超過: 超過分の2乗ペナルティ
+    - 検出件数が実用帯外: detect_adequacy による係数割引（floor が下限）
     """
     if not metrics:
         return -1000.0
@@ -65,23 +89,23 @@ def calculate_custom_score(metrics, total_trading_days, max_allowed_dd: float = 
         # Gradient so Optuna knows if it's getting closer
         return -100.0 + (trades_count * 20.0)
     avg_trades_per_day = trades_count / total_trading_days
-    
-    # Penalty for too many trades (noise / over-fitting)
-    if avg_trades_per_day >= 50:
-        return -500.0 - (avg_trades_per_day * 10)
-    elif avg_trades_per_day >= 25:
-        return -100.0 - (avg_trades_per_day * 2)
-        
-    # --- Primary scoring: expectancy の下側信頼限界（LCB）---
-    expectancy = metrics.get('expectancy_lcb', metrics.get('expectancy', 0.0))
+
+    # --- 主指標: 期間CAGR（年率化）。無限資金・avg_slots 正規化済みの strat_multiplier から算出 ---
+    strat_mult = metrics.get('strat_multiplier', 1.0)
+    period_years = total_trading_days / 252.0
+    if period_years > 0 and strat_mult > 0:
+        period_cagr = (strat_mult ** (1.0 / period_years) - 1.0) * 100.0
+    else:
+        period_cagr = 0.0
+
     # The max_drawdown_pct received here is now already Portfolio-Equivalent (Normalized via Little's Law)
     normalized_dd = abs(metrics.get('max_drawdown_pct', 0.0))
 
-    if expectancy <= 0:
-        # マイナス期待値ならドローダウンが深いほどさらにマイナス
-        return (expectancy * 10) - normalized_dd
+    if period_cagr <= 0:
+        # 成長がゼロ以下ならドローダウンが深いほどさらにマイナス（検出係数は掛けない）
+        return period_cagr - normalized_dd
 
-    # --- しきい値付き2乗ペナルティ計算 ---
+    # --- しきい値付き2乗 DD ペナルティ（CAGR に対して割る = Calmar 型） ---
     if normalized_dd <= max_allowed_dd:
         # 閾値内ならマイルドな割引
         penalty = 1.0 + (normalized_dd ** 0.5) * 0.1
@@ -89,12 +113,11 @@ def calculate_custom_score(metrics, total_trading_days, max_allowed_dd: float = 
         # 閾値を超えたら、超過分を2乗して急激にペナルティを増大させる
         excess = normalized_dd - max_allowed_dd
         penalty = 1.0 + (max_allowed_dd ** 0.5) * 0.1 + (excess ** 2) * 1.5
-        
-    score = (expectancy * 100.0) / penalty
-    
-    # 1日あたりの取引回数が多すぎる場合は期待値をさらに割り引く(10件まではノーペナルティ)
-    if avg_trades_per_day > 10.0:
-        score = score / ((avg_trades_per_day / 10.0) ** 0.5)
+
+    score = period_cagr / penalty
+
+    # --- 検出件数の実用帯係数（多すぎず少なすぎず） ---
+    score *= detect_adequacy(avg_trades_per_day, detect_band)
 
     return score
 
@@ -404,9 +427,16 @@ def objective(trial: optuna.Trial, strategy_name: str, config, config_app, exit_
         max_allowed_dd = strat_base.get('max_allowed_dd', 20.0)
         consider_tax = float(config.get('general', {}).get('consider_tax', 0.0))
         entry_mode = config.get('general', {}).get('entry_mode', 'close')
-        
+
+        # 検出件数の実用帯 detect_band=(lo, hi, floor)。戦略側 > [optimization_pruning] > コード既定 の順で解決
+        band_lo = strat_base.get('detect_lo', prune_conf.get('detect_lo', 1.0))
+        band_hi = strat_base.get('detect_hi', prune_conf.get('detect_hi', 12.0))
+        band_floor = strat_base.get('detect_floor', prune_conf.get('detect_floor', 0.4))
+        detect_band = (float(band_lo), float(band_hi), float(band_floor))
+
         total_score = 0.0
         total_trades = 0
+        total_trading_days_all = 0
         total_wins = 0
         expectancy_sum = 0.0
         expectancy_lcb_sum = 0.0
@@ -442,9 +472,10 @@ def objective(trial: optuna.Trial, strategy_name: str, config, config_app, exit_
                     # Fallback, theoretically shouldn't reach if bounds logic matched
                     raise optuna.TrialPruned()
                 
-            period_score = calculate_custom_score(metrics, len(trading_dates), max_allowed_dd)
+            period_score = calculate_custom_score(metrics, len(trading_dates), max_allowed_dd, detect_band)
             total_score += period_score
-            
+            total_trading_days_all += len(trading_dates)
+
             if metrics:
                 total_trades += metrics.get('total_trades', 0)
                 total_wins += metrics.get('win_trades', 0)
@@ -531,7 +562,8 @@ def objective(trial: optuna.Trial, strategy_name: str, config, config_app, exit_
         trial.set_system_attr("note", params_toml_str)
 
         # --- Trial Summary Log ---
-        print(f"  [Trial {trial.number}] Score: {avg_score:.2f} | AvgGain: {trial.user_attrs['avg_gain']:+.2f}% (LCB: {trial.user_attrs['expectancy_lcb']:+.2f}%) | Port vs SPY: {portfolio_vs_spy:+.2f}% (Total: {port_vs_spy_total:+.1f}%) | MaxDD: {max_dd_overall:.1f}% | Trades: {total_trades} | WinRate: {trial.user_attrs['win_rate']:.1f}%", flush=True)
+        avg_per_day_all = total_trades / total_trading_days_all if total_trading_days_all > 0 else 0.0
+        print(f"  [Trial {trial.number}] Score: {avg_score:.2f} | PortCAGR: {portfolio_cagr:+.1f}% (vs SPY {portfolio_vs_spy:+.1f}%) | MaxDD: {max_dd_overall:.1f}% | {avg_per_day_all:.1f} hits/day | Trades: {total_trades} | Win: {trial.user_attrs['win_rate']:.1f}% | AvgGain: {trial.user_attrs['avg_gain']:+.2f}%", flush=True)
 
         return avg_score
     except Exception as e:
@@ -636,15 +668,15 @@ def main():
     print("-" * 30 + "\n")
         
     if "expectancy" in trial.user_attrs:
+        print(f"  Port CAGR:      {trial.user_attrs.get('port_cagr', 0):.2f}% (Total: {trial.user_attrs.get('port_total_return', 0):.2f}%)  ← スコアの主指標（年率化・DDペナルティ・検出件数帯で調整）")
+        print(f"  Max Drawdown:   {trial.user_attrs.get('max_drawdown', 0):.1f}%")
         print(f"  Expectancy:     {trial.user_attrs['expectancy']:.3f}%")
-        print(f"  Expectancy LCB: {trial.user_attrs.get('expectancy_lcb', 0):.3f}%  (期待値 − 2×SE。スコアの主指標)")
+        print(f"  Expectancy LCB: {trial.user_attrs.get('expectancy_lcb', 0):.3f}%  (期待値 − 2×SE。補助指標＝シグナルの質)")
         print(f"  Avg Gain/Trade: {trial.user_attrs['avg_gain']:.3f}%")
         print(f"  Avg SPY Gain:   {trial.user_attrs['avg_spy_gain']:.3f}%")
         print(f"  Alpha:          {trial.user_attrs.get('alpha', 0):.3f}%")
-        print(f"  Max Drawdown:   {trial.user_attrs.get('max_drawdown', 0):.1f}%")
         print(f"  Win Rate:       {trial.user_attrs.get('win_rate', 0):.1f}%")
         print(f"  Total Trades:   {trial.user_attrs.get('total_trades', 0)}")
-        print(f"  Port CAGR:      {trial.user_attrs.get('port_cagr', 0):.2f}% (Total: {trial.user_attrs.get('port_total_return', 0):.2f}%)")
         print(f"  SPY B&H CAGR:   {trial.user_attrs.get('spy_cagr', 0):.2f}% (Total: {trial.user_attrs.get('spy_total_return', 0):.2f}%)")
         print(f"  Port vs SPY:    {trial.user_attrs.get('port_vs_spy', 0):.2f}% (Total: {trial.user_attrs.get('port_vs_spy_total', 0):.2f}%)")
 
