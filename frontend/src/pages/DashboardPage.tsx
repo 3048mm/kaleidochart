@@ -19,6 +19,13 @@ export const DashboardPage: React.FC = () => {
     const [activeTab, setActiveTab] = useState<'indicator' | 'market' | 'sector-theme'>('indicator');
     const [themesVisibleCount, setThemesVisibleCount] = useState(10);
     const [rankType, setRankType] = useState<'rs_trend' | 'rs_ratio'>('rs_trend');
+    const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+
+    useEffect(() => {
+        const handleResize = () => setIsMobile(window.innerWidth <= 768);
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
 
     // Initial load: Fetch available dates
     useEffect(() => {
@@ -181,11 +188,24 @@ export const DashboardPage: React.FC = () => {
     };
 
     return (
-        <div className="dashboard-page" style={{ padding: '20px', width: '100%', maxWidth: '1200px', margin: '0 auto', boxSizing: 'border-box' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                <h1 style={{ margin: 0 }}>Market Dashboard</h1>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <label style={{ fontSize: '14px', color: '#aaa' }}>Base Date:</label>
+        <div className="dashboard-page" style={{ padding: isMobile ? '10px' : '20px', width: '100%', maxWidth: '1200px', margin: '0 auto', boxSizing: 'border-box' }}>
+            <div style={{ 
+                display: 'flex', 
+                flexDirection: isMobile ? 'column' : 'row', 
+                justifyContent: 'space-between', 
+                alignItems: isMobile ? 'flex-start' : 'center', 
+                marginBottom: '20px',
+                gap: isMobile ? '12px' : '0'
+            }}>
+                <h1 style={{ margin: 0, fontSize: isMobile ? '20px' : '28px' }}>Market Dashboard</h1>
+                <div style={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: isMobile ? '4px' : '10px', 
+                    width: isMobile ? '100%' : 'auto', 
+                    justifyContent: isMobile ? 'space-between' : 'flex-end' 
+                }}>
+                    <label style={{ fontSize: '13px', color: '#aaa' }}>Base Date:</label>
                     <button 
                         onClick={() => shiftDate(-1)} 
                         style={{ background: 'transparent', border: 'none', color: !availableDates.some(d => d < selectedDate) ? '#444' : '#aaa', cursor: 'pointer', fontSize: '18px', padding: '0 5px' }}
@@ -193,7 +213,17 @@ export const DashboardPage: React.FC = () => {
                     >
                         ◀
                     </button>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(255,255,255,0.05)', padding: '4px 10px', borderRadius: '6px', border: `1px solid ${appConfig.colors.glassBorder}` }}>
+                    <div style={{ 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        gap: '4px', 
+                        background: 'rgba(255,255,255,0.05)', 
+                        padding: '4px 8px', 
+                        borderRadius: '6px', 
+                        border: `1px solid ${appConfig.colors.glassBorder}`,
+                        flex: isMobile ? 1 : 'none',
+                        justifyContent: 'center'
+                    }}>
                         <input
                             type="date"
                             value={selectedDate}
@@ -202,13 +232,14 @@ export const DashboardPage: React.FC = () => {
                                 background: 'transparent',
                                 border: 'none',
                                 color: '#fff',
-                                fontSize: '14px',
+                                fontSize: '13px',
                                 outline: 'none',
                                 colorScheme: 'dark',
-                                cursor: 'pointer'
+                                cursor: 'pointer',
+                                width: '105px'
                             }}
                         />
-                        <span style={{ fontSize: '13px', color: appConfig.colors.accent, fontWeight: 'bold', minWidth: '35px' }}>
+                        <span style={{ fontSize: '12px', color: appConfig.colors.accent, fontWeight: 'bold' }}>
                             ({selectedDate ? new Date(selectedDate).toLocaleDateString('en-US', { weekday: 'short' }) : '---'})
                         </span>
                     </div>

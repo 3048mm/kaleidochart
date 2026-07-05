@@ -6,6 +6,10 @@ start_date = "2021-03-26"
 end_date   = "2026-03-26"
 failsafe_max_days = 120
 consider_tax = 0.0
+# エントリー方式: "close"=シグナル当日終値（オーバーナイト発注運用と整合） / "next_open"=翌営業日寄付（保守側の感度計測用）
+entry_mode = "close"
+# 流動性ハード制約（最適化対象外・全戦略共通）: 21日平均売買代金がこの値未満の銘柄はシグナル対象外
+min_avg_dollar_volume_21 = 2e6
 
 # --- Exit Rules (固定) ---
 [exit_rules]
@@ -382,6 +386,20 @@ periods = [
     { start = "2022-01-01", end = "2022-12-31", label = "Bear 2022" },
     { start = "2024-06-01", end = "2025-12-31", label = "Bull 2024-25" },
 ]
+
+# =============================================================
+# Optimization Holdout Validation (スコア計算に使わない未学習期間)
+# 注意: 学習期間（optimization_periods）と重なる期間は定義しないこと。
+#       2025-02〜04 は Bull 2024-25 に内包されるため使用禁止。2021 は温存（将来のブル側検証候補）。
+# =============================================================
+
+[[optimization_validation.sets]]
+label = "stress_bear"   # 引き締め型ベア(2018Q4) + 事故型クラッシュ(COVID)。勝率の安定性を見る
+windows = [ { start = "2018-10-01", end = "2018-12-31" }, { start = "2020-02-01", end = "2020-05-31" } ]
+
+[[optimization_validation.sets]]
+label = "calm_recent"   # レンジ相場(2023)での無駄撃ち + 学習期間より後の疑似フォワード(2026H1)
+windows = [ { start = "2023-01-01", end = "2023-12-31" }, { start = "2026-01-01", end = "2026-06-30" } ]
 
 # =============================================================
 # Optimization Pruning Rules

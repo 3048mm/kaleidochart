@@ -661,7 +661,14 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
         <div style={{ display: 'flex', flexDirection: 'column', height: isMobile ? 'calc(100vh - 130px)' : '100%', boxSizing: 'border-box' }}>
             <div style={{ padding: isMobile ? '10px' : '10px 20px', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: isMobile ? '8px' : '12px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', width: '100%', justifyContent: 'space-between' }}>
-                    <Link to="/" style={{ color: '#00ff88', textDecoration: 'none', fontSize: isMobile ? '13px' : '14px' }}>&larr; Dashboard</Link>
+                    <div style={{ display: 'flex', gap: '15px' }}>
+                        <Link to="/" style={{ color: '#00ff88', textDecoration: 'none', fontSize: isMobile ? '13px' : '14px' }}>&larr; Dashboard</Link>
+                        {(selected.category === 'テーマ' || selected.category === 'セクタ') && (
+                            <Link to={`/group/${selected.ticker}`} style={{ color: '#60a5fa', textDecoration: 'none', fontSize: isMobile ? '13px' : '14px', fontWeight: 'bold' }}>
+                                &rarr; Theme Details ({selected.ticker})
+                            </Link>
+                        )}
+                    </div>
                     <a href={tradingViewUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#2962FF', textDecoration: 'none', fontSize: '12px' }}>
                         TradingView ↗
                     </a>

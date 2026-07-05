@@ -22,6 +22,8 @@ A personal stock analysis/screening web tool (Japanese-language docs and UI). It
 
 Read `doc/architecture.md`, `doc/backend_specification.md`, and `doc/frontend_specification.md` before working on backend data model, pipeline, or API changes — they are detailed and authoritative (DB schema, column semantics, indicator formulas, API contracts). `doc/issue_list.md` tracks open backlog items.
 
+**Development-item workflow**: when starting a development item, copy `doc/in_progress/_TEMPLATE.md` to `doc/in_progress/<name>_plan.md`, fill it in, and get the plan reviewed by the user before implementing. Keep the checklist / notes / issues sections updated while working (the plan doubles as a handoff document for other sessions/agents), and move the file to `doc/completed/` when done. See `doc/agent_execution_rules.md` §9.
+
 ## Commands
 
 ### Setup
@@ -104,7 +106,7 @@ Each phase catches up independently by comparing max dates between source and ta
 - `backend/db/` — SQLAlchemy models/engine: `database.py`+`models.py` for `stocktool.db`, `database_user.py`+`models_user.py` for `user_data.db`
 - `backend/indicators/` — pure calculation modules (moving averages, volatility, relative strength, volume/trend, market signals, screener filters) — split by responsibility
 - `backend/pipeline/` — orchestrator + phases + `parquet_cache_manager.py` (MVCC read/write of the Parquet master)
-- `backend/backtest/` — CLI backtest/scenario engine (`backtest_runner.py`, `backtest_screener.py`, `backtest_simulator.py`, `scenario_*.py` for multi-regime/Monte Carlo scenario testing), driven by `backtest_config.toml`
+- `backend/backtest/` — CLI backtest/scenario engine (`backtest_runner.py`, `backtest_screener.py`, `backtest_simulator.py`, `scenario_*.py` for multi-regime/Monte Carlo scenario testing), driven by `backtest_config.toml`. テストは役割の異なる3種類（型1: スクリーン条件最適化＝無限資金・コストなし・レジーム非依存が**意図** / 型2: ETFシナリオ / 型3: 個別銘柄シナリオ＝有限資産・コストあり・MTS連動）— 片方の設計判断をもう片方の基準で評価しないこと。詳細: `doc/backend_specification.md` §6.1
 - `backend/scripts/` — batch entry points and one-off migration scripts
 
 ### Frontend layout (`frontend/src/`)

@@ -95,8 +95,11 @@ def scan_signals_for_date(
         price_day = df_price[df_price['date'] == target_date].copy()
         if price_day.empty: return []
     
+    price_cols = ['symbol_id', 'date', 'open', 'high', 'low', 'close', 'volume', 'market_cap']
+    if 'avg_dollar_volume_21' in price_day.columns:
+        price_cols.append('avg_dollar_volume_21')  # 流動性ハード制約（min_avg_dollar_volume_21）用
     merged = ind_day.merge(
-        price_day[['symbol_id', 'date', 'open', 'high', 'low', 'close', 'volume', 'market_cap']],
+        price_day[price_cols],
         on=['symbol_id', 'date'],
         how='inner'
     )

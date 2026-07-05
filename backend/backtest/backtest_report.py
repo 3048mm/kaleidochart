@@ -5,24 +5,86 @@ Aggregates TradeResult lists into performance metrics and
 generates comparison tables.
 """
 import json
+import math
 import os
-from typing import List, Dict, Any
+from typing import Any, Dict, List, Optional
 from datetime import date
 from backend.backtest.backtest_simulator import TradeResult
 
 
-def calculate_metrics(trades: List[TradeResult], spy_period_return: float = 0.0, consider_tax: float = 0.0) -> Dict[str, Any]:
+def _build_mtm_max_drawdown(trades: List[TradeResult], price_by_sym: Dict[int, Any],
+                            partial_ratio: float) -> float:
+    """日次 mark-to-market エクイティカーブから最大ドローダウン（正規化前・%ポイント）を計算する。
+
+    - 保有中（entry_date < d < exit_date）は日次終値で含み損益を評価
+    - 部分利確後は確定分（partial_ratio）を固定し、残りのみ時価評価
+    - exit 日以降は確定損益（pnl_pct）が累積エクイティに恒久加算される
+
+    旧 additive 方式（exit 日ソートの確定損益累積）では見えなかった
+    「保有中の含み損の谷」「シグナル集中期の同時被弾」を DD に反映する。
+    """
+    realized_by_date: Dict[Any, float] = {}
+    open_by_date: Dict[Any, float] = {}
+
+    for t in trades:
+        realized_by_date[t.exit_date] = realized_by_date.get(t.exit_date, 0.0) + t.pnl_pct
+
+        df_p = price_by_sym.get(t.symbol_id)
+        if df_p is None or len(df_p) == 0 or t.entry_price <= 0:
+            continue
+        window = df_p[(df_p['date'] > t.entry_date) & (df_p['date'] < t.exit_date)]
+        if window.empty:
+            continue
+        partial_date = getattr(t, 'partial_exit_date', None)
+        partial_pnl = t.partial_exit_pnl_pct
+        for d, close in zip(window['date'].values, window['close'].values):
+            unrealized = (close - t.entry_price) / t.entry_price * 100.0
+            if partial_date is not None and partial_pnl is not None and d >= partial_date:
+                contrib = partial_pnl * partial_ratio + unrealized * (1.0 - partial_ratio)
+            else:
+                contrib = unrealized
+            open_by_date[d] = open_by_date.get(d, 0.0) + contrib
+
+    all_dates = sorted(set(realized_by_date) | set(open_by_date))
+    cum_realized = 0.0
+    peak = 0.0
+    max_dd = 0.0
+    for d in all_dates:
+        cum_realized += realized_by_date.get(d, 0.0)
+        equity = cum_realized + open_by_date.get(d, 0.0)
+        if equity > peak:
+            peak = equity
+        dd = peak - equity
+        if dd > max_dd:
+            max_dd = dd
+    return max_dd
+
+
+def calculate_metrics(trades: List[TradeResult], spy_period_return: float = 0.0,
+                      consider_tax: float = 0.0,
+                      price_by_sym: Optional[Dict[int, Any]] = None,
+                      trading_dates: Optional[list] = None,
+                      partial_ratio: float = 0.333) -> Dict[str, Any]:
     """
     Calculate performance metrics from a list of trade results.
+
+    Args:
+        price_by_sym: {symbol_id: 日次価格 DataFrame}。指定時は max_drawdown_pct を
+            mark-to-market 方式で計算する（未指定時は旧 additive 方式にフォールバック）。
+        partial_ratio: 部分利確の比率（MTM 評価で確定分を固定するために使用）。
 
     Returns:
         Dict with metrics including:
         - trades, wins, win_rate, avg_win, avg_loss
         - profit_factor, expectancy, avg_holding_days
-        - avg_gain: average PnL% per trade (key metric for optimization)
+        - pnl_std / expectancy_se / expectancy_lcb: トレードpnl の標本標準偏差・標準誤差・
+          下側信頼限界（expectancy − 2×SE）。少数トレードのまぐれを罰する最適化用指標
+        - avg_gain: average PnL% per trade
         - avg_spy_gain: average SPY return% over the same holding periods (benchmark)
         - alpha: avg_gain - avg_spy_gain (excess return over market)
-        - total_return_pct, max_drawdown_pct (additive cumulative PnL)
+        - total_return_pct
+        - max_drawdown_pct: MTM ドローダウン（price_by_sym 指定時）
+        - max_drawdown_legacy_pct: 旧 additive 方式の DD（比較用に常時併記)
         - exit_reasons breakdown
     """
     if not trades:
@@ -30,10 +92,12 @@ def calculate_metrics(trades: List[TradeResult], spy_period_return: float = 0.0,
             'trades': 0, 'wins': 0, 'win_rate': 0.0,
             'avg_win': 0.0, 'avg_loss': 0.0,
             'profit_factor': 0.0, 'expectancy': 0.0,
+            'pnl_std': 0.0, 'expectancy_se': 0.0, 'expectancy_lcb': 0.0,
             'avg_holding_days': 0.0, 'exit_reasons': {},
             'avg_gain': 0.0, 'avg_spy_gain': 0.0, 'alpha': 0.0,
             'total_trades': 0, 'win_trades': 0,
             'total_return_pct': 0.0, 'max_drawdown_pct': 0.0,
+            'max_drawdown_legacy_pct': 0.0,
             'strat_multiplier': 1.0, 'spy_multiplier': 1.0,
         }
 
@@ -57,6 +121,18 @@ def calculate_metrics(trades: List[TradeResult], spy_period_return: float = 0.0,
 
     # Average gain per trade (key metric for optimization)
     avg_gain = sum(t.pnl_pct for t in trades) / total
+
+    # 期待値の下側信頼限界（LCB = expectancy − 2×SE）。
+    # 少数トレード・高分散の「まぐれ」は SE が大きくなり自動的に沈む。
+    # n < 2 では SE が定義できないため LCB = expectancy（<5件はスコア側のゲートが罰する）
+    if total >= 2:
+        variance = sum((t.pnl_pct - avg_gain) ** 2 for t in trades) / (total - 1)
+        pnl_std = math.sqrt(variance)
+        expectancy_se = pnl_std / math.sqrt(total)
+    else:
+        pnl_std = 0.0
+        expectancy_se = 0.0
+    expectancy_lcb = avg_gain - 2.0 * expectancy_se
 
     # SPY benchmark: average SPY return over the same holding periods
     spy_gains = [t.spy_pnl_pct for t in trades if t.spy_pnl_pct is not None]
@@ -100,7 +176,14 @@ def calculate_metrics(trades: List[TradeResult], spy_period_return: float = 0.0,
         avg_slots = 1.0
 
     total_return_pct = cumulative_pnl / avg_slots
-    max_dd_norm = max_dd / avg_slots
+    max_dd_legacy_norm = max_dd / avg_slots
+
+    # MTM ドローダウン（price_by_sym 指定時のみ。未指定は旧 additive にフォールバック）
+    if price_by_sym is not None:
+        mtm_dd = _build_mtm_max_drawdown(trades, price_by_sym, partial_ratio)
+        max_dd_norm = mtm_dd / avg_slots
+    else:
+        max_dd_norm = max_dd_legacy_norm
 
     # Calculate Portfolio Compound Multiplier for this period
     strat_mult = 1.0
@@ -118,6 +201,9 @@ def calculate_metrics(trades: List[TradeResult], spy_period_return: float = 0.0,
         'avg_loss': avg_loss,
         'profit_factor': profit_factor,
         'expectancy': expectancy,
+        'pnl_std': pnl_std,
+        'expectancy_se': expectancy_se,
+        'expectancy_lcb': expectancy_lcb,
         'avg_holding_days': avg_holding,
         'exit_reasons': exit_reasons,
         'avg_gain': avg_gain,
@@ -129,6 +215,7 @@ def calculate_metrics(trades: List[TradeResult], spy_period_return: float = 0.0,
         'win_trades': win_count,
         'total_return_pct': total_return_pct,
         'max_drawdown_pct': -max_dd_norm,
+        'max_drawdown_legacy_pct': -max_dd_legacy_norm,
         
         # Multipliers for multi-period compounding
         'strat_multiplier': strat_mult,

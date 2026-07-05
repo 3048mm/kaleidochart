@@ -35,6 +35,20 @@ def load_config(config_path: str) -> dict:
     """Load TOML configuration file."""
     with open(config_path, 'rb') as f:
         return tomli.load(f)
+def add_avg_dollar_volume(df_prices: 'pd.DataFrame', window: int = 21) -> 'pd.DataFrame':
+    """close×volume のローリング平均（`avg_dollar_volume_{window}` 列）を銘柄ごとに付与する。
+
+    最適化対象外の流動性ハード制約（min_avg_dollar_volume_21）用。
+    min_periods=1 のため上場直後の銘柄は在籍日数分の平均になる。
+    ローリングは全履歴に対して行うこと（期間スライス後だと先頭 window 日が歪む）。
+    """
+    df = df_prices.sort_values(['symbol_id', 'date'])
+    dv = df['close'] * df['volume']
+    rolled = dv.groupby(df['symbol_id']).rolling(window, min_periods=1).mean()
+    df[f'avg_dollar_volume_{window}'] = rolled.reset_index(level=0, drop=True)
+    return df
+
+
 def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = False):
     """
     Preload all required data into pandas DataFrames.
@@ -104,11 +118,14 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
         df_indicators['date'] = pd.to_datetime(df_indicators['date']).dt.date
         df_ranks['date'] = pd.to_datetime(df_ranks['date']).dt.date
         
+        # 流動性ハード制約用の売買代金平均（スライス前の全履歴で計算する）
+        df_prices = add_avg_dollar_volume(df_prices, window=21)
+
         # 4. In-memory slicing based on start_date and end_date
         t_slice = time.time()
         sd = dt_date.fromisoformat(start_date)
         ed = dt_date.fromisoformat(end_date)
-        
+
         # Slice in-memory
         df_prices = df_prices[(df_prices['date'] >= sd) & (df_prices['date'] <= ed)]
         df_indicators = df_indicators[(df_indicators['date'] >= sd) & (df_indicators['date'] <= ed)]
@@ -181,12 +198,25 @@ def get_groupby_cache(df, col_name='date'):
     return _GROUPBY_CACHE[meta_key]
 
 
-def run_single_strategy(strat_dict: dict, df_indicators, df_prices, df_ranks, df_symbols, df_theme_constituents, trading_dates, exit_rules, show_progress=True, fast_prune=False, prune_bounds=(1.0, 15.0, 5.0), consider_tax=0.0):
+def run_single_strategy(strat_dict: dict, df_indicators, df_prices, df_ranks, df_symbols, df_theme_constituents, trading_dates, exit_rules, show_progress=True, fast_prune=False, prune_bounds=(1.0, 15.0, 5.0), consider_tax=0.0,
+                        allow_reentry_during_hold=False, entry_mode="close"):
     """
     Run backtest for a single strategy.
-    If fast_prune=True, it will pre-scan all signals and immediately return ("PRUNED", None) 
+    If fast_prune=True, it will pre-scan all signals and immediately return ("PRUNED", None)
     if the signal counts exceed the prune_bounds (min_avg, max_avg, min_hit_rate_pct).
+
+    allow_reentry_during_hold: True で建玉存続中の再エントリーを許可する（旧挙動）。
+        修正前後の比較レポート専用の内部引数で、TOML には公開しない。
+        デフォルト False = 同一銘柄は exit 翌営業日まで新規シグナルをスキップ
+        （急騰継続銘柄の連日シグナルで1つのムーブが複数トレードに水増しされ、
+        トレード独立性と VCP 系の評価が壊れるため）。
+
+    entry_mode: "close"（シグナル当日終値。24時間取引でのオーバーナイト発注運用と整合）
+        または "next_open"（シグナル翌営業日の寄付価格。翌営業日データが無い場合は
+        シグナル破棄）。exit 評価窓はどちらもシグナル翌営業日の終値から（不変）。
+        両方式の成績差で「引け値で買えること自体がエッジか」の感度を計測する。
     """
+    import dataclasses
     strat_name = strat_dict.get('name', 'Optuna_Strategy')
     strat_desc = strat_dict.get('description', '')
     if show_progress:
@@ -263,23 +293,40 @@ def run_single_strategy(strat_dict: dict, df_indicators, df_prices, df_ranks, df
 
     # --- PHASE 2: Trade Simulation ---
     trades = []
-    # BB1 fix: look-ahead simulation completes trades instantly, so we only need
-    # to prevent duplicate entries on the same day for the same symbol.
-    # No need for cross-day active_positions blocking.
+    # look-ahead シミュレーションでトレードは即時完結するため、exit_date を記録して
+    # 建玉存続中（entry < signal.date <= exit）の同一銘柄シグナルをスキップする。
+    # 同日の重複シグナルも従来通り排除。
+    active_until = {}  # symbol_id -> 直近トレードの exit_date
 
     for i, td in enumerate(trading_dates):
         signals = signals_by_date.get(td, [])
-        daily_entered = set()  # Same-day duplicate prevention only
+        daily_entered = set()  # Same-day duplicate prevention
 
         for signal in signals:
             if signal.symbol_id in daily_entered:
                 continue
+            if not allow_reentry_during_hold:
+                held_until = active_until.get(signal.symbol_id)
+                if held_until is not None and signal.date <= held_until:
+                    continue
             df_price_sym = price_by_sym.get(signal.symbol_id, pd.DataFrame())
             df_ind_sym = ind_by_sym.get(signal.symbol_id, pd.DataFrame())
+
+            if entry_mode == "next_open":
+                # シグナル翌営業日の寄付価格をエントリー価格に差し替える
+                future_px = df_price_sym[df_price_sym['date'] > signal.date]
+                if future_px.empty:
+                    continue
+                next_open = future_px.sort_values('date').iloc[0]['open']
+                if next_open is None or pd.isna(next_open) or next_open <= 0:
+                    continue
+                signal = dataclasses.replace(signal, entry_price=float(next_open))
+
             result = simulate_trade(signal, df_price_sym, df_ind_sym, exit_rules)
             if result:
                 trades.append(result)
                 daily_entered.add(signal.symbol_id)
+                active_until[signal.symbol_id] = result.exit_date
 
         if show_progress and (i + 1) % 100 == 0:
             print(f"  Processed {i + 1}/{total_days} days, {len(trades)} trades so far...", flush=True)
@@ -309,7 +356,10 @@ def run_single_strategy(strat_dict: dict, df_indicators, df_prices, df_ranks, df
                     t.spy_pnl_pct = None
 
     elapsed = time.time() - t0
-    metrics = calculate_metrics(trades, spy_period_return=spy_period_return, consider_tax=consider_tax)
+    metrics = calculate_metrics(
+        trades, spy_period_return=spy_period_return, consider_tax=consider_tax,
+        price_by_sym=price_by_sym, partial_ratio=exit_rules.partial_ratio,
+    )
     if show_progress:
         print(f"  Completed: {len(trades)} trades in {elapsed:.1f}s", flush=True)
     
@@ -398,11 +448,17 @@ def run_backtest(config: dict, strategy_filter: str = None, refresh_cache: bool 
     all_trades = {}
 
     consider_tax = config.get('general', {}).get('consider_tax', 0.0)
+    entry_mode = config.get('general', {}).get('entry_mode', 'close')
+    # 流動性ハード制約（最適化対象外・全戦略共通。戦略側の明示指定があればそちらを優先）
+    min_dollar_vol = config.get('general', {}).get('min_avg_dollar_volume_21')
     for strat in strategies:
         strat_name = strat.get('name', 'Strategy')
+        if min_dollar_vol is not None and 'min_avg_dollar_volume_21' not in strat:
+            strat = {**strat, 'min_avg_dollar_volume_21': float(min_dollar_vol)}
         metrics, trades = run_single_strategy(
-            strat, df_indicators, df_prices, df_ranks, df_symbols, df_theme_constituents, 
-            trading_dates, exit_rules, show_progress=True, consider_tax=consider_tax
+            strat, df_indicators, df_prices, df_ranks, df_symbols, df_theme_constituents,
+            trading_dates, exit_rules, show_progress=True, consider_tax=consider_tax,
+            entry_mode=entry_mode
         )
         all_results[strat_name] = metrics
         all_trades[strat_name] = trades

@@ -46,9 +46,12 @@ def get_cached_data(config_app, start_date, end_date):
 def calculate_custom_score(metrics, total_trading_days, max_allowed_dd: float = 20.0):
     """
     Calculate optimization score. Higher = Better.
-    
-    Primary metric: expectancy (avg gain per trade).
-    
+
+    Primary metric: expectancy_lcb（期待値の下側信頼限界 = expectancy − 2×SE）。
+    少数トレード×高分散の「まぐれ」は SE 増大で自動的に沈み、
+    件数を伴って安定して勝つパラメータほど高スコアになる。
+    （metrics に expectancy_lcb が無い旧呼び出し元では expectancy にフォールバック）
+
     Penalties:
     - Less than 5 trades (too rare to be statistically meaningful)
     - More than 25 trades per day on average (too noisy / over-fitted)
@@ -69,8 +72,8 @@ def calculate_custom_score(metrics, total_trading_days, max_allowed_dd: float = 
     elif avg_trades_per_day >= 25:
         return -100.0 - (avg_trades_per_day * 2)
         
-    # --- Primary scoring: expectancy (average %Gain per trade) ---
-    expectancy = metrics.get('expectancy', 0.0)
+    # --- Primary scoring: expectancy の下側信頼限界（LCB）---
+    expectancy = metrics.get('expectancy_lcb', metrics.get('expectancy', 0.0))
     # The max_drawdown_pct received here is now already Portfolio-Equivalent (Normalized via Little's Law)
     normalized_dd = abs(metrics.get('max_drawdown_pct', 0.0))
 
@@ -219,6 +222,125 @@ def parse_optimization_periods(config):
     return [(p['start'], p['end']) for p in raw_periods]
 
 
+def parse_validation_sets(config) -> list:
+    """[[optimization_validation.sets]] をパースする。
+
+    学習期間（optimization_periods）とは別の、スコア計算に一切使わない
+    ホールドアウト検証セット。無ければ空リスト（検証スキップ）。
+    Returns: [{'label': str, 'windows': [(start, end), ...]}, ...]
+    """
+    section = config.get('optimization_validation', {})
+    result = []
+    for s in section.get('sets', []):
+        result.append({
+            'label': s['label'],
+            'windows': [(w['start'], w['end']) for w in s['windows']],
+        })
+    return result
+
+
+def evaluate_holdout_for_params(strat: dict, config_app, exit_rules, validation_sets: list,
+                                entry_mode: str = "close", consider_tax: float = 0.0) -> dict:
+    """ホールドアウト検証セットでパラメータを評価する（スコア計算には一切使わない）。
+
+    セット内の全窓のトレードを**プールしてから**指標計算する。3ヶ月窓単体に
+    活動量ゲート等を当てると静かなスクリーンが不当に沈むため。窓別内訳も併記する。
+
+    注意: プール後の指標（pooled）は窓をまたぐため DD は additive（legacy）値。
+    窓単体の MTM DD は windows[i]['metrics'] 側を参照する。
+    """
+    from backtest.backtest_report import calculate_metrics as _calc_metrics
+
+    results = {}
+    for vset in validation_sets:
+        pooled_trades = []
+        window_metrics = []
+        for start_date, end_date in vset['windows']:
+            df_symbols, df_prices, df_indicators, df_ranks, df_theme_constituents, trading_dates = \
+                get_cached_data(config_app, start_date, end_date)
+            metrics, trades = run_single_strategy(
+                strat, df_indicators, df_prices, df_ranks, df_symbols, df_theme_constituents,
+                trading_dates, exit_rules, show_progress=False,
+                consider_tax=consider_tax, entry_mode=entry_mode,
+            )
+            window_metrics.append({'start': start_date, 'end': end_date, 'metrics': metrics})
+            if trades:
+                pooled_trades.extend(trades)
+        results[vset['label']] = {
+            'pooled': _calc_metrics(pooled_trades, consider_tax=consider_tax),
+            'windows': window_metrics,
+        }
+    return results
+
+
+def run_holdout_validation(study, strat_base: dict, actual_name: str, config, config_app,
+                           exit_rules, validation_sets: list, top_n: int = 5):
+    """study 完了後に best-N trial をホールドアウト検証セットで評価し、表と JSON を出力する。
+
+    in-sample スコア（study の value）と並記することで、勝者の呪い（選択バイアス）
+    による劣化率を可視化する。結果は backend/backtest/results/holdout_{strategy}.json に保存。
+    """
+    completed = [t for t in study.trials
+                 if t.state == optuna.trial.TrialState.COMPLETE and t.value is not None]
+    top_trials = sorted(completed, key=lambda t: t.value, reverse=True)[:top_n]
+    if not top_trials:
+        print("  Holdout: 評価可能な trial がありません。")
+        return
+
+    entry_mode = config.get('general', {}).get('entry_mode', 'close')
+    consider_tax = float(config.get('general', {}).get('consider_tax', 0.0))
+    min_dollar_vol = config.get('general', {}).get('min_avg_dollar_volume_21')
+
+    print("=" * 70)
+    print(f"  Holdout Validation: best {len(top_trials)} trials / "
+          f"sets: {', '.join(v['label'] for v in validation_sets)}")
+    print("  （この期間はスコア最大化に一切使用していない未学習期間）")
+    print("=" * 70)
+
+    report = {
+        'strategy': actual_name,
+        'validation_sets': [{'label': v['label'], 'windows': v['windows']} for v in validation_sets],
+        'trials': [],
+    }
+    for t in top_trials:
+        strat = strat_base.copy()
+        strat.update(t.params)
+        strat['name'] = f"{actual_name}_holdout_t{t.number}"
+        if min_dollar_vol is not None and 'min_avg_dollar_volume_21' not in strat:
+            strat['min_avg_dollar_volume_21'] = float(min_dollar_vol)
+
+        results = evaluate_holdout_for_params(
+            strat, config_app, exit_rules, validation_sets,
+            entry_mode=entry_mode, consider_tax=consider_tax)
+
+        print(f"\n  [Trial {t.number}] in-sample score = {t.value:.2f}")
+        entry = {'trial': t.number, 'in_sample_score': t.value, 'params': t.params, 'sets': {}}
+        for label, res in results.items():
+            p = res['pooled']
+            print(f"    {label:<14} trades={p['total_trades']:>4} "
+                  f"win={p['win_rate'] * 100:5.1f}% exp={p['expectancy']:+6.2f}% "
+                  f"lcb={p['expectancy_lcb']:+6.2f}% dd={p['max_drawdown_pct']:6.1f}%")
+            entry['sets'][label] = {
+                'pooled': {k: p.get(k) for k in (
+                    'total_trades', 'win_rate', 'expectancy', 'expectancy_lcb',
+                    'avg_gain', 'profit_factor', 'max_drawdown_pct')},
+                'windows': [{'start': w['start'], 'end': w['end'],
+                             'trades': (w['metrics'] or {}).get('total_trades', 0),
+                             'win_rate': (w['metrics'] or {}).get('win_rate', 0.0),
+                             'expectancy': (w['metrics'] or {}).get('expectancy', 0.0)}
+                            for w in res['windows']],
+            }
+        report['trials'].append(entry)
+
+    import json as _json
+    out_dir = os.path.join(backend_dir, 'backtest', 'results')
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, f'holdout_{actual_name}.json')
+    with open(out_path, 'w', encoding='utf-8') as f:
+        _json.dump(report, f, indent=2, ensure_ascii=False, default=str)
+    print(f"\n  Holdout report saved: {out_path}")
+
+
 def enqueue_baseline_trial(study, config: dict, strategy_name: str) -> bool:
     """
     Extract baseline default parameters for a strategy from TOML config
@@ -263,6 +385,11 @@ def objective(trial: optuna.Trial, strategy_name: str, config, config_app, exit_
         strat = strat_base.copy()
         strat['name'] = f"{actual_name}_Trial_{trial.number}"
 
+        # 流動性ハード制約（最適化対象外・全戦略共通。戦略側の明示指定があればそちらを優先）
+        min_dollar_vol = config.get('general', {}).get('min_avg_dollar_volume_21')
+        if min_dollar_vol is not None and 'min_avg_dollar_volume_21' not in strat:
+            strat['min_avg_dollar_volume_21'] = float(min_dollar_vol)
+
         # Parse optimization params from TOML and apply via Optuna trial
         param_defs = parse_optimization_params(config, actual_name)
         apply_trial_params(trial, param_defs, strat)
@@ -276,11 +403,13 @@ def objective(trial: optuna.Trial, strategy_name: str, config, config_app, exit_
         # Extract tax and drawdown threshold options
         max_allowed_dd = strat_base.get('max_allowed_dd', 20.0)
         consider_tax = float(config.get('general', {}).get('consider_tax', 0.0))
+        entry_mode = config.get('general', {}).get('entry_mode', 'close')
         
         total_score = 0.0
         total_trades = 0
         total_wins = 0
         expectancy_sum = 0.0
+        expectancy_lcb_sum = 0.0
         avg_gain_sum = 0.0
         avg_spy_gain_sum = 0.0
         max_dd_overall = 0.0
@@ -292,9 +421,10 @@ def objective(trial: optuna.Trial, strategy_name: str, config, config_app, exit_
         for start_date, end_date in periods:
             df_symbols, df_prices, df_indicators, df_ranks, df_theme_constituents, trading_dates = get_cached_data(config_app, start_date, end_date)
             metrics, _ = run_single_strategy(
-                strat, df_indicators, df_prices, df_ranks, df_symbols, df_theme_constituents, 
-                trading_dates, exit_rules, show_progress=True, 
-                fast_prune=True, prune_bounds=prune_bounds, consider_tax=consider_tax
+                strat, df_indicators, df_prices, df_ranks, df_symbols, df_theme_constituents,
+                trading_dates, exit_rules, show_progress=True,
+                fast_prune=True, prune_bounds=prune_bounds, consider_tax=consider_tax,
+                entry_mode=entry_mode
             )
             
             # --- Handle directional penalty branching ---
@@ -321,6 +451,7 @@ def objective(trial: optuna.Trial, strategy_name: str, config, config_app, exit_
                 max_dd_overall = min(max_dd_overall, metrics.get('max_drawdown_pct', 0.0))
                 if metrics.get('total_trades', 0) > 0:
                     expectancy_sum += metrics.get('expectancy', 0.0)
+                    expectancy_lcb_sum += metrics.get('expectancy_lcb', 0.0)
                     avg_gain_sum += metrics.get('avg_gain', 0.0)
                     avg_spy_gain_sum += metrics.get('avg_spy_gain', 0.0)
                     overall_strat_mult *= metrics.get('strat_multiplier', 1.0)
@@ -342,11 +473,13 @@ def objective(trial: optuna.Trial, strategy_name: str, config, config_app, exit_
             avg_gain = avg_gain_sum / periods_with_trades
             avg_spy = avg_spy_gain_sum / periods_with_trades
             trial.set_user_attr("expectancy", round(avg_expectancy, 3))
+            trial.set_user_attr("expectancy_lcb", round(expectancy_lcb_sum / periods_with_trades, 3))
             trial.set_user_attr("avg_gain", round(avg_gain, 3))
             trial.set_user_attr("avg_spy_gain", round(avg_spy, 3))
             trial.set_user_attr("alpha", round(avg_gain - avg_spy, 3))
         else:
             trial.set_user_attr("expectancy", 0.0)
+            trial.set_user_attr("expectancy_lcb", 0.0)
             trial.set_user_attr("avg_gain", 0.0)
             trial.set_user_attr("avg_spy_gain", 0.0)
             trial.set_user_attr("alpha", 0.0)
@@ -513,6 +646,17 @@ def main():
         print(f"  Port CAGR:      {trial.user_attrs.get('port_cagr', 0):.2f}% (Total: {trial.user_attrs.get('port_total_return', 0):.2f}%)")
         print(f"  SPY B&H CAGR:   {trial.user_attrs.get('spy_cagr', 0):.2f}% (Total: {trial.user_attrs.get('spy_total_return', 0):.2f}%)")
         print(f"  Port vs SPY:    {trial.user_attrs.get('port_vs_spy', 0):.2f}% (Total: {trial.user_attrs.get('port_vs_spy_total', 0):.2f}%)")
+
+    # --- ホールドアウト検証（未学習期間で best-N を評価。スコア最大化には不使用） ---
+    validation_sets = parse_validation_sets(config)
+    if validation_sets:
+        try:
+            run_holdout_validation(study, strat_base, actual_name, config, config_app,
+                                   exit_rules, validation_sets)
+        except Exception as e:
+            import traceback
+            print(f"\n  Warning: ホールドアウト検証でエラーが発生しました: {e}")
+            traceback.print_exc()
 
 if __name__ == "__main__":
     main()

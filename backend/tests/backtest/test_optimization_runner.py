@@ -327,8 +327,154 @@ class TestEnqueueBaselineTrial:
     def test_enqueue_baseline_trial_strategy_not_found(self, sample_config):
         mock_study = MagicMock()
         from optimization_runner import enqueue_baseline_trial
-        
+
         # Strategy 'Z' is not in sample_config
         with pytest.raises(ValueError, match="Strategy"):
             enqueue_baseline_trial(mock_study, sample_config, "Z")
+
+
+# ============================================================
+# Tests for holdout validation（修正6）
+# ============================================================
+
+@pytest.fixture
+def config_with_validation(sample_config):
+    sample_config["optimization_validation"] = {
+        "sets": [
+            {
+                "label": "stress_bear",
+                "windows": [
+                    {"start": "2018-10-01", "end": "2018-12-31"},
+                    {"start": "2020-02-01", "end": "2020-05-31"},
+                ],
+            },
+            {
+                "label": "calm_recent",
+                "windows": [
+                    {"start": "2023-01-01", "end": "2023-12-31"},
+                ],
+            },
+        ]
+    }
+    return sample_config
+
+
+class TestParseValidationSets:
+    def test_parse_sets(self, config_with_validation):
+        from optimization_runner import parse_validation_sets
+
+        sets = parse_validation_sets(config_with_validation)
+        assert len(sets) == 2
+        assert sets[0]["label"] == "stress_bear"
+        assert sets[0]["windows"] == [("2018-10-01", "2018-12-31"),
+                                      ("2020-02-01", "2020-05-31")]
+        assert sets[1]["windows"] == [("2023-01-01", "2023-12-31")]
+
+    def test_missing_section_returns_empty(self, sample_config):
+        from optimization_runner import parse_validation_sets
+
+        assert parse_validation_sets(sample_config) == []
+
+
+class TestEvaluateHoldout:
+    """ホールドアウト評価はセット内の全窓のトレードをプールしてから指標計算すること。
+
+    3ヶ月窓単体に活動量ゲートやトレード数最少要件を当てると、静かなスクリーンが
+    不当に沈むため（doc/completed/backtest_optimization_hardening_plan.md 修正6）。
+    """
+
+    def _stub_trade(self, pnl, day):
+        from datetime import date, timedelta
+        from backend.backtest.backtest_simulator import TradeResult
+        d = date(2020, 3, 2) + timedelta(days=day)
+        return TradeResult(symbol_id=1, ticker="TST", entry_date=d,
+                           exit_date=d + timedelta(days=3),
+                           entry_price=100.0, exit_price=100.0 * (1 + pnl / 100),
+                           pnl_pct=pnl, holding_days=3, exit_reason="test")
+
+    def test_pools_trades_across_windows(self, config_with_validation, monkeypatch):
+        import optimization_runner as opt
+        from optimization_runner import parse_validation_sets, evaluate_holdout_for_params
+
+        # 窓ごとに 2 トレード / 3 トレードを返すスタブ
+        trades_per_window = [
+            [self._stub_trade(5.0, 0), self._stub_trade(-2.0, 10)],
+            [self._stub_trade(3.0, 20), self._stub_trade(1.0, 30), self._stub_trade(-1.0, 40)],
+            [self._stub_trade(2.0, 50)],
+        ]
+        calls = []
+
+        def fake_get_cached_data(config_app, start, end):
+            calls.append((start, end))
+            return (None, None, None, None, None, [1, 2, 3])  # trading_dates はダミー
+
+        def fake_run_single_strategy(*args, **kwargs):
+            return {}, trades_per_window[len(calls) - 1]
+
+        monkeypatch.setattr(opt, "get_cached_data", fake_get_cached_data)
+        monkeypatch.setattr(opt, "run_single_strategy", fake_run_single_strategy)
+
+        sets = parse_validation_sets(config_with_validation)
+        result = evaluate_holdout_for_params(
+            {"name": "T"}, config_app={}, exit_rules=None,
+            validation_sets=sets, entry_mode="close", consider_tax=0.0)
+
+        # stress_bear: 2 窓のトレードがプールされて 5 件
+        stress = result["stress_bear"]
+        assert stress["pooled"]["total_trades"] == 5
+        assert len(stress["windows"]) == 2
+        # calm_recent: 1 窓 1 件
+        assert result["calm_recent"]["pooled"]["total_trades"] == 1
+        # 評価に使った窓は定義順どおり
+        assert calls == [("2018-10-01", "2018-12-31"),
+                         ("2020-02-01", "2020-05-31"),
+                         ("2023-01-01", "2023-12-31")]
+
+
+# ============================================================
+# Tests for calculate_custom_score() — LCB 化（修正3）
+# ============================================================
+
+def _score_metrics(expectancy, lcb=None, trades=50, dd=-5.0):
+    m = {
+        "total_trades": trades,
+        "expectancy": expectancy,
+        "max_drawdown_pct": dd,
+    }
+    if lcb is not None:
+        m["expectancy_lcb"] = lcb
+    return m
+
+
+class TestCustomScoreUsesLcb:
+    """スコアの主指標は expectancy ではなく expectancy_lcb（期待値 − 2×SE）であること。
+
+    少数トレード×高分散の「まぐれ」パラメータが、安定して稼ぐパラメータより
+    高評価になるのを防ぐ（doc/completed/backtest_optimization_hardening_plan.md 修正3）。
+    """
+
+    def test_score_uses_lcb_not_raw_expectancy(self):
+        from optimization_runner import calculate_custom_score
+
+        # 期待値 5.0 だが分散が大きく LCB=1.0 のケースは、
+        # 期待値 1.0（=LCB 1.0）の安定ケースと同スコアであるべき
+        lumpy = calculate_custom_score(_score_metrics(5.0, lcb=1.0), 252)
+        stable = calculate_custom_score(_score_metrics(1.0, lcb=1.0), 252)
+        assert lumpy == pytest.approx(stable)
+
+    def test_negative_lcb_scores_negative_even_if_expectancy_positive(self):
+        from optimization_runner import calculate_custom_score
+
+        # 期待値はプラスでも LCB がマイナス（統計的にゼロと区別できない）なら
+        # マイナス期待値の分岐で罰する
+        score = calculate_custom_score(_score_metrics(2.0, lcb=-1.0), 252)
+        assert score < 0
+
+    def test_fallback_to_expectancy_when_lcb_missing(self):
+        from optimization_runner import calculate_custom_score
+
+        # 後方互換: expectancy_lcb が無い metrics（旧呼び出し元）では expectancy を使う
+        with_lcb = calculate_custom_score(_score_metrics(3.0, lcb=3.0), 252)
+        without = calculate_custom_score(_score_metrics(3.0), 252)
+        assert without == pytest.approx(with_lcb)
 

@@ -24,6 +24,7 @@ class TradeResult:
     exit_reason: str         # 'stop_loss', 'partial_then_stop', 'ema21_exit', 'sma50_atr_exit', 'time_stop', 'failsafe'
     partial_exit_pnl_pct: Optional[float] = None  # PnL % on the 1/3 partial exit
     spy_pnl_pct: Optional[float] = None           # SPY return % over the same holding period (benchmark)
+    partial_exit_date: Optional[object] = None    # 部分利確の約定日（MTM エクイティ計算で確定分を固定するため）
 
 
 @dataclass
@@ -98,6 +99,7 @@ def simulate_trade(
     stop_price = entry_price * (1 + exit_rules.stop_loss_pct / 100.0)
     ema21_below_count = 0
     partial_exit_pnl = None
+    partial_exit_dt = None
 
     # For time stop: track 7-day high/low range
     recent_highs = []
@@ -136,7 +138,7 @@ def simulate_trade(
                     entry_date=entry_date, exit_date=current_date,
                     entry_price=entry_price, exit_price=current_close,
                     pnl_pct=total_pnl, holding_days=day_count,
-                    exit_reason='failsafe', partial_exit_pnl_pct=partial_exit_pnl,
+                    exit_reason='failsafe', partial_exit_pnl_pct=partial_exit_pnl, partial_exit_date=partial_exit_dt,
                 )
             continue
 
@@ -154,7 +156,7 @@ def simulate_trade(
                     entry_date=entry_date, exit_date=current_date,
                     entry_price=entry_price, exit_price=current_close,
                     pnl_pct=total_pnl, holding_days=day_count,
-                    exit_reason='vxv_vix_exit', partial_exit_pnl_pct=partial_exit_pnl,
+                    exit_reason='vxv_vix_exit', partial_exit_pnl_pct=partial_exit_pnl, partial_exit_date=partial_exit_dt,
                 )
             
             # Still apply stop loss for protection
@@ -171,7 +173,7 @@ def simulate_trade(
                     entry_date=entry_date, exit_date=current_date,
                     entry_price=entry_price, exit_price=current_close,
                     pnl_pct=total_pnl, holding_days=day_count,
-                    exit_reason=reason, partial_exit_pnl_pct=partial_exit_pnl,
+                    exit_reason=reason, partial_exit_pnl_pct=partial_exit_pnl, partial_exit_date=partial_exit_dt,
                 )
                 
             if day_count >= exit_rules.failsafe_max_days:
@@ -185,7 +187,7 @@ def simulate_trade(
                     entry_date=entry_date, exit_date=current_date,
                     entry_price=entry_price, exit_price=current_close,
                     pnl_pct=total_pnl, holding_days=day_count,
-                    exit_reason='failsafe', partial_exit_pnl_pct=partial_exit_pnl,
+                    exit_reason='failsafe', partial_exit_pnl_pct=partial_exit_pnl, partial_exit_date=partial_exit_dt,
                 )
             continue
 
@@ -206,7 +208,7 @@ def simulate_trade(
                 entry_date=entry_date, exit_date=current_date,
                 entry_price=entry_price, exit_price=current_close,
                 pnl_pct=total_pnl, holding_days=day_count,
-                exit_reason=reason, partial_exit_pnl_pct=partial_exit_pnl,
+                exit_reason=reason, partial_exit_pnl_pct=partial_exit_pnl, partial_exit_date=partial_exit_dt,
             )
 
         # === 2. 1/3 Partial Take Profit Check ===
@@ -221,6 +223,7 @@ def simulate_trade(
             if take_profit_triggered or sma50_atr_triggered:
                 partial_taken = True
                 partial_exit_pnl = gain_pct
+                partial_exit_dt = current_date
                 # Move stop to entry (breakeven)
                 stop_price = entry_price
 
@@ -238,7 +241,7 @@ def simulate_trade(
                 entry_date=entry_date, exit_date=current_date,
                 entry_price=entry_price, exit_price=current_close,
                 pnl_pct=total_pnl, holding_days=day_count,
-                exit_reason='sma50_atr_exit', partial_exit_pnl_pct=partial_exit_pnl,
+                exit_reason='sma50_atr_exit', partial_exit_pnl_pct=partial_exit_pnl, partial_exit_date=partial_exit_dt,
             )
 
         # === 4. Full Exit: EMA21 below for N consecutive days ===
@@ -259,7 +262,7 @@ def simulate_trade(
                     entry_date=entry_date, exit_date=current_date,
                     entry_price=entry_price, exit_price=current_close,
                     pnl_pct=total_pnl, holding_days=day_count,
-                    exit_reason='ema21_exit', partial_exit_pnl_pct=partial_exit_pnl,
+                    exit_reason='ema21_exit', partial_exit_pnl_pct=partial_exit_pnl, partial_exit_date=partial_exit_dt,
                 )
 
         # === 5. Time Stop: 7-day range < 1 ATR ===
@@ -277,7 +280,7 @@ def simulate_trade(
                     entry_date=entry_date, exit_date=current_date,
                     entry_price=entry_price, exit_price=current_close,
                     pnl_pct=total_pnl, holding_days=day_count,
-                    exit_reason='time_stop', partial_exit_pnl_pct=partial_exit_pnl,
+                    exit_reason='time_stop', partial_exit_pnl_pct=partial_exit_pnl, partial_exit_date=partial_exit_dt,
                 )
 
         # === 6. Failsafe ===
@@ -292,7 +295,7 @@ def simulate_trade(
                 entry_date=entry_date, exit_date=current_date,
                 entry_price=entry_price, exit_price=current_close,
                 pnl_pct=total_pnl, holding_days=day_count,
-                exit_reason='failsafe', partial_exit_pnl_pct=partial_exit_pnl,
+                exit_reason='failsafe', partial_exit_pnl_pct=partial_exit_pnl, partial_exit_date=partial_exit_dt,
             )
 
     # If we exhausted all data without an exit, exit at last available price
@@ -308,7 +311,7 @@ def simulate_trade(
             entry_date=entry_date, exit_date=last_row['date'],
             entry_price=entry_price, exit_price=float(last_row['close']),
             pnl_pct=total_pnl, holding_days=len(future_prices),
-            exit_reason='data_end', partial_exit_pnl_pct=partial_exit_pnl,
+            exit_reason='data_end', partial_exit_pnl_pct=partial_exit_pnl, partial_exit_date=partial_exit_dt,
         )
 
     return None
