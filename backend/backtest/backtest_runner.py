@@ -504,6 +504,12 @@ def validate_strategies_config(strategies: list, df_ind: pd.DataFrame, df_prices
 
     warnings = []
 
+    # 特殊フィルタに付随する数値パラメータ（is_vcp_breakout の閾値群など）
+    FILTER_ATTACHED_PARAM_KEYS = {
+        'breakout_high_window', 'vcr_contraction_max', 'base_high_tol',
+        'near_high_tol', 'breakout_change', 'breakout_vol_mult',
+    }
+
     # Metadata, execution, and validation controller params
     METADATA_KEYS = {
         'name', 'description', 'max_hits_per_day', 'sort_column', 'sort_ascending', 'expression', '_use_hysteresis',
@@ -540,6 +546,9 @@ def validate_strategies_config(strategies: list, df_ind: pd.DataFrame, df_prices
             if key in SPECIAL_FILTER_KEYS:
                 continue
             if key == 'rrg_intensity_threshold':
+                continue
+            # 特殊フィルタに付随する数値パラメータ（min_/max_/is_ 接頭辞を持たない）
+            if key in FILTER_ATTACHED_PARAM_KEYS:
                 continue
 
             # Normalize theme-based keys for standard validation checks (e.g. min_theme_rs_trend_s21 -> min_rs_trend_s21)

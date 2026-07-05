@@ -170,6 +170,14 @@ S&P500（SPY）の動向や市場全体の統計から算出される、市場�
     スクリーナーおよびバックテストで使用される突入検知フラグは、以下の条件をオンザフライで計算して判定します：
     - **Leading In**: 当日が Leading 象限 (Ratio>0, Mom>0) かつ強度 (sqrt(R^2+M^2)) >= 閾値 かつ Mom加速中で、前日が「Leading 象限外」または「低強度」であった場合。
     - **Improving In**: 当日が Improving 象限 (Ratio<0, Mom>0) かつ強度 >= 閾値 かつ Mom加速中で、前日が「Lagging 象限 (Ratio<0, Mom<=0)」または「低強度かつRatio負」であった場合。
+- **VCP ブレイクアウト特殊フィルタ (`is_vcp_breakout`)**: 「収縮した高値圏の土台からの、出来高を伴う大陽線ブレイクアウト」を検出するイベントフィルタ。E ファミリー（E1/E2）で使用。条件（`high_window` = 63日 or 252日=52週で近傍ゲートを切替）:
+    - 前日まで収縮: `prev_vcr <= vcr_contraction_max`
+    - 高値圏の浅い土台: `prev_dist_52w_high_pct >= -base_high_tol`
+    - 当日は N日高値の近傍: `dist_{W}_high_pct >= -near_high_tol`（緩いゲート）
+    - ブレイクの大陽線: `change_1d_pct >= breakout_change`（イベントトリガー）／ 出来高膨張: `vol_surge_21 >= breakout_vol_mult`／ 地合い: `is_trend_template == 1`
+    - **deny-by-default**: 前日カラムが無い場合は全 False（イベントは前日比較が本質で、他の prev 依存フィルタの no-op フォールバックとは意図的に挙動を変える）。
+    - **設計メモ**: 当初は `dist_Nd_high_pct` のピボット距離クロスで検出したが、この指標はローリング最大に当日を含むため新高値を付ける強いブレイク日ほど終値が乖離して落ち、検出数が過少になった（2026-07-05 診断）。ブレイク検出を `change_1d_pct` の大陽線に切り替え、`dist_{W}` は緩い近傍ゲートに降格した。
+    - 付随パラメータ（`is_vcp_breakout=true` に随伴。RRG の intensity_threshold と同じ扱い）: `breakout_high_window / vcr_contraction_max / base_high_tol / near_high_tol / breakout_change / breakout_vol_mult`。
 
 #### 3.6.1 各定性的シグナルの定義
 ダッシュボードに表示される市場の健康状態は、S&P500 (SPY) の日足データから以下のロジックで判定されます。

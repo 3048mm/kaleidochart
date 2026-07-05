@@ -10,7 +10,8 @@ def test_objective_calculates_cagr_correctly():
     # Setup mock trial
     mock_trial = MagicMock(spec=optuna.Trial)
     mock_trial.number = 0
-    mock_trial.user_attrs = {'win_rate': 0.0}
+    # set_user_attr はモックで no-op のため、ログ行が参照する属性を手動で seed する
+    mock_trial.user_attrs = {'win_rate': 0.0, 'avg_gain': 0.0, 'expectancy_lcb': 0.0}
     mock_trial.params = {
         'min_change_1d_pct': 7.0,
     }

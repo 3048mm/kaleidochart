@@ -59,7 +59,7 @@ export const EtfFeaturePanel: React.FC<EtfFeaturePanelProps> = ({
                         { label: 'dist SMA5', val: feature.dist_sma5_pct },
                         { label: 'dist SMA21', val: feature.dist_sma21_pct },
                         { label: 'dist SMA63', val: feature.dist_sma63_pct },
-                        { label: 'SMA21/63 diff', val: feature.sma21_sma63_pct },
+                        { label: 'dist SMA200', val: feature.dist_sma200_pct },
                     ].map(metric => (
                         <div key={metric.label} style={{ background: 'rgba(255,255,255,0.05)', padding: '10px 5px', borderRadius: '6px', textAlign: 'center' }}>
                             <div style={{ fontSize: '10px', color: '#aaa', marginBottom: '4px' }}>{metric.label}</div>

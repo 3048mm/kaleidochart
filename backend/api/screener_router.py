@@ -634,7 +634,9 @@ def get_screener_dashboard(
             thr = preset_def.get("rrg_intensity_threshold", 0.0)
             if thr == 0.0:
                 thr = preset_def.get("filters", {}).get("rrg_intensity_threshold", 0.0)
-            passing_ids = evaluate_special_filters(merged_cs, df_tc_cs, special_flags, float(thr))
+            passing_ids = evaluate_special_filters(
+                merged_cs, df_tc_cs, special_flags, float(thr),
+                params=preset_def.get("filters", {}))
 
         # Default sort: by 1Day% (Prev Close base) descending
         q = q.order_by(desc(Indicator.change_1d_pct))

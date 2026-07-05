@@ -363,6 +363,61 @@ def filter_theme_rs_trend_rank_s21_gt_s63(
                                   'rs_condition_21_rank', 'rs_condition_63_rank')
 
 
+def filter_vcp_breakout(
+    merged: pd.DataFrame,
+    high_window: int = 63,
+    vcr_contraction_max: float = 0.8,
+    base_high_tol: float = 15.0,
+    near_high_tol: float = 4.0,
+    breakout_change: float = 4.0,
+    breakout_vol_mult: float = 1.5,
+) -> pd.Series:
+    """VCP 収縮からのブレイクアウト（出来高膨張を伴う大陽線）イベントを通過させるフィルタ。
+
+    「昨日まで収縮した高値圏の土台にあった銘柄が、今日 N日高値の近傍で
+    出来高を伴う大陽線を出した日」だけを True にするイベントフィルタ。
+
+    条件:
+    - 前日まで収縮: prev_vcr <= vcr_contraction_max
+    - 高値圏の土台: prev_dist_52w_high_pct >= -base_high_tol（浅い＝高値近くの土台）
+    - 当日は N日高値の近傍: dist_{W}_high_pct >= -near_high_tol
+    - ブレイクの大陽線: change_1d_pct >= breakout_change（イベントトリガー）
+    - 出来高膨張: vol_surge_21 >= breakout_vol_mult（収縮の逆）
+    - 上昇トレンド地合い: is_trend_template == 1
+
+    high_window: 63（3ヶ月ベース→dist_63d_high_pct）または 252（52週→dist_52w_high_pct）。
+
+    設計メモ（2026-07-05）: 当初はピボット距離（dist_Nd_high_pct）の前日→当日クロスで
+    ブレイクを検出したが、dist はローリング最大に当日を含むため、新高値を付けた強い
+    ブレイク日ほど終値が(新)高値から乖離して落ちるという構造的欠陥があり検出数が過少に
+    なった（診断: 収縮＋高値圏の翌日 dist は95%点でも-2.34%）。ブレイクの検出を
+    change_1d_pct の大陽線に切り替え、dist は緩い「高値近傍」ゲートに降格した。
+
+    prev カラムが無い場合は **全 False**（deny-by-default）。イベントは前日比較が本質で、
+    前日情報が無いのに全通過させると「全銘柄がブレイク」という危険な過剰包含になるため、
+    他の prev 依存フィルタ（RRG 等）の no-op フォールバックとは意図的に挙動を変える。
+    """
+    today_col = 'dist_52w_high_pct' if high_window == 252 else 'dist_63d_high_pct'
+
+    required_prev = ['prev_vcr', 'prev_dist_52w_high_pct']
+    if any(c not in merged.columns for c in required_prev):
+        return pd.Series(False, index=merged.index)
+    required_today = [today_col, 'change_1d_pct', 'vol_surge_21', 'is_trend_template']
+    if any(c not in merged.columns for c in required_today):
+        return pd.Series(False, index=merged.index)
+
+    prev_contracted = merged['prev_vcr'] <= vcr_contraction_max
+    prev_high_base = merged['prev_dist_52w_high_pct'] >= -base_high_tol
+    near_high = merged[today_col] >= -near_high_tol
+    breakout_bar = merged['change_1d_pct'] >= breakout_change
+    vol_expansion = merged['vol_surge_21'] >= breakout_vol_mult
+    uptrend = merged['is_trend_template'] == 1
+
+    mask = (prev_contracted & prev_high_base & near_high
+            & breakout_bar & vol_expansion & uptrend)
+    return mask.fillna(False)
+
+
 # ============================================================
 # 特殊ブールフィルタキーのレジストリ
 # ============================================================
@@ -385,6 +440,8 @@ SPECIAL_FILTER_KEYS = {
     "is_theme_rs_trend_rank_s14_gt_s21", "is_theme_rs_trend_rank_s21_gt_s63",
     # RS-MACD 加速
     "is_rs_macd_hist_rising_21",
+    # VCP ブレイクアウト（収縮からのピボット上抜けイベント）
+    "is_vcp_breakout",
 }
 
 

@@ -353,6 +353,7 @@ def _build_etf_feature(db: Session, sym: Symbol, dp: DailyPrice, target_date: st
     dist_sma21_pct = 0.0
     dist_sma63_pct = 0.0
     sma21_sma63_pct = 0.0
+    dist_sma200_pct = 0.0
     
     if ind:
         if ind.sma_5 and ind.sma_5 > 0:
@@ -363,6 +364,8 @@ def _build_etf_feature(db: Session, sym: Symbol, dp: DailyPrice, target_date: st
             dist_sma63_pct = ((dp.close - ind.sma_63) / ind.sma_63) * 100
         if ind.sma_21 and ind.sma_63 and ind.sma_63 > 0:
             sma21_sma63_pct = ((ind.sma_21 - ind.sma_63) / ind.sma_63) * 100
+        if ind.sma_200 and ind.sma_200 > 0:
+            dist_sma200_pct = ((dp.close - ind.sma_200) / ind.sma_200) * 100
             
     rs14_spark = _get_sparkline_data(db, sym.id, target_date, 14)
     rs21_spark = _get_sparkline_data(db, sym.id, target_date, 21)
@@ -411,15 +414,24 @@ def _build_etf_feature(db: Session, sym: Symbol, dp: DailyPrice, target_date: st
             rs_value_e14=i.rs_value_e14 if i else None,
             rs_value_e21=i.rs_value_e21 if i else None,
             rs_value_e63=i.rs_value_e63 if i else None,
+            rs_value_e200=i.rs_value_e200 if i else None,
+            rs_ratio_e5=i.rs_ratio_e5 if i else None,
             rs_ratio_e14=i.rs_ratio_e14 if i else None,
             rs_ratio_e21=i.rs_ratio_e21 if i else None,
             rs_ratio_e63=i.rs_ratio_e63 if i else None,
+            rs_ratio_e200=i.rs_ratio_e200 if i else None,
+            rs_momentum_e5=i.rs_momentum_e5 if i else None,
             rs_momentum_e14=i.rs_momentum_e14 if i else None,
             rs_momentum_e21=i.rs_momentum_e21 if i else None,
             rs_momentum_e63=i.rs_momentum_e63 if i else None,
+            rs_momentum_e200=i.rs_momentum_e200 if i else None,
+            rs_trend_s5=i.rs_trend_s5 if i else None,
             rs_trend_s14=i.rs_trend_s14 if i else None,
             rs_trend_s21=i.rs_trend_s21 if i else None,
             rs_trend_s63=i.rs_trend_s63 if i else None,
+            rs_trend_s200=i.rs_trend_s200 if i else None,
+            vol_surge_rel_spy_21=i.vol_surge_rel_spy_21 if i else None,
+            rel_vol_vs_spy_21=i.vol_surge_rel_spy_21 if i else None,
         ))
     
     return schemas.EtfFeatureItem(
@@ -428,6 +440,7 @@ def _build_etf_feature(db: Session, sym: Symbol, dp: DailyPrice, target_date: st
         change_1m_pct=float(change_1m_pct or 0.0), change_1y_pct=float(change_1y_pct or 0.0),
         dist_sma5_pct=float(dist_sma5_pct or 0.0), dist_sma21_pct=float(dist_sma21_pct or 0.0),
         dist_sma63_pct=float(dist_sma63_pct or 0.0), sma21_sma63_pct=float(sma21_sma63_pct or 0.0),
+        dist_sma200_pct=float(dist_sma200_pct or 0.0),
         rs_ratio_e14=ind.rs_ratio_e14 if ind else None,
         rs_ratio_e21=ind.rs_ratio_e21 if ind else None,
         rs_ratio_e63=ind.rs_ratio_e63 if ind else None,

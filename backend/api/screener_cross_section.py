@@ -28,6 +28,7 @@ from indicators.screener_filters import (
     filter_rs_trend_s14_lt_s21,
     filter_theme_rs_trend_rank_s14_gt_s21,
     filter_theme_rs_trend_rank_s21_gt_s63,
+    filter_vcp_breakout,
     SPECIAL_FILTER_KEYS,
 )
 
@@ -39,9 +40,16 @@ _IND_COLS = [
     "rs_momentum_e21",
     "rs_trend_s14", "rs_trend_s21", "rs_trend_s63",
     "rs_macd_hist_21",
+    # VCP ブレイクアウト用（当日）
+    "vcr", "dist_63d_high_pct", "dist_52w_high_pct", "vol_surge_21", "is_trend_template",
+    "change_1d_pct",
 ]
 # 前日から prev_ プレフィックスで取り込むカラム
-_PREV_COLS = ["rs_ratio_e21", "rs_momentum_e21", "rs_macd_hist_21"]
+_PREV_COLS = [
+    "rs_ratio_e21", "rs_momentum_e21", "rs_macd_hist_21",
+    # VCP ブレイクアウト用（前日）
+    "vcr", "dist_63d_high_pct", "dist_52w_high_pct",
+]
 # wide 形式 relative_ranks → 共通カラム名へのマッピング
 _RANK_COL_MAP = {
     "rs_ratio_rank_e14": "rs14_rank",
@@ -112,16 +120,20 @@ def evaluate_special_filters(
     df_tc: pd.DataFrame,
     flags: Dict[str, Any],
     intensity_threshold: float = 0.0,
+    params: Optional[Dict[str, Any]] = None,
 ) -> Optional[Set[int]]:
     """有効化された特殊ブールフィルタを AND 適用し、通過 symbol_id 集合を返す。
 
     Args:
         flags: {フィルタキー: True} の辞書（SPECIAL_FILTER_KEYS のサブセット）
         intensity_threshold: RRG フィルタの強度閾値
+        params: フィルタの数値パラメータ辞書（VCP ブレイクアウトの vcr_contraction_max 等）。
+            None の場合は各フィルタのデフォルト値を使用する。
 
     Returns:
         通過した symbol_id の set。有効なフィルタが1つも無ければ None（=無フィルタ）。
     """
+    params = params or {}
     enabled = {k for k, v in flags.items() if v is True and k in SPECIAL_FILTER_KEYS}
     if not enabled:
         return None
@@ -161,5 +173,15 @@ def evaluate_special_filters(
             mask &= filter_theme_rs_trend_rank_s21_gt_s63(merged, df_tc)
         elif key == "is_rs_macd_hist_rising_21":
             mask &= filter_rs_macd_hist_rising_21(merged)
+        elif key == "is_vcp_breakout":
+            mask &= filter_vcp_breakout(
+                merged,
+                high_window=int(params.get("breakout_high_window", 63)),
+                vcr_contraction_max=float(params.get("vcr_contraction_max", 0.8)),
+                base_high_tol=float(params.get("base_high_tol", 15.0)),
+                near_high_tol=float(params.get("near_high_tol", 4.0)),
+                breakout_change=float(params.get("breakout_change", 4.0)),
+                breakout_vol_mult=float(params.get("breakout_vol_mult", 1.5)),
+            )
 
     return set(merged.loc[mask, "symbol_id"].tolist())

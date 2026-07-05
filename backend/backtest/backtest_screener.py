@@ -28,6 +28,7 @@ try:
         filter_rs_trend_s14_lt_s21,
         filter_theme_rs_trend_rank_s14_gt_s21,
         filter_theme_rs_trend_rank_s21_gt_s63,
+        filter_vcp_breakout,
     )
 except ModuleNotFoundError:
     from backend.indicators.screener_filters import (
@@ -45,6 +46,7 @@ except ModuleNotFoundError:
         filter_rs_trend_s14_lt_s21,
         filter_theme_rs_trend_rank_s14_gt_s21,
         filter_theme_rs_trend_rank_s21_gt_s63,
+        filter_vcp_breakout,
     )
 
 
@@ -335,22 +337,26 @@ def apply_filters_to_df(
             ):
                 return pd.DataFrame(columns=merged.columns)
 
-    # --- RRG or RS-MACD merges ---
+    # --- RRG / RS-MACD / VCP breakout の前日マージ ---
     if (
         strategy.get('rrg_leading_in')
         or strategy.get('rrg_lagging_in')
         or strategy.get('rrg_improving_in')
         or strategy.get('is_rs_macd_hist_rising_21')
+        or strategy.get('is_vcp_breakout')
     ) and prev_date is not None:
         if ind_day_cache is not None:
             ind_prev_all = ind_day_cache.get(prev_date)
         else:
             ind_prev_all = df_ind[df_ind['date'] == prev_date]
-            
+
         if ind_prev_all is not None:
             cols_to_use = ['symbol_id']
             rename_dict = {}
-            for c in ['rs_ratio_e21', 'rs_momentum_e21', 'rs_macd_hist_21']:
+            # VCP ブレイクアウト用に vcr / N日高値距離も前日から取り込む
+            prev_merge_cols = ['rs_ratio_e21', 'rs_momentum_e21', 'rs_macd_hist_21',
+                               'vcr', 'dist_63d_high_pct', 'dist_52w_high_pct']
+            for c in prev_merge_cols:
                 if c in ind_prev_all.columns:
                     cols_to_use.append(c)
                     rename_dict[c] = f'prev_{c}'
@@ -550,6 +556,18 @@ def apply_filters_to_df(
         mask &= filter_rrg_lagging_in(merged)
     if strategy.get('rrg_improving_in') and 'prev_rs_ratio_e21' in merged.columns:
         mask &= filter_rrg_improving_in(merged, intensity_threshold)
+
+    # VCP ブレイクアウト（収縮からのピボット上抜けイベント）
+    if strategy.get('is_vcp_breakout'):
+        mask &= filter_vcp_breakout(
+            merged,
+            high_window=int(strategy.get('breakout_high_window', 63)),
+            vcr_contraction_max=float(strategy.get('vcr_contraction_max', 0.8)),
+            base_high_tol=float(strategy.get('base_high_tol', 15.0)),
+            near_high_tol=float(strategy.get('near_high_tol', 4.0)),
+            breakout_change=float(strategy.get('breakout_change', 4.0)),
+            breakout_vol_mult=float(strategy.get('breakout_vol_mult', 1.5)),
+        )
 
     # 3. Expression Filter
     expression = strategy.get('expression')

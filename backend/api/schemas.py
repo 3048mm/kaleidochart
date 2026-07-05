@@ -256,6 +256,7 @@ class EtfFeatureItem(BaseModel):
     dist_sma21_pct: float
     dist_sma63_pct: float
     sma21_sma63_pct: float
+    dist_sma200_pct: float = 0.0
     rs_ratio_e14: Optional[float] = None
     rs_ratio_e21: Optional[float] = None
     rs_ratio_e63: Optional[float] = None
@@ -344,6 +345,7 @@ class ThemeDetailResponse(BaseModel):
     dist_sma21_pct: float = 0.0
     dist_sma63_pct: float = 0.0
     sma21_sma63_pct: float = 0.0
+    dist_sma200_pct: float = 0.0
     rs_ratio_e5: Optional[float] = None
     rs_ratio_e14: Optional[float] = None
     rs_ratio_e21: Optional[float] = None

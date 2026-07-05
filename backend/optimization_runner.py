@@ -531,7 +531,7 @@ def objective(trial: optuna.Trial, strategy_name: str, config, config_app, exit_
         trial.set_system_attr("note", params_toml_str)
 
         # --- Trial Summary Log ---
-        print(f"  [Trial {trial.number}] Score: {avg_score:.2f} | Port vs SPY: {portfolio_vs_spy:+.2f}% (Total: {port_vs_spy_total:+.1f}%) | MaxDD: {max_dd_overall:.1f}% | Trades: {total_trades} | WinRate: {trial.user_attrs['win_rate']:.1f}%", flush=True)
+        print(f"  [Trial {trial.number}] Score: {avg_score:.2f} | AvgGain: {trial.user_attrs['avg_gain']:+.2f}% (LCB: {trial.user_attrs['expectancy_lcb']:+.2f}%) | Port vs SPY: {portfolio_vs_spy:+.2f}% (Total: {port_vs_spy_total:+.1f}%) | MaxDD: {max_dd_overall:.1f}% | Trades: {total_trades} | WinRate: {trial.user_attrs['win_rate']:.1f}%", flush=True)
 
         return avg_score
     except Exception as e:
@@ -637,6 +637,7 @@ def main():
         
     if "expectancy" in trial.user_attrs:
         print(f"  Expectancy:     {trial.user_attrs['expectancy']:.3f}%")
+        print(f"  Expectancy LCB: {trial.user_attrs.get('expectancy_lcb', 0):.3f}%  (期待値 − 2×SE。スコアの主指標)")
         print(f"  Avg Gain/Trade: {trial.user_attrs['avg_gain']:.3f}%")
         print(f"  Avg SPY Gain:   {trial.user_attrs['avg_spy_gain']:.3f}%")
         print(f"  Alpha:          {trial.user_attrs.get('alpha', 0):.3f}%")

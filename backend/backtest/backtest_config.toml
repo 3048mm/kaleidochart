@@ -27,8 +27,17 @@ time_stop_days = 7
 # =============================================================
 # Strategy Parameter Sets
 # =============================================================
-
-
+#
+# max_allowed_dd の校正について（2026-07-05 再校正）:
+#   最適化スコアの DD ペナルティ閾値。2026-07-05 に DD 計測を mark-to-market 化
+#   （含み損の谷・同時被弾を反映）したため、旧 additive 計測時代の校正値（20% 等）は
+#   MTM スケールでは 2〜4 倍厳しく作用していた。全戦略に MTM 基準の値を明示する。
+#   スケール感（ポートフォリオ等価 DD の許容水準）:
+#     - 攻撃的モメンタム（A, B系）: 35
+#     - RRG / F（中庸）: 30
+#     - 押し目（D）: 25
+#     - VCP（設計上低ボラ・E系）: 20
+#   全て未設定時のコード側デフォルトは 20（optimization_runner.calculate_custom_score）。
 
 [[strategy]]
 name = "A_momentum_breakout"
@@ -45,7 +54,7 @@ min_market_cap = 1e8
 is_rs_ratio_rank_e21_gt_e63 = true
 min_avg_hits_per_day = 0.1
 min_hit_rate_pct = 1.0
-max_allowed_dd = 20.0
+max_allowed_dd = 35.0   # MTM 再校正（旧 20.0）
 
 [strategy.optimization]
 min_change_1d_pct  = { type = "float", min = 2.0, max = 10.0, step = 1.0 }
@@ -73,7 +82,7 @@ max_sma50_atr_mult = 7.0
 min_market_cap = 1e7
 min_theme_rs_ratio_rank_e21 = 0.8
 is_close_gt_ema63 = true
-max_allowed_dd = 25.0
+max_allowed_dd = 35.0   # MTM 再校正（旧 25.0）
 
 [strategy.optimization]
 min_change_1d_pct  = { type = "float", min = 2.0, max = 12.0, step = 1.0 }
@@ -95,14 +104,18 @@ min_vol_surge_21 = 2.7
 min_adr_pct_21 = 6.0 
 max_sma50_atr_mult = 5.0 
 min_market_cap = 5e6 
-is_theme_rs_ratio_rank_e21_gt_e63 = true 
-min_rs_ratio_rank_e21 = 0.4 
+is_theme_rs_ratio_rank_e21_gt_e63 = true
+min_rs_ratio_rank_e21 = 0.4
 is_close_gt_ema63 = true
+max_allowed_dd = 35.0   # MTM 再校正（旧: 未設定=デフォルト 20.0）
 
 [strategy.optimization]
 min_change_1d_pct  = { type = "float", min = 2.0, max = 10.0, step = 1.0 }
 min_vol_surge_21   = { type = "float", min = 0.5, max = 3.0, step = 0.1 }
-min_adr_pct_21     = { type = "float", min = 1.0, max = 6.0, step = 0.5 }
+# 2026-07-05: 探索下限を 1.0→3.0 に引き上げ。B2 の「テーマの急騰銘柄」というコンセプトを
+# 探索空間で防衛する（DD 制約下で adr を下げてボラフィルタを撤廃した低ボラ大量トレード型へ
+# 変質するのを防ぐ）
+min_adr_pct_21     = { type = "float", min = 3.0, max = 6.0, step = 0.5 }
 max_sma50_atr_mult = { type = "float", min = 2.0, max = 8.0, step = 0.5 }
 min_market_cap     = { type = "categorical", choices = [1e5, 5e5, 1e6, 5e6, 1e7, 5e7, 1e8, 3e8, 1e9] }
 is_theme_rs_ratio_rank_e21_gt_e63   = { type = "categorical", choices = [true] }
@@ -124,6 +137,7 @@ min_market_cap = 5e6
 is_theme_rs_ratio_rank_e14_gt_e21 = true
 min_rs_ratio_rank_e14 = 0.5
 is_close_gt_ema63 = true
+max_allowed_dd = 35.0   # MTM 再校正（旧: 未設定=デフォルト 20.0）
 
 [strategy.optimization]
 min_change_1d_pct    = { type = "float", min = 2.0, max = 10.0, step = 1.0 }
@@ -149,11 +163,12 @@ min_vol_surge_21 = 0.6
 min_adr_pct_21 = 6.0 
 max_sma50_atr_mult = 4.0 
 min_market_cap = 1e6
-min_rs_trend_s21 = 1.0 
+min_rs_trend_s21 = 1.0
 min_theme_rs_ratio_rank_e21 = 0.6
-is_rs_trend_s21_lt_s63 = true 
-is_theme_rs_ratio_rank_e14_gt_e21 = true 
+is_rs_trend_s21_lt_s63 = true
+is_theme_rs_ratio_rank_e14_gt_e21 = true
 is_close_gt_ema63 = true
+max_allowed_dd = 35.0   # MTM 再校正（旧: 未設定=デフォルト 20.0）
 
 [strategy.optimization]
 min_change_1d_pct    = { type = "float", min = 2.0, max = 10.0, step = 1.0 }
@@ -183,8 +198,9 @@ min_market_cap = 1e7
 min_rs_trend_s21 = 0.9 
 min_theme_rs_trend_s21 = 0.9 
 is_rs_trend_s14_lt_s21 = true
-is_theme_rs_trend_rank_s14_gt_s21 = true 
+is_theme_rs_trend_rank_s14_gt_s21 = true
 is_close_gt_ema63 = true
+max_allowed_dd = 35.0   # MTM 再校正（旧: 未設定=デフォルト 20.0）
 
 [strategy.optimization]
 min_change_1d_pct    = { type = "float", min = 2.0, max = 10.0, step = 1.0 }
@@ -216,8 +232,9 @@ min_rs_trend_rank_s21 = 0.9
 min_rs_macd_hist_21 = 0.0 
 min_theme_rs_trend_s21 = 0.9 
 is_theme_rs_trend_rank_s14_gt_s21 = true
-is_close_gt_ema63 = true 
+is_close_gt_ema63 = true
 is_rs_macd_hist_rising_21 = false
+max_allowed_dd = 35.0   # MTM 再校正（旧: 未設定=デフォルト 20.0）
 
 [strategy.optimization]
 min_change_1d_pct    = { type = "float", min = 4.0, max = 10.0, step = 1.0 }
@@ -245,6 +262,7 @@ min_vol_surge_21 = 1.0
 min_adr_pct_21 = 4.0
 max_sma50_atr_mult = 6.0
 min_market_cap = 1e9
+max_allowed_dd = 30.0   # MTM 再校正（旧: 未設定=デフォルト 20.0）
 
 [strategy.optimization]
 min_change_1d_pct  = { type = "categorical", choices = [0.0] }
@@ -262,10 +280,11 @@ sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
 rrg_improving_in = true
 min_change_1d_pct = 2.0
-min_vol_surge_21 = 1.6 
-min_adr_pct_21 = 3.5 
-max_sma50_atr_mult = 5.0 
+min_vol_surge_21 = 1.6
+min_adr_pct_21 = 3.5
+max_sma50_atr_mult = 5.0
 min_market_cap = 1e8
+max_allowed_dd = 30.0   # MTM 再校正（旧: 未設定=デフォルト 20.0）
 
 [strategy.optimization]
 rrg_improving_in     = { type = "categorical", choices = [true] }
@@ -289,6 +308,7 @@ min_rs_ratio_rank_e21 = 0.7
 min_up_down_vol_ratio_50 = 1.2
 max_vol_surge_21 = 0.8
 is_trend_template = true
+max_allowed_dd = 25.0   # MTM 再校正（旧: 未設定=デフォルト 20.0。押し目系はやや厳しめ）
 
 [strategy.optimization]
 min_dist_ema21_pct   = { type = "float", min = -4.0, max = -1.0, step = 0.5 }
@@ -301,55 +321,76 @@ max_vol_surge_21     = { type = "float", min = 0.6,  max = 1.2,  step = 0.1 }
 min_up_down_vol_ratio_50 = { type = "float", min = 1.0, max = 1.5, step = 0.1 }
 
 
+# E1/E2 は 2026-07-05 に状態版 VCP から「ブレイクアウトイベント版」へ作り直し。
+# 旧 study は E1_old/E2_old でユーザーが退避（is_vcp_breakout はイベントなので発火が疎・
+# 各シグナルが独立で LCB が正直になる）。詳細: doc/completed/e3_vcp_breakout_plan.md
+#
+# is_vcp_breakout=true に付随するフィルタ内パラメータ（RRG の intensity_threshold と同じ扱い）:
+#   breakout_high_window: 高値近傍ゲートのウィンドウ（63=3ヶ月ベース / 252=52週高値）
+#   vcr_contraction_max : 前日までの収縮度上限（ATR10/ATR50）
+#   base_high_tol       : 前日の 52週高値からの許容乖離（%。土台の浅さ）
+#   near_high_tol       : 当日が N日高値からどれだけ以内か（緩い近傍ゲート）
+#   breakout_change     : ブレイクの大陽線（change_1d_pct の下限。イベントトリガー）
+#   breakout_vol_mult   : 当日の出来高膨張の下限（vol_surge_21）
+
 [[strategy]]
-name = "E1_vcp"
-description = "ボラティリティ収縮パターン"
+name = "E1_vcp_breakout_mid"
+description = "VCP 収縮からの中期(63日高値近傍)ブレイクアウト（出来高を伴う大陽線イベント）"
 max_hits_per_day = 10
 sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
-is_trend_template = true           # ミネルヴィニのトレンドテンプレート適合
-max_vcr = 0.7                   # 収縮度合い（ATR10/ATR50。0.5に近いほどタイト）
-max_adr_pct_21 = 1.5            # 21日平均の値幅の上限（静かな動き）
-# dist_52w_high_pct = (close−52週高値)/高値×100 で常に0以下のため、「高値に近い」は min_ で下から締める
-# （旧 max_dist_52w_high_pct = 0.0 は常に真の無効フィルタだった。2026-07-05 修正）
-min_dist_52w_high_pct = -10.0   # 52週高値から10%以内の位置
-min_up_down_vol_ratio_50 = 1.5  # 出来高比率（買い集め傾向）
-min_market_cap = 1e9
+is_vcp_breakout = true
+breakout_high_window = 63
+vcr_contraction_max = 0.85
+base_high_tol = 10.0
+near_high_tol = 4.0        # 当日は63日高値から4%以内（緩い近傍ゲート）
+breakout_change = 4.0      # ブレイクの大陽線（イベントトリガー）
+breakout_vol_mult = 2.1
+min_market_cap = 3e8
+max_allowed_dd = 20.0
+min_avg_hits_per_day = 0.05   # イベント系は疎なので下限を緩める
+min_hit_rate_pct = 0.3
 
 [strategy.optimization]
-is_trend_template    = { type = "categorical", choices = [true] }
-max_vcr              = { type = "float", min = 0.5, max = 0.8, step = 0.05 }
-max_adr_pct_21       = { type = "float", min = 1.5, max = 4.5, step = 0.5 }
-min_dist_52w_high_pct = { type = "float", min = -25.0, max = -2.5, step = 2.5 }
-min_up_down_vol_ratio_50 = { type = "float", min = 1.0, max = 3.0, step = 0.5 }
-min_market_cap       = { type = "categorical", choices = [1e8, 3e8, 1e9] }
+# is_vcp_breakout / breakout_high_window は固定だが、シナリオテスト（型3）が Optuna の
+# z_params_toml を screener_presets.toml に貼って使うため、単一カテゴリカルで出力に含める
+# （A/B の特殊フラグと同じパターン。欠落するとプリセットでフィルタが発火せずサイレント失敗）
+is_vcp_breakout      = { type = "categorical", choices = [true] }
+breakout_high_window = { type = "categorical", choices = [63] }
+vcr_contraction_max = { type = "float", min = 0.5, max = 0.9, step = 0.05 }
+base_high_tol       = { type = "float", min = 5.0, max = 25.0, step = 5.0 }
+near_high_tol       = { type = "float", min = 2.0, max = 8.0, step = 1.0 }
+breakout_change     = { type = "float", min = 2.0, max = 7.0, step = 0.5 }
+breakout_vol_mult   = { type = "float", min = 1.2, max = 3.0, step = 0.1 }
+min_market_cap      = { type = "categorical", choices = [5e7, 1e8, 3e8, 1e9] }
 
 [[strategy]]
-name = "E2_vcp_basic"
-description = "ボラティリティ収縮パターン"
+name = "E2_vcp_breakout_52w"
+description = "VCP 収縮からの52週高値近傍ブレイクアウト（出来高を伴う大陽線・最高確度で最も稀なイベント）"
 max_hits_per_day = 10
 sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
-is_trend_template = true           # ミネルヴィニのトレンドテンプレート適合
-max_vcr = 0.65                  # 収縮度合い（ATR10/ATR50。0.5に近いほどタイト）
-max_adr_pct_21 = 1.5            # 21日平均の値幅の上限（静かな動き）
-# 旧 max_dist_52w_high_pct = 5.0 は常に真の無効フィルタだった（2026-07-05 修正、E1 のコメント参照）
-min_dist_52w_high_pct = -10.0   # 52週高値から10%以内の位置
-min_up_down_vol_ratio_50 = 1.5  # 出来高比率（買い集め傾向）
-min_market_cap = 1e9
-is_close_gt_ema63 = true
-min_avg_hits_per_day = 0.05
-min_hit_rate_pct = 0.5
-max_allowed_dd = 15.0
+is_vcp_breakout = true
+breakout_high_window = 252
+vcr_contraction_max = 0.85
+base_high_tol = 10.0
+near_high_tol = 4.0        # 当日は52週高値から4%以内
+breakout_change = 4.0      # ブレイクの大陽線
+breakout_vol_mult = 2.1
+min_market_cap = 1e8
+max_allowed_dd = 20.0
+min_avg_hits_per_day = 0.02   # 52週新高値はさらに稀
+min_hit_rate_pct = 0.2
 
 [strategy.optimization]
-is_trend_template    = { type = "categorical", choices = [true] }
-max_vcr              = { type = "float", min = 0.5, max = 0.8, step = 0.05 }
-max_adr_pct_21       = { type = "float", min = 1.5, max = 6.0, step = 0.5 }
-min_dist_52w_high_pct = { type = "float", min = -25.0, max = -2.5, step = 2.5 }
-min_up_down_vol_ratio_50 = { type = "float", min = 1.0, max = 3.0, step = 0.5 }
-min_market_cap       = { type = "categorical", choices = [1e7, 5e7, 1e8, 3e8, 1e9] }
-is_close_gt_ema63 = { type = "categorical", choices = [true] }
+is_vcp_breakout      = { type = "categorical", choices = [true] }
+breakout_high_window = { type = "categorical", choices = [252] }
+vcr_contraction_max = { type = "float", min = 0.5, max = 0.9, step = 0.05 }
+base_high_tol       = { type = "float", min = 5.0, max = 25.0, step = 5.0 }
+near_high_tol       = { type = "float", min = 2.0, max = 8.0, step = 1.0 }
+breakout_change     = { type = "float", min = 2.0, max = 7.0, step = 0.5 }
+breakout_vol_mult   = { type = "float", min = 1.2, max = 3.0, step = 0.1 }
+min_market_cap      = { type = "categorical", choices = [5e7, 1e8, 3e8, 1e9] }
 
 [[strategy]]
 name = "F_elite_momentum97"
@@ -363,6 +404,7 @@ min_adr_pct_21 = 2.5
 min_market_cap = 3e8
 max_sma50_atr_mult = 6.0
 min_vol_accum_days_5 = 3
+max_allowed_dd = 30.0   # MTM 再校正（旧: 未設定=デフォルト 20.0）
 
 [strategy.optimization]
 min_rs_ratio_rank_e21 = { type = "float", min = 0.97, max = 0.99, step = 0.01 }

@@ -208,6 +208,7 @@ export interface EtfFeatureItem {
     dist_sma21_pct: number;
     dist_sma63_pct: number;
     sma21_sma63_pct: number;
+    dist_sma200_pct?: number;
     rs_ratio_e14?: number | null;
     rs_ratio_e21?: number | null;
     rs_ratio_e63?: number | null;
@@ -284,6 +285,7 @@ export interface ThemeDetailResponse {
     dist_sma21_pct: number;
     dist_sma63_pct: number;
     sma21_sma63_pct: number;
+    dist_sma200_pct?: number;
     rs_ratio_e14?: number | null;
     rs_ratio_e21?: number | null;
     rs_ratio_e63?: number | null;
