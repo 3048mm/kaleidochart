@@ -182,6 +182,7 @@ def apply_filters_to_df(
         or strategy.get('is_rs_ratio_rank_e14_gt_e21')
         or strategy.get('theme_rs_rank_14_gt_21')
         or strategy.get('is_theme_rs_ratio_rank_e14_gt_e21')
+        or 'min_rs_ratio_rank_e14' in strategy
         or 'min_theme_rs_ratio_14_rank' in strategy
         or 'min_theme_rs_ratio_rank_e14' in strategy
         or sort_col in ('rs14_rank', 'rs_ratio_14_rank', 'rs_ratio_rank_e14')
@@ -228,6 +229,8 @@ def apply_filters_to_df(
         or strategy.get('is_rs_ratio_rank_e21_gt_e63')
         or strategy.get('theme_rs_rank_21_gt_63')
         or strategy.get('is_theme_rs_ratio_rank_e21_gt_e63')
+        or 'min_rs_ratio_rank_e63' in strategy
+        or 'min_rs_ratio_63_rank' in strategy
         or 'min_theme_rs_ratio_63_rank' in strategy
         or 'min_theme_rs_ratio_rank_e63' in strategy
         or sort_col in ('rs63_rank', 'rs_ratio_63_rank', 'rs_ratio_rank_e63')
@@ -297,6 +300,9 @@ def apply_filters_to_df(
             if (
                 'min_rs_ratio_21_rank' in strategy
                 or 'min_rs_ratio_rank_e21' in strategy
+                or 'min_rs_ratio_rank_e14' in strategy
+                or 'min_rs_ratio_rank_e63' in strategy
+                or 'min_rs_ratio_63_rank' in strategy
                 or 'min_theme_rs_ratio_14_rank' in strategy
                 or 'min_theme_rs_ratio_rank_e14' in strategy
                 or 'min_theme_rs_ratio_21_rank' in strategy

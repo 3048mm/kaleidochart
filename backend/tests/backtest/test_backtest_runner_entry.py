@@ -56,6 +56,14 @@ def _build_frames(signal_days=range(5), n_symbols=1, dollar_volume=None):
                 "symbol_id": sid, "date": d,
                 "indicator_name": "rs_ratio_rank_e21", "percent_rank": 0.9,
             })
+            rank_rows.append({
+                "symbol_id": sid, "date": d,
+                "indicator_name": "rs_ratio_rank_e14", "percent_rank": 0.5,
+            })
+            rank_rows.append({
+                "symbol_id": sid, "date": d,
+                "indicator_name": "rs_ratio_rank_e63", "percent_rank": 0.5,
+            })
 
     df_prices = pd.DataFrame(price_rows)
     df_ind = pd.DataFrame(ind_rows)
@@ -127,6 +135,33 @@ def test_reentry_escape_hatch_reproduces_old_behavior():
     frames = _build_frames(signal_days=range(5))
     metrics, trades = _run(_strategy(), frames, allow_reentry_during_hold=True)
     assert len(trades) == 5
+
+
+# =============================================================
+# rank 床フィルタの needs_rs* トリガー漏れ（2026-07-05 発見）
+# min_rs_ratio_rank_e14/e63 が単独で使われた場合、rank カラムが
+# マージされず黙って素通しになるバグの回帰テスト。
+# =============================================================
+
+@pytest.mark.parametrize("rank_key", ["min_rs_ratio_rank_e14", "min_rs_ratio_rank_e63"])
+def test_individual_rank_floor_works_standalone(rank_key):
+    """個別 rank 床が「他の rank 条件なしで単独」でも機能すること。
+
+    フィクスチャの rank は 0.5。閾値 0.95 なら 0 件、0.3 なら通過するはず。
+    トリガー漏れがあると 0.95 でも素通しでトレードが発生してしまう。
+    """
+    frames = _build_frames(signal_days={0})
+
+    strict = _strategy(**{rank_key: 0.95})
+    _, trades_strict = _run(strict, frames)
+    assert len(trades_strict) == 0, (
+        f"{rank_key}=0.95（データは0.5）なのにシグナルが通過 — "
+        "needs_rs* トリガー漏れで rank カラム未マージのまま素通しになっている"
+    )
+
+    loose = _strategy(**{rank_key: 0.3})
+    _, trades_loose = _run(loose, frames)
+    assert len(trades_loose) == 1, f"{rank_key}=0.3 は通過するはず（フィルタが機能した上で緩い閾値）"
 
 
 # =============================================================

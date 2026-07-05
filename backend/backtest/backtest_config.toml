@@ -57,30 +57,32 @@ min_market_cap     = { type = "categorical", choices = [1e8, 3e8, 1e9] }
 is_rs_ratio_rank_e21_gt_e63   = { type = "categorical", choices = [true] }
 
 
+# B1 は 2026-07-05 にコンセプト転換（旧: テーマ改善中のモメンタム → 新: リーダーテーマの継続）。
+# 旧 B1 のシグナルは B2 の上位集合（B2 銘柄の9割超を内包）で独自価値がなかったため、
+# B2/B3（テーマの「変化・加速」）と直交する「テーマの水準」特化に変更。旧 study 名: B1_old
 [[strategy]]
-name = "B1_theme_momentum"
-description = "強いテーマに属する銘柄のモメンタム"
+name = "B1_theme_leader"
+description = "確立されたリーダーテーマ（RS%rank上位・水準特化）に属する銘柄のモメンタム。加速条件は持たない（変化系は B2/B3 の役割）"
 max_hits_per_day = 10
 sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
 min_change_1d_pct = 7.0
-min_vol_surge_21 = 2.8
-min_adr_pct_21 = 6.0
+min_vol_surge_21 = 2.0
+min_adr_pct_21 = 5.0
 max_sma50_atr_mult = 7.0
-min_market_cap = 5e6
-is_theme_rs_ratio_e21_gt_e63 = true
+min_market_cap = 1e7
+min_theme_rs_ratio_rank_e21 = 0.8
+is_close_gt_ema63 = true
 max_allowed_dd = 25.0
 
 [strategy.optimization]
-min_change_1d_pct  = { type = "float", min = 2.0, max = 10.0, step = 1.0 }
-min_vol_surge_21   = { type = "float", min = 0.5, max = 3.0, step = 0.1 }
-min_adr_pct_21     = { type = "float", min = 1.0, max = 6.0, step = 0.5 }
-max_sma50_atr_mult = { type = "float", min = 2.0, max = 8.0, step = 0.5 }
-min_market_cap     = { type = "categorical", choices = [1e5, 5e5, 1e6, 5e6, 1e7, 5e7, 1e8, 3e8, 1e9] }
-is_theme_rs_ratio_e21_gt_e63   = { type = "categorical", choices = [true] }
-
-#min_rs_ratio_rank_e21 = 0.5
-#is_close_gt_ema63 = true
+min_change_1d_pct  = { type = "float", min = 2.0, max = 12.0, step = 1.0 }
+min_vol_surge_21   = { type = "float", min = 0.5, max = 4.0, step = 0.1 }
+min_adr_pct_21     = { type = "float", min = 1.0, max = 8.0, step = 0.5 }
+max_sma50_atr_mult = { type = "float", min = 2.0, max = 10.0, step = 0.5 }
+min_market_cap     = { type = "categorical", choices = [1e7, 5e7, 1e8, 3e8, 1e9] }
+min_theme_rs_ratio_rank_e21 = { type = "float", min = 0.6, max = 0.95, step = 0.05 }
+is_close_gt_ema63 = { type = "categorical", choices = [true] }
 
 [[strategy]]
 name = "B2_theme_rsrank_momentum"
@@ -131,7 +133,8 @@ min_adr_pct_21     = { type = "float", min = 1.0, max = 6.0, step = 0.5 }
 max_sma50_atr_mult = { type = "float", min = 2.0, max = 8.0, step = 0.5 }
 min_market_cap     = { type = "categorical", choices = [1e5, 5e5, 1e6, 5e6, 1e7, 5e7, 1e8, 3e8, 1e9] }
 is_theme_rs_ratio_rank_e14_gt_e21   = { type = "categorical", choices = [true] }
-min_rs_ratio_rank_e21 = { type = "float", min = 0.2, max = 0.5, step = 0.1 }
+# 2026-07-05 修正: ベースライン（min_rs_ratio_rank_e14）と探索キーが不一致だったのを e14 に統一
+min_rs_ratio_rank_e14 = { type = "float", min = 0.2, max = 0.7, step = 0.1 }
 is_close_gt_ema63 = { type = "categorical", choices = [true] }
 
 [[strategy]]
@@ -305,19 +308,21 @@ max_hits_per_day = 10
 sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
 is_trend_template = true           # ミネルヴィニのトレンドテンプレート適合
-max_vcr = 0.7                   # 収縮度合い（0.5に近いほどタイト）
-max_adr_pct_21 = 1.5            # 21日平均の値幅が3.5%以内（静かな動き）
-max_dist_52w_high_pct = 0.0     # 52週高値から10%以内の位置
+max_vcr = 0.7                   # 収縮度合い（ATR10/ATR50。0.5に近いほどタイト）
+max_adr_pct_21 = 1.5            # 21日平均の値幅の上限（静かな動き）
+# dist_52w_high_pct = (close−52週高値)/高値×100 で常に0以下のため、「高値に近い」は min_ で下から締める
+# （旧 max_dist_52w_high_pct = 0.0 は常に真の無効フィルタだった。2026-07-05 修正）
+min_dist_52w_high_pct = -10.0   # 52週高値から10%以内の位置
 min_up_down_vol_ratio_50 = 1.5  # 出来高比率（買い集め傾向）
 min_market_cap = 1e9
 
 [strategy.optimization]
-is_trend_template    = { type = "categorical", choices = [true] }  
-max_vcr              = { type = "float", min = 0.5, max = 0.8, step = 0.05 } 
-max_adr_pct_21       = { type = "float", min = 1.5, max = 4.5, step = 0.5 }  
-max_dist_52w_high_pct = { type = "float", min = -20.0, max = 10.0, step = 5.0 } 
-min_up_down_vol_ratio_50 = { type = "float", min = 1.0, max = 3.0, step = 0.5 }  
-min_market_cap       = { type = "categorical", choices = [1e8, 3e8, 1e9] }            # 時価総額300Mドル以上
+is_trend_template    = { type = "categorical", choices = [true] }
+max_vcr              = { type = "float", min = 0.5, max = 0.8, step = 0.05 }
+max_adr_pct_21       = { type = "float", min = 1.5, max = 4.5, step = 0.5 }
+min_dist_52w_high_pct = { type = "float", min = -25.0, max = -2.5, step = 2.5 }
+min_up_down_vol_ratio_50 = { type = "float", min = 1.0, max = 3.0, step = 0.5 }
+min_market_cap       = { type = "categorical", choices = [1e8, 3e8, 1e9] }
 
 [[strategy]]
 name = "E2_vcp_basic"
@@ -326,23 +331,24 @@ max_hits_per_day = 10
 sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
 is_trend_template = true           # ミネルヴィニのトレンドテンプレート適合
-max_vcr = 0.65                  # 収縮度合い（0.5に近いほどタイト）
-max_adr_pct_21 = 1.5            # 21日平均の値幅が3.5%以内（静かな動き）
-max_dist_52w_high_pct = 5.0     # 52週高値から10%以内の位置
+max_vcr = 0.65                  # 収縮度合い（ATR10/ATR50。0.5に近いほどタイト）
+max_adr_pct_21 = 1.5            # 21日平均の値幅の上限（静かな動き）
+# 旧 max_dist_52w_high_pct = 5.0 は常に真の無効フィルタだった（2026-07-05 修正、E1 のコメント参照）
+min_dist_52w_high_pct = -10.0   # 52週高値から10%以内の位置
 min_up_down_vol_ratio_50 = 1.5  # 出来高比率（買い集め傾向）
-min_market_cap = 1e9            # 時価総額300Mドル以上
+min_market_cap = 1e9
 is_close_gt_ema63 = true
 min_avg_hits_per_day = 0.05
 min_hit_rate_pct = 0.5
 max_allowed_dd = 15.0
 
 [strategy.optimization]
-is_trend_template    = { type = "categorical", choices = [true] }  
-max_vcr              = { type = "float", min = 0.5, max = 0.8, step = 0.05 } 
-max_adr_pct_21       = { type = "float", min = 1.5, max = 6.0, step = 0.5 }  
-max_dist_52w_high_pct = { type = "float", min = -20.0, max = 15.0, step = 5.0 } 
-min_up_down_vol_ratio_50 = { type = "float", min = 1.0, max = 3.0, step = 0.5 }  
-min_market_cap       = { type = "categorical", choices = [1e7, 5e7, 1e8, 3e8, 1e9] }  
+is_trend_template    = { type = "categorical", choices = [true] }
+max_vcr              = { type = "float", min = 0.5, max = 0.8, step = 0.05 }
+max_adr_pct_21       = { type = "float", min = 1.5, max = 6.0, step = 0.5 }
+min_dist_52w_high_pct = { type = "float", min = -25.0, max = -2.5, step = 2.5 }
+min_up_down_vol_ratio_50 = { type = "float", min = 1.0, max = 3.0, step = 0.5 }
+min_market_cap       = { type = "categorical", choices = [1e7, 5e7, 1e8, 3e8, 1e9] }
 is_close_gt_ema63 = { type = "categorical", choices = [true] }
 
 [[strategy]]
