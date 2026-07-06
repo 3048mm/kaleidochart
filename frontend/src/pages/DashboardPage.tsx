@@ -367,6 +367,16 @@ export const DashboardPage: React.FC = () => {
                                 <EtfFeaturePanel 
                                     feature={data.spy_feature} 
                                     titleSuffix="S&P 500 ETF"
+                                    showRsMetrics={false}
+                                />
+                            )}
+
+                            {/* QQQ Feature Panel */}
+                            {data.qqq_feature && (
+                                <EtfFeaturePanel 
+                                    feature={data.qqq_feature} 
+                                    titleSuffix="NASDAQ-100 ETF"
+                                    showRsMetrics={false}
                                 />
                             )}
 

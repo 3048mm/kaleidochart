@@ -239,6 +239,7 @@ export interface DashboardResponse {
     vxv_vix_ratio?: number | null
     trend_score_history: MarketTrendScoreHistoryItem[]
     spy_feature?: EtfFeatureItem
+    qqq_feature?: EtfFeatureItem
     leading: LeadingIndicatorItem[]
     indices: DashboardPanelItem[]
     sectors: DashboardPanelItem[]
