@@ -8,6 +8,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - エラーメッセージの説明も日本語で行う
 - ドキュメントも日本語で生成する
 
+## ツール呼び出しの書式（AIエージェント向け・厳守）
+- ツール呼び出しは名前空間接頭辞付きの正規の書式で出力すること。接頭辞を欠いた壊れた書式は malformed として送信が弾かれ、ツールが実行されない。
+- malformed で弾かれたら、同じ書式のまま闇雲に再送しない。直近で成功したツール呼び出しの書式に合わせ、1呼び出しずつ確実に送り直す。
+
 ## Project overview
 
 A personal stock analysis/screening web tool (Japanese-language docs and UI). It computes Relative Strength (vs SPY), ATR-based volatility, volume surge, and Minervini Trend Template signals, then serves them through a batch-computed backend so the frontend only reads pre-aggregated data.
