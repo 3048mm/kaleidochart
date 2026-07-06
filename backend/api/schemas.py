@@ -296,6 +296,7 @@ class DashboardResponse(BaseModel):
     vxv_vix_ratio: Optional[float] = None
     trend_score_history: List[MarketTrendScoreHistoryItem] = []
     spy_feature: Optional[EtfFeatureItem] = None
+    qqq_feature: Optional[EtfFeatureItem] = None
     leading: List[LeadingIndicatorItem] = []
     indices: List[DashboardPanelItem] = []
     sectors: List[DashboardPanelItem] = []

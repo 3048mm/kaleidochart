@@ -192,6 +192,11 @@ def get_dashboard(
 
         dp = price_dict[sym_id]
 
+        # QQQ も SPY と同様に etf_feature として別格扱いにする
+        if s.ticker == "QQQ":
+            resp.qqq_feature = _build_etf_feature(db, s, dp, target_date)
+            continue
+
         # 「指標」カテゴリは panel item を使わない（leading / SPY feature 専用ビルダー）
         if s.category == "指標":
             if s.ticker == "SPY":
