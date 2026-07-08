@@ -508,6 +508,7 @@ def validate_strategies_config(strategies: list, df_ind: pd.DataFrame, df_prices
     FILTER_ATTACHED_PARAM_KEYS = {
         'breakout_high_window', 'vcr_contraction_max', 'base_high_tol',
         'near_high_tol', 'breakout_change', 'breakout_vol_mult',
+        'pivot_tol', 'base_vol_dry_max',
     }
 
     # Metadata, execution, and validation controller params

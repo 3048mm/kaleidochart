@@ -353,9 +353,10 @@ def apply_filters_to_df(
         if ind_prev_all is not None:
             cols_to_use = ['symbol_id']
             rename_dict = {}
-            # VCP ブレイクアウト用に vcr / N日高値距離も前日から取り込む
+            # VCP ブレイクアウト用に vcr / N日高値距離 / 出来高倍率も前日から取り込む
             prev_merge_cols = ['rs_ratio_e21', 'rs_momentum_e21', 'rs_macd_hist_21',
-                               'vcr', 'dist_63d_high_pct', 'dist_52w_high_pct']
+                               'vcr', 'dist_63d_high_pct', 'dist_52w_high_pct',
+                               'vol_surge_21']
             for c in prev_merge_cols:
                 if c in ind_prev_all.columns:
                     cols_to_use.append(c)
@@ -567,6 +568,10 @@ def apply_filters_to_df(
             near_high_tol=float(strategy.get('near_high_tol', 4.0)),
             breakout_change=float(strategy.get('breakout_change', 4.0)),
             breakout_vol_mult=float(strategy.get('breakout_vol_mult', 1.5)),
+            pivot_tol=(float(strategy['pivot_tol'])
+                       if strategy.get('pivot_tol') is not None else None),
+            base_vol_dry_max=(float(strategy['base_vol_dry_max'])
+                              if strategy.get('base_vol_dry_max') is not None else None),
         )
 
     # 3. Expression Filter

@@ -48,7 +48,7 @@ _IND_COLS = [
 _PREV_COLS = [
     "rs_ratio_e21", "rs_momentum_e21", "rs_macd_hist_21",
     # VCP ブレイクアウト用（前日）
-    "vcr", "dist_63d_high_pct", "dist_52w_high_pct",
+    "vcr", "dist_63d_high_pct", "dist_52w_high_pct", "vol_surge_21",
 ]
 # wide 形式 relative_ranks → 共通カラム名へのマッピング
 _RANK_COL_MAP = {
@@ -182,6 +182,10 @@ def evaluate_special_filters(
                 near_high_tol=float(params.get("near_high_tol", 4.0)),
                 breakout_change=float(params.get("breakout_change", 4.0)),
                 breakout_vol_mult=float(params.get("breakout_vol_mult", 1.5)),
+                pivot_tol=(float(params["pivot_tol"])
+                           if params.get("pivot_tol") is not None else None),
+                base_vol_dry_max=(float(params["base_vol_dry_max"])
+                                  if params.get("base_vol_dry_max") is not None else None),
             )
 
     return set(merged.loc[mask, "symbol_id"].tolist())
