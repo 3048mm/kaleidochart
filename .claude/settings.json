@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./venv/Scripts/python.exe -m pytest *)",
+      "PowerShell(.\\venv\\Scripts\\python.exe -m pytest *)",
+      "Bash(export PYTHONPATH=backend)"
+    ]
+  }
+}
