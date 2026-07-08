@@ -175,9 +175,11 @@ S&P500（SPY）の動向や市場全体の統計から算出される、市場�
     - 高値圏の浅い土台: `prev_dist_52w_high_pct >= -base_high_tol`
     - 当日は N日高値の近傍: `dist_{W}_high_pct >= -near_high_tol`（緩いゲート）
     - ブレイクの大陽線: `change_1d_pct >= breakout_change`（イベントトリガー）／ 出来高膨張: `vol_surge_21 >= breakout_vol_mult`／ 地合い: `is_trend_template == 1`
-    - **deny-by-default**: 前日カラムが無い場合は全 False（イベントは前日比較が本質で、他の prev 依存フィルタの no-op フォールバックとは意図的に挙動を変える）。
-    - **設計メモ**: 当初は `dist_Nd_high_pct` のピボット距離クロスで検出したが、この指標はローリング最大に当日を含むため新高値を付ける強いブレイク日ほど終値が乖離して落ち、検出数が過少になった（2026-07-05 診断）。ブレイク検出を `change_1d_pct` の大陽線に切り替え、`dist_{W}` は緩い近傍ゲートに降格した。
-    - 付随パラメータ（`is_vcp_breakout=true` に随伴。RRG の intensity_threshold と同じ扱い）: `breakout_high_window / vcr_contraction_max / base_high_tol / near_high_tol / breakout_change / breakout_vol_mult`。
+    - **真のピボットクロス（`pivot_tol` 指定時のみ・2026-07-09 追加）**: 今日の終値が「昨日までの」N日最大高値の `(1 - pivot_tol/100)` 倍以上。`dist_Nd_high_pct` は当日を含むローリング最大で計算されるため直接使えないが、`change_1d_pct`（終値の前日比）から前日終値を復元すると等価式 `(1 + change_1d_pct/100) × (1 + prev_dist_{W}_high_pct/100) >= 1 - pivot_tol/100` で判定できる。土台内のリバウンド陽線や、ブレイク後の上昇継続中の大陽線での再発火を排除する。
+    - **土台のドライアップ（`base_vol_dry_max` 指定時のみ・2026-07-09 追加）**: `prev_vol_surge_21 <= base_vol_dry_max`（前日の出来高が21日平均比で枯れていた）。枯れ→膨張のコントラストが VCP の核心。
+    - **deny-by-default**: 前日カラムが無い場合は全 False（イベントは前日比較が本質で、他の prev 依存フィルタの no-op フォールバックとは意図的に挙動を変える）。`pivot_tol` / `base_vol_dry_max` 有効時に必要な prev カラムが無い場合も同様。
+    - **設計メモ**: 当初は `dist_Nd_high_pct` のピボット距離クロスで検出したが、この指標はローリング最大に当日を含むため新高値を付ける強いブレイク日ほど終値が乖離して落ち、検出数が過少になった（2026-07-05 診断）。ブレイク検出を `change_1d_pct` の大陽線に切り替え、`dist_{W}` は緩い近傍ゲートに降格した。2026-07-09、比較対象を「前日までの」最大に取ることで欠陥を回避した真のクロス条件を `pivot_tol` として追加（詳細: `doc/completed/e4_vcp_pivot_dryup_plan.md`）。
+    - 付随パラメータ（`is_vcp_breakout=true` に随伴。RRG の intensity_threshold と同じ扱い）: `breakout_high_window / vcr_contraction_max / base_high_tol / near_high_tol / breakout_change / breakout_vol_mult / pivot_tol / base_vol_dry_max`（後2者は未指定なら無効＝後方互換）。
 
 #### 3.6.1 各定性的シグナルの定義
 ダッシュボードに表示される市場の健康状態は、S&P500 (SPY) の日足データから以下のロジックで判定されます。

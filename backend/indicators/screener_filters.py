@@ -371,6 +371,8 @@ def filter_vcp_breakout(
     near_high_tol: float = 4.0,
     breakout_change: float = 4.0,
     breakout_vol_mult: float = 1.5,
+    pivot_tol: float = None,
+    base_vol_dry_max: float = None,
 ) -> pd.Series:
     """VCP 収縮からのブレイクアウト（出来高膨張を伴う大陽線）イベントを通過させるフィルタ。
 
@@ -384,6 +386,13 @@ def filter_vcp_breakout(
     - ブレイクの大陽線: change_1d_pct >= breakout_change（イベントトリガー）
     - 出来高膨張: vol_surge_21 >= breakout_vol_mult（収縮の逆）
     - 上昇トレンド地合い: is_trend_template == 1
+    - [pivot_tol 指定時] 真のピボットクロス: 今日の終値が「昨日までの」N日最大高値の
+      (1 - pivot_tol/100) 倍以上。dist_Nd_high_pct は当日を含むローリング最大で
+      計算されるため直接は使えないが、change_1d_pct（終値の前日比）から前日終値を
+      復元すると次の等価式で判定できる（doc: e4_vcp_pivot_dryup_plan §3.1）:
+        (1 + change_1d_pct/100) × (1 + prev_dist_{W}_high_pct/100) >= 1 - pivot_tol/100
+    - [base_vol_dry_max 指定時] 土台のドライアップ: prev_vol_surge_21 <= base_vol_dry_max
+      （前日の出来高が21日平均比で枯れていた。枯れ→膨張のコントラストが VCP の核心）
 
     high_window: 63（3ヶ月ベース→dist_63d_high_pct）または 252（52週→dist_52w_high_pct）。
 
@@ -392,14 +401,22 @@ def filter_vcp_breakout(
     ブレイク日ほど終値が(新)高値から乖離して落ちるという構造的欠陥があり検出数が過少に
     なった（診断: 収縮＋高値圏の翌日 dist は95%点でも-2.34%）。ブレイクの検出を
     change_1d_pct の大陽線に切り替え、dist は緩い「高値近傍」ゲートに降格した。
+    2026-07-09: 比較対象を「前日までの」最大に取ることで上記欠陥を回避した真のクロス条件を
+    pivot_tol として追加（None なら従来挙動のまま）。
 
     prev カラムが無い場合は **全 False**（deny-by-default）。イベントは前日比較が本質で、
     前日情報が無いのに全通過させると「全銘柄がブレイク」という危険な過剰包含になるため、
     他の prev 依存フィルタ（RRG 等）の no-op フォールバックとは意図的に挙動を変える。
+    pivot_tol / base_vol_dry_max 有効時に必要な prev カラムが無い場合も同様に全 False。
     """
     today_col = 'dist_52w_high_pct' if high_window == 252 else 'dist_63d_high_pct'
+    prev_dist_col = 'prev_dist_52w_high_pct' if high_window == 252 else 'prev_dist_63d_high_pct'
 
     required_prev = ['prev_vcr', 'prev_dist_52w_high_pct']
+    if pivot_tol is not None:
+        required_prev.append(prev_dist_col)
+    if base_vol_dry_max is not None:
+        required_prev.append('prev_vol_surge_21')
     if any(c not in merged.columns for c in required_prev):
         return pd.Series(False, index=merged.index)
     required_today = [today_col, 'change_1d_pct', 'vol_surge_21', 'is_trend_template']
@@ -415,6 +432,16 @@ def filter_vcp_breakout(
 
     mask = (prev_contracted & prev_high_base & near_high
             & breakout_bar & vol_expansion & uptrend)
+
+    if pivot_tol is not None:
+        # close_today >= prev_rollmax × (1 - tol/100) の等価式（docstring 参照）
+        growth_vs_prev_max = ((1 + merged['change_1d_pct'] / 100)
+                              * (1 + merged[prev_dist_col] / 100))
+        mask &= growth_vs_prev_max >= (1 - pivot_tol / 100)
+
+    if base_vol_dry_max is not None:
+        mask &= merged['prev_vol_surge_21'] <= base_vol_dry_max
+
     return mask.fillna(False)
 
 
