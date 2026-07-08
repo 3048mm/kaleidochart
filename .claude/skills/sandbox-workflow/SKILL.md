@@ -24,6 +24,13 @@ DBスキーマ変更・新規指標の追加・パイプラインロジック変
 > API サーバーの watchlist/portfolio には `heal_*_ids()` という自己修復処理があり、GET のたびに ticker→symbol_id を接続中の stocktool DB と突合して **user_data.db を破壊的に UPDATE・commit する**。
 > stocktool 側だけ Sandbox に向けると、Sandbox に存在しない銘柄の symbol_id が本番 `user_data.db` で全て NULL 化される事故が起きる（2026-07-04 に実際に発生。ticker 列は無傷のため本番 DB に対する heal 再実行で復旧済み）。
 
+### 1.1 ワークツリーから利用する場合（バックグラウンドジョブ・並列ワーカー）
+
+- ワークツリーの `data/` はほぼ空（git 管理の TOML 数件のみ）。**相対パスのまま実行するとエラーにならず空 DB が新規作成される**ので、環境変数（上記2つ）は必ず**絶対パス**で設定する。
+- Sandbox は**ワークツリー内に使い捨てで作成**する（コピー元は本体の `data/parquet_master/`）。複数ワーカーの並行検証で共有 Sandbox を取り合わない。
+- ワークツリー内 Sandbox は**昇格の元ネタにしない**（昇格は merge 後に本番データから再生成 — §2 Step 4 参照）。ワークツリー削除と同時に破棄する。
+- `git add` は明示パスのみ（Sandbox の Parquet を誤コミットしない）。データ運用全般の規定は `doc/agent_execution_rules.md` §10。
+
 ## 2. 検証フロー（5ステップ）
 
 ### Step 1: Sandbox データ準備
@@ -49,10 +56,14 @@ API サーバーを Sandbox DB に向けて起動し、以下を確認:
 - チャート・テーブルで新指標がエラーなくレンダリングされること
 
 ### Step 4: 本番コールドの更新 (Promote to Cold)
-検証が 100% 成功したら、`parquet_master_sandbox/` の検証済み Parquet ファイル群を本番 `data/parquet_master/` へアトミックに差し替える（タイムスタンプ付きファイルのコピー + `latest_master.json` ポインタ更新）。
+
+> [!NOTE]
+> コード変更が merge を経由する運用（ワークツリー開発）では、Step 4-5 は merge 直後に `tools/deploy_after_merge.ps1` として1コマンド実行に集約する（前提チェック → 本番 Parquet に新コードで再適用 → swap → restore → health check → NG 時ロールバック。計画書: `doc/in_progress/deploy_after_merge_plan.md`）。検証に使った Sandbox のデータはそのまま swap **せず**、常に「その時点の本番データ＋merge 済みコード」から再生成する — 検証と昇格の間に daily update が走っていても鮮度問題が起きない。
+
+手動で行う場合: 検証が 100% 成功したら、`parquet_master_sandbox/` の検証済み Parquet ファイル群を本番 `data/parquet_master/` へアトミックに差し替える（タイムスタンプ付きファイルのコピー + `latest_master.json` ポインタ更新）。**health check 合格まで旧世代ファイルを prune しない**（MVCC 旧世代がロールバック用バックアップを兼ねる）。
 
 ### Step 5: 本番ホットの同期 (Promote to Hot)
-本番 SQLite の該当キャッシュテーブルをクリアし、`restore_sqlite_cache_from_parquet`（`backend/pipeline/parquet_cache_manager.py`）で本番 Parquet マスターから直近2年分をバルクリストアする（約3分/200万行）。
+本番 SQLite の該当キャッシュテーブルをクリアし、`restore_sqlite_cache_from_parquet`（`backend/pipeline/parquet_cache_manager.py`）で本番 Parquet マスターから直近2年分をバルクリストアする（約3分/200万行）。昇格中は daily update と API サーバを停止すること。
 
 ## 3. チェックリスト
 

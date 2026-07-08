@@ -16,7 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **同一エラーで3回失敗したら打ち切る**（`doc/agent_execution_rules.md` §4）。打ち切り後はアプローチを変えるか、エラー内容を報告してユーザーの判断を仰ぐ。同じ呼び出しをそのまま再送することを禁止する。
 - `File has not been read yet` / `File has been modified since read` で Edit が拒否されたら、**対象ファイルを Read し直してから** Edit する。長いセッションやコンテキスト要約（compaction）後は Read 状態が失われているため、記憶を頼りに Edit しない。
 - `sleep` によるポーリング待機を禁止する（この環境ではブロックされる）。長時間コマンドは `run_in_background` で実行し、完了通知を待つ。
-- Python 実行は常に `.\venv\Scripts\python.exe` を使う。素の `python` は venv 外の Python を拾い、`ModuleNotFoundError`（pytest 等が見つからない）の原因になる。
+- Python 実行は常に**リポジトリ本体の venv** を使う。本体では `.\venv\Scripts\python.exe`、**ワークツリー内には venv が存在しない**ため `..\..\..\venv\Scripts\python.exe` または絶対パスで本体の venv を参照する。素の `python` は venv 外の Python を拾い、`ModuleNotFoundError`（pytest 等が見つからない）の原因になる。
 - import は `PYTHONPATH=backend` 前提の `api.x` / `pipeline.x` / `indicators.x` 形式が基本。`backend.x` プレフィックス形式は `scenario_*` 系など一部のみ（プロジェクトルートから直接実行する前提）。両形式が混在しているため、**編集対象ファイルの既存 import 形式に必ず合わせる**こと。`No module named 'backend'` が出たら PYTHONPATH と import 形式の不一致を疑う。
 - その他の共通ルール（`python -c` の制限、文字コード、パス、Git 合意形成）は `doc/agent_execution_rules.md` §1〜§8 を参照する。
 
@@ -39,6 +39,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 本体チェックアウトでのコミットは禁止（`git add` まで）。**ワークツリー（`.claude/worktrees/` 配下）では自ブランチへのコミットを許可** — 完了報告にブランチ名・SHA・取り込みコマンドを明記する。
 - main への直接コミット・push・マージ、`--amend`・force-push は場所を問わず禁止。push・PR 作成は都度ユーザー指示。
 - ワークツリーで作成した `doc/in_progress/` の計画書は未コミットで置き残さない（その場でコミット）。
+- `git add` は**明示パスのみ**（`git add -A` / `git add .` 禁止 — ワークツリー内 sandbox の Parquet を誤コミットしない）。
+- **データ（DB / Parquet）は git に乗らない**: ワークツリーでのデータアクセス（環境変数は絶対パスで両方設定）、merge 後のデータ昇格（`tools/deploy_after_merge.ps1`）、変更の4種別（A〜D）は `doc/agent_execution_rules.md` §10 を参照。エージェントは完了報告に変更種別を必ず記載する。
 - 詳細: `doc/agent_execution_rules.md` §7。未取り込み作業の棚卸し: `tools/check_worktrees.ps1`
 
 ## Project overview

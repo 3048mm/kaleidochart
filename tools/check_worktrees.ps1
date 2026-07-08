@@ -28,6 +28,18 @@ foreach ($p in $wtPaths) {
     $mark = if (($br -ne 'main' -and $dirty -gt 0) -or $ahead -gt 0) { '[!]' } else { '   ' }
     Write-Output ("{0} {1}" -f $mark, $p)
     Write-Output ("      branch={0}  dirty={1}  ahead-of-main={2}" -f $br, $dirty, $ahead)
+    # disposable sandbox data inside a worktree (skip main: its data/ is production)
+    if ($br -ne 'main') {
+        $dataDir = Join-Path $p 'data'
+        if (Test-Path $dataDir) {
+            $bytes = (Get-ChildItem $dataDir -Recurse -File -ErrorAction SilentlyContinue |
+                Measure-Object Length -Sum).Sum
+            $mb = [math]::Round($bytes / 1MB, 0)
+            if ($mb -ge 1) {
+                Write-Output ("      local sandbox data: {0} MB (delete before/with worktree removal)" -f $mb)
+            }
+        }
+    }
 }
 
 Write-Output ""
