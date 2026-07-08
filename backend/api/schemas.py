@@ -218,6 +218,7 @@ class ScreenerDashboardItem(BaseModel):
     theme_ticker: Optional[str] = None
     theme_name: Optional[str] = None
     theme_rs_ratio: Optional[float] = None
+    rs_trend_history: List[float] = []
 
 class ScreenerDashboardCategory(BaseModel):
     id: str

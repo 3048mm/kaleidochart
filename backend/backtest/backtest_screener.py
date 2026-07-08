@@ -371,6 +371,7 @@ def apply_filters_to_df(
         'rs_ratio_21_rank': 'rs21_rank',
         'rs_ratio_63_rank': 'rs63_rank',
         'trend_template_ok': 'trend_template_ok',
+        'rs_blue_dot': 'is_rs_blue_dot',
         'rs_condition_14_rank': 'rs_condition_14_rank',
         'rs_condition_21_rank': 'rs_condition_21_rank',
         'rs_condition_63_rank': 'rs_condition_63_rank',

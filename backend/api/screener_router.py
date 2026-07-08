@@ -508,6 +508,26 @@ def get_screener_dashboard(
         # Get all mapped themes for these 8 stocks with RelativeRank on target date
         stock_ids = [r.id for r in results]
         
+        # Bulk-preload rs_trend_s21 history for the last 30 trading days
+        date_rows = db.query(Indicator.date).filter(
+            Indicator.date <= latest_date_result
+        ).distinct().order_by(desc(Indicator.date)).limit(30).all()
+        history_dates = [dr[0] for dr in date_rows]
+        
+        trend_rows = db.query(
+            Indicator.symbol_id,
+            Indicator.date,
+            Indicator.rs_trend_s21
+        ).filter(
+            Indicator.symbol_id.in_(stock_ids),
+            Indicator.date.in_(history_dates)
+        ).order_by(Indicator.symbol_id, Indicator.date).all()
+        
+        from collections import defaultdict
+        stock_trends = defaultdict(list)
+        for tr in trend_rows:
+            stock_trends[tr.symbol_id].append(tr.rs_trend_s21 if tr.rs_trend_s21 is not None else 0.0)
+        
         # We query the mapping and theme rank in one query
         theme_ranks = db.query(
             ThemeConstituent.symbol_id.label("stock_id"),
@@ -523,7 +543,6 @@ def get_screener_dashboard(
         ).all()
         
         # Group theme ranks by stock_id
-        from collections import defaultdict
         stock_themes = defaultdict(list)
         for tr in theme_ranks:
             stock_themes[tr.stock_id].append({
@@ -558,7 +577,8 @@ def get_screener_dashboard(
                 change_pct=chg,
                 theme_ticker=theme_ticker,
                 theme_name=theme_name,
-                theme_rs_ratio=theme_rs
+                theme_rs_ratio=theme_rs,
+                rs_trend_history=stock_trends.get(r.id, [])
             ))
         return items
 

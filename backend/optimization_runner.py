@@ -65,10 +65,11 @@ def detect_adequacy(avg_hits_per_day: float, detect_band: tuple = (1.0, 12.0, 0.
 
 
 def calculate_custom_score(metrics, total_trading_days, max_allowed_dd: float = 20.0,
-                           detect_band: tuple = (1.0, 12.0, 0.4)):
+                           detect_band: tuple = (1.0, 12.0, 0.4),
+                           lcb_gate_penalty: float = 0.5):
     """最適化スコアを計算する（高いほど良い）。2026-07-06 再設計。
 
-    score = period_CAGR / dd_penalty × detect_adequacy(avg_hits_per_day)
+    score = period_CAGR / dd_penalty × detect_adequacy(avg_hits_per_day) × lcb_gate
 
     主指標を expectancy_lcb（1トレード単価）から **期間CAGR（複利での資産成長）** へ差し替えた。
     「1トレードで勝つ」ではなく「資産をどこまで伸ばしつつ DD を抑えるか」を最適化する（実質 Calmar 型）。
@@ -80,6 +81,9 @@ def calculate_custom_score(metrics, total_trading_days, max_allowed_dd: float = 
     - CAGR<=0（成長がマイナス）: DD の深さでさらに沈める（detect係数は掛けない）
     - max_allowed_dd 超過: 超過分の2乗ペナルティ
     - 検出件数が実用帯外: detect_adequacy による係数割引（floor が下限）
+    - expectancy_lcb<=0（1トレード単価で勝てていない=生存者バイアス疑い）: lcb_gate_penalty で割引
+      （CAGRは少数の巨大勝ち=右の裾に支配されやすい。単価エッジの下限が無いスクリーンをソフトに減点し、
+       過適合を抑える。metrics に expectancy_lcb が無ければスキップ=後方互換）
     """
     if not metrics:
         return -1000.0
@@ -118,6 +122,14 @@ def calculate_custom_score(metrics, total_trading_days, max_allowed_dd: float = 
 
     # --- 検出件数の実用帯係数（多すぎず少なすぎず） ---
     score *= detect_adequacy(avg_trades_per_day, detect_band)
+
+    # --- expectancy_lcb ソフトゲート（右裾過適合対策） ---
+    # 1トレード期待値の下限(LCB)が 0以下 = 単価では勝てておらず、CAGRが少数の巨大勝ち
+    # （生存者バイアス）に依存している疑い。主指標はCAGRのまま、そうしたスクリーンを割り引く。
+    # metrics に expectancy_lcb が無い場合はスキップ（後方互換）。
+    lcb = metrics.get('expectancy_lcb')
+    if lcb is not None and lcb <= 0.0:
+        score *= lcb_gate_penalty
 
     return score
 
@@ -434,6 +446,10 @@ def objective(trial: optuna.Trial, strategy_name: str, config, config_app, exit_
         band_floor = strat_base.get('detect_floor', prune_conf.get('detect_floor', 0.4))
         detect_band = (float(band_lo), float(band_hi), float(band_floor))
 
+        # expectancy_lcb ソフトゲート係数。戦略側 > [optimization_pruning] > コード既定 の順で解決
+        lcb_gate_penalty = float(strat_base.get('lcb_gate_penalty',
+                                                prune_conf.get('lcb_gate_penalty', 0.5)))
+
         total_score = 0.0
         total_trades = 0
         total_trading_days_all = 0
@@ -472,7 +488,7 @@ def objective(trial: optuna.Trial, strategy_name: str, config, config_app, exit_
                     # Fallback, theoretically shouldn't reach if bounds logic matched
                     raise optuna.TrialPruned()
                 
-            period_score = calculate_custom_score(metrics, len(trading_dates), max_allowed_dd, detect_band)
+            period_score = calculate_custom_score(metrics, len(trading_dates), max_allowed_dd, detect_band, lcb_gate_penalty)
             total_score += period_score
             total_trading_days_all += len(trading_dates)
 

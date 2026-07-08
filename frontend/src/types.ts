@@ -167,11 +167,16 @@ export interface ScreenerDashboardItem {
     ticker: string;
     name: string;
     change_pct: number;
+    theme_ticker?: string | null;
+    theme_name?: string | null;
+    theme_rs_ratio?: number | null;
+    rs_trend_history?: number[];
 }
 
 export interface ScreenerDashboardCategory {
     id: string;
     name: string;
+    subname?: string;
     subtitle?: string;
     group: string;
     items: ScreenerDashboardItem[];

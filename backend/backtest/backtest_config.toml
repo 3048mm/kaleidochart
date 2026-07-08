@@ -153,19 +153,19 @@ is_close_gt_ema63 = { type = "categorical", choices = [true] }
 
 [[strategy]]
 name = "B4_rs_trend_with_theme"
-description = "相対トレンドが強く、上昇テーマにも属する銘柄"
+description = "相対トレンドが強く、上昇テーマ(RSR)にも属する銘柄"
 max_hits_per_day = 10
 sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
-min_change_1d_pct = 7.0 
-min_dist_ema21_pct = 8.0 
-min_vol_surge_21 = 0.6 
+min_change_1d_pct = 2.0 
+min_dist_ema21_pct = 11.0 
+min_vol_surge_21 = 2.0 
 min_adr_pct_21 = 6.0 
-max_sma50_atr_mult = 4.0 
-min_market_cap = 1e6
-min_rs_trend_s21 = 1.0
+max_sma50_atr_mult = 5.0 
+min_market_cap = 1e7
+min_rs_trend_s21 = 0.9 
 min_theme_rs_ratio_rank_e21 = 0.6
-is_rs_trend_s21_lt_s63 = true
+is_rs_trend_s14_lt_s21 = true
 is_theme_rs_ratio_rank_e14_gt_e21 = true
 is_close_gt_ema63 = true
 max_allowed_dd = 35.0   # MTM 再校正（旧: 未設定=デフォルト 20.0）
@@ -173,32 +173,33 @@ max_allowed_dd = 35.0   # MTM 再校正（旧: 未設定=デフォルト 20.0）
 [strategy.optimization]
 min_change_1d_pct    = { type = "float", min = 2.0, max = 10.0, step = 1.0 }
 min_dist_ema21_pct   = { type = "float", min = -1.0, max = 20.0, step = 1.0 }
-min_vol_surge_21   = { type = "float", min = 0.5, max = 3.0, step = 0.1 }
+min_vol_surge_21   = { type = "float", min = 0.5, max = 5.0, step = 0.1 }
 min_adr_pct_21     = { type = "float", min = 1.0, max = 6.0, step = 0.5 }
 max_sma50_atr_mult = { type = "float", min = 2.0, max = 8.0, step = 0.5 }
-min_market_cap     = { type = "categorical", choices = [1e5, 5e5, 1e6, 5e6, 1e7, 5e7, 1e8, 3e8, 1e9] }
+min_market_cap     = { type = "categorical", choices = [1e7, 1e8] }
+#min_market_cap     = { type = "categorical", choices = [1e5, 5e5, 1e6, 5e6, 1e7, 5e7, 1e8, 3e8, 1e9] }
 min_rs_trend_s21 = { type = "float", min = 0.8, max = 2.0, step = 0.1 }
 min_theme_rs_ratio_rank_e21 = { type = "float", min = 0.4, max = 0.9, step = 0.1 }
-is_rs_trend_s21_lt_s63   = { type = "categorical", choices = [true] }
+is_rs_trend_s14_lt_s21   = { type = "categorical", choices = [true] }
 is_theme_rs_ratio_rank_e14_gt_e21   = { type = "categorical", choices = [true] }
 is_close_gt_ema63 = { type = "categorical", choices = [true] }
 
 [[strategy]]
 name = "B5_rs_trend_with_theme"
-description = "相対トレンドが強く、上昇テーマにも属する銘柄"
+description = "相対トレンドが強く、上昇テーマ(RST)にも属する銘柄"
 max_hits_per_day = 10
 sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
-min_change_1d_pct = 4.0 
-min_dist_ema21_pct = 3.0 
-min_vol_surge_21 = 2.4
-min_adr_pct_21 = 5.5 
-max_sma50_atr_mult = 7.5 
-min_market_cap = 1e7 
+min_change_1d_pct = 2.0 
+min_dist_ema21_pct = 11.0 
+min_vol_surge_21 = 2.0 
+min_adr_pct_21 = 6.0 
+max_sma50_atr_mult = 5.0 
+min_market_cap = 1e7
 min_rs_trend_s21 = 0.9 
 min_theme_rs_trend_s21 = 0.9 
-is_rs_trend_s14_lt_s21 = true
-is_theme_rs_trend_rank_s14_gt_s21 = true
+is_rs_trend_s14_lt_s21 = true 
+is_theme_rs_trend_rank_s14_gt_s21 = true 
 is_close_gt_ema63 = true
 max_allowed_dd = 35.0   # MTM 再校正（旧: 未設定=デフォルト 20.0）
 
@@ -415,6 +416,95 @@ max_sma50_atr_mult   = { type = "float", min = 4.0, max = 8.0, step = 1.0 }
 min_vol_accum_days_5   = { type = "categorical", choices = [3] }
 
 
+
+# =============================================================
+# G系: 追加インジケーター検証（td9 / change_1w/1m_pct / is_rs_blue_dot）
+# issue_list P1「追加インジケーターのバックテスト検証」の実装。2026-07-08 追加。
+#   - td9 符号: 正=上昇カウント(天井過熱) / 負=下降カウント(-9=大底枯渇=押し目)
+#   - change_1w_pct / change_1m_pct / td9 は generic min_/max_ 経由で配管済み（実測確認済み）
+#   - detect_band はデフォルト(lo=1,hi=12,floor=0.4)。hi/floor は小規模 study の実分布で校正のこと
+# =============================================================
+
+[[strategy]]
+name = "G1_leader_td9_dip"
+description = "月次リーダーの短期TD9押し目（下降カウント中を拾う）。Dの EMA21 バンド押し目とは別メカニズム（TD9 タイミング）"
+max_hits_per_day = 10
+sort_column = "rs_ratio_rank_e21"
+sort_ascending = false
+min_change_1m_pct = 15.0        # 月次で確立した上昇
+max_td9 = -1                    # td9<=-1（現在4日ルックバックで下降カウント＝押し目）
+is_close_gt_sma50 = true        # 地合い（is_trend_template は現状サイレント失敗のため代替）
+max_sma50_atr_mult = 5.0        # 伸びきっていない
+min_rs_ratio_rank_e21 = 0.70    # リーダー（配管済みランク）
+min_adr_pct_21 = 3.0
+min_market_cap = 3e8
+min_avg_hits_per_day = 0.5
+min_hit_rate_pct = 1.0
+max_allowed_dd = 25.0           # 押し目系（MTM 校正）
+
+[strategy.optimization]
+min_change_1m_pct     = { type = "float", min = 8.0, max = 25.0, step = 1.0 }
+max_td9               = { type = "int",   min = -4,  max = 0,    step = 1 }
+max_sma50_atr_mult    = { type = "float", min = 2.0, max = 6.0,  step = 0.5 }
+min_rs_ratio_rank_e21 = { type = "float", min = 0.55, max = 0.90, step = 0.05 }
+min_adr_pct_21        = { type = "float", min = 2.0, max = 6.0,  step = 0.5 }
+min_market_cap        = { type = "categorical", choices = [1e8, 3e8, 5e8, 1e9] }
+is_close_gt_sma50     = { type = "categorical", choices = [true] }
+
+[[strategy]]
+name = "G2_momentum_no_exhaust"
+description = "週次+月次モメンタム、TD9 天井(8-9)を除外して climax 買いを回避。過熱ガードの有効性を検証"
+max_hits_per_day = 10
+sort_column = "rs_ratio_rank_e21"
+sort_ascending = false
+min_change_1w_pct = 8.0
+min_change_1m_pct = 15.0
+max_td9 = 7                     # td9<=7 で td9=8,9 の climax を除外（★検証の肝）
+is_close_gt_sma50 = true
+min_vol_surge_21 = 1.5
+min_adr_pct_21 = 3.0
+max_sma50_atr_mult = 8.0
+min_market_cap = 3e8
+min_avg_hits_per_day = 0.5
+min_hit_rate_pct = 1.0
+max_allowed_dd = 35.0           # 攻撃的モメンタム
+
+[strategy.optimization]
+min_change_1w_pct  = { type = "float", min = 4.0, max = 15.0, step = 1.0 }
+min_change_1m_pct  = { type = "float", min = 8.0, max = 25.0, step = 1.0 }
+# 6=強ガード 〜 9=実質ガード無しとの対照。過熱除外の有効性が重要度に直接出る
+max_td9            = { type = "categorical", choices = [6, 7, 8, 9] }
+min_vol_surge_21   = { type = "float", min = 0.5, max = 3.0, step = 0.2 }
+max_sma50_atr_mult = { type = "float", min = 4.0, max = 10.0, step = 0.5 }
+min_market_cap     = { type = "categorical", choices = [1e8, 3e8, 1e9] }
+is_close_gt_sma50  = { type = "categorical", choices = [true] }
+
+# ⚠️ G3 前提条件: is_rs_blue_dot は現状 backtest_screener.py の alias 不一致で
+#   サイレント素通し（全銘柄通過＝フィルタ無効）。有効化するには alias_map に
+#   'rs_blue_dot': 'is_rs_blue_dot' を追加すること。未修正のまま回すと blue_dot が効かず
+#   「月次モメンタム＋地合い」だけのスクリーンになる点に注意。
+[[strategy]]
+name = "G3_bluedot_leader"
+description = "RS 先行新高値(blue dot)×月次モメンタムのリーダー先取り。※ is_rs_blue_dot の alias 修正が前提"
+max_hits_per_day = 10
+sort_column = "rs_ratio_rank_e21"
+sort_ascending = false
+is_rs_blue_dot = true           # ★ alias 修正が入るまで無効（サイレント素通し）
+min_change_1m_pct = 10.0
+is_close_gt_sma50 = true
+min_adr_pct_21 = 2.5
+min_market_cap = 3e8
+min_avg_hits_per_day = 0.3
+min_hit_rate_pct = 0.5
+max_allowed_dd = 30.0
+
+[strategy.optimization]
+min_change_1m_pct = { type = "float", min = 5.0, max = 20.0, step = 1.0 }
+min_adr_pct_21    = { type = "float", min = 2.0, max = 6.0, step = 0.5 }
+min_market_cap    = { type = "categorical", choices = [1e8, 3e8, 1e9] }
+is_rs_blue_dot    = { type = "categorical", choices = [true] }
+is_close_gt_sma50 = { type = "categorical", choices = [true] }
+
 # =============================================================
 # Optimization Parameter Search Ranges (Optuna)
 # type: "float" | "int" | "categorical"
@@ -466,3 +556,10 @@ min_hit_rate_pct = 5.0         # 期間中、1件でもシグナルが出た営�
 detect_lo = 1.0        # 実用帯の下限（件/日）。lo〜hi は減点なし=1.0
 detect_hi = 12.0       # 実用帯の上限（件/日）。超過は hi/x で割引
 detect_floor = 0.4     # 帯外でもこれ以上は割り引かない係数の下限（優秀なスクリーンを件数だけで抹殺しない）
+
+# --- expectancy_lcb ソフトゲート（2026-07-08 追加。CAGR主指標の右裾過適合対策）---
+# CAGRは少数の巨大勝ち（右の裾）に支配されやすく、1トレード単価では勝てていない
+# スクリーン（生存者バイアス疑い）を高評価しがち。期間CAGRを主指標に保ったまま、
+# expectancy_lcb<=0 の期間スコアをこの係数で割り引き、頑健性を補強する。
+# 1.0 で無効、0.0 で該当期間を完全に潰す。戦略側 [[strategy]] に lcb_gate_penalty で上書き可能。
+lcb_gate_penalty = 0.5

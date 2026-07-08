@@ -49,13 +49,21 @@ def test_detect_adequacy_peaks_inside_band():
 # calculate_custom_score
 # =============================================================
 
-def _metrics(strat_multiplier=1.2, max_drawdown_pct=-10.0, total_trades=756):
-    """テスト用 metrics 生成（必要キーのみ）。"""
-    return {
+def _metrics(strat_multiplier=1.2, max_drawdown_pct=-10.0, total_trades=756,
+             expectancy_lcb=None):
+    """テスト用 metrics 生成（必要キーのみ）。
+
+    expectancy_lcb を渡した時のみキーを含める（None ならキー自体を持たせない＝
+    LCBゲート後方互換のケースを再現）。
+    """
+    m = {
         'strat_multiplier': strat_multiplier,
         'max_drawdown_pct': max_drawdown_pct,
         'total_trades': total_trades,
     }
+    if expectancy_lcb is not None:
+        m['expectancy_lcb'] = expectancy_lcb
+    return m
 
 
 def test_none_metrics_returns_sentinel():
@@ -116,3 +124,44 @@ def test_negative_cagr_penalized_by_dd_depth():
     # CAGR<=0 は成長がマイナス。DDが深いほどさらに沈める（detect係数は掛けない）
     m = _metrics(strat_multiplier=0.8, max_drawdown_pct=-15.0, total_trades=756)  # CAGR=-20%
     assert calculate_custom_score(m, 252, 20.0, BAND) == pytest.approx(-35.0)
+
+
+# =============================================================
+# expectancy_lcb ソフトゲート（CAGRの右裾過適合対策）
+# =============================================================
+
+def test_lcb_gate_discounts_nonpositive_lcb():
+    # CAGR>0 でも 1トレードLCB<=0（単価で勝てていない＝生存者バイアス疑い）は割り引く
+    base = calculate_custom_score(_metrics(strat_multiplier=1.3, expectancy_lcb=0.5), 252, 20.0, BAND)
+    gated = calculate_custom_score(_metrics(strat_multiplier=1.3, expectancy_lcb=-0.1), 252, 20.0, BAND)
+    assert gated < base
+    assert gated == pytest.approx(base * 0.5, rel=1e-9)  # デフォルト係数 0.5
+
+
+def test_lcb_gate_boundary_zero_is_gated():
+    # LCB==0 は「>0 でない」ので割り引く（境界はゲート側）
+    base = calculate_custom_score(_metrics(strat_multiplier=1.3, expectancy_lcb=0.5), 252, 20.0, BAND)
+    at_zero = calculate_custom_score(_metrics(strat_multiplier=1.3, expectancy_lcb=0.0), 252, 20.0, BAND)
+    assert at_zero == pytest.approx(base * 0.5, rel=1e-9)
+
+
+def test_lcb_gate_no_effect_when_positive():
+    # LCB>0 は減点なし（キー無し=後方互換ケースと一致）
+    absent = calculate_custom_score(_metrics(strat_multiplier=1.3), 252, 20.0, BAND)
+    positive = calculate_custom_score(_metrics(strat_multiplier=1.3, expectancy_lcb=0.5), 252, 20.0, BAND)
+    assert positive == pytest.approx(absent, rel=1e-12)
+
+
+def test_lcb_gate_skipped_when_key_absent():
+    # expectancy_lcb キーが無い metrics は割り引かない（後方互換）
+    m = _metrics(strat_multiplier=1.3)
+    assert 'expectancy_lcb' not in m
+    with_pos = calculate_custom_score(_metrics(strat_multiplier=1.3, expectancy_lcb=1.0), 252, 20.0, BAND)
+    assert calculate_custom_score(m, 252, 20.0, BAND) == pytest.approx(with_pos, rel=1e-12)
+
+
+def test_lcb_gate_penalty_is_configurable():
+    base = calculate_custom_score(_metrics(strat_multiplier=1.3, expectancy_lcb=0.5), 252, 20.0, BAND)
+    gated = calculate_custom_score(
+        _metrics(strat_multiplier=1.3, expectancy_lcb=-0.1), 252, 20.0, BAND, lcb_gate_penalty=0.25)
+    assert gated == pytest.approx(base * 0.25, rel=1e-9)

@@ -3,8 +3,9 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { appConfig, getIntensityColor } from '../config';
 import { useWatchlist } from '../hooks/useWatchlist';
 import { WatchlistButton } from '../components/WatchlistButton';
+import { Sparkline } from '../components/Sparkline';
+import { ScreenerDashboardItem, ScreenerDashboardCategory, ScreenerDashboardResponse } from '../types';
 
-// Types for preset API response
 interface PresetItem {
     id: string;
     name: string;
@@ -17,30 +18,6 @@ interface PresetItem {
 interface PresetsResponse {
     rise: PresetItem[];
     fall: PresetItem[];
-}
-
-interface ScreenerDashboardItem {
-    id: number;
-    ticker: string;
-    name: string;
-    change_pct: number;
-    theme_ticker?: string;
-    theme_name?: string;
-    theme_rs_ratio?: number;
-}
-
-interface ScreenerDashboardCategory {
-    id: string;
-    name: string;
-    subname?: string;
-    subtitle?: string;
-    group: string;
-    items: ScreenerDashboardItem[];
-}
-
-interface ScreenerDashboardResponse {
-    rise: ScreenerDashboardCategory[];
-    fall: ScreenerDashboardCategory[];
 }
 
 export const ScreenerPage: React.FC = () => {
@@ -217,15 +194,40 @@ export const ScreenerPage: React.FC = () => {
                                             </span>
                                         )}
                                     </div>
-                                    <div style={{
-                                        padding: '2px 6px',
-                                        borderRadius: '3px',
-                                        backgroundColor: bgColor,
-                                        color: textColor,
-                                        fontWeight: '600',
-                                        fontSize: '11px'
-                                    }}>
-                                        {formatPct(item.change_pct)}
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        {item.rs_trend_history && item.rs_trend_history.length > 0 && (
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                                <span style={{ fontSize: '8px', color: '#555', fontWeight: 'bold', letterSpacing: '0.05em' }}>RS</span>
+                                                <div style={{ width: '60px', height: '16px', display: 'flex', alignItems: 'center' }} title="RSTrend21 (Last 30 days)">
+                                                    {(() => {
+                                                        const hist = item.rs_trend_history;
+                                                        const firstVal = hist[0];
+                                                        const lastVal = hist[hist.length - 1];
+                                                        const isUp = lastVal >= firstVal;
+                                                        return (
+                                                            <Sparkline 
+                                                                data={hist} 
+                                                                width={60} 
+                                                                height={16} 
+                                                                color={isUp ? appConfig.colors.good : appConfig.colors.bad} 
+                                                            />
+                                                        );
+                                                    })()}
+                                                </div>
+                                            </div>
+                                        )}
+                                        <div style={{
+                                            padding: '2px 6px',
+                                            borderRadius: '3px',
+                                            backgroundColor: bgColor,
+                                            color: textColor,
+                                            fontWeight: '600',
+                                            fontSize: '11px',
+                                            minWidth: '55px',
+                                            textAlign: 'right'
+                                        }}>
+                                            {formatPct(item.change_pct)}
+                                        </div>
                                     </div>
                                 </div>
                             );
