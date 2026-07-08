@@ -14,13 +14,16 @@ DBスキーマ変更・新規指標の追加・パイプラインロジック変
 | 環境 | ホットDB (SQLite) | コールドマスター (Parquet) |
 | :--- | :--- | :--- |
 | **本番** | `data/stocktool.db` | `data/parquet_master/` |
-| **Sandbox** | `data/stocktool_sandbox.db` | `data/parquet_master_sandbox/` |
+| **Sandbox** | `data/sandbox/stocktool_sandbox.db` | `data/sandbox/parquet_master/` |
 
-- 切り替えは環境変数 `STOCKTOOL_DB_PATH` で行う。Parquet ディレクトリは DB パスから自動解決される（`parquet_cache_manager.get_parquet_master_dir()` — DB と同じディレクトリの `parquet_master/`）ため、Sandbox 用 DB パスを指定すれば Parquet も分離される。
+- 切り替えは環境変数 `STOCKTOOL_DB_PATH` で行う。Parquet ディレクトリは DB パスから自動解決される（`parquet_cache_manager.get_parquet_master_dir()` — **DB と同じディレクトリの `parquet_master/`**）。
+
+> [!CAUTION]
+> **Sandbox は必ず専用ディレクトリ（`data/sandbox/` 等）に置くこと。** 旧手順の `data/stocktool_sandbox.db`（本番と同じ `data/` 直下）は、Parquet 解決が `data/parquet_master/` = **本番 Parquet** を指すため、パイプライン実行終盤の `rotate_and_archive_to_parquet` が **Sandbox の計算結果で本番 Parquet の新世代を書いてしまう**（2026-07-09 のコード調査で判明。`parquet_master_sandbox` という名前を参照するコードは存在しない）。
 - `user_data.db`（ウォッチリスト・ポートフォリオ）はユーザー永続データであり、Sandbox 検証の対象外。**絶対にクリア・再構築しない。**
 
 > [!CAUTION]
-> **`STOCKTOOL_DB_PATH` を設定するときは、必ず `STOCKTOOL_USER_DB_PATH="data/user_data_sandbox.db"` も併せて設定すること。**
+> **`STOCKTOOL_DB_PATH` を設定するときは、必ず `STOCKTOOL_USER_DB_PATH`（例: `data/sandbox/user_data_sandbox.db`）も併せて設定すること。**
 > API サーバーの watchlist/portfolio には `heal_*_ids()` という自己修復処理があり、GET のたびに ticker→symbol_id を接続中の stocktool DB と突合して **user_data.db を破壊的に UPDATE・commit する**。
 > stocktool 側だけ Sandbox に向けると、Sandbox に存在しない銘柄の symbol_id が本番 `user_data.db` で全て NULL 化される事故が起きる（2026-07-04 に実際に発生。ticker 列は無傷のため本番 DB に対する heal 再実行で復旧済み）。
 
@@ -34,18 +37,20 @@ DBスキーマ変更・新規指標の追加・パイプラインロジック変
 ## 2. 検証フロー（5ステップ）
 
 ### Step 1: Sandbox データ準備
-本番の最新 Parquet マスターを Sandbox にコピーする（数秒で完了）:
+本番の最新 Parquet マスターを **専用ディレクトリへ** コピーする（数秒で完了）:
 ```powershell
-Copy-Item -Recurse -Force data\parquet_master data\parquet_master_sandbox
+New-Item -ItemType Directory -Force data\sandbox | Out-Null
+Copy-Item -Recurse -Force data\parquet_master data\sandbox\parquet_master
 ```
 軽量な SQLite Sandbox が必要な場合は `python backend/scripts/create_sandbox.py`（主要銘柄+テーマ、直近300日分を抽出）も利用可能。
 
 ### Step 2: 隔離テスト (Isolate & Test)
 ```powershell
-$env:STOCKTOOL_DB_PATH="data/stocktool_sandbox.db"
+$env:STOCKTOOL_DB_PATH="data/sandbox/stocktool_sandbox.db"
+$env:STOCKTOOL_USER_DB_PATH="data/sandbox/user_data_sandbox.db"
 python backend/scripts/update_pipeline.py   # 例: 新指標を含むパイプライン実行
 ```
-実行後、`stocktool_sandbox.db` と `parquet_master_sandbox/` に対して:
+実行後、`data/sandbox/` の SQLite と `parquet_master/` に対して:
 - 新カラムが期待通りの値で計算されているか **SQL で直接検証**する（「処理が通った」だけでは不十分。カラムの値・NULL有無まで確認する）
 - `python tools/db_health_check.py --all --check-nulls` で整合性チェック
 

@@ -31,7 +31,7 @@ def check_symbol_health(ticker: str = None, all_active: bool = False, check_null
     spy_latest = conn.execute("SELECT max(date) FROM daily_prices WHERE symbol_id = (SELECT id FROM symbols WHERE ticker='SPY')").fetchone()[0]
     if not spy_latest:
         print("Error: SPY data not found in daily_prices.")
-        return
+        return 1  # SPY 欠損は NG 扱い（restore 失敗の典型症状）
     
     print(f"基準日 (SPY Latest): {spy_latest}")
     print("-" * 60)
@@ -147,7 +147,8 @@ def check_symbol_health(ticker: str = None, all_active: bool = False, check_null
                     print(f"  - NULL検知: {null_info}")
 
     conn.close()
-    
+
+    ng_total = sum(1 for r in results if r['Status'] == 'NG')
     if all_active:
         df_res = pd.DataFrame(results)
         ng_count = len(df_res[df_res['Status'] == 'NG'])
@@ -156,8 +157,10 @@ def check_symbol_health(ticker: str = None, all_active: bool = False, check_null
         if ng_count > 0:
             print("\n異常あり銘柄リスト（上位10件）:")
             print(df_res[df_res['Status'] == 'NG'].head(10))
+    # 呼び出し元（deploy_after_merge 等）が合否判定できるよう NG 件数を返す
+    return ng_total
 
-def check_parquet_health():
+def check_parquet_health(parquet_dir_override: str = None):
     """
     Parquetマスタのデータ件数、最新日付、カラムのデータ型をチェックする。
     特にID列（symbol_id, theme_id）が文字列型(object)に汚染されていないかを検出する。
@@ -165,7 +168,7 @@ def check_parquet_health():
     print("-" * 60)
     print("📋 PARQUET MASTER CACHE HEALTH CHECK")
     print("-" * 60)
-    
+
     # configからdb_pathを取得
     try:
         import tomllib
@@ -175,8 +178,8 @@ def check_parquet_health():
             db_path = config.get("system", {}).get("db_path", "data/stocktool.db")
     except Exception:
         db_path = os.path.join(project_root, "data", "stocktool.db")
-        
-    parquet_dir = os.path.join(os.path.dirname(db_path), "parquet_master")
+
+    parquet_dir = parquet_dir_override or os.path.join(os.path.dirname(db_path), "parquet_master")
     pointer_file = os.path.join(parquet_dir, "latest_master.json")
     
     if not os.path.exists(pointer_file):
@@ -235,13 +238,24 @@ if __name__ == "__main__":
     parser.add_argument('--all', action='store_true', help='Check all active symbols')
     parser.add_argument('--check-nulls', action='store_true', help='Include NULL checks for critical columns in T3')
     parser.add_argument('--parquet', action='store_true', default=True, help='Check Parquet Master Cache health')
+    parser.add_argument('--db-path', type=str, help='Check a specific SQLite DB (default: data/stocktool.db). Parquet dir is resolved next to it.')
     args = parser.parse_args()
-    
+
+    # --db-path 指定時は検査対象 DB と Parquet ディレクトリを差し替える
+    # （deploy_after_merge のワークスペース検証・模擬昇格テストで使用）
+    parquet_dir_override = None
+    if args.db_path:
+        DB_PATH = os.path.abspath(args.db_path)
+        parquet_dir_override = os.path.join(os.path.dirname(DB_PATH), "parquet_master")
+
     if args.parquet:
-        check_parquet_health()
-        
+        check_parquet_health(parquet_dir_override)
+
     if args.ticker or args.all:
-        check_symbol_health(ticker=args.ticker, all_active=args.all, check_nulls=args.check_nulls)
+        ng = check_symbol_health(ticker=args.ticker, all_active=args.all, check_nulls=args.check_nulls)
     else:
         # Default behavior: if no symbol arguments, check SPY as standard check
-        check_symbol_health(ticker='SPY', all_active=False, check_nulls=args.check_nulls)
+        ng = check_symbol_health(ticker='SPY', all_active=False, check_nulls=args.check_nulls)
+
+    # NG があれば非ゼロ終了（deploy_after_merge の合否ゲート）
+    sys.exit(1 if ng else 0)

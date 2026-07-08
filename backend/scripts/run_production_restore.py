@@ -21,12 +21,20 @@ if backend_dir not in sys.path:
 from backend.db.database import init_db, get_db
 from backend.pipeline.parquet_cache_manager import restore_sqlite_cache_from_parquet
 
-def run_production_restore():
+def run_production_restore(db_path: str = None):
     logger.info("=========================================================")
     logger.info("    🏛️ PRODUCTION DATABASE REBUILD & RESTORE RUNNER 🏛️")
     logger.info("=========================================================")
-    
-    prod_db_path = os.path.join(project_root, "data", "stocktool.db")
+
+    # db_path 指定時はそのDB（と隣の parquet_master/）を対象にする
+    # （deploy_after_merge の模擬昇格テスト・ワークスペース復元で使用）
+    prod_db_path = os.path.abspath(db_path) if db_path else os.path.join(project_root, "data", "stocktool.db")
+
+    # init_db は STOCKTOOL_DB_PATH を優先するため、restore 対象と食い違うと
+    # 「parquet は A、書き込み先は B」という破壊的な不整合になる。ここで必ず解除する。
+    env_db = os.environ.pop("STOCKTOOL_DB_PATH", None)
+    if env_db and os.path.abspath(env_db) != prod_db_path:
+        logger.warning(f"STOCKTOOL_DB_PATH ({env_db}) を解除しました。restore 対象: {prod_db_path}")
     
     # 1. Close any potential open engine/sessions in this process
     import backend.db.database as db_module
@@ -110,5 +118,14 @@ def run_production_restore():
     return True
 
 if __name__ == "__main__":
-    success = run_production_restore()
+    import argparse
+    parser = argparse.ArgumentParser(description="Rebuild & restore a SQLite hot cache from its Parquet master.")
+    parser.add_argument("--db-path", type=str, default=None,
+                        help="対象 SQLite パス（省略時は data/stocktool.db。parquet_master/ は DB と同じディレクトリから解決）")
+    args = parser.parse_args()
+    # 注意: init_db は STOCKTOOL_DB_PATH 環境変数を優先するため、
+    # --db-path を使う場合は環境変数が未設定であることを呼び出し元が保証すること
+    if args.db_path and os.getenv("STOCKTOOL_DB_PATH"):
+        logger.warning("STOCKTOOL_DB_PATH が設定されているため --db-path は無視されます。環境変数を解除してください。")
+    success = run_production_restore(args.db_path)
     sys.exit(0 if success else 1)

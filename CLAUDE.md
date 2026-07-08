@@ -17,7 +17,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `File has not been read yet` / `File has been modified since read` で Edit が拒否されたら、**対象ファイルを Read し直してから** Edit する。長いセッションやコンテキスト要約（compaction）後は Read 状態が失われているため、記憶を頼りに Edit しない。
 - `sleep` によるポーリング待機を禁止する（この環境ではブロックされる）。長時間コマンドは `run_in_background` で実行し、完了通知を待つ。
 - Python 実行は常に**リポジトリ本体の venv** を使う。本体では `.\venv\Scripts\python.exe`、**ワークツリー内には venv が存在しない**ため `..\..\..\venv\Scripts\python.exe` または絶対パスで本体の venv を参照する。素の `python` は venv 外の Python を拾い、`ModuleNotFoundError`（pytest 等が見つからない）の原因になる。
-- import は `PYTHONPATH=backend` 前提の `api.x` / `pipeline.x` / `indicators.x` 形式が基本。`backend.x` プレフィックス形式は `scenario_*` 系など一部のみ（プロジェクトルートから直接実行する前提）。両形式が混在しているため、**編集対象ファイルの既存 import 形式に必ず合わせる**こと。`No module named 'backend'` が出たら PYTHONPATH と import 形式の不一致を疑う。
+- `No module named 'backend'` が出たら PYTHONPATH と import 形式の不一致を疑う（import 規約は「Coding conventions」参照）。
 - その他の共通ルール（`python -c` の制限、文字コード、パス、Git 合意形成）は `doc/agent_execution_rules.md` §1〜§8 を参照する。
 
 ## サブエージェント委譲（オーケストレーター運用）
@@ -39,8 +39,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 本体チェックアウトでのコミットは禁止（`git add` まで）。**ワークツリー（`.claude/worktrees/` 配下）では自ブランチへのコミットを許可** — 完了報告にブランチ名・SHA・取り込みコマンドを明記する。
 - main への直接コミット・push・マージ、`--amend`・force-push は場所を問わず禁止。push・PR 作成は都度ユーザー指示。
 - ワークツリーで作成した `doc/in_progress/` の計画書は未コミットで置き残さない（その場でコミット）。
-- `git add` は**明示パスのみ**（`git add -A` / `git add .` 禁止 — ワークツリー内 sandbox の Parquet を誤コミットしない）。
-- **データ（DB / Parquet）は git に乗らない**: ワークツリーでのデータアクセス（環境変数は絶対パスで両方設定）、merge 後のデータ昇格（`tools/deploy_after_merge.ps1`）、変更の4種別（A〜D）は `doc/agent_execution_rules.md` §10 を参照。エージェントは完了報告に変更種別を必ず記載する。
+- `git add` は**明示パスのみ**（`-A` / `.` 禁止）。
+- **データ（DB / Parquet）は git に乗らない** — アクセス方法・変更種別（A〜D、完了報告に必須記載）・merge 後の昇格は `doc/agent_execution_rules.md` §10 を参照。
+- 機械判定可能な違反（`git add -A`/`.`、force-push、main 宛 push、`--amend`、本体での commit）は PreToolUse フック `tools/hooks/git_guard.ps1` が自動でブロック/確認する。
 - 詳細: `doc/agent_execution_rules.md` §7。未取り込み作業の棚卸し: `tools/check_worktrees.ps1`
 
 ## Project overview
@@ -165,6 +166,7 @@ Check `/api/system/info` (`is_production` flag) to confirm which environment you
 - **File encoding/line endings**: UTF-8 without BOM, LF line endings for `.py/.md/.toml/.json/.tsx` etc. (`.bat` files are CRLF, `.sh` are LF — see `.gitattributes`). Windows Notepad/PowerShell redirection (`>`) can silently corrupt this — be careful when writing files.
 - **SQLite (WAL mode)**: every connection must set `PRAGMA journal_mode=WAL`, `PRAGMA busy_timeout>=5000`, `PRAGMA synchronous=NORMAL`; writes should use `BEGIN IMMEDIATE` to avoid upgrade deadlocks. Don't change `journal_mode` at runtime while other connections are open (causes `database is locked`). Inside a write session NEVER: `pd.read_sql(q, db.bind)` (self-deadlock — use `get_read_engine_for(db)` after `db.commit()`), `PRAGMA synchronous`, or `VACUUM` (both fail in-transaction). Full details: `.claude/skills/sqlite-wal-handling/SKILL.md`.
 - **SQL/ORM**: no `SELECT *`, avoid N+1 (use `joinedload`/`selectinload`), always parameterize queries, never run unscoped `DELETE`/`UPDATE`. Details: `.claude/skills/sql-best-practices/SKILL.md`.
+- **import 規約**: `PYTHONPATH=backend` 前提の `api.x` / `pipeline.x` / `indicators.x` 形式が基本。`backend.x` プレフィックス形式は `scenario_*` 系など一部のみ（プロジェクトルートから直接実行する前提）。両形式が混在しているため、**編集対象ファイルの既存 import 形式に必ず合わせる**。
 - **Tests mirror source 1:1** under `backend/tests/` with a `test_` prefix (e.g. `backend/indicators/moving_averages.py` → `backend/tests/indicators/test_moving_averages.py`).
 - TDD is the intended workflow for new backend features (see `.claude/skills/tdd/SKILL.md`): write one failing test, minimal code to pass, refactor, repeat — not "write all tests then all code."
 - Data-integrity expectations (enforced by `tools/db_health_check.py`): every active symbol's T2 data must be at least as recent as SPY's; T2 and T3 row counts per symbol must match exactly; benchmark symbols (SPY etc.) are always included in RS calculations even when `--category` filters are used.

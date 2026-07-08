@@ -1,10 +1,18 @@
+import os
 import sqlite3
 import requests
 import json
 import sys
 
+import pytest
+
 def test_rs_data_availability():
-    db_path = 'data/stocktool.db'
+    # データ依存の統合テスト: 実 DB（既定 data/stocktool.db、STOCKTOOL_DB_PATH で差し替え可）が
+    # 存在する環境でのみ実行する。ワークツリー等の data/ が空の環境ではスキップ
+    # （sqlite3.connect は存在しないパスでも空 DB を新規作成してしまうため、事前に存在確認する）
+    db_path = os.environ.get('STOCKTOOL_DB_PATH', 'data/stocktool.db')
+    if not os.path.exists(db_path):
+        pytest.skip(f"実データ DB が存在しないためスキップ: {db_path}")
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     
@@ -41,7 +49,7 @@ def test_rs_data_availability():
     print("\n--- Testing API Response (Direct function call) ---")
     sys.path.append('backend')
     from db.database import init_db
-    init_db('data/stocktool.db')
+    init_db(db_path)
     
     from api.routers import get_chart_data
     from db.database import SessionLocal
