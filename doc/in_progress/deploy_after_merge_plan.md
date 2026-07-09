@@ -49,7 +49,7 @@
 
 1. API 停止の扱い → **中断してユーザーに停止を促す**（自動 kill しない）
 2. 再計算の範囲指定 → 既定 `T3`、`-RebuildFrom T2|T4|T5|All` で変更可（**All 対応を追加**）
-3. db_health_check の合格基準 → **既存の NG 判定をそのまま採用**
+3. db_health_check の合格基準 → 当初「既存の NG 判定をそのまま採用（NG ゼロで合格）」で合意したが、**初回実行（2026-07-10）で本番自体に既存 NG が42件ある**（上場廃止銘柄等のデータ負債、issue_list P1 参照）と判明し、絶対基準では永遠に昇格不能なため、**「ベースライン比較 — 本番の既存 NG に無い新規 NG を1件でも生んだら不合格」に修正**（要ユーザー事後確認）
 4. 一時ディレクトリ → **`data/tmp/` 階層**（`data/tmp/parquet_master_deploy/`）
 5. ロールバック後 → **自動終了。ただしロールバック発生を明示表示する**
 
@@ -68,11 +68,11 @@
 
 ### 作業中メモ
 
-実装完了・単体検証済み。残りは実データ検証（-DryRun → ロールバック演習 → 本番初回）で、いずれもユーザー立ち会いを推奨。実行手順:
+2026-07-10 時点: 全経路が実データで通過済み（swap 直前まで）。ワークスペースは `data/tmp/deploy/` に検証済みの状態で保全されている。ゲートをベースライン比較に修正済みのため、次の再実行で完走見込み:
 ```powershell
-.\tools\deploy_after_merge.ps1 -DryRun          # 本番無変更で全経路を検証
-.\tools\deploy_after_merge.ps1                  # 本番昇格（T3）
+.\tools\deploy_after_merge.ps1 -SkipRegenerate   # 検証済みワークスペースを再利用（2時間の再計算なし）
 ```
+※ 次に本番データが更新される（daily update が走る）とワークスペースが古くなるため、その場合は -SkipRegenerate を付けず最初から。
 
 ## 6. 検証プラン / 結果
 
@@ -81,9 +81,11 @@
 | deploy_promotion 単体テスト（コピー/昇格/ロールバック/世代抽出） | ✅ 10件 green（2026-07-09） |
 | 前提チェック: 本番ポインタ無し → exit 1・本番無変更 | ✅ 確認（2026-07-09） |
 | 前提チェック: update_pipeline.lock 存在 → exit 1 | ✅ 確認（2026-07-09） |
-| 実データ -DryRun（コピー→SQLite復元→パイプライン→health check） | ⏳ ユーザー立ち会い時 |
-| ロールバック演習（意図的 health check 失敗 → 旧世代復帰） | ⏳ ユーザー立ち会い時 |
-| 所要時間の計測 | ⏳ -DryRun 時に記録 |
+| 実データ実行: コピー→SQLite復元→パイプライン(T3)→health check | ✅ 2026-07-09〜10 ユーザー実行で全経路通過（swap 直前のゲートで中断＝当時の絶対基準による正しい動作） |
+| 所要時間の実測 | コピー 1.1s / ワークスペース SQLite 復元 777s / パイプライン T3 再計算+health check 約2時間（7GB級ジョブと並走時） |
+| ベースライン比較の実測 | 本番 NG 42件・ワークスペース NG 41件・**新規 NG 0件**（再生成はむしろ1件改善） |
+| swap → 本番 restore → 最終ゲート | ⏳ `-SkipRegenerate` での再実行時（ワークスペース保全済みのため再計算不要） |
+| ロールバック演習（意図的 health check 失敗 → 旧世代復帰） | ⏳ 別途実施 |
 
 ## 7. 途中発生した課題
 
@@ -94,6 +96,7 @@
 5. 実データ dry-run は別の長時間 Python ジョブ（7GB 級）稼働中のため見送り（リソース競合回避）
 6. **【初回実行で発覚・修正済み】lock 残骸による誤中断**（2026-07-09）: `update_pipeline.py` の `release_lock` はロック解除のみでファイルを削除しないため、`update_pipeline.lock` は正常終了後も常に残る。前提チェックが「存在」で判定していたため、初回実行が誤中断した。→ `is_pipeline_lock_held()`（msvcrt 非ブロッキングロックの取得可否で判定）を `deploy_promotion.py` に追加し、テスト3件で担保。実環境の残骸 lock に対して held=False を確認済み
 7. **【2回目実行で発覚・修正済み】未作成ワークスペースで disk_usage が FileNotFoundError**（2026-07-09）: 空き容量チェックが未作成の `data/tmp/` を `shutil.disk_usage` に渡していた。→ `nearest_existing_dir()`（存在する祖先まで遡って解決）を追加しテスト2件で担保。実環境パスで preflight が None（OK）になることを確認済み
+8.5 **【4回目実行で発覚・仕様修正】health check ゲートが本番の既存データ負債で不合格になる**（2026-07-10）: 全経路が正常動作した上で、swap 直前のゲートが NG 41件で中断。本番に同チェックをかけると 42件 NG（上場廃止銘柄等）で、**ワークスペース起因の新規 NG は 0件**と確認。絶対基準（NG ゼロ）では既存負債がある限り昇格不能のため、ゲートを**ベースライン比較**（Step 2.5 で本番の NG を記録し、新規 NG のみ不合格）へ変更。`db_health_check.py` に `--ng-out` を追加、`--skip-regenerate` / `-SkipRegenerate` で再計算なしの再実行を可能にした。データ負債自体は issue_list P1 に起票
 8. **【3回目実行で発覚・修正済み／既存バグ】restore のバルクインサートが `database is locked`**（2026-07-09）: `bulk_insert_df_to_sqlite` が `PRAGMA journal_mode = MEMORY` を実行していたが、WAL からの journal_mode 変更は**他の接続が1つでも開いていると即失敗**する（sqlite-wal-handling スキルの既知パターン）。restore は同一プロセス内に SQLAlchemy セッション＋raw 接続を持つため構造的に失敗する。**deploy 固有ではなく `run_production_restore.py`・パイプラインの restore 経路全体に影響する既存バグ**。→ クロージャをモジュール関数へ抽出し、journal_mode を変更せず WAL 維持＋`busy_timeout`＋接続ローカルな `synchronous=OFF` のみに変更。redフェーズで本番と同一エラーの再現を確認した回帰テスト3件を追加（`test_parquet_cache_manager.py`）。全スイート 343 passed
 
 ## 8. スコープ外・残作業

@@ -119,15 +119,27 @@ def regenerate_in_workspace(workspace: str, prod_parquet_dir: str, rebuild_from:
     return True
 
 
-def health_check(db_path: str) -> bool:
-    """db_health_check.py を実行し、exit code で合否を返す"""
+def health_check_ng(db_path: str, label: str) -> set | None:
+    """db_health_check.py を実行し、NG 銘柄の集合を返す（None = チェック自体の実行失敗）。
+
+    合否は「NG ゼロ」ではなく、呼び出し元で本番ベースラインとの差分で判定する。
+    本番には上場廃止等による既存のデータ負債（stale な active 銘柄）があり、
+    絶対基準では昇格が永遠に通らないため（2026-07-10 初回実行で発覚）。"""
     py = _venv_python()
     env = {k: v for k, v in os.environ.items() if k not in ("STOCKTOOL_DB_PATH", "STOCKTOOL_USER_DB_PATH")}
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUTF8"] = "1"
+    ng_file = os.path.join(project_root, "data", "tmp", f"hc_ng_{label}.txt")
+    os.makedirs(os.path.dirname(ng_file), exist_ok=True)
+    if os.path.exists(ng_file):
+        os.remove(ng_file)
     rc = _run([py, os.path.join(project_root, "tools", "db_health_check.py"),
-               "--all", "--check-nulls", "--db-path", db_path], env=env)
-    return rc == 0
+               "--all", "--check-nulls", "--db-path", db_path, "--ng-out", ng_file], env=env)
+    # rc: 0=NGなし / 1=NGあり（どちらもチェック自体は成功）。ng_file 不在は実行失敗
+    if rc not in (0, 1) or not os.path.exists(ng_file):
+        return None
+    with open(ng_file, "r", encoding="utf-8") as f:
+        return {line.strip() for line in f if line.strip()}
 
 
 def restore_prod_sqlite(prod_db_path: str) -> bool:
@@ -152,6 +164,8 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true",
                         help="再生成とワークスペース検証まで実施し、本番への swap/restore を行わない")
     parser.add_argument("--keep-workspace", action="store_true", help="終了時にワークスペースを残す")
+    parser.add_argument("--skip-regenerate", action="store_true",
+                        help="既存ワークスペースの再生成結果を再利用する（中断後の再実行用。merge 済みコードで生成済みであること）")
     args = parser.parse_args()
 
     from pipeline.deploy_promotion import read_generation, promote_generation, rollback_generation, generation_timestamp
@@ -179,15 +193,37 @@ def main() -> int:
     old_pointer = read_generation(prod_parquet_dir)
     logger.info(f"現行本番世代: {generation_timestamp(old_pointer)}（ロールバック用に記録）")
 
-    # 3. ワークスペースで再生成
-    if not regenerate_in_workspace(workspace, prod_parquet_dir, args.rebuild_from):
+    # 2.5 ベースライン記録: 昇格ゲートは「本番に無い新規 NG を生まないこと」
+    #     （上場廃止等による既存のデータ負債は昇格の合否に含めない）
+    logger.info("Step 2.5: 本番の health check ベースラインを記録...")
+    baseline = health_check_ng(prod_db_path, "baseline")
+    if baseline is None:
+        logger.error("ベースライン health check の実行に失敗しました")
         return EXIT_FAILED_BEFORE_PROMOTE
+    logger.info(f"ベースライン: 本番の既存 NG {len(baseline)} 件（ゲートは新規 NG のみを問題にする）")
 
-    # 4. ワークスペース検証
-    logger.info("Step 4: ワークスペースの health check...")
-    if not health_check(ws_db):
-        logger.error("ワークスペースの health check NG。本番は無変更のまま中断します。")
+    # 3. ワークスペースで再生成
+    if args.skip_regenerate:
+        if read_generation(ws_parquet) is None:
+            logger.error(f"--skip-regenerate 指定ですがワークスペースに世代がありません: {ws_parquet}")
+            return EXIT_FAILED_BEFORE_PROMOTE
+        logger.warning("skip-regenerate: 既存ワークスペースの生成結果を再利用します")
+    else:
+        if not regenerate_in_workspace(workspace, prod_parquet_dir, args.rebuild_from):
+            return EXIT_FAILED_BEFORE_PROMOTE
+
+    # 4. ワークスペース検証（ベースライン比較）
+    logger.info("Step 4: ワークスペースの health check（ベースライン比較）...")
+    ws_ng = health_check_ng(ws_db, "workspace")
+    if ws_ng is None:
+        logger.error("ワークスペース health check の実行に失敗しました")
         return EXIT_FAILED_BEFORE_PROMOTE
+    new_ng = ws_ng - baseline
+    if new_ng:
+        logger.error(f"ワークスペースに新規 NG {len(new_ng)} 件（今回の変更が持ち込んだ異常）: {sorted(new_ng)}")
+        logger.error("本番は無変更のまま中断します。")
+        return EXIT_FAILED_BEFORE_PROMOTE
+    logger.info(f"ワークスペース合格: NG {len(ws_ng)} 件はすべて既存ベースライン内（新規 0 件）")
 
     if args.dry_run:
         logger.info("dry-run 指定のためここで終了します（本番は無変更）。")
@@ -198,9 +234,18 @@ def main() -> int:
     logger.info("Step 5: 新世代を本番へ昇格（ポインタ差し替え）...")
     old_pointer, new_pointer = promote_generation(ws_parquet, prod_parquet_dir, logger)
 
-    # 6. 本番 SQLite restore + health check
+    # 6. 本番 SQLite restore + health check（ベースライン比較）
     logger.info("Step 6: 本番 SQLite を新世代から restore...")
-    ok = restore_prod_sqlite(prod_db_path) and health_check(prod_db_path)
+    ok = restore_prod_sqlite(prod_db_path)
+    if ok:
+        prod_ng = health_check_ng(prod_db_path, "production")
+        if prod_ng is None:
+            ok = False
+        else:
+            prod_new_ng = prod_ng - baseline
+            if prod_new_ng:
+                logger.error(f"昇格後の本番に新規 NG {len(prod_new_ng)} 件: {sorted(prod_new_ng)}")
+                ok = False
 
     if not ok:
         # 7. ロールバック

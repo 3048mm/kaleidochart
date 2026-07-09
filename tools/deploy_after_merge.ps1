@@ -16,7 +16,8 @@ param(
     [ValidateSet('T2', 'T3', 'T4', 'T5', 'All')]
     [string]$RebuildFrom = 'T3',
     [switch]$DryRun,
-    [switch]$KeepWorkspace
+    [switch]$KeepWorkspace,
+    [switch]$SkipRegenerate  # reuse an existing workspace (rerun after an aborted gate)
 )
 
 $ErrorActionPreference = 'Stop'
@@ -48,6 +49,7 @@ $runner = Join-Path $root 'backend\scripts\deploy_after_merge.py'
 $argList = @($runner, '--rebuild-from', $RebuildFrom)
 if ($DryRun) { $argList += '--dry-run' }
 if ($KeepWorkspace) { $argList += '--keep-workspace' }
+if ($SkipRegenerate) { $argList += '--skip-regenerate' }
 
 $env:PYTHONIOENCODING = 'utf-8'
 $env:PYTHONUTF8 = '1'
