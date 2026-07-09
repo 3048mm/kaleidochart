@@ -94,6 +94,7 @@
 5. 実データ dry-run は別の長時間 Python ジョブ（7GB 級）稼働中のため見送り（リソース競合回避）
 6. **【初回実行で発覚・修正済み】lock 残骸による誤中断**（2026-07-09）: `update_pipeline.py` の `release_lock` はロック解除のみでファイルを削除しないため、`update_pipeline.lock` は正常終了後も常に残る。前提チェックが「存在」で判定していたため、初回実行が誤中断した。→ `is_pipeline_lock_held()`（msvcrt 非ブロッキングロックの取得可否で判定）を `deploy_promotion.py` に追加し、テスト3件で担保。実環境の残骸 lock に対して held=False を確認済み
 7. **【2回目実行で発覚・修正済み】未作成ワークスペースで disk_usage が FileNotFoundError**（2026-07-09）: 空き容量チェックが未作成の `data/tmp/` を `shutil.disk_usage` に渡していた。→ `nearest_existing_dir()`（存在する祖先まで遡って解決）を追加しテスト2件で担保。実環境パスで preflight が None（OK）になることを確認済み
+8. **【3回目実行で発覚・修正済み／既存バグ】restore のバルクインサートが `database is locked`**（2026-07-09）: `bulk_insert_df_to_sqlite` が `PRAGMA journal_mode = MEMORY` を実行していたが、WAL からの journal_mode 変更は**他の接続が1つでも開いていると即失敗**する（sqlite-wal-handling スキルの既知パターン）。restore は同一プロセス内に SQLAlchemy セッション＋raw 接続を持つため構造的に失敗する。**deploy 固有ではなく `run_production_restore.py`・パイプラインの restore 経路全体に影響する既存バグ**。→ クロージャをモジュール関数へ抽出し、journal_mode を変更せず WAL 維持＋`busy_timeout`＋接続ローカルな `synchronous=OFF` のみに変更。redフェーズで本番と同一エラーの再現を確認した回帰テスト3件を追加（`test_parquet_cache_manager.py`）。全スイート 343 passed
 
 ## 8. スコープ外・残作業
 
