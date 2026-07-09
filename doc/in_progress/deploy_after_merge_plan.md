@@ -92,6 +92,7 @@
 3. `db_health_check.py` が NG でも exit 0 だった → NG 件数で非ゼロ終了するよう改修（SPY 欠損も NG 扱い）
 4. `run_production_restore.py` が `STOCKTOOL_DB_PATH` 環境変数に横取りされ「Parquet は A・書き込みは B」の不整合になり得た → 関数内で環境変数を解除するガードを追加
 5. 実データ dry-run は別の長時間 Python ジョブ（7GB 級）稼働中のため見送り（リソース競合回避）
+6. **【初回実行で発覚・修正済み】lock 残骸による誤中断**（2026-07-09）: `update_pipeline.py` の `release_lock` はロック解除のみでファイルを削除しないため、`update_pipeline.lock` は正常終了後も常に残る。前提チェックが「存在」で判定していたため、初回実行が誤中断した。→ `is_pipeline_lock_held()`（msvcrt 非ブロッキングロックの取得可否で判定）を `deploy_promotion.py` に追加し、テスト3件で担保。実環境の残骸 lock に対して held=False を確認済み
 
 ## 8. スコープ外・残作業
 

@@ -145,3 +145,36 @@ def test_rollback_generation_with_none_pointer_returns_false(tmp_path):
     prod = str(tmp_path / "prod")
     _make_generation(prod)
     assert rollback_generation(prod, None, logger) is False
+
+
+def test_lock_absent_is_not_held(tmp_path):
+    """lock ファイルが無ければ保持されていない"""
+    from pipeline.deploy_promotion import is_pipeline_lock_held
+    assert is_pipeline_lock_held(str(tmp_path / "no.lock")) is False
+
+
+def test_lock_stale_residue_is_not_held(tmp_path):
+    """lock ファイルが存在するだけ（残骸）なら保持されていない。
+    update_pipeline.py の release_lock はファイルを削除しないため、
+    存在チェックでは実行中と残骸を区別できない（2026-07-09 初回実行で誤中断した実バグ）"""
+    from pipeline.deploy_promotion import is_pipeline_lock_held
+    stale = tmp_path / "update_pipeline.lock"
+    stale.write_bytes(b"\x00")
+    assert is_pipeline_lock_held(str(stale)) is False
+
+
+def test_lock_actively_held_is_detected(tmp_path):
+    """msvcrt ロックが保持されている間は True"""
+    import msvcrt
+    from pipeline.deploy_promotion import is_pipeline_lock_held
+    lock_file = str(tmp_path / "update_pipeline.lock")
+    fd = os.open(lock_file, os.O_CREAT | os.O_RDWR)
+    try:
+        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        assert is_pipeline_lock_held(lock_file) is True
+    finally:
+        try:
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        except OSError:
+            pass
+        os.close(fd)
