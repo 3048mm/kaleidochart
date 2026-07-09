@@ -281,6 +281,68 @@ def purge_sqlite_cache_older_than_2_years(db, db_path: str, logger: logging.Logg
                 f"(Reclaimed: {reclaimed / 1024 / 1024:.2f} MB, {reclaimed / initial_db_size * 100:.1f}% space reclaimed)")
     logger.info(f"SQLite cache shrink completed in {time.time()-t0:.2f}s.")
 
+def bulk_insert_df_to_sqlite(engine, df: pd.DataFrame, table_name: str, logger: logging.Logger):
+    """Parquet 復元用の高速バルクインサート（raw DBAPI executemany）。"""
+    if df.empty:
+        return
+
+    df_to_insert = df.copy()
+
+    # Drop auto-incrementing ID column for tables other than 'symbols' to prevent UNIQUE constraint failures.
+    # 'symbols' ID must be preserved because it is referenced as a foreign key by other tables.
+    if 'id' in df_to_insert.columns and table_name != 'symbols':
+        df_to_insert = df_to_insert.drop(columns=['id'])
+
+    # Get column names of the SQLAlchemy table dynamically
+    # Map table name to the respective Model class
+    from db.models import Symbol, ThemeConstituent, DailyPrice, Indicator, RelativeRank
+    model_map = {
+        "symbols": Symbol,
+        "theme_constituents": ThemeConstituent,
+        "daily_prices": DailyPrice,
+        "indicators": Indicator,
+        "relative_ranks": RelativeRank
+    }
+
+    model_cls = model_map.get(table_name)
+    if model_cls:
+        valid_cols = {c.name for c in model_cls.__table__.columns}
+        # Filter df columns to keep only those that exist in the database table
+        cols_to_keep = [c for c in df_to_insert.columns if c in valid_cols]
+        df_to_insert = df_to_insert[cols_to_keep]
+
+    cols = df_to_insert.columns.tolist()
+    col_str = ", ".join([f'"{c}"' for c in cols])
+    placeholders = ", ".join(["?"] * len(cols))
+    query = f'INSERT INTO "{table_name}" ({col_str}) VALUES ({placeholders})'
+
+    # Replace NaN with None for SQL NULL compatibility
+    df_clean = df_to_insert.where(pd.notnull(df_to_insert), None)
+    records = [tuple(x) for x in df_clean.to_numpy()]
+
+    # Access raw DBAPI connection for raw executemany and PRAGMA settings
+    connection = engine.raw_connection()
+    try:
+        cursor = connection.cursor()
+        # journal_mode は変更しない: WAL からの切り替えは他の接続が1つでも
+        # 開いていると database is locked で即失敗する（同一プロセス内の
+        # SQLAlchemy セッション/プール接続で常に該当。2026-07-09 に実発生）。
+        # synchronous は接続ローカルなのでロック不要で高速化できる。
+        cursor.execute("PRAGMA busy_timeout = 30000")
+        cursor.execute("PRAGMA synchronous = OFF")
+
+        cursor.executemany(query, records)
+        connection.commit()
+
+        cursor.execute("PRAGMA synchronous = NORMAL")
+    except Exception as e:
+        connection.rollback()
+        logger.error(f"Failed bulk insert into {table_name}: {e}")
+        raise e
+    finally:
+        connection.close()
+
+
 def restore_sqlite_cache_from_parquet(db, db_path: str, logger: logging.Logger):
     """
     Physically deletes and rebuilds SQLite cache tables,
@@ -353,85 +415,26 @@ def restore_sqlite_cache_from_parquet(db, db_path: str, logger: logging.Logger):
     
     logger.info(f"  3. Bulk-importing records to SQLite...")
     engine = db.bind
-    
-    def bulk_insert_df_to_sqlite(df: pd.DataFrame, table_name: str):
-        if df.empty:
-            return
-        
-        df_to_insert = df.copy()
-        
-        # Drop auto-incrementing ID column for tables other than 'symbols' to prevent UNIQUE constraint failures.
-        # 'symbols' ID must be preserved because it is referenced as a foreign key by other tables.
-        if 'id' in df_to_insert.columns and table_name != 'symbols':
-            df_to_insert = df_to_insert.drop(columns=['id'])
-            
-        # Get column names of the SQLAlchemy table dynamically
-        # Map table name to the respective Model class
-        from db.models import Symbol, ThemeConstituent, DailyPrice, Indicator, RelativeRank
-        model_map = {
-            "symbols": Symbol,
-            "theme_constituents": ThemeConstituent,
-            "daily_prices": DailyPrice,
-            "indicators": Indicator,
-            "relative_ranks": RelativeRank
-        }
-        
-        model_cls = model_map.get(table_name)
-        if model_cls:
-            valid_cols = {c.name for c in model_cls.__table__.columns}
-            # Filter df columns to keep only those that exist in the database table
-            cols_to_keep = [c for c in df_to_insert.columns if c in valid_cols]
-            df_to_insert = df_to_insert[cols_to_keep]
-            
-        cols = df_to_insert.columns.tolist()
-        col_str = ", ".join([f'"{c}"' for c in cols])
-        placeholders = ", ".join(["?"] * len(cols))
-        query = f'INSERT INTO "{table_name}" ({col_str}) VALUES ({placeholders})'
-        
-        # Replace NaN with None for SQL NULL compatibility
-        df_clean = df_to_insert.where(pd.notnull(df_to_insert), None)
-        records = [tuple(x) for x in df_clean.to_numpy()]
-        
-        # Access raw DBAPI connection for raw executemany and PRAGMA settings
-        connection = engine.raw_connection()
-        try:
-            cursor = connection.cursor()
-            # Disable transaction sync and journaling overhead during rebuild
-            cursor.execute("PRAGMA synchronous = OFF")
-            cursor.execute("PRAGMA journal_mode = MEMORY")
-            
-            cursor.executemany(query, records)
-            connection.commit()
-            
-            # Restore WAL mode after bulk insert (critical when called with active API server)
-            cursor.execute("PRAGMA journal_mode = WAL")
-            cursor.execute("PRAGMA synchronous = NORMAL")
-        except Exception as e:
-            connection.rollback()
-            logger.error(f"Failed bulk insert into {table_name}: {e}")
-            raise e
-        finally:
-            connection.close()
 
     # Import symbols & constituents (full list)
     logger.info("    Importing symbols...")
-    bulk_insert_df_to_sqlite(df_symbols, "symbols")
+    bulk_insert_df_to_sqlite(engine, df_symbols, "symbols", logger)
     logger.info("    Importing theme constituents...")
-    bulk_insert_df_to_sqlite(df_tc, "theme_constituents")
+    bulk_insert_df_to_sqlite(engine, df_tc, "theme_constituents", logger)
     
     # Import hot-db cached rows (latest 2 years)
     logger.info("    Importing daily prices...")
-    bulk_insert_df_to_sqlite(df_prices_cached, "daily_prices")
+    bulk_insert_df_to_sqlite(engine, df_prices_cached, "daily_prices", logger)
     logger.info("    Importing indicators...")
-    bulk_insert_df_to_sqlite(df_indicators_cached, "indicators")
+    bulk_insert_df_to_sqlite(engine, df_indicators_cached, "indicators", logger)
     logger.info("    Importing relative ranks...")
-    bulk_insert_df_to_sqlite(df_ranks_cached, "relative_ranks")
+    bulk_insert_df_to_sqlite(engine, df_ranks_cached, "relative_ranks", logger)
     
     # Import market signals (full history - small table, no date filtering needed)
     if 'signals' in latest_files and os.path.exists(latest_files['signals']):
         logger.info("    Loading & importing market signals...")
         df_signals_cached = pd.read_parquet(latest_files['signals'], filters=[('date', '>=', cutoff_str)])
-        bulk_insert_df_to_sqlite(df_signals_cached, "market_signals")
+        bulk_insert_df_to_sqlite(engine, df_signals_cached, "market_signals", logger)
     else:
         logger.warning("    market_signals Parquet not found in pointer - will be recalculated on next pipeline run.")
     

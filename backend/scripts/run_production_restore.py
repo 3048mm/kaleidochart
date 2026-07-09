@@ -123,9 +123,8 @@ if __name__ == "__main__":
     parser.add_argument("--db-path", type=str, default=None,
                         help="対象 SQLite パス（省略時は data/stocktool.db。parquet_master/ は DB と同じディレクトリから解決）")
     args = parser.parse_args()
-    # 注意: init_db は STOCKTOOL_DB_PATH 環境変数を優先するため、
-    # --db-path を使う場合は環境変数が未設定であることを呼び出し元が保証すること
+    # run_production_restore 内で STOCKTOOL_DB_PATH は解除され --db-path が優先される
     if args.db_path and os.getenv("STOCKTOOL_DB_PATH"):
-        logger.warning("STOCKTOOL_DB_PATH が設定されているため --db-path は無視されます。環境変数を解除してください。")
+        logger.info("STOCKTOOL_DB_PATH はプロセス内で解除され、--db-path を restore 対象として使用します。")
     success = run_production_restore(args.db_path)
     sys.exit(0 if success else 1)
