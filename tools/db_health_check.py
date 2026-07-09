@@ -31,7 +31,7 @@ def check_symbol_health(ticker: str = None, all_active: bool = False, check_null
     spy_latest = conn.execute("SELECT max(date) FROM daily_prices WHERE symbol_id = (SELECT id FROM symbols WHERE ticker='SPY')").fetchone()[0]
     if not spy_latest:
         print("Error: SPY data not found in daily_prices.")
-        return 1  # SPY 欠損は NG 扱い（restore 失敗の典型症状）
+        return ['<SPY_MISSING>']  # SPY 欠損は NG 扱い（restore 失敗の典型症状）
     
     print(f"基準日 (SPY Latest): {spy_latest}")
     print("-" * 60)
@@ -148,7 +148,7 @@ def check_symbol_health(ticker: str = None, all_active: bool = False, check_null
 
     conn.close()
 
-    ng_total = sum(1 for r in results if r['Status'] == 'NG')
+    ng_tickers = [r['Symbol'] for r in results if r['Status'] == 'NG']
     if all_active:
         df_res = pd.DataFrame(results)
         ng_count = len(df_res[df_res['Status'] == 'NG'])
@@ -157,8 +157,8 @@ def check_symbol_health(ticker: str = None, all_active: bool = False, check_null
         if ng_count > 0:
             print("\n異常あり銘柄リスト（上位10件）:")
             print(df_res[df_res['Status'] == 'NG'].head(10))
-    # 呼び出し元（deploy_after_merge 等）が合否判定できるよう NG 件数を返す
-    return ng_total
+    # 呼び出し元（deploy_after_merge 等）が合否判定・差分比較できるよう NG 銘柄リストを返す
+    return ng_tickers
 
 def check_parquet_health(parquet_dir_override: str = None):
     """
@@ -239,6 +239,7 @@ if __name__ == "__main__":
     parser.add_argument('--check-nulls', action='store_true', help='Include NULL checks for critical columns in T3')
     parser.add_argument('--parquet', action='store_true', default=True, help='Check Parquet Master Cache health')
     parser.add_argument('--db-path', type=str, help='Check a specific SQLite DB (default: data/stocktool.db). Parquet dir is resolved next to it.')
+    parser.add_argument('--ng-out', type=str, help='NG 銘柄ティッカーを1行1件で書き出すファイルパス（deploy_after_merge のベースライン比較用）')
     args = parser.parse_args()
 
     # --db-path 指定時は検査対象 DB と Parquet ディレクトリを差し替える
@@ -256,6 +257,12 @@ if __name__ == "__main__":
     else:
         # Default behavior: if no symbol arguments, check SPY as standard check
         ng = check_symbol_health(ticker='SPY', all_active=False, check_nulls=args.check_nulls)
+
+    # NG 銘柄リストの書き出し（BOM なし UTF-8。NG ゼロでも空ファイルを書き「実行済み」を示す）
+    if args.ng_out:
+        with open(args.ng_out, 'w', encoding='utf-8', newline='\n') as f:
+            for t in ng:
+                f.write(f"{t}\n")
 
     # NG があれば非ゼロ終了（deploy_after_merge の合否ゲート）
     sys.exit(1 if ng else 0)
