@@ -85,6 +85,29 @@ def promote_generation(workspace_dir: str, prod_dir: str, logger: logging.Logger
     return old_pointer, new_pointer
 
 
+def is_pipeline_lock_held(lock_file: str) -> bool:
+    """update_pipeline.lock が実行中プロセスに保持されているかを判定する。
+
+    update_pipeline.py の release_lock はロック解除のみでファイルを削除しないため、
+    ファイルの存在では「実行中」と「残骸」を区別できない。
+    msvcrt の非ブロッキングロックが取得できるかで判定する（Windows 前提）。"""
+    if not os.path.exists(lock_file):
+        return False
+    import msvcrt
+    try:
+        fd = os.open(lock_file, os.O_RDWR)
+    except OSError:
+        return True  # open すらできない = 他プロセスが排他保持している
+    try:
+        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        return False
+    except OSError:
+        return True
+    finally:
+        os.close(fd)
+
+
 def rollback_generation(prod_dir: str, old_pointer: dict | None, logger: logging.Logger) -> bool:
     """本番ポインタを旧世代へ戻す。旧ポインタが無い場合は False。"""
     if not old_pointer:

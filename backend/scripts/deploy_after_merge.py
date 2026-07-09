@@ -53,12 +53,12 @@ def _run(cmd: list[str], env: dict | None = None, cwd: str | None = None) -> int
 
 def preflight(prod_parquet_dir: str, workspace: str) -> str | None:
     """前提チェック。NG 理由を返す（None なら OK）"""
-    from pipeline.deploy_promotion import read_generation
+    from pipeline.deploy_promotion import read_generation, is_pipeline_lock_held
 
+    # lock ファイルは正常終了後も残るため、存在ではなくロック保持で判定する
     lock_file = os.path.join(project_root, "update_pipeline.lock")
-    if os.path.exists(lock_file):
-        # msvcrt ロックの残骸の可能性もあるが、安全側に倒して中断する
-        return f"update_pipeline.lock が存在します（daily update 実行中の可能性）: {lock_file}"
+    if is_pipeline_lock_held(lock_file):
+        return f"update_pipeline.lock が実行中プロセスに保持されています（daily update 実行中）: {lock_file}"
 
     if read_generation(prod_parquet_dir) is None:
         return f"本番 Parquet の世代ポインタが見つかりません: {prod_parquet_dir}"
