@@ -85,6 +85,19 @@ def promote_generation(workspace_dir: str, prod_dir: str, logger: logging.Logger
     return old_pointer, new_pointer
 
 
+def nearest_existing_dir(path: str) -> str:
+    """path から親方向に辿り、最初に存在するディレクトリを返す。
+    shutil.disk_usage 等、存在するパスを要求する API に未作成パス
+    （例: 初回実行時の data/tmp/deploy）を渡す前の解決に使う。"""
+    probe = os.path.abspath(path)
+    while probe and not os.path.exists(probe):
+        parent = os.path.dirname(probe)
+        if parent == probe:  # ドライブルートまで到達
+            break
+        probe = parent
+    return probe
+
+
 def is_pipeline_lock_held(lock_file: str) -> bool:
     """update_pipeline.lock が実行中プロセスに保持されているかを判定する。
 

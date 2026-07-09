@@ -53,7 +53,7 @@ def _run(cmd: list[str], env: dict | None = None, cwd: str | None = None) -> int
 
 def preflight(prod_parquet_dir: str, workspace: str) -> str | None:
     """前提チェック。NG 理由を返す（None なら OK）"""
-    from pipeline.deploy_promotion import read_generation, is_pipeline_lock_held
+    from pipeline.deploy_promotion import read_generation, is_pipeline_lock_held, nearest_existing_dir
 
     # lock ファイルは正常終了後も残るため、存在ではなくロック保持で判定する
     lock_file = os.path.join(project_root, "update_pipeline.lock")
@@ -63,7 +63,8 @@ def preflight(prod_parquet_dir: str, workspace: str) -> str | None:
     if read_generation(prod_parquet_dir) is None:
         return f"本番 Parquet の世代ポインタが見つかりません: {prod_parquet_dir}"
 
-    free_gb = shutil.disk_usage(os.path.dirname(workspace) or ".").free / (1024 ** 3)
+    # ワークスペースは未作成の場合がある（初回実行）ため、存在する祖先で空き容量を測る
+    free_gb = shutil.disk_usage(nearest_existing_dir(workspace)).free / (1024 ** 3)
     if free_gb < MIN_FREE_GB:
         return f"ディスク空き容量不足: {free_gb:.1f} GB（{MIN_FREE_GB} GB 以上必要）"
     return None

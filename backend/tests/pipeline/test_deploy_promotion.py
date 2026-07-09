@@ -147,6 +147,20 @@ def test_rollback_generation_with_none_pointer_returns_false(tmp_path):
     assert rollback_generation(prod, None, logger) is False
 
 
+def test_nearest_existing_dir_returns_path_itself_if_exists(tmp_path):
+    """存在するパスはそのまま返す"""
+    from pipeline.deploy_promotion import nearest_existing_dir
+    assert nearest_existing_dir(str(tmp_path)) == str(tmp_path)
+
+
+def test_nearest_existing_dir_walks_up_for_missing_path(tmp_path):
+    """未作成の深いパス（例: data/tmp/deploy 初回）は存在する祖先を返す。
+    shutil.disk_usage は存在しないパスで FileNotFoundError になる（2026-07-09 初回実行の実バグ）"""
+    from pipeline.deploy_promotion import nearest_existing_dir
+    missing = str(tmp_path / "data" / "tmp" / "deploy")
+    assert nearest_existing_dir(missing) == str(tmp_path)
+
+
 def test_lock_absent_is_not_held(tmp_path):
     """lock ファイルが無ければ保持されていない"""
     from pipeline.deploy_promotion import is_pipeline_lock_held
