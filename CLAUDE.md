@@ -12,6 +12,38 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - ツール呼び出しは名前空間接頭辞付きの正規の書式で出力すること。接頭辞を欠いた壊れた書式は malformed として送信が弾かれ、ツールが実行されない。
 - malformed で弾かれたら、同じ書式のまま闇雲に再送しない。直近で成功したツール呼び出しの書式に合わせ、1呼び出しずつ確実に送り直す。
 
+## エラーリトライ規律（AIエージェント向け・厳守）
+- **同一エラーで3回失敗したら打ち切る**（`doc/agent_execution_rules.md` §4）。打ち切り後はアプローチを変えるか、エラー内容を報告してユーザーの判断を仰ぐ。同じ呼び出しをそのまま再送することを禁止する。
+- `File has not been read yet` / `File has been modified since read` で Edit が拒否されたら、**対象ファイルを Read し直してから** Edit する。長いセッションやコンテキスト要約（compaction）後は Read 状態が失われているため、記憶を頼りに Edit しない。
+- `sleep` によるポーリング待機を禁止する（この環境ではブロックされる）。長時間コマンドは `run_in_background` で実行し、完了通知を待つ。
+- Python 実行は常に**リポジトリ本体の venv** を使う。本体では `.\venv\Scripts\python.exe`、**ワークツリー内には venv が存在しない**ため `..\..\..\venv\Scripts\python.exe` または絶対パスで本体の venv を参照する。素の `python` は venv 外の Python を拾い、`ModuleNotFoundError`（pytest 等が見つからない）の原因になる。
+- `No module named 'backend'` が出たら PYTHONPATH と import 形式の不一致を疑う（import 規約は「Coding conventions」参照）。
+- その他の共通ルール（`python -c` の制限、文字コード、パス、Git 合意形成）は `doc/agent_execution_rules.md` §1〜§8 を参照する。
+
+## サブエージェント委譲（オーケストレーター運用）
+
+役割分担: 方針立て・アーキテクチャ判断・実装計画書の作成とユーザーレビュー・成果物の検収は**メインセッション（オーケストレーター）**が行い、確定した計画の機械的な作業は低コストモデルのワーカーに委譲する。
+
+- **implementer**（`.claude/agents/implementer.md`）— 計画確定後のコード実装
+- **test-writer**（`.claude/agents/test-writer.md`）— テスト実装（TDD red フェーズ、テスト追加）
+
+委譲時のルール:
+- ワーカーは会話コンテキストを引き継がない。**計画書パス（`doc/in_progress/<name>_plan.md`）と対象チェックリスト項目を明示した自己完結プロンプト**を渡す。
+- 委譲単位は計画書のチェックリスト1項目程度（1機能の実装＋テスト）。関数1個のような細かすぎる委譲はコンテキスト再構築コストで逆に割高。
+- ワーカー完了後、オーケストレーターが **diff の確認とテスト全体実行を検収として必ず行う**。検収なしで次の項目に進まない。
+- 複数ワーカーを並列に走らせる場合は `isolation: "worktree"` で作業コピーの衝突を防ぐ。
+- 設計判断が必要になった・計画に穴があった、という報告がワーカーから来たら、オーケストレーターが判断して計画書を更新してから再委譲する（ワーカーに判断させない）。
+
+## Git 運用（AIエージェント向け）
+
+- 本体チェックアウトでのコミットは禁止（`git add` まで）。**ワークツリー（`.claude/worktrees/` 配下）では自ブランチへのコミットを許可** — 完了報告にブランチ名・SHA・取り込みコマンドを明記する。
+- main への直接コミット・push・マージ、`--amend`・force-push は場所を問わず禁止。push・PR 作成は都度ユーザー指示。
+- ワークツリーで作成した `doc/in_progress/` の計画書は未コミットで置き残さない（その場でコミット）。
+- `git add` は**明示パスのみ**（`-A` / `.` 禁止）。
+- **データ（DB / Parquet）は git に乗らない** — アクセス方法・変更種別（A〜D、完了報告に必須記載）・merge 後の昇格は `doc/agent_execution_rules.md` §10 を参照。
+- 機械判定可能な違反（`git add -A`/`.`、force-push、main 宛 push、`--amend`、本体での commit）は PreToolUse フック `tools/hooks/git_guard.ps1` が自動でブロック/確認する。
+- 詳細: `doc/agent_execution_rules.md` §7。未取り込み作業の棚卸し: `tools/check_worktrees.ps1`
+
 ## Project overview
 
 A personal stock analysis/screening web tool (Japanese-language docs and UI). It computes Relative Strength (vs SPY), ATR-based volatility, volume surge, and Minervini Trend Template signals, then serves them through a batch-computed backend so the frontend only reads pre-aggregated data.
@@ -41,7 +73,7 @@ cd frontend && npm install
 ### Run backend API (from project root, port 8000)
 ```powershell
 $env:PYTHONPATH="backend"
-.\venv\Scripts\python.exe -m uvicorn api.server:app --host 127.0.0.1 --port 8001
+.\venv\Scripts\python.exe -m uvicorn api.server:app --host 127.0.0.1 --port 8000
 ```
 (`run/run_server.bat` / `run/KickBackend.bat` do this with the venv auto-activated.)
 
@@ -53,9 +85,9 @@ npm run dev
 
 ### Backend tests (pytest, from project root)
 ```powershell
-$env:PYTHONPATH="backend"; python -m pytest backend/tests/ -v
+$env:PYTHONPATH="backend"; .\venv\Scripts\python.exe -m pytest backend/tests/ -v
 ```
-Run a single test file/case: `python -m pytest backend/tests/api/test_watchlist_earnings.py -v` or `::test_name`.
+Run a single test file/case: `.\venv\Scripts\python.exe -m pytest backend/tests/api/test_watchlist_earnings.py -v` or `::test_name`.
 `pytest.ini` already sets `pythonpath = backend` and `testpaths = backend/tests`, so plain `pytest -v` from the root also works.
 **All tests must pass before committing.**
 
@@ -134,6 +166,7 @@ Check `/api/system/info` (`is_production` flag) to confirm which environment you
 - **File encoding/line endings**: UTF-8 without BOM, LF line endings for `.py/.md/.toml/.json/.tsx` etc. (`.bat` files are CRLF, `.sh` are LF — see `.gitattributes`). Windows Notepad/PowerShell redirection (`>`) can silently corrupt this — be careful when writing files.
 - **SQLite (WAL mode)**: every connection must set `PRAGMA journal_mode=WAL`, `PRAGMA busy_timeout>=5000`, `PRAGMA synchronous=NORMAL`; writes should use `BEGIN IMMEDIATE` to avoid upgrade deadlocks. Don't change `journal_mode` at runtime while other connections are open (causes `database is locked`). Inside a write session NEVER: `pd.read_sql(q, db.bind)` (self-deadlock — use `get_read_engine_for(db)` after `db.commit()`), `PRAGMA synchronous`, or `VACUUM` (both fail in-transaction). Full details: `.claude/skills/sqlite-wal-handling/SKILL.md`.
 - **SQL/ORM**: no `SELECT *`, avoid N+1 (use `joinedload`/`selectinload`), always parameterize queries, never run unscoped `DELETE`/`UPDATE`. Details: `.claude/skills/sql-best-practices/SKILL.md`.
+- **import 規約**: `PYTHONPATH=backend` 前提の `api.x` / `pipeline.x` / `indicators.x` 形式が基本。`backend.x` プレフィックス形式は `scenario_*` 系など一部のみ（プロジェクトルートから直接実行する前提）。両形式が混在しているため、**編集対象ファイルの既存 import 形式に必ず合わせる**。
 - **Tests mirror source 1:1** under `backend/tests/` with a `test_` prefix (e.g. `backend/indicators/moving_averages.py` → `backend/tests/indicators/test_moving_averages.py`).
 - TDD is the intended workflow for new backend features (see `.claude/skills/tdd/SKILL.md`): write one failing test, minimal code to pass, refactor, repeat — not "write all tests then all code."
 - Data-integrity expectations (enforced by `tools/db_health_check.py`): every active symbol's T2 data must be at least as recent as SPY's; T2 and T3 row counts per symbol must match exactly; benchmark symbols (SPY etc.) are always included in RS calculations even when `--category` filters are used.

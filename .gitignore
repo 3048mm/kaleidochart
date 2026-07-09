@@ -76,3 +76,10 @@ data/*.csv
 
 # Backtest Cache (Parquet)
 backend/backtest/cache/
+
+# Production data & sandboxes -- never in git (doc/agent_execution_rules.md §10)
+# ワークツリー内 sandbox の誤コミット防止（git add -A 事故対策の多層防御）
+data/parquet_master*/
+data/_bk/
+*.db-shm
+*.db-wal

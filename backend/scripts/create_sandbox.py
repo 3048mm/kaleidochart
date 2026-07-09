@@ -10,10 +10,15 @@ if backend_dir not in sys.path:
 
 from db.database import init_db
 
-def create_sandbox(src_db='data/stocktool.db', dst_db='data/stocktool_sandbox.db', days=180):
+def create_sandbox(src_db='data/stocktool.db', dst_db='data/sandbox/stocktool_sandbox.db', days=180):
+    # 注意: sandbox は専用ディレクトリ（data/sandbox/ 等）に置くこと。data/ 直下に置くと
+    # Parquet 解決（DB と同じディレクトリの parquet_master/）が本番 Parquet を指してしまう。
+    # 詳細: .claude/skills/sandbox-workflow/SKILL.md §1
     if not os.path.exists(src_db):
         print(f"Source DB {src_db} not found.")
         return
+
+    os.makedirs(os.path.dirname(dst_db) or ".", exist_ok=True)
 
     # Delete existing sandbox
     if os.path.exists(dst_db):

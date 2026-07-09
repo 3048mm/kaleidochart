@@ -1,0 +1,39 @@
+{
+  "worktree": {
+    "baseRef": "head"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -File \"$CLAUDE_PROJECT_DIR/tools/hooks/git_guard.ps1\"",
+            "if": "Bash(git *)",
+            "timeout": 15,
+            "statusMessage": "git guard"
+          }
+        ]
+      },
+      {
+        "matcher": "PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -File \"$CLAUDE_PROJECT_DIR/tools/hooks/git_guard.ps1\"",
+            "timeout": 15,
+            "statusMessage": "git guard"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(./venv/Scripts/python.exe -m pytest *)",
+      "PowerShell(.\\venv\\Scripts\\python.exe -m pytest *)",
+      "Bash(export PYTHONPATH=backend)"
+    ]
+  }
+}
