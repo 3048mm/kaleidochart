@@ -21,7 +21,7 @@ router = APIRouter(tags=["backtest"])
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 OUTPUT_DIR = os.path.join(PROJECT_ROOT, "output")
 
-SCENARIO_STRATEGIES = ["A", "B1", "B2", "B3", "B4", "B5", "B6", "E2"]
+SCENARIO_STRATEGIES = ["A", "B1", "B2", "B3", "B4", "B5", "B6", "D", "E1", "E2", "G1", "G2", "G3"]
 SCENARIO_MODELS = ["full_position", "spy_sma200", "spy_sma63", "vxv_vix_ema", "mts_raw"]
 
 
@@ -1287,7 +1287,7 @@ def get_group_comparison(group: str):
     Returns the side-by-side comparison of the 4 market regimes for a given Monte Carlo group.
     Loads and aggregates results across their respective 10 runs.
     """
-    base_groups = ["A", "B1", "B2", "B3", "B4", "E2"]
+    base_groups = ["A", "B1", "B2", "B3", "B4", "B5", "B6", "D", "E1", "E2", "G1", "G2", "G3"]
     if group not in base_groups:
         raise HTTPException(status_code=400, detail="Invalid group name")
     sub_scenario_dir = os.path.join(OUTPUT_DIR, "scenario")

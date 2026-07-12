@@ -26,7 +26,7 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
   const [selectedRegime, setSelectedRegime] = useState<string>('default');
   const [selectedSubRun, setSelectedSubRun] = useState<string>('all');
 
-  const baseGroups = React.useMemo(() => ["A", "B1", "B2", "B3", "B4", "B5", "B6", "E2"], []);
+  const baseGroups = React.useMemo(() => ["A", "B1", "B2", "B3", "B4", "B5", "B6", "D", "E1", "E2", "G1", "G2", "G3"], []);
   const isGroup = baseGroups.includes(selectedStrategy);
 
   // 実質的なベースシナリオ名 (グループ + レジーム)

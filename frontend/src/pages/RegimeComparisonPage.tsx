@@ -12,7 +12,12 @@ const STRATEGIES = [
   { id: 'B4', label: 'B4' },
   { id: 'B5', label: 'B5' },
   { id: 'B6', label: 'B6' },
+  { id: 'D', label: 'D' },
+  { id: 'E1', label: 'E1' },
   { id: 'E2', label: 'E2' },
+  { id: 'G1', label: 'G1' },
+  { id: 'G2', label: 'G2' },
+  { id: 'G3', label: 'G3' },
 ];
 
 const MODELS = [

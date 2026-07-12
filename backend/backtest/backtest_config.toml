@@ -343,16 +343,16 @@ description = "VCP 収縮からの中期(63日高値近傍)ブレイクアウト
 max_hits_per_day = 10
 sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
-is_vcp_breakout = true
-breakout_high_window = 63
-vcr_contraction_max = 0.85
-base_high_tol = 10.0
-near_high_tol = 4.0        # 当日は63日高値から4%以内（緩い近傍ゲート）
-breakout_change = 3.0      # ブレイクの大陽線（クロス条件が主トリガーになったため 4.0→3.0）
-breakout_vol_mult = 2.1
-pivot_tol = 0.5            # 昨日までの63日最大高値の0.5%下まで許容（真のクロス）
-base_vol_dry_max = 1.2     # 前日の出来高上限（1.0 は過剰でイベントが枯渇。診断: e4 計画書 §6）
-min_market_cap = 3e8
+is_vcp_breakout = true 
+breakout_high_window = 63 
+vcr_contraction_max = 0.9 
+base_high_tol = 25.0 
+near_high_tol = 4.0 
+breakout_change = 6.0 
+breakout_vol_mult = 1.8 
+pivot_tol = 0.0 
+base_vol_dry_max = 1.2 
+min_market_cap = 5e7
 max_allowed_dd = 20.0
 min_avg_hits_per_day = 0.05   # イベント系は疎なので下限を緩める
 min_hit_rate_pct = 0.3
@@ -363,13 +363,13 @@ min_hit_rate_pct = 0.3
 # （A/B の特殊フラグと同じパターン。欠落するとプリセットでフィルタが発火せずサイレント失敗）
 is_vcp_breakout      = { type = "categorical", choices = [true] }
 breakout_high_window = { type = "categorical", choices = [63] }
-vcr_contraction_max = { type = "float", min = 0.5, max = 0.9, step = 0.05 }
-base_high_tol       = { type = "float", min = 5.0, max = 25.0, step = 5.0 }
+vcr_contraction_max = { type = "float", min = 0.5, max = 1.0, step = 0.05 }
+base_high_tol       = { type = "float", min = 5.0, max = 35.0, step = 5.0 }
 near_high_tol       = { type = "float", min = 2.0, max = 8.0, step = 1.0 }
 breakout_change     = { type = "float", min = 2.0, max = 7.0, step = 0.5 }
 breakout_vol_mult   = { type = "float", min = 1.2, max = 3.0, step = 0.1 }
 pivot_tol           = { type = "float", min = 0.0, max = 2.0, step = 0.25 }
-base_vol_dry_max    = { type = "float", min = 0.7, max = 1.3, step = 0.1 }
+base_vol_dry_max    = { type = "float", min = 0.7, max = 1.5, step = 0.1 }
 min_market_cap      = { type = "categorical", choices = [5e7, 1e8, 3e8, 1e9] }
 
 [[strategy]]
@@ -378,16 +378,16 @@ description = "VCP 収縮からの52週高値近傍ブレイクアウト（出�
 max_hits_per_day = 10
 sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
-is_vcp_breakout = true
-breakout_high_window = 252
-vcr_contraction_max = 0.85
-base_high_tol = 10.0
-near_high_tol = 4.0        # 当日は52週高値から4%以内
-breakout_change = 3.0      # ブレイクの大陽線（クロス条件が主トリガーになったため 4.0→3.0）
-breakout_vol_mult = 2.1
-pivot_tol = 0.5            # 昨日までの52週最大高値の0.5%下まで許容（真のクロス）
-base_vol_dry_max = 1.2     # 前日の出来高上限（1.0 は過剰でイベントが枯渇。診断: e4 計画書 §6）
-min_market_cap = 1e8
+is_vcp_breakout = true 
+breakout_high_window = 252 
+vcr_contraction_max = 0.9 
+base_high_tol = 25.0 
+near_high_tol = 8.0 
+breakout_change = 4.5 
+breakout_vol_mult = 1.2 
+pivot_tol = 1.0
+base_vol_dry_max = 1.3 
+min_market_cap = 5e7
 max_allowed_dd = 20.0
 min_avg_hits_per_day = 0.02   # 52週新高値はさらに稀
 min_hit_rate_pct = 0.2
@@ -395,13 +395,13 @@ min_hit_rate_pct = 0.2
 [strategy.optimization]
 is_vcp_breakout      = { type = "categorical", choices = [true] }
 breakout_high_window = { type = "categorical", choices = [252] }
-vcr_contraction_max = { type = "float", min = 0.5, max = 0.9, step = 0.05 }
-base_high_tol       = { type = "float", min = 5.0, max = 25.0, step = 5.0 }
+vcr_contraction_max = { type = "float", min = 0.5, max = 1.0, step = 0.05 }
+base_high_tol       = { type = "float", min = 5.0, max = 35.0, step = 5.0 }
 near_high_tol       = { type = "float", min = 2.0, max = 8.0, step = 1.0 }
 breakout_change     = { type = "float", min = 2.0, max = 7.0, step = 0.5 }
-breakout_vol_mult   = { type = "float", min = 1.2, max = 3.0, step = 0.1 }
-pivot_tol           = { type = "float", min = 0.0, max = 2.0, step = 0.25 }
-base_vol_dry_max    = { type = "float", min = 0.7, max = 1.3, step = 0.1 }
+breakout_vol_mult   = { type = "float", min = 1.0, max = 3.0, step = 0.1 }
+pivot_tol           = { type = "float", min = 0.0, max = 2.5, step = 0.25 }
+base_vol_dry_max    = { type = "float", min = 0.7, max = 2.0, step = 0.1 }
 min_market_cap      = { type = "categorical", choices = [5e7, 1e8, 3e8, 1e9] }
 
 [[strategy]]

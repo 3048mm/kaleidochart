@@ -56,10 +56,43 @@ source = "optuna"
 study_name = "B6_rs_macd_and_theme"
 
 [[job]]
+name = "D"
+strategy_code = "D_ema21_pullback"
+source = "optuna"
+study_name = "D_ema21_pullback"
+
+[[job]]
+name = "E1"
+strategy_code = "E1_vcp_breakout_mid"
+source = "optuna"
+study_name = "E1_vcp_breakout_mid"
+
+[[job]]
 name = "E2"
 strategy_code = "E2_vcp_basic"
 source = "optuna"
 study_name = "E2_vcp_basic"
+
+
+[[job]]
+name = "G1"
+strategy_code = "G1_leader_td9_dip"
+source = "optuna"
+study_name = "G1_leader_td9_dip" 
+[[job]]
+name = "G2"
+strategy_code = "G2_momentum_no_exhaust"
+source = "optuna"
+study_name = "G2_momentum_no_exhaust" 
+[[job]]
+name = "G3"
+strategy_code = "G3_bluedot_leader"
+source = "optuna"
+study_name = "G3_bluedot_leader"
+
+
+
+
 
 # 記述例（手動変更パラメータの比較テスト用）:
 # [[job]]
