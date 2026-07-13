@@ -322,87 +322,72 @@ max_vol_surge_21     = { type = "float", min = 0.6,  max = 1.2,  step = 0.1 }
 min_up_down_vol_ratio_50 = { type = "float", min = 1.0, max = 1.5, step = 0.1 }
 
 
-# E1/E2 は 2026-07-05 に状態版 VCP から「ブレイクアウトイベント版」へ作り直し。
-# 旧 study は E1_old/E2_old でユーザーが退避（is_vcp_breakout はイベントなので発火が疎・
-# 各シグナルが独立で LCB が正直になる）。詳細: doc/completed/e3_vcp_breakout_plan.md
+# E1/E2 は 2026-07-05 に状態版 VCP から「ブレイクアウトイベント版」へ、
+# 2026-07-14 に再び状態版へ復元（型3シナリオで大敗・PF0.7〜1.3。ブレイク日の引けで
+# 追いかけ買いする構造が実運用と噛み合わなかった。型1が求めた「シグナルの独立性」は
+# 2026-07-05 の再エントリーブロック（exit まで同一銘柄スキップ）で既に測定器側で解決済み
+# だったため、イベント化の当初動機は別の対策で不要になっていた）。詳細:
+# doc/completed/e3_vcp_breakout_plan.md（イベント化の経緯）/
+# doc/completed/e4_vcp_pivot_dryup_plan.md（ピボットクロス・ドライアップ追加）/
+# doc/completed/e5_vcp_state_restore_plan.md（状態版への復元・質ゲート移植）
 #
-# is_vcp_breakout=true に付随するフィルタ内パラメータ（RRG の intensity_threshold と同じ扱い）:
-#   breakout_high_window: 高値近傍ゲートのウィンドウ（63=3ヶ月ベース / 252=52週高値）
-#   vcr_contraction_max : 前日までの収縮度上限（ATR10/ATR50）
-#   base_high_tol       : 前日の 52週高値からの許容乖離（%。土台の浅さ）
-#   near_high_tol       : 当日が N日高値からどれだけ以内か（緩い近傍ゲート）
-#   breakout_change     : ブレイクの大陽線（change_1d_pct の下限。イベントトリガー）
-#   breakout_vol_mult   : 当日の出来高膨張の下限（vol_surge_21）
-#   pivot_tol           : 真のピボットクロス許容（%）。今日の終値が「昨日までの」N日最大
-#                         高値の (1-tol/100) 倍以上を要求（e4 計画書 §3.1。未指定なら無効）
-#   base_vol_dry_max    : 土台のドライアップ上限（前日の vol_surge_21。未指定なら無効）
+# is_vcp_breakout（イベント版フィルタ本体）は現在どの戦略にも使われていないが、
+# テスト済みの汎用フィルタとして温存（将来「ブレイク通知」用途で使う可能性）。
+# 旧 study は E1_old/E2_old 等でユーザーが退避してから再最適化する運用。
 
 [[strategy]]
 name = "E1_vcp_breakout_mid"
-description = "VCP 収縮からの中期(63日高値近傍)ブレイクアウト（出来高を伴う大陽線イベント）"
+description = "VCP 収縮パターン（中期・63日高値近傍の土台を監視）。状態スクリーン"
 max_hits_per_day = 10
 sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
-is_vcp_breakout = true
-breakout_high_window = 63
-vcr_contraction_max = 0.85
-base_high_tol = 10.0
-near_high_tol = 4.0        # 当日は63日高値から4%以内（緩い近傍ゲート）
-breakout_change = 3.0      # ブレイクの大陽線（クロス条件が主トリガーになったため 4.0→3.0）
-breakout_vol_mult = 2.1
-pivot_tol = 0.5            # 昨日までの63日最大高値の0.5%下まで許容（真のクロス）
-base_vol_dry_max = 1.2     # 前日の出来高上限（1.0 は過剰でイベントが枯渇。診断: e4 計画書 §6）
-min_market_cap = 3e8
+is_trend_template = true       # ミネルヴィニのトレンドテンプレート適合
+max_vcr = 0.7                  # 収縮度合い（ATR10/ATR50。0.5に近いほどタイト）
+max_adr_pct_21 = 1.5           # 21日平均の値幅の上限（静かな動き）
+max_vol_surge_21 = 1.2         # 出来高ドライアップ（21日平均比。スパイクなし＝土台が静か。e4 移植）
+min_dist_63d_high_pct = -15.0  # 63日高値から15%以内（中期の浅い土台）
+min_up_down_vol_ratio_50 = 1.5 # 出来高比率（買い集め傾向）
+min_market_cap = 1e9
 max_allowed_dd = 20.0
-min_avg_hits_per_day = 0.05   # イベント系は疎なので下限を緩める
+min_avg_hits_per_day = 0.05
 min_hit_rate_pct = 0.3
 
 [strategy.optimization]
-# is_vcp_breakout / breakout_high_window は固定だが、シナリオテスト（型3）が Optuna の
-# z_params_toml を screener_presets.toml に貼って使うため、単一カテゴリカルで出力に含める
-# （A/B の特殊フラグと同じパターン。欠落するとプリセットでフィルタが発火せずサイレント失敗）
-is_vcp_breakout      = { type = "categorical", choices = [true] }
-breakout_high_window = { type = "categorical", choices = [63] }
-vcr_contraction_max = { type = "float", min = 0.5, max = 0.9, step = 0.05 }
-base_high_tol       = { type = "float", min = 5.0, max = 25.0, step = 5.0 }
-near_high_tol       = { type = "float", min = 2.0, max = 8.0, step = 1.0 }
-breakout_change     = { type = "float", min = 2.0, max = 7.0, step = 0.5 }
-breakout_vol_mult   = { type = "float", min = 1.2, max = 3.0, step = 0.1 }
-pivot_tol           = { type = "float", min = 0.0, max = 2.0, step = 0.25 }
-base_vol_dry_max    = { type = "float", min = 0.7, max = 1.3, step = 0.1 }
-min_market_cap      = { type = "categorical", choices = [5e7, 1e8, 3e8, 1e9] }
+is_trend_template    = { type = "categorical", choices = [true] }
+max_vcr              = { type = "float", min = 0.5, max = 0.8, step = 0.05 }
+max_adr_pct_21       = { type = "float", min = 1.5, max = 4.5, step = 0.5 }
+max_vol_surge_21     = { type = "float", min = 0.7, max = 1.5, step = 0.1 }
+min_dist_63d_high_pct = { type = "float", min = -25.0, max = -2.5, step = 2.5 }
+min_up_down_vol_ratio_50 = { type = "float", min = 1.0, max = 3.0, step = 0.5 }
+min_market_cap       = { type = "categorical", choices = [1e8, 3e8, 1e9] }
 
 [[strategy]]
 name = "E2_vcp_breakout_52w"
-description = "VCP 収縮からの52週高値近傍ブレイクアウト（出来高を伴う大陽線・最高確度で最も稀なイベント）"
+description = "VCP 収縮パターン（52週高値近傍の土台を監視・最高確度）。状態スクリーン"
 max_hits_per_day = 10
 sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
-is_vcp_breakout = true
-breakout_high_window = 252
-vcr_contraction_max = 0.85
-base_high_tol = 10.0
-near_high_tol = 4.0        # 当日は52週高値から4%以内
-breakout_change = 3.0      # ブレイクの大陽線（クロス条件が主トリガーになったため 4.0→3.0）
-breakout_vol_mult = 2.1
-pivot_tol = 0.5            # 昨日までの52週最大高値の0.5%下まで許容（真のクロス）
-base_vol_dry_max = 1.2     # 前日の出来高上限（1.0 は過剰でイベントが枯渇。診断: e4 計画書 §6）
-min_market_cap = 1e8
+is_trend_template = true       # ミネルヴィニのトレンドテンプレート適合
+max_vcr = 0.65                 # 収縮度合い（ATR10/ATR50。E1より僅かにタイト）
+max_adr_pct_21 = 1.5           # 21日平均の値幅の上限（静かな動き）
+max_vol_surge_21 = 1.2         # 出来高ドライアップ（21日平均比。e4 移植）
+min_dist_52w_high_pct = -10.0  # 52週高値から10%以内（E1より高値近接を要求）
+min_up_down_vol_ratio_50 = 1.5 # 出来高比率（買い集め傾向）
+min_market_cap = 1e9
+is_close_gt_ema63 = true
 max_allowed_dd = 20.0
-min_avg_hits_per_day = 0.02   # 52週新高値はさらに稀
+min_avg_hits_per_day = 0.02
 min_hit_rate_pct = 0.2
 
 [strategy.optimization]
-is_vcp_breakout      = { type = "categorical", choices = [true] }
-breakout_high_window = { type = "categorical", choices = [252] }
-vcr_contraction_max = { type = "float", min = 0.5, max = 0.9, step = 0.05 }
-base_high_tol       = { type = "float", min = 5.0, max = 25.0, step = 5.0 }
-near_high_tol       = { type = "float", min = 2.0, max = 8.0, step = 1.0 }
-breakout_change     = { type = "float", min = 2.0, max = 7.0, step = 0.5 }
-breakout_vol_mult   = { type = "float", min = 1.2, max = 3.0, step = 0.1 }
-pivot_tol           = { type = "float", min = 0.0, max = 2.0, step = 0.25 }
-base_vol_dry_max    = { type = "float", min = 0.7, max = 1.3, step = 0.1 }
-min_market_cap      = { type = "categorical", choices = [5e7, 1e8, 3e8, 1e9] }
+is_trend_template    = { type = "categorical", choices = [true] }
+max_vcr              = { type = "float", min = 0.5, max = 0.8, step = 0.05 }
+max_adr_pct_21       = { type = "float", min = 1.5, max = 6.0, step = 0.5 }
+max_vol_surge_21     = { type = "float", min = 0.7, max = 1.5, step = 0.1 }
+min_dist_52w_high_pct = { type = "float", min = -25.0, max = -2.5, step = 2.5 }
+min_up_down_vol_ratio_50 = { type = "float", min = 1.0, max = 3.0, step = 0.5 }
+min_market_cap       = { type = "categorical", choices = [1e7, 5e7, 1e8, 3e8, 1e9] }
+is_close_gt_ema63    = { type = "categorical", choices = [true] }
 
 [[strategy]]
 name = "F_elite_momentum97"
