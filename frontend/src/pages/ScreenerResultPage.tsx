@@ -227,7 +227,7 @@ export const ScreenerResultPage: React.FC = () => {
         setLoading(true);
         setError('');
         const params = new URLSearchParams(location.search);
-        fetch(`/api/screener?${params.toString()}`)
+        fetch(`/api/screener?${params.toString()}`, { cache: 'no-store' })
             .then(res => {
                 if (!res.ok) throw new Error('API fetch error');
                 return res.json();

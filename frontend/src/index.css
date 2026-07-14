@@ -113,6 +113,10 @@ body {
   display: none;
 }
 
+.mobile-only-nav {
+  display: none !important;
+}
+
 /* === Mobile Responsive === */
 @media (max-width: 768px) {
   .app-shell,
@@ -296,6 +300,12 @@ body {
   
   .pc-only-text {
     display: none !important;
+  }
+  .pc-only-nav {
+    display: none !important;
+  }
+  .mobile-only-nav {
+    display: flex !important;
   }
 }
 

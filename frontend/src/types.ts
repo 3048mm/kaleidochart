@@ -258,6 +258,42 @@ export interface SystemInfo {
     is_production: boolean;
 }
 
+export interface FreshnessInfo {
+    daily_prices: string | null;
+    indicators: string | null;
+    relative_ranks: string | null;
+    market_signals: string | null;
+    spy_latest: string | null;
+    delay_days: number | null;
+}
+
+export interface IntegrityInfo {
+    latest_date: string | null;
+    daily_prices_count: number;
+    indicators_count: number;
+    is_consistent: boolean;
+}
+
+export interface PipelineStatusInfo {
+    is_running: boolean;
+    last_completed_at: string | null;
+    last_spy_date: string | null;
+}
+
+export interface ValidationInfo {
+    presets_path: string;
+    is_valid: boolean;
+    warnings: string[];
+}
+
+export interface SystemHealthResponse {
+    overall_status: 'healthy' | 'warning' | 'error';
+    data_freshness: FreshnessInfo;
+    data_integrity: IntegrityInfo;
+    pipeline_status: PipelineStatusInfo;
+    validation: ValidationInfo;
+}
+
 export interface ThemeConstituentItem {
     id: number;
     ticker: string;

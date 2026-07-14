@@ -104,7 +104,7 @@ export const ScreenerPage: React.FC = () => {
             navigate(`/screener?${params.toString()}`, { replace: true });
         }
 
-        fetch(`/api/screener/dashboard?${params.toString()}`)
+        fetch(`/api/screener/dashboard?${params.toString()}`, { cache: 'no-store' })
             .then(res => {
                 if (!res.ok) throw new Error('Failed to fetch screener dashboard');
                 return res.json();
@@ -160,8 +160,21 @@ export const ScreenerPage: React.FC = () => {
                             const formatPct = (pct: number) => `${pct > 0 ? '+' : ''}${pct.toFixed(2)}%`;
 
                             return (
-                                <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+                                <div key={item.id} style={{ 
+                                    display: 'flex', 
+                                    alignItems: 'center', 
+                                    fontSize: '13px',
+                                    height: '26px'
+                                }}>
+                                    {/* Column 1: Ticker & Sector */}
+                                    <div style={{ 
+                                        display: 'flex', 
+                                        alignItems: 'center', 
+                                        gap: '2px',
+                                        flex: 1,
+                                        minWidth: 0,
+                                        marginRight: '8px'
+                                    }}>
                                         <WatchlistButton 
                                             isActive={isTickerActive(item.ticker)} 
                                             onClick={(e) => {
@@ -170,7 +183,7 @@ export const ScreenerPage: React.FC = () => {
                                             }}
                                             size={16}
                                         />
-                                        <Link to={`/chart/${encodeURIComponent(item.ticker)}`} target="_blank" style={{ color: appConfig.colors.chartText, textDecoration: 'none', fontWeight: '500' }}>
+                                        <Link to={`/chart/${encodeURIComponent(item.ticker)}`} target="_blank" style={{ color: appConfig.colors.chartText, textDecoration: 'none', fontWeight: '500', minWidth: '42px' }}>
                                             {item.ticker}
                                         </Link>
                                         
@@ -184,17 +197,28 @@ export const ScreenerPage: React.FC = () => {
                                                     border: activeTab === 'Rise' ? '1px solid rgba(0, 255, 136, 0.15)' : '1px solid rgba(255, 68, 68, 0.15)',
                                                     padding: '1px 5px',
                                                     borderRadius: '4px',
-                                                    marginLeft: '8px',
+                                                    marginLeft: '4px',
                                                     cursor: 'help',
                                                     fontWeight: 'normal',
-                                                    whiteSpace: 'nowrap'
+                                                    whiteSpace: 'nowrap',
+                                                    overflow: 'hidden',
+                                                    textOverflow: 'ellipsis',
+                                                    maxWidth: '120px'
                                                 }}
                                             >
                                                 {item.theme_name}
                                             </span>
                                         )}
                                     </div>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+
+                                    {/* Column 2: RS Sparkline */}
+                                    <div style={{ 
+                                        width: '90px', 
+                                        display: 'flex', 
+                                        justifyContent: 'flex-end',
+                                        alignItems: 'center',
+                                        marginRight: '12px'
+                                    }}>
                                         {item.rs_trend_history && item.rs_trend_history.length > 0 && (
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
                                                 <span style={{ fontSize: '8px', color: '#555', fontWeight: 'bold', letterSpacing: '0.05em' }}>RS</span>
@@ -216,18 +240,20 @@ export const ScreenerPage: React.FC = () => {
                                                 </div>
                                             </div>
                                         )}
-                                        <div style={{
-                                            padding: '2px 6px',
-                                            borderRadius: '3px',
-                                            backgroundColor: bgColor,
-                                            color: textColor,
-                                            fontWeight: '600',
-                                            fontSize: '11px',
-                                            minWidth: '55px',
-                                            textAlign: 'right'
-                                        }}>
-                                            {formatPct(item.change_pct)}
-                                        </div>
+                                    </div>
+
+                                    {/* Column 3: Change Percentage */}
+                                    <div style={{
+                                        padding: '2px 6px',
+                                        borderRadius: '3px',
+                                        backgroundColor: bgColor,
+                                        color: textColor,
+                                        fontWeight: '600',
+                                        fontSize: '11px',
+                                        width: '58px',
+                                        textAlign: 'right'
+                                    }}>
+                                        {formatPct(item.change_pct)}
                                     </div>
                                 </div>
                             );

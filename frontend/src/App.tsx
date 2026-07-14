@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from 'react'
 import { Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom'
-import { Symbol, SystemInfo } from './types'
+import { Symbol, SystemInfo, SystemHealthResponse } from './types'
 import { DashboardPage } from './pages/DashboardPage'
 import { ChartPage } from './pages/ChartPage'
 import { ScreenerPage } from './pages/ScreenerPage'
@@ -17,6 +17,8 @@ const API = '/api'
 export default function App() {
     const [symbols, setSymbols] = useState<Symbol[]>([])
     const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null)
+    const [systemHealth, setSystemHealth] = useState<SystemHealthResponse | null>(null)
+    const [healthPopoverOpen, setHealthPopoverOpen] = useState(false)
     const [search, setSearch] = useState('')
     const [sidebarOpen, setSidebarOpen] = useState(
         () => !window.matchMedia('(max-width: 768px)').matches
@@ -46,6 +48,20 @@ export default function App() {
         return collapsedCategories[cat] ?? false;
     }
 
+    const fetchSystemHealth = () => {
+        fetch(`${API}/system/health`)
+            .then(r => {
+                if (!r.ok) throw new Error("API error");
+                return r.json();
+            })
+            .then((data: SystemHealthResponse) => {
+                setSystemHealth(data);
+            })
+            .catch(err => {
+                console.error("Failed to fetch system health:", err);
+            });
+    }
+
     // Load symbols on mount
     useEffect(() => {
         fetch(`${API}/symbols`).then(r => r.json()).then((data: Symbol[]) => {
@@ -54,6 +70,10 @@ export default function App() {
         fetch(`${API}/system/info`).then(r => r.json()).then((data: SystemInfo) => {
             setSystemInfo(data)
         })
+        
+        fetchSystemHealth();
+        const interval = setInterval(fetchSystemHealth, 60000); // Poll every 60s
+        return () => clearInterval(interval);
     }, [])
 
     // Filtered symbol list
@@ -171,18 +191,162 @@ export default function App() {
                     </div>
                 )}
 
+
+
                 <div className="header-spacer" />
-                <nav style={{ display: 'flex', gap: '20px', marginRight: '20px' }}>
+                <nav className="pc-only-nav" style={{ display: 'flex', gap: '20px', marginRight: '20px' }}>
                     <Link to="/" style={{ color: location.pathname === '/' ? '#00ff88' : '#d1d4dc', textDecoration: 'none' }}>Dashboard</Link>
                     <Link to="/screener" style={{ color: location.pathname === '/screener' ? '#00ff88' : '#d1d4dc', textDecoration: 'none' }}>Screener</Link>
                     <Link to="/watchlist" style={{ color: location.pathname === '/watchlist' ? '#00ff88' : '#d1d4dc', textDecoration: 'none' }}>Watchlist</Link>
                     <Link to="/portfolio" style={{ color: location.pathname.startsWith('/portfolio') ? '#00ff88' : '#d1d4dc', textDecoration: 'none' }}>Portfolio</Link>
                     <Link to="/backtest" style={{ color: location.pathname.startsWith('/backtest') || location.pathname.startsWith('/scenariotest') || location.pathname.startsWith('/etf-backtest') ? '#00ff88' : '#d1d4dc', textDecoration: 'none' }}>Backtest</Link>
                 </nav>
-                <div className="header-status">
-                    <div className="status-dot" />
-                    <span>Live</span>
-                </div>
+                
+                {systemHealth && (
+                    <div style={{ position: 'relative', display: 'inline-block', marginRight: '20px' }}>
+                        <button
+                            onClick={() => setHealthPopoverOpen(prev => !prev)}
+                            style={{
+                                padding: '4px 10px',
+                                backgroundColor: 'rgba(21, 26, 38, 0.6)',
+                                backdropFilter: 'blur(4px)',
+                                border: `1px solid ${
+                                    systemHealth.overall_status === 'healthy' ? '#00ff88' :
+                                    systemHealth.overall_status === 'warning' ? '#ff9800' : '#ff4444'
+                                }`,
+                                color: '#fff',
+                                borderRadius: '6px',
+                                fontSize: '11px',
+                                fontWeight: 600,
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                transition: 'all 0.2s',
+                                boxShadow: `0 0 10px ${
+                                    systemHealth.overall_status === 'healthy' ? 'rgba(0, 255, 136, 0.15)' :
+                                    systemHealth.overall_status === 'warning' ? 'rgba(255, 152, 0, 0.15)' : 'rgba(255, 68, 68, 0.15)'
+                                }`
+                            }}
+                        >
+                            <span style={{
+                                width: '8px',
+                                height: '8px',
+                                borderRadius: '50%',
+                                backgroundColor: 
+                                    systemHealth.overall_status === 'healthy' ? '#00ff88' :
+                                    systemHealth.overall_status === 'warning' ? '#ff9800' : '#ff4444',
+                                display: 'inline-block',
+                                boxShadow: `0 0 6px ${
+                                    systemHealth.overall_status === 'healthy' ? '#00ff88' :
+                                    systemHealth.overall_status === 'warning' ? '#ff9800' : '#ff4444'
+                                }`
+                            }} />
+                            <span>
+                                {systemHealth.pipeline_status.is_running ? 'Updating' : 
+                                 systemHealth.overall_status === 'healthy' ? 'Live' : 
+                                 systemHealth.overall_status === 'warning' ? 'Delayed' : 'Error'}
+                            </span>
+                        </button>
+                        
+                        {healthPopoverOpen && (
+                            <div style={{
+                                position: 'absolute',
+                                top: '100%',
+                                right: 0,
+                                marginTop: '8px',
+                                width: '320px',
+                                backgroundColor: 'rgba(21, 26, 38, 0.95)',
+                                backdropFilter: 'blur(10px)',
+                                border: '1px solid rgba(255, 255, 255, 0.1)',
+                                borderRadius: '8px',
+                                boxShadow: '0 10px 25px rgba(0, 0, 0, 0.5)',
+                                padding: '16px',
+                                zIndex: 1000,
+                                color: '#d1d4dc',
+                                fontSize: '12px',
+                                textAlign: 'left'
+                            }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px', borderBottom: '1px solid rgba(255, 255, 255, 0.1)', paddingBottom: '8px' }}>
+                                    <span style={{ fontWeight: 'bold', color: '#fff' }}>System Status</span>
+                                    <button 
+                                        onClick={() => setHealthPopoverOpen(false)}
+                                        style={{ background: 'none', border: 'none', color: '#d1d4dc', cursor: 'pointer', fontSize: '14px' }}
+                                    >
+                                        ×
+                                    </button>
+                                </div>
+                                
+                                {/* Freshness */}
+                                <div style={{ marginBottom: '12px' }}>
+                                    <div style={{ fontWeight: 'bold', color: '#00ff88', marginBottom: '4px' }}>Data Freshness</div>
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '4px' }}>
+                                        <div>T2 (Prices):</div><div>{systemHealth.data_freshness.daily_prices || 'N/A'}</div>
+                                        <div>T3 (Indicators):</div><div>{systemHealth.data_freshness.indicators || 'N/A'}</div>
+                                        <div>T4 (Ranks):</div><div>{systemHealth.data_freshness.relative_ranks || 'N/A'}</div>
+                                        <div>T5 (Signals):</div><div>{systemHealth.data_freshness.market_signals || 'N/A'}</div>
+                                        <div>SPY Latest Date:</div><div>{systemHealth.data_freshness.spy_latest || 'N/A'}</div>
+                                        {systemHealth.data_freshness.delay_days !== null && (
+                                            <>
+                                                <div>Delay Days:</div><div>{systemHealth.data_freshness.delay_days} day(s)</div>
+                                            </>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* Integrity */}
+                                <div style={{ marginBottom: '12px' }}>
+                                    <div style={{ fontWeight: 'bold', color: '#00ff88', marginBottom: '4px' }}>Data Integrity</div>
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '4px' }}>
+                                        <div>Latest Date Count:</div><div>T2: {systemHealth.data_integrity.daily_prices_count} / T3: {systemHealth.data_integrity.indicators_count}</div>
+                                        <div>Integrity Check:</div>
+                                        <div style={{ color: systemHealth.data_integrity.is_consistent ? '#00ff88' : '#ff4444' }}>
+                                            {systemHealth.data_integrity.is_consistent ? 'Matched (OK)' : 'Mismatched (NG)'}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Pipeline */}
+                                <div style={{ marginBottom: '12px' }}>
+                                    <div style={{ fontWeight: 'bold', color: '#00ff88', marginBottom: '4px' }}>Pipeline Status</div>
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '4px' }}>
+                                        <div>Execution:</div>
+                                        <div style={{ color: systemHealth.pipeline_status.is_running ? '#ff9800' : '#d1d4dc' }}>
+                                            {systemHealth.pipeline_status.is_running ? 'Running' : 'Idle'}
+                                        </div>
+                                        <div>Last Completed:</div>
+                                        <div>
+                                            {systemHealth.pipeline_status.last_completed_at
+                                                ? new Date(systemHealth.pipeline_status.last_completed_at).toLocaleString('ja-JP')
+                                                : 'N/A'}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Validation Warnings */}
+                                {systemHealth.validation.warnings.length > 0 && (
+                                    <div>
+                                        <div style={{ fontWeight: 'bold', color: '#ff4444', marginBottom: '4px' }}>Preset Warnings</div>
+                                        <div style={{ 
+                                            maxHeight: '100px', 
+                                            overflowY: 'auto', 
+                                            backgroundColor: 'rgba(255, 68, 68, 0.1)', 
+                                            padding: '8px', 
+                                            borderRadius: '4px',
+                                            border: '1px solid rgba(255, 68, 68, 0.2)',
+                                            fontSize: '11px',
+                                            color: '#ff8888'
+                                        }}>
+                                            {systemHealth.validation.warnings.map((w, idx) => (
+                                                <div key={idx} style={{ marginBottom: '4px' }}>• {w}</div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                )}
             </header>
 
             {/* Sidebar Backdrop (mobile) */}
@@ -192,6 +356,19 @@ export default function App() {
             />
 
             <aside className={`app-sidebar ${sidebarOpen ? 'open' : ''}`}>
+                <div className="mobile-only-nav" style={{ 
+                    flexDirection: 'column', 
+                    gap: '12px', 
+                    padding: '16px 14px', 
+                    borderBottom: '1px solid var(--border)',
+                    background: 'rgba(30, 40, 70, 0.15)'
+                }}>
+                    <Link to="/" onClick={() => setSidebarOpen(false)} style={{ color: location.pathname === '/' ? '#00ff88' : '#d1d4dc', textDecoration: 'none', fontWeight: 600, fontSize: '13px' }}>Dashboard</Link>
+                    <Link to="/screener" onClick={() => setSidebarOpen(false)} style={{ color: location.pathname === '/screener' ? '#00ff88' : '#d1d4dc', textDecoration: 'none', fontWeight: 600, fontSize: '13px' }}>Screener</Link>
+                    <Link to="/watchlist" onClick={() => setSidebarOpen(false)} style={{ color: location.pathname === '/watchlist' ? '#00ff88' : '#d1d4dc', textDecoration: 'none', fontWeight: 600, fontSize: '13px' }}>Watchlist</Link>
+                    <Link to="/portfolio" onClick={() => setSidebarOpen(false)} style={{ color: location.pathname.startsWith('/portfolio') ? '#00ff88' : '#d1d4dc', textDecoration: 'none', fontWeight: 600, fontSize: '13px' }}>Portfolio</Link>
+                    <Link to="/backtest" onClick={() => setSidebarOpen(false)} style={{ color: location.pathname.startsWith('/backtest') || location.pathname.startsWith('/scenariotest') || location.pathname.startsWith('/etf-backtest') ? '#00ff88' : '#d1d4dc', textDecoration: 'none', fontWeight: 600, fontSize: '13px' }}>Backtest</Link>
+                </div>
                 <div className="sidebar-search" style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                     <input
                         className="search-input"

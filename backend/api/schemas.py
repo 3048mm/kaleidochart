@@ -711,3 +711,36 @@ class ScenarioComparisonEquityPoint(BaseModel):
     equity_spy_sma63: float
     equity_vxv_vix_ema: float
     equity_mts_raw: float
+
+# --- System Health Visibility ---
+
+class FreshnessInfo(BaseModel):
+    daily_prices: Optional[str] = None
+    indicators: Optional[str] = None
+    relative_ranks: Optional[str] = None
+    market_signals: Optional[str] = None
+    spy_latest: Optional[str] = None
+    delay_days: Optional[int] = None
+
+class IntegrityInfo(BaseModel):
+    latest_date: Optional[str] = None
+    daily_prices_count: int
+    indicators_count: int
+    is_consistent: bool
+
+class PipelineStatusInfo(BaseModel):
+    is_running: bool
+    last_completed_at: Optional[str] = None
+    last_spy_date: Optional[str] = None
+
+class ValidationInfo(BaseModel):
+    presets_path: str
+    is_valid: bool
+    warnings: List[str]
+
+class SystemHealthResponse(BaseModel):
+    overall_status: str
+    data_freshness: FreshnessInfo
+    data_integrity: IntegrityInfo
+    pipeline_status: PipelineStatusInfo
+    validation: ValidationInfo
