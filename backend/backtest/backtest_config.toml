@@ -219,7 +219,7 @@ is_close_gt_ema63 = { type = "categorical", choices = [true] }
 
 [[strategy]]
 name = "B6_rs_macd_and_theme"
-description = "相対トレンド・出来高が強く、上昇テーマに属し、RS-MACDが加速している銘柄"
+description = "相対トレンド・出来高が強く、上昇テーマに属し、RS-MACDがプラス圏の銘柄"
 max_hits_per_day = 10
 sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
