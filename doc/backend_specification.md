@@ -391,7 +391,8 @@ S&P500（SPY）の動向や市場全体の統計から算出される、市場�
 | **スロットル** | 前回の heal が clean（修復ゼロ・安全弁非発動）だった場合、**60分 (`HEAL_CLEAN_TTL_SECONDS`) 間は再実行をスキップ**。修復発生直後・安全弁発動中は毎回実行される。キーは（種別, stocktool DB, user DB）の組で、接続先を切り替えると独立にカウント |
 
 > [!WARNING]
-> Sandbox 検証時は `STOCKTOOL_DB_PATH` と `STOCKTOOL_USER_DB_PATH` を**必ずセットで**指定すること（片方だけだと heal が本番 user_data.db に向く）。安全弁はこの誤設定に対する最終防衛線であり、頼る前提で運用しないこと。
+> Sandbox 検証時は、設定漏れによる本番汚染（片方だけ指定し heal が本番 user_data.db に向く事故）を防ぐため、**単一の環境変数 `STOCKTOOL_ENV=sandbox` を使用することを強く推奨します。**
+> 個別のレガシー変数を使う場合は `STOCKTOOL_DB_PATH` と `STOCKTOOL_USER_DB_PATH` を**必ずセットで**指定すること。安全弁はこの誤設定に対する最終防衛線であり、頼る前提で運用しないこと。
 
 ### 5.2 ウォッチリスト API
 
@@ -683,7 +684,7 @@ periods = [
 1.  **Sandbox データ準備**:
     *   本番の最新 Parquet マスターを `data/parquet_master_sandbox/` に丸ごとコピーしてテスト用の歴史マスターを用意します（数秒で完了）。
 2.  **Sandbox 隔離テスト (Isolate & Test)**:
-    *   環境変数 `STOCKTOOL_DB_PATH="data/stocktool_sandbox.db"` を指定し、接続先をサンドボックスDBに完全隔離します。
+    *   環境変数 `STOCKTOOL_ENV="sandbox"` を指定し、接続先をサンドボックス環境（`data/sandbox/` 下の各DB）に完全隔離します。
     *   この状態で新規計算スクリプトやパイプラインを走らせ、`parquet_master_sandbox/` および `stocktool_sandbox.db` に対して、意図した新指標がエラーや不整合なく正しく計算・反映されるかをテストします。
 3.  **Verify ステージ (視覚的確認)**:
     *   APIサーバーをサンドボックスDBに向けた状態で起動し、フロントエンド画面左上に「オレンジ色の警告バッジ（`⚠️ DB: stocktool_sandbox.db`）」が表示されていることを目視確認します。

@@ -1,85 +1,60 @@
-import os
-import sqlite3
-import requests
-import json
-import sys
-
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from db.models import Base, Symbol, DailyPrice, Indicator, RelativeRank
+from api.routers import get_chart_data
+
 
 def test_rs_data_availability():
-    # データ依存の統合テスト: 実 DB（既定 data/stocktool.db、STOCKTOOL_DB_PATH で差し替え可）が
-    # 存在する環境でのみ実行する。ワークツリー等の data/ が空の環境ではスキップ
-    # （sqlite3.connect は存在しないパスでも空 DB を新規作成してしまうため、事前に存在確認する）
-    db_path = os.environ.get('STOCKTOOL_DB_PATH', 'data/stocktool.db')
-    if not os.path.exists(db_path):
-        pytest.skip(f"実データ DB が存在しないためスキップ: {db_path}")
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
+    """TDD Phase 2: Verify chart data API is populated correctly using mock seed data (No real DB dependency)."""
+    # 1. Create a clean in-memory database for testing
+    engine = create_engine(
+        "sqlite:///file::memory:?cache=shared&uri=true",
+        connect_args={"check_same_thread": False},
+    )
+    Base.metadata.create_all(engine)
+    TestingSessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
     
-    # 1. Get DUOL symbol_id and latest RS values from DB
-    cursor.execute("SELECT id FROM symbols WHERE ticker='DUOL'")
-    res = cursor.fetchone()
-    if not res:
-        print("DUOL not found in DB")
-        return
-    symbol_id = res[0]
-    
-    cursor.execute("""
-        SELECT date, rs_ratio_e14, rs_momentum_e14, rs_trend_s14
-        FROM indicators 
-        WHERE symbol_id = ? 
-        ORDER BY date DESC LIMIT 1
-    """, (symbol_id,))
-    db_row = cursor.fetchone()
-    if not db_row:
-        print("No indicator data for DUOL")
-        return
-    
-    latest_date, db_ratio, db_mom, db_cond = db_row
-    print(f"DB Latest ({latest_date}): rs_ratio_e14={db_ratio}, rs_momentum_e14={db_mom}, rs_trend_s14={db_cond}")
-    conn.close()
-    
-    # 2. Call API (assuming the server is NOT running, we might need to use TestClient or mock)
-    # Actually, let's try to use FastAPI's TestClient if possible, or just check the code.
-    # Since I don't know if the server is running, I'll use a direct check or try to start it.
-    
-    # Alternatively, I can write a script that imports the router and calls the function directly.
-    # This is more robust for TDD in this environment.
-    
-    print("\n--- Testing API Response (Direct function call) ---")
-    sys.path.append('backend')
-    from db.database import init_db
-    init_db(db_path)
-    
-    from api.routers import get_chart_data
-    from db.database import SessionLocal
-    
-    db = SessionLocal()
+    db = TestingSessionLocal()
     try:
-        response = get_chart_data(symbol_id, db)
-        # response is a fastapi.Response object because of the custom JSON dump
+        # Seed test data for DUOL
+        from datetime import date
+        d = date(2026, 5, 20)
+        
+        duol = Symbol(id=1, ticker="DUOL", name="Duolingo", category="個別", active=1)
+        db.add(duol)
+        
+        dp = DailyPrice(symbol_id=1, date=d, open=100.0, high=105.0, low=98.0, close=102.0, volume=1000)
+        ind = Indicator(
+            symbol_id=1,
+            date=d,
+            change_1d_pct=2.0,
+            ema_21=100.0,
+            rs_ratio_e14=0.85,
+            rs_momentum_e14=0.75,
+            rs_trend_s14=0.65
+        ) 
+        db.add_all([dp, ind])
+        db.commit()
+        
+        # 2. Call API directly
+        response = get_chart_data(symbol_id=1, db=db)
+        import json
         content = json.loads(response.body)
         
-        # Get the last data point
+        assert len(content['data']) > 0
         last_point = content['data'][-1]
-        print(f"API Latest Date: {last_point['time']}")
         
-        keys_to_check = ['rs_ratio_e14', 'rs_momentum_e14', 'rs_trend_s14', 'change_1d_pct']
-        missing = []
-        for key in keys_to_check:
-            val = last_point.get(key)
-            print(f"API {key}: {val}")
-            if val is None:
-                missing.append(key)
+        # Check T3 indicators are fetched correctly
+        assert last_point['rs_ratio_14'] == 0.85
+        assert last_point['rs_momentum_14'] == 0.75
+        assert last_point['rs_condition_14'] == 0.65
         
-        if missing:
-            print(f"\n[FAIL] Missing keys in API response: {missing}")
-            assert False, f"Missing keys in API response: {missing}"
-        else:
-            print("\n[PASS] All keys found in API response.")
-            
+        # Verify change_1d_pct is present and matches the mock seed
+        assert last_point['change_1d_pct'] is not None
+        assert last_point['change_1d_pct'] == 2.0
+
     finally:
         db.close()
-
-if __name__ == "__main__":
-    test_rs_data_availability()
+        Base.metadata.drop_all(engine)

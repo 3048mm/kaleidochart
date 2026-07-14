@@ -29,6 +29,7 @@ from backend.db import database
 from backend.backtest.backtest_screener import scan_signals_for_date, SignalRecord
 from backend.backtest.backtest_simulator import simulate_trade, ExitRules, TradeResult
 from backend.backtest.backtest_report import calculate_metrics, print_comparison_table, save_results_json
+from backend.backtest.strategy_normalizer import normalize_strategy_keys
 
 
 def load_config(config_path: str) -> dict:
@@ -373,6 +374,7 @@ def run_backtest(config: dict, strategy_filter: str = None, refresh_cache: bool 
     exit_rules = ExitRules.from_config(config)
 
     strategies = config.get('strategy', [])
+    strategies = [normalize_strategy_keys(s) for s in strategies]
     if strategy_filter:
         # Support short codes (A, B, C1, C2...) and prefixes
         filtered = [s for s in strategies if s['name'] == strategy_filter or s['name'].startswith(strategy_filter + "_")]
@@ -493,6 +495,9 @@ def validate_strategies_config(strategies: list, df_ind: pd.DataFrame, df_prices
     """Validate parameters in strategies configuration against schema and preloaded data."""
     import re
     from backend.db.models import RelativeRank
+    from backend.backtest.strategy_normalizer import normalize_strategy_keys
+
+    strategies = [normalize_strategy_keys(s) for s in strategies]
 
     try:
         from backend.indicators.screener_filters import SPECIAL_FILTER_KEYS
@@ -534,7 +539,7 @@ def validate_strategies_config(strategies: list, df_ind: pd.DataFrame, df_prices
 
     # Aliases in backtest_screener.py
     alias_map = {
-        'change_intraday_pct', 'rs_ratio_21_rank', 'rs21_rank', 'rs_ratio_63_rank', 'rs63_rank',
+        'change_intraday_pct', 'rs21_rank', 'rs63_rank',
         'trend_template_ok', 'rs_condition_14_rank', 'rs_condition_21_rank', 'rs_condition_63_rank'
     }
 

@@ -14,14 +14,28 @@ def get_active_user_db_path():
 def init_user_db(db_path: str):
     global engine_user, SessionLocalUser, _active_user_db_path
     
-    # Allow override via environment variable (e.g. for testing)
-    env_db_path = os.getenv("STOCKTOOL_USER_DB_PATH")
-    if env_db_path:
-        db_path = env_db_path
+    # Allow override via environment variables
+    env_name = os.getenv("STOCKTOOL_ENV")
+    if env_name == "sandbox":
+        db_path = "data/sandbox/user_data.db"
         print("\n" + "!" * 60)
-        print(f"!!! [WARNING] USER DATABASE OVERRIDDEN BY ENVIRONMENT VARIABLE !!!")
+        print(f"!!! [INFO] USER DATABASE ENVIRONMENT: SANDBOX !!!")
         print(f"!!! Target DB: {db_path} ")
         print("!" * 60 + "\n")
+    elif env_name == "test":
+        db_path = "data/test/user_data.db"
+        print("\n" + "!" * 60)
+        print(f"!!! [INFO] USER DATABASE ENVIRONMENT: TEST !!!")
+        print(f"!!! Target DB: {db_path} ")
+        print("!" * 60 + "\n")
+    else:
+        env_db_path = os.getenv("STOCKTOOL_USER_DB_PATH")
+        if env_db_path:
+            db_path = env_db_path
+            print("\n" + "!" * 60)
+            print(f"!!! [WARNING] USER DATABASE OVERRIDDEN BY ENVIRONMENT VARIABLE !!!")
+            print(f"!!! Target DB: {db_path} ")
+            print("!" * 60 + "\n")
     
     db_path = os.path.abspath(db_path)
     _active_user_db_path = db_path

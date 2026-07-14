@@ -83,6 +83,8 @@ def load_scenario_config(config_path: str = "data/screener_presets.toml") -> Dic
     with open(abs_path, 'rb') as f:
         data = tomli.load(f)
         
+    from backend.backtest.strategy_normalizer import normalize_strategy_keys
+    
     active_rise_ids = data.get('active_rise_ids', [])
     active_fall_ids = data.get('active_fall_ids', [])
     
@@ -107,7 +109,7 @@ def load_scenario_config(config_path: str = "data/screener_presets.toml") -> Dic
             filters['_use_hysteresis'] = item.get('use_hysteresis', False) or item.get('use_vxv_vix_hysteresis', False)
             filters['use_vxv_vix_hysteresis'] = item.get('use_vxv_vix_hysteresis', False)
             filters['vxv_vix_hysteresis_type'] = item.get('vxv_vix_hysteresis_type', 'trend_follow')
-            strategies[strat_name] = filters
+            strategies[strat_name] = normalize_strategy_keys(filters)
         
     if not strategies:
         raise ValueError(f"No strategies found in {config_path}")

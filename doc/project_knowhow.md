@@ -9,12 +9,13 @@
 
 ### A-1. サンドボックスDBを使用したテスト実行ルール (Sandbox Testing Protocol)
 #### 原則
-本作業環境では、本番データ (`data/stocktool.db`) を保護するため、実験や破壊的なテストにはサンドボックスDB (`data/stocktool_sandbox.db`) を使用する。その際、**`config.toml` は書き換えず、環境変数によって動的に切り替えること。**
+本作業環境では、本番データ (`data/stocktool.db`) を保護するため、実験や破壊的なテストにはサンドボックス環境を使用する。その際、**`config.toml` は書き換えず、環境変数によって動的に切り替えること。**
 
 #### ルール
-- **環境変数の利用**: テスト実行時のみ、一時的な環境変数 `STOCKTOOL_DB_PATH` をセットして実行する。
-  - PowerShell 例: `$env:STOCKTOOL_DB_PATH = "data/stocktool_sandbox.db"; python backend/api/server.py`
-  - 完了後は必ずセッションを閉じるか、環境変数をクリア (`$env:STOCKTOOL_DB_PATH = $null`) する。
+- **環境変数の利用**: 一時的な環境変数 `STOCKTOOL_ENV = "sandbox"` をセットして実行する。これにより、システムDB (`data/sandbox/stocktool.db`) およびユーザーDB (`data/sandbox/user_data.db`) が一貫して完全に分離され、片方の設定漏れによる本番汚染事故を防止できます。
+  - PowerShell 例: `$env:STOCKTOOL_ENV = "sandbox"; python backend/api/server.py`
+  - 完了後は必ずセッションを閉じるか、環境変数をクリア (`$env:STOCKTOOL_ENV = $null`) する。
+- **レガシー・個別オーバーライドのフォールバック**: 特定のカスタムパスを指定したい場合のみ、レガシー環境変数 `STOCKTOOL_DB_PATH` / `STOCKTOOL_USER_DB_PATH` を個別に指定します（※設定漏れに十分注意すること）。
 - **グローバル設定の禁止**: OS のシステム環境変数や、プロジェクトの `config.toml` にサンドボックスのパスを永続的に書き込んではならない。
 - **ログによる判別**: `init_db()` 実行時に、参照している DB パスが本番以外である場合は、コンソールに警告を表示するように設計する。
 
@@ -30,7 +31,7 @@
     - Web ブラウザや `curl` 等で直接 `/api/system/info` を叩くことで、接続状況の JSON を取得できる。
     - レスポンス例: `{"db_name": "stocktool_sandbox.db", "is_production": false, ...}`
 3.  **環境変数の優先適用**:
-    - 迷った場合は、環境変数 `STOCKTOOL_DB_PATH` を明示的にセットしてプロセスを起動する（CLI / Server 双方有効）。
+    - 迷った場合は、環境変数 `STOCKTOOL_ENV` を `sandbox` にセットしてプロセスを起動する（CLI / Server 双方有効）。
 
 ### A-3. 環境間でのデータベース・スキーマの不整合 (Schema Drift)
 #### 問題

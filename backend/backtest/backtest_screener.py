@@ -11,6 +11,7 @@ import numpy as np
 import bisect
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
+from backend.backtest.strategy_normalizer import normalize_strategy_keys
 
 try:
     from indicators.screener_filters import (
@@ -153,6 +154,7 @@ def apply_filters_to_df(
     """
     Applies strategy filters to a pre-merged daily DataFrame.
     """
+    strategy = normalize_strategy_keys(strategy)
     if merged.empty:
         return merged
 
@@ -180,70 +182,47 @@ def apply_filters_to_df(
     # --- RS Rank merge ---
     sort_col = strategy.get('sort_column', 'rs_ratio_rank_e21')
     needs_rs14 = (
-        strategy.get('rs_rank_14_gt_21')
-        or strategy.get('is_rs_ratio_rank_e14_gt_e21')
-        or strategy.get('theme_rs_rank_14_gt_21')
+        strategy.get('is_rs_ratio_rank_e14_gt_e21')
         or strategy.get('is_theme_rs_ratio_rank_e14_gt_e21')
         or 'min_rs_ratio_rank_e14' in strategy
-        or 'min_theme_rs_ratio_14_rank' in strategy
         or 'min_theme_rs_ratio_rank_e14' in strategy
-        or sort_col in ('rs14_rank', 'rs_ratio_14_rank', 'rs_ratio_rank_e14')
-        or 'min_rs_condition_14_rank' in strategy
+        or sort_col in ('rs14_rank', 'rs_ratio_rank_e14')
         or 'min_rs_trend_rank_s14' in strategy
-        or 'min_theme_rs_condition_14_rank' in strategy
         or 'min_theme_rs_trend_rank_s14' in strategy
-        or strategy.get('rs_condition_14_gt_21')
-        or strategy.get('theme_rs_condition_14_gt_21')
+        or strategy.get('is_rs_trend_rank_s14_gt_s21')
         or strategy.get('is_theme_rs_trend_rank_s14_gt_s21')
         or strategy.get('is_rs_trend_s14_lt_s21')
     )
     needs_rs21 = (
-        'min_rs_ratio_21_rank' in strategy
-        or 'min_rs_ratio_rank_e21' in strategy
-        or 'min_theme_rs_ratio_21_rank' in strategy
+        'min_rs_ratio_rank_e21' in strategy
         or 'min_theme_rs_ratio_rank_e21' in strategy
         or 'min_rs_macd_hist_rank_21' in strategy
         or strategy.get('is_rs_macd_hist_rising_21')
-        or strategy.get('rs_rank_21_gt_63')
         or strategy.get('is_rs_ratio_rank_e21_gt_e63')
-        or strategy.get('theme_rs_rank_21_gt_63')
         or strategy.get('is_theme_rs_ratio_rank_e21_gt_e63')
-        or strategy.get('rs_rank_14_gt_21')
         or strategy.get('is_rs_ratio_rank_e14_gt_e21')
-        or strategy.get('theme_rs_rank_14_gt_21')
         or strategy.get('is_theme_rs_ratio_rank_e14_gt_e21')
-        or sort_col in ('rs21_rank', 'rs_ratio_21_rank', 'rs_ratio_rank_e21')
-        or 'min_rs_condition_21_rank' in strategy
+        or sort_col in ('rs21_rank', 'rs_ratio_rank_e21')
         or 'min_rs_trend_rank_s21' in strategy
-        or 'min_theme_rs_condition_21_rank' in strategy
         or 'min_theme_rs_trend_rank_s21' in strategy
-        or strategy.get('rs_condition_14_gt_21')
-        or strategy.get('theme_rs_condition_14_gt_21')
-        or strategy.get('rs_condition_21_gt_63')
-        or strategy.get('is_rs_trend_s21_lt_s63')
-        or strategy.get('theme_rs_condition_21_gt_63')
+        or strategy.get('is_rs_trend_rank_s14_gt_s21')
         or strategy.get('is_theme_rs_trend_rank_s14_gt_s21')
+        or strategy.get('is_rs_trend_rank_s21_gt_s63')
         or strategy.get('is_theme_rs_trend_rank_s21_gt_s63')
+        or strategy.get('is_rs_trend_s21_lt_s63')
         or strategy.get('is_rs_trend_s14_lt_s21')
     )
     needs_rs63 = (
-        strategy.get('rs_rank_21_gt_63')
-        or strategy.get('is_rs_ratio_rank_e21_gt_e63')
-        or strategy.get('theme_rs_rank_21_gt_63')
+        strategy.get('is_rs_ratio_rank_e21_gt_e63')
         or strategy.get('is_theme_rs_ratio_rank_e21_gt_e63')
         or 'min_rs_ratio_rank_e63' in strategy
-        or 'min_rs_ratio_63_rank' in strategy
-        or 'min_theme_rs_ratio_63_rank' in strategy
         or 'min_theme_rs_ratio_rank_e63' in strategy
-        or sort_col in ('rs63_rank', 'rs_ratio_63_rank', 'rs_ratio_rank_e63')
-        or 'min_rs_condition_63_rank' in strategy
+        or sort_col in ('rs63_rank', 'rs_ratio_rank_e63')
         or 'min_rs_trend_rank_s63' in strategy
-        or 'min_theme_rs_condition_63_rank' in strategy
         or 'min_theme_rs_trend_rank_s63' in strategy
-        or strategy.get('rs_condition_21_gt_63')
-        or strategy.get('is_rs_trend_s21_lt_s63')
-        or strategy.get('theme_rs_condition_21_gt_63')
+        or strategy.get('is_rs_trend_rank_s21_gt_s63')
         or strategy.get('is_theme_rs_trend_rank_s21_gt_s63')
+        or strategy.get('is_rs_trend_s21_lt_s63')
     )
 
     if needs_rs14 or needs_rs21 or needs_rs63:
@@ -300,39 +279,26 @@ def apply_filters_to_df(
                 merged = merged.merge(c63, on='symbol_id', how='left').reset_index(drop=True)
         else:
             if (
-                'min_rs_ratio_21_rank' in strategy
-                or 'min_rs_ratio_rank_e21' in strategy
+                'min_rs_ratio_rank_e21' in strategy
                 or 'min_rs_ratio_rank_e14' in strategy
                 or 'min_rs_ratio_rank_e63' in strategy
-                or 'min_rs_ratio_63_rank' in strategy
-                or 'min_theme_rs_ratio_14_rank' in strategy
                 or 'min_theme_rs_ratio_rank_e14' in strategy
-                or 'min_theme_rs_ratio_21_rank' in strategy
                 or 'min_theme_rs_ratio_rank_e21' in strategy
-                or 'min_theme_rs_ratio_63_rank' in strategy
                 or 'min_theme_rs_ratio_rank_e63' in strategy
-                or strategy.get('rs_rank_21_gt_63')
                 or strategy.get('is_rs_ratio_rank_e21_gt_e63')
-                or strategy.get('rs_rank_14_gt_21')
                 or strategy.get('is_rs_ratio_rank_e14_gt_e21')
-                or 'min_rs_condition_14_rank' in strategy
                 or 'min_rs_trend_rank_s14' in strategy
-                or 'min_rs_condition_21_rank' in strategy
                 or 'min_rs_trend_rank_s21' in strategy
-                or 'min_rs_condition_63_rank' in strategy
                 or 'min_rs_trend_rank_s63' in strategy
-                or 'min_theme_rs_condition_14_rank' in strategy
                 or 'min_theme_rs_trend_rank_s14' in strategy
-                or 'min_theme_rs_condition_21_rank' in strategy
                 or 'min_theme_rs_trend_rank_s21' in strategy
-                or 'min_theme_rs_condition_63_rank' in strategy
                 or 'min_theme_rs_trend_rank_s63' in strategy
-                or strategy.get('rs_condition_14_gt_21')
-                or strategy.get('rs_condition_21_gt_63')
+                or strategy.get('is_rs_trend_rank_s14_gt_s21')
+                or strategy.get('is_rs_trend_rank_s21_gt_s63')
                 or strategy.get('is_rs_trend_s21_lt_s63')
                 or strategy.get('is_rs_trend_s14_lt_s21')
-                or strategy.get('theme_rs_condition_14_gt_21')
-                or strategy.get('theme_rs_condition_21_gt_63')
+                or strategy.get('is_theme_rs_trend_rank_s14_gt_s21')
+                or strategy.get('is_theme_rs_trend_rank_s21_gt_s63')
                 or 'min_rs_macd_hist_rank_21' in strategy
             ):
                 return pd.DataFrame(columns=merged.columns)
@@ -368,23 +334,14 @@ def apply_filters_to_df(
     mask = pd.Series(True, index=merged.index)
 
     alias_map = {
-        'change_intraday_pct': 'change_intraday_pct',
-        'rs_ratio_21_rank': 'rs21_rank',
-        'rs_ratio_63_rank': 'rs63_rank',
-        'trend_template_ok': 'trend_template_ok',
-        'rs_blue_dot': 'is_rs_blue_dot',
-        'rs_condition_14_rank': 'rs_condition_14_rank',
-        'rs_condition_21_rank': 'rs_condition_21_rank',
-        'rs_condition_63_rank': 'rs_condition_63_rank',
-        # New refactored parameter aliases
         'rs_ratio_rank_e14': 'rs14_rank',
         'rs_ratio_rank_e21': 'rs21_rank',
         'rs_ratio_rank_e63': 'rs63_rank',
         'rs_trend_rank_s14': 'rs_condition_14_rank',
         'rs_trend_rank_s21': 'rs_condition_21_rank',
         'rs_trend_rank_s63': 'rs_condition_63_rank',
-        'dist_ema21_pct': 'dist_21ema_pct',
-        'change_oc_pct': 'change_intraday_pct',
+        'change_intraday_pct': 'change_intraday_pct',
+        'dist_21ema_pct': 'dist_21ema_pct',
     }
 
     for key, value in strategy.items():
@@ -428,10 +385,10 @@ def apply_filters_to_df(
             if 'close' in merged.columns and ind_name in merged.columns:
                 mask &= merged['close'] > merged[ind_name]
 
-    if strategy.get('rs_rank_21_gt_63') or strategy.get('is_rs_ratio_rank_e21_gt_e63'):
+    if strategy.get('is_rs_ratio_rank_e21_gt_e63'):
         mask &= filter_rs_rank_21_gt_63(merged)
 
-    if strategy.get('theme_rs21_gt_63') or strategy.get('is_theme_rs_ratio_e21_gt_e63'):
+    if strategy.get('is_theme_rs_ratio_e21_gt_e63'):
         if ind_day_cache is not None:
             ind_day_for_theme = ind_day_cache.get(target_date)
         else:
@@ -440,13 +397,13 @@ def apply_filters_to_df(
         if ind_day_for_theme is not None:
             mask &= filter_theme_rs21_gt_63(merged, ind_day_for_theme, df_symbols, df_theme_constituents)
 
-    if strategy.get('theme_rs_rank_21_gt_63') or strategy.get('is_theme_rs_ratio_rank_e21_gt_e63'):
+    if strategy.get('is_theme_rs_ratio_rank_e21_gt_e63'):
         mask &= filter_theme_rs_rank_21_gt_63(merged, df_symbols, df_theme_constituents)
 
-    if strategy.get('rs_rank_14_gt_21') or strategy.get('is_rs_ratio_rank_e14_gt_e21'):
+    if strategy.get('is_rs_ratio_rank_e14_gt_e21'):
         mask &= filter_rs_rank_14_gt_21(merged)
 
-    if strategy.get('theme_rs14_gt_21') or strategy.get('is_theme_rs_ratio_e14_gt_e21'):
+    if strategy.get('is_theme_rs_ratio_e14_gt_e21'):
         if ind_day_cache is not None:
             ind_day_for_theme = ind_day_cache.get(target_date)
         else:
@@ -455,15 +412,14 @@ def apply_filters_to_df(
         if ind_day_for_theme is not None:
             mask &= filter_theme_rs14_gt_21(merged, ind_day_for_theme, df_symbols, df_theme_constituents)
 
-    if strategy.get('theme_rs_rank_14_gt_21') or strategy.get('is_theme_rs_ratio_rank_e14_gt_e21'):
+    if strategy.get('is_theme_rs_ratio_rank_e14_gt_e21'):
         mask &= filter_theme_rs_rank_14_gt_21(merged, df_symbols, df_theme_constituents)
 
-    # Dynamic Theme RS Rank Filters (min_theme_rs_ratio_14/21/63_rank or min_theme_rs_ratio_rank_e14/e21/e63)
+    # Dynamic Theme RS Rank Filters (min_theme_rs_ratio_rank_e14/e21/e63)
     for num in ('14', '21', '63'):
-        param_key = f'min_theme_rs_ratio_{num}_rank'
         new_param_key = f'min_theme_rs_ratio_rank_e{num}'
-        if param_key in strategy or new_param_key in strategy:
-            threshold = float(strategy.get(param_key) or strategy.get(new_param_key))
+        if new_param_key in strategy:
+            threshold = float(strategy.get(new_param_key))
             rank_col = f'rs{num}_rank'
             if rank_col in merged.columns:
                 # 1. テーマの中で rank_col >= threshold のものを抽出
@@ -481,12 +437,11 @@ def apply_filters_to_df(
                     ((merged['category'] == '個別') & (merged['symbol_id'].isin(stocks_in_themes)))
                 )
 
-    # Dynamic Theme RS Condition Rank Filters (min_theme_rs_condition_14/21/63_rank or min_theme_rs_trend_rank_s14/s21/s63)
+    # Dynamic Theme RS Condition Rank Filters (min_theme_rs_trend_rank_s14/s21/s63)
     for num in ('14', '21', '63'):
-        param_key = f'min_theme_rs_condition_{num}_rank'
         new_param_key = f'min_theme_rs_trend_rank_s{num}'
-        if param_key in strategy or new_param_key in strategy:
-            threshold = float(strategy.get(param_key) or strategy.get(new_param_key))
+        if new_param_key in strategy:
+            threshold = float(strategy.get(new_param_key))
             rank_col = f'rs_condition_{num}_rank'
             if rank_col in merged.columns:
                 # 1. テーマの中で rank_col >= threshold のものを抽出
@@ -505,11 +460,11 @@ def apply_filters_to_df(
                 )
 
     # Individual RS Condition Rank comparisons
-    if strategy.get('rs_condition_14_gt_21') or strategy.get('is_rs_trend_rank_s14_gt_s21'):
+    if strategy.get('is_rs_trend_rank_s14_gt_s21'):
         if 'rs_condition_14_rank' in merged.columns and 'rs_condition_21_rank' in merged.columns:
             mask &= merged['rs_condition_14_rank'] > merged['rs_condition_21_rank']
 
-    if strategy.get('rs_condition_21_gt_63') or strategy.get('is_rs_trend_rank_s21_gt_s63'):
+    if strategy.get('is_rs_trend_rank_s21_gt_s63'):
         if 'rs_condition_21_rank' in merged.columns and 'rs_condition_63_rank' in merged.columns:
             mask &= merged['rs_condition_21_rank'] > merged['rs_condition_63_rank']
 
@@ -525,10 +480,10 @@ def apply_filters_to_df(
         mask &= filter_rs_macd_hist_rising_21(merged)
 
     # Theme RS Condition Rank comparisons
-    if strategy.get('theme_rs_condition_14_gt_21') or strategy.get('is_theme_rs_trend_rank_s14_gt_s21'):
+    if strategy.get('is_theme_rs_trend_rank_s14_gt_s21'):
         mask &= filter_theme_rs_trend_rank_s14_gt_s21(merged, df_theme_constituents)
 
-    if strategy.get('theme_rs_condition_21_gt_63') or strategy.get('is_theme_rs_trend_rank_s21_gt_s63'):
+    if strategy.get('is_theme_rs_trend_rank_s21_gt_s63'):
         mask &= filter_theme_rs_trend_rank_s21_gt_s63(merged, df_theme_constituents)
 
     # Dynamic Theme Indicator numerical filters (e.g. min_theme_rs_trend_s21)

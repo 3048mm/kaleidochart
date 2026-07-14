@@ -155,7 +155,7 @@ Each phase catches up independently by comparing max dates between source and ta
 ### Sandbox workflow for schema/pipeline changes
 Never test schema or indicator-logic changes against production data directly:
 1. Copy production Parquet to `data/parquet_master_sandbox/`
-2. Point at sandbox via env vars: `$env:STOCKTOOL_DB_PATH="data/stocktool_sandbox.db"` **AND** `$env:STOCKTOOL_USER_DB_PATH="data/user_data_sandbox.db"` — setting only the former lets the API's `heal_*_ids()` destructively NULL out symbol_ids in the production `user_data.db` (see `.claude/skills/sandbox-workflow/SKILL.md`)
+2. Point at sandbox via env vars: `$env:STOCKTOOL_ENV="sandbox"` — this automatically points all databases (system and user) to isolated locations under `data/sandbox/` and prevents setting-mismatch errors like the API's `heal_*_ids()` destructively NULLing out production `user_data.db` (see `.claude/skills/sandbox-workflow/SKILL.md`).
 3. Verify visually — the frontend shows an orange warning badge when connected to a non-production DB
 4. Promote: swap `parquet_master_sandbox/` → `data/parquet_master/`, then clear+restore the SQLite hot cache from the new Parquet master (`restore_sqlite_cache_from_parquet`)
 

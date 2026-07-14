@@ -240,23 +240,27 @@ Windows OS環境特有の「ファイル共有ロック（PermissionError WinErr
 今後、機能追加（新指標の追加やテーブル変更）やバグ修正を行う際は、**本番サービス（Uvicorn/API）を無停止かつノーリスクで維持したまま、Sandbox環境で安全にテストおよび検証**を行います。
 
 ### 12.1 Sandbox 環境のディレクトリ構成
-*   **ホットDB (SQLite Sandbox)**: `data/stocktool_sandbox.db`
-*   **コールドマスター (Parquet Sandbox)**: `data/parquet_master_sandbox/`
+*   **システムDB (SQLite Sandbox)**: `data/sandbox/stocktool.db`
+*   **ユーザーDB (SQLite Sandbox)**: `data/sandbox/user_data.db`
+*   **コールドマスター (Parquet Sandbox)**: `data/sandbox/parquet/` (※システムDBパスと同じディレクトリ階層から自動解決)
 
 ### 12.2 Sandbox への切り替えと設定方法
-テストや開発のスクリプト実行時、環境変数 `STOCKTOOL_DB_PATH` を指定して、データベースの接続先を Sandbox に向けます。
+テストや開発のスクリプト実行時、環境変数 `STOCKTOOL_ENV` を `sandbox` に設定するだけで、ウォッチリスト等のユーザーデータも含めて安全にサンドボックス環境へ切り替わります。
 
 *   **PowerShell の場合**:
     ```powershell
-    $env:STOCKTOOL_DB_PATH="data/stocktool_sandbox.db"
+    $env:STOCKTOOL_ENV="sandbox"
     # この状態でスクリプトを実行
     python backend/scripts/update_pipeline.py
     ```
 *   **CMD / Batch の場合**:
     ```cmd
-    set STOCKTOOL_DB_PATH=data/stocktool_sandbox.db
+    set STOCKTOOL_ENV=sandbox
     python backend/scripts/update_pipeline.py
     ```
+
+> [!TIP]
+> 個別にカスタムパスを指定してオーバーライドしたい場合のみ、レガシー環境変数 `STOCKTOOL_DB_PATH` / `STOCKTOOL_USER_DB_PATH` を個別に指定します（※設定漏れに十分注意すること）。
 
 ### 12.3 変更適用の安全な移行ワークフロー（プロモーション手順）
 1.  **データのコピー**: 本番の最新 Parquet データを `data/parquet_master_sandbox/` にコピーして Sandbox 用の初期データを用意。

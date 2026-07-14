@@ -159,3 +159,42 @@ def test_screener_dashboard_theme_rank_assignment(client):
     assert msft_item.get("theme_name") == "航空"
     assert msft_item.get("theme_rs_ratio") == 0.3
 
+
+def test_screener_api_legacy_alias_normalization(client):
+    """Verify that legacy parameter names are normalized and correctly filtered in API."""
+    db = _TestSession()
+    from datetime import date
+    d = date(2026, 5, 20)
+    
+    # Seed specific RelativeRank values for the stocks
+    # AAPL (1): rs_ratio_rank_e21 = 0.8
+    # MSFT (4): rs_ratio_rank_e21 = 0.4
+    rr_aapl = RelativeRank(symbol_id=1, date=d, group_name="stock", rs_ratio_rank_e21=0.8)
+    rr_msft = RelativeRank(symbol_id=4, date=d, group_name="stock", rs_ratio_rank_e21=0.4)
+    
+    # Seed intraday close/open values for change_oc_pct normalization check
+    # AAPL (1): close=183, open=180 -> change_oc_pct = (183-180)/180 * 100 = 1.66%
+    # MSFT (4): close=388, open=400 -> change_oc_pct = (388-400)/400 * 100 = -3.00%
+    
+    db.add_all([rr_aapl, rr_msft])
+    db.commit()
+    db.close()
+    
+    # 1. Test legacy 'min_rs_ratio_21_rank' (should normalize to 'min_rs_ratio_rank_e21')
+    # Filter: min_rs_ratio_21_rank = 0.6. Only AAPL (0.8) should pass.
+    resp = client.get("/api/screener?target_date=2026-05-20&min_rs_ratio_21_rank=0.6")
+    assert resp.status_code == 200
+    items = resp.json()
+    tickers = [x["ticker"] for x in items]
+    assert "AAPL" in tickers
+    assert "MSFT" not in tickers
+
+    # 2. Test legacy 'min_change_oc_pct' (should normalize to 'min_change_intraday_pct')
+    # Filter: min_change_oc_pct = 0.0. AAPL (1.66%) should pass, MSFT (-3.00%) should fail.
+    resp2 = client.get("/api/screener?target_date=2026-05-20&min_change_oc_pct=0.0")
+    assert resp2.status_code == 200
+    items2 = resp2.json()
+    tickers2 = [x["ticker"] for x in items2]
+    assert "AAPL" in tickers2
+    assert "MSFT" not in tickers2
+

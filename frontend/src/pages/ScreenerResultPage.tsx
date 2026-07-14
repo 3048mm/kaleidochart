@@ -289,7 +289,7 @@ export const ScreenerResultPage: React.FC = () => {
                     >
                         {getLabel('change_1d_pct', '1D%')} {sortKey === 'change_pct' ? (sortDesc ? '▼' : '▲') : ''}
                     </div>
-                    <div style={{ width: '50px', textAlign: 'right', paddingRight: '5px' }}>{getLabel('dist_ema21_pct', '21E%')}</div>
+                    <div style={{ width: '50px', textAlign: 'right', paddingRight: '5px' }}>{getLabel('dist_21ema_pct', '21E%')}</div>
                     <div
                         style={{ width: '50px', textAlign: 'right', cursor: 'pointer', color: sortKey === 'vol_surge_21' ? '#fff' : '#aaa' }}
                         onClick={() => handleSort('vol_surge_21')}

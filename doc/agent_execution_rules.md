@@ -139,7 +139,7 @@ Windows のデフォルトエンコーディング (Shift-JIS / CP932) と、Pyt
 ### 10.3 ワークツリーでのデータアクセス
 
 - ワークツリーの `data/` はほぼ空（git 管理の TOML 数件のみ）。**相対パスのまま実行するとエラーにならず空 DB が新規作成される**罠がある。
-- DB / Parquet にアクセスする実行では環境変数を**絶対パス**で設定する: `STOCKTOOL_DB_PATH` と `STOCKTOOL_USER_DB_PATH` の**両方**（片方だけだと `heal_*_ids()` が本番 user_data.db を破壊する — sandbox-workflow スキル参照）。Parquet の所在は DB パスと同じディレクトリから自動解決される。
+- DB / Parquet にアクセスする実行では、環境変数 `STOCKTOOL_ENV=sandbox` を設定して起動します（これによりシステムDB、ユーザーDBが一括して `data/sandbox/` 下へ安全に切り替わります。個別のレガシー環境変数 `STOCKTOOL_DB_PATH` / `STOCKTOOL_USER_DB_PATH` を使うのは設定漏れで本番を破壊する恐れがあるため避けてください）。Parquet の所在は DB パスと同じディレクトリから自動解決されます。
 - 本番データへは**読み取りのみ**（sandbox のコピー元、バックテストの入力）。ワークツリーからの本番書き込みは禁止。
 - sandbox はワークツリー内に使い捨てで作る（`backend/scripts/create_sandbox.py` 経由）。**昇格の元ネタにはしない**。ワークツリー削除と同時に破棄する。
 

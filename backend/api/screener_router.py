@@ -30,8 +30,15 @@ _PRESETS_PATH = os.path.join(_PROJECT_ROOT, "data", "screener_presets.toml")
 def _load_presets() -> dict:
     """Load screener presets from TOML (re-read on every call for hot-reload)."""
     try:
+        from backend.backtest.strategy_normalizer import normalize_strategy_keys
         with open(_PRESETS_PATH, "rb") as f:
-            return tomli.load(f)
+            data = tomli.load(f)
+            for section in ("rise", "fall"):
+                if section in data and isinstance(data[section], list):
+                    for item in data[section]:
+                        if "filters" in item and isinstance(item["filters"], dict):
+                            item["filters"] = normalize_strategy_keys(item["filters"])
+            return data
     except Exception as e:
         logger.error(f"Failed to load screener presets: {e}")
         return {"rise": [], "fall": []}
@@ -53,7 +60,9 @@ _INDICATOR_COLUMN_TYPES["market_cap"] = "float"
 # --- Virtual (computed) columns ---
 _VIRTUAL_COLUMNS = {
     "change_oc_pct":  lambda: (DailyPrice.close - DailyPrice.open) / DailyPrice.open * 100,
+    "change_intraday_pct":  lambda: (DailyPrice.close - DailyPrice.open) / DailyPrice.open * 100,
     "dist_ema21_pct": lambda: (DailyPrice.close - Indicator.ema_21) / Indicator.ema_21 * 100,
+    "dist_21ema_pct": lambda: (DailyPrice.close - Indicator.ema_21) / Indicator.ema_21 * 100,
     "dist_sma50_pct": lambda: (DailyPrice.close - Indicator.sma_50) / Indicator.sma_50 * 100,
 }
 
@@ -79,7 +88,7 @@ _COLUMN_CATEGORIES = {
     "Price & Trend": ["sma_5", "sma_21", "sma_50", "sma_63", "sma_150", "sma_200",
                       "ema_5", "ema_21", "ema_50", "ema_63", "ema_150", "ema_200",
                       "is_trend_template", "change_1d_pct", "change_1w_pct", "change_1m_pct",
-                      "change_oc_pct", "dist_ema21_pct", "dist_sma50_pct",
+                      "change_oc_pct", "change_intraday_pct", "dist_ema21_pct", "dist_21ema_pct", "dist_sma50_pct",
                       "dist_63d_high_pct", "dist_52w_high_pct"],
     "Volume & Volatility": ["atr_14", "atr_pct_14", "adr_pct_21", "sma50_atr_mult",
                             "td9", "vol_surge_21", "vol_surge_rel_spy_21", "up_down_vol_ratio_50", "vcr", "vol_accum_days_5"],
@@ -115,7 +124,9 @@ _COLUMN_LABELS = {
     "change_1w_pct": "1W Change %",
     "change_1m_pct": "1M Change %",
     "change_oc_pct": "Open-to-Close %",
+    "change_intraday_pct": "Intraday Change %",
     "dist_ema21_pct": "Dist 21EMA %",
+    "dist_21ema_pct": "Dist 21EMA %",
     "dist_sma50_pct": "Dist 50SMA %",
     "dist_63d_high_pct": "Dist 63D High %",
     "dist_52w_high_pct": "Dist 52W High %",
@@ -741,7 +752,10 @@ def get_screener(
                         "rs_rank_21_gt_63", "theme_rs21_gt_63", "theme_rs_rank_21_gt_63",
                         "rs_rank_14_gt_21", "theme_rs14_gt_21", "theme_rs_rank_14_gt_21",
                         "require_positive_eps", "preset", "expression"}
-    for key, value in request.query_params.items():
+    from backend.backtest.strategy_normalizer import normalize_strategy_keys
+    normalized_params = normalize_strategy_keys(dict(request.query_params))
+
+    for key, value in normalized_params.items():
         if key in _RESERVED_PARAMS:
             continue
         if not value:

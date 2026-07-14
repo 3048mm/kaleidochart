@@ -64,17 +64,6 @@
 ## P2 — 中（体感改善・保守性・運用安全性）
 
 
-- [ ] **Sandbox 切替を単一スイッチにする**（2026-07-04 発見）
-  - 現状 `STOCKTOOL_DB_PATH` と `STOCKTOOL_USER_DB_PATH` を**別々に**設定する必要があり、片方の設定漏れが I-7 事故（watchlist NULL 化）の引き金になった。
-  - `STOCKTOOL_ENV=sandbox` のような単一環境変数で stocktool.db / user_data.db / Parquet の接続先が一貫して切り替わる設計へ変更する。
-- [ ] **フィルタキー命名の新旧エイリアスの正規化層**（2026-07-04 発見）
-  - `rs_ratio_21_rank`（旧）/`rs_ratio_rank_e21`（新）等の別名が `backtest_screener.py` の `needs_rs*` 判定（各30行超の or 連鎖）や `alias_map` に散在。指標追加のたびに複数箇所の更新が必要で、漏れると**フィルタが黙って素通しになる**（I-6 と同じ静かな失敗パターン）。
-  - 対策: TOML ロード直後にキーを正規名へ一括変換する正規化層を1つ設け、以降のコードは新名のみ扱う。
-  - 併せて `ScreenerResultItem` 等の API レスポンスに重複する新旧フィールドも、フロントの参照を新名に統一して旧名を廃止する。
-  - **進捗メモ**: ②システム健全性の可視化の一環で `validate_strategies_config` の TOML パラメータ検証を強化（未知パラメータの検出・ヘルスチェック報告）した。ただし「正規化層（TOML ロード直後に旧名→新名を一括変換）」自体は未実装。現状は3箇所にエイリアスが分散したまま: ①`backtest_screener.py` の `alias_map`（dict, L370-388）②`backtest_screener.py` の `needs_rs*` 判定（or 連鎖, L182-247）③`screener_router.py` の `_RANK_COLUMN_ALIASES`（dict, L61-75）。
-- [ ] **テストスイートの本番 DB 依存の解消**（2026-07-04 発見）
-  - `test_rs_data_availability` は本番 DB の DUOL 銘柄の状態に依存し、データ次第で落ちる flaky テスト（現に失敗し続けており All Green ルールを形骸化させている）。フィクスチャ化 or 削除。
-  - `backend/tests/db/test_db.py` は pytest ではなく手動確認スクリプトが紛れ込んでいる状態。`tools/` へ移動 or 削除。
 - [ ] **`get_db_session()` に commit がない**（audit D-4）
   - 呼び出し側の commit 書き忘れによるデータロストの芽。修正コスト小。
 - [ ] **スプレッドシートの銘柄・テーマ紐づけの整理と自動化**
@@ -107,6 +96,9 @@
 
 ## 完了済みタスク (Completed)
 
+- [x] 🎯 **Sandbox環境切替の単一スイッチ化**: 環境変数 `STOCKTOOL_ENV=sandbox`（または `test`）を指定するだけで、メインDB・ユーザーDB・Parquetキャッシュを含むすべての接続・参照先パスが自動で `data/sandbox/` (または `data/test/`) に一貫して切り替わる設計へと整理。設定漏れによる本番データ汚染（I-7 事故など）を防ぐ堅牢なインフラを構築。 - 2026-07-15
+- [x] 🎯 **自動テストスイートの本番DB依存の完全解消**: flakyであった `test_rs_data_availability` テストをリファクタリングし、実DBに依存せずインメモリSQLite上に一時的にモックデータをシードしてAPI結果をアサートする構成へ変更。また、テストフォルダに紛れ込んでいた手動確認用スクリプト `test_db.py` は `tools/verify_db_local.py` に退避（コピー）のうえ元のファイルを削除。データが不十分な環境でも pytest が常に 100% 成功する状態を達成。 - 2026-07-15
+- [x] 🎯 **フィルタキー命名の新旧エイリアス正規化層の実装**: TOML ロード直後に strategy dict のキーを正規名へ一括変換する正規化層（strategy_normalizer.py）を実装。backtest_screener.py の needs_rs* 70行超 of or 連鎖および 14箇所の特殊フィルタ dispatch の or 分岐を全削除。API 側（screener_router.py）でも presets ロード時と get_screener のクエリパラメータ取得時に自動的に正規化を適用。また、backtest_config.toml 上に残る legacy キー（min_change_oc_pct, min_dist_ema21_pct, max_dist_ema21_pct 等）を一括で正規名（min_change_intraday_pct, min_dist_21ema_pct, max_dist_21ema_pct）に置換。フロントの `ScreenerResultPage.tsx` の表示キーも正規名に統一。テスト379件 All Green。 - 2026-07-14
 - [x] 🎯 **②システム健全性の可視化**: `/api/system/health` エンドポイントを新設し、データ鮮度（T2〜T5 最新日付・SPY 乖離）、整合性（T2=T3 行数一致）、パイプライン実行状態（ロックファイル・pipeline_meta）、プリセット TOML 検証結果をワンショットで返却。フロントエンドのヘッダー右端に Live/Delayed/Error/Updating ステータスドットを常設し、クリックでポップオーバー詳細表示（System Status・Data Freshness・Data Integrity・Config Validation）。スマホ対応としてサイドバーにナビ統合。API レスポンスにキャッシュ防止ヘッダーも追加。P1「パイプライン堅牢化」の対策B を兼ねる。 - 2026-07-13
 - [x] **E ファミリー再設計: VCP を状態版からブレイクアウトイベント版へ**: 旧 E1/E2（状態版 VCP）は収縮した保ち合いの間ずっと毎日発火し、1セットアップを平均3.12回・最大10回カウント（疑似反復で LCB の n を水増し）していた。新規の特殊フィルタ `is_vcp_breakout`（「昨日まで収縮した高値圏の土台→今日ピボットを出来高膨張で上抜け」を前日比較で検出、deny-by-default）を追加し、E1=`E1_vcp_breakout_mid`(63日高値)／E2=`E2_vcp_breakout_52w`(52週新高値) に作り直し。イベント化で1銘柄あたり発火が **3.12回→1.04回**（実質1セットアップ1シグナル）になり各シグナルが独立化、LCB が正直になった。既存カラムのみで実装（T3変更・サンドボックス不要）。API/バックテスト双方に同一関数をディスパッチ結線（D-2 規律、サイレント素通し防止）。テスト40件green（純関数・API同値性）。旧 study は E1_old/E2_old でユーザー退避。短期版(21日高値)は v2（サンドボックス要）。詳細: `doc/completed/e3_vcp_breakout_plan.md` - 2026-07-05
 - [x] **B1 のコンセプト転換（B1_theme_momentum → B1_theme_leader）**: シグナル重複の実測で「B2 は B1 のほぼ部分集合（B2銘柄の9割超を B1 が内包）かつ集計値は B2 が期待値・DD とも優位」と判明し、旧 B1 の独自貢献は B2 が品質フィルタで捨てた低品質シグナルのみだった。B ファミリーを「水準×変化」で整理し、B1 を「確立されたリーダーテーマ（min_theme_rs_ratio_rank_e21 ≥ 0.8 の水準特化・加速条件なし）」に転換。B2/B3（変化・加速）と直交する分担に。サニティ実行済み（2025Q4 3ヶ月: 178トレード・期待値+2.70%・α+2.63%）。旧 study: B1_old。 - 2026-07-05

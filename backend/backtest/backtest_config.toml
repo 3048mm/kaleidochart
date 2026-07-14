@@ -46,7 +46,7 @@ max_hits_per_day = 10
 sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
 min_change_1d_pct = 7.0 
-min_change_oc_pct = 7.0 
+min_change_intraday_pct = 7.0 
 min_vol_surge_21 = 2.8 
 min_adr_pct_21 = 6.0 
 max_sma50_atr_mult = 6.5 
@@ -58,7 +58,7 @@ max_allowed_dd = 35.0   # MTM 再校正（旧 20.0）
 
 [strategy.optimization]
 min_change_1d_pct  = { type = "float", min = 2.0, max = 10.0, step = 1.0 }
-min_change_oc_pct = { type = "float", min = -8.0, max = 8.0, step = 1.0 }
+min_change_intraday_pct = { type = "float", min = -8.0, max = 8.0, step = 1.0 }
 min_vol_surge_21   = { type = "float", min = 1.0, max = 3.0, step = 0.2 }
 min_adr_pct_21     = { type = "float", min = 2.0, max = 6.0, step = 0.5 }
 max_sma50_atr_mult = { type = "float", min = 4.0, max = 10.0, step = 0.5 }
@@ -131,7 +131,7 @@ sort_ascending = false
 min_change_1d_pct = 8.0
 min_vol_surge_21 = 3.0
 min_adr_pct_21 = 6.0
-min_dist_ema21_pct = 1.0
+min_dist_21ema_pct = 1.0
 max_sma50_atr_mult = 7.0
 min_market_cap = 5e6
 is_theme_rs_ratio_rank_e14_gt_e21 = true
@@ -141,7 +141,7 @@ max_allowed_dd = 35.0   # MTM 再校正（旧: 未設定=デフォルト 20.0）
 
 [strategy.optimization]
 min_change_1d_pct    = { type = "float", min = 2.0, max = 10.0, step = 1.0 }
-min_dist_ema21_pct   = { type = "float", min = -1.0, max = 20.0, step = 1.0 }
+min_dist_21ema_pct   = { type = "float", min = -1.0, max = 20.0, step = 1.0 }
 min_vol_surge_21   = { type = "float", min = 0.5, max = 3.0, step = 0.1 }
 min_adr_pct_21     = { type = "float", min = 1.0, max = 6.0, step = 0.5 }
 max_sma50_atr_mult = { type = "float", min = 2.0, max = 8.0, step = 0.5 }
@@ -158,7 +158,7 @@ max_hits_per_day = 10
 sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
 min_change_1d_pct = 2.0 
-min_dist_ema21_pct = 11.0 
+min_dist_21ema_pct = 11.0 
 min_vol_surge_21 = 2.0 
 min_adr_pct_21 = 6.0 
 max_sma50_atr_mult = 5.0 
@@ -172,7 +172,7 @@ max_allowed_dd = 35.0   # MTM 再校正（旧: 未設定=デフォルト 20.0）
 
 [strategy.optimization]
 min_change_1d_pct    = { type = "float", min = 2.0, max = 10.0, step = 1.0 }
-min_dist_ema21_pct   = { type = "float", min = -1.0, max = 20.0, step = 1.0 }
+min_dist_21ema_pct   = { type = "float", min = -1.0, max = 20.0, step = 1.0 }
 min_vol_surge_21   = { type = "float", min = 0.5, max = 5.0, step = 0.1 }
 min_adr_pct_21     = { type = "float", min = 1.0, max = 6.0, step = 0.5 }
 max_sma50_atr_mult = { type = "float", min = 2.0, max = 8.0, step = 0.5 }
@@ -191,7 +191,7 @@ max_hits_per_day = 10
 sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
 min_change_1d_pct = 2.0 
-min_dist_ema21_pct = 11.0 
+min_dist_21ema_pct = 11.0 
 min_vol_surge_21 = 2.0 
 min_adr_pct_21 = 6.0 
 max_sma50_atr_mult = 5.0 
@@ -205,7 +205,7 @@ max_allowed_dd = 35.0   # MTM 再校正（旧: 未設定=デフォルト 20.0）
 
 [strategy.optimization]
 min_change_1d_pct    = { type = "float", min = 2.0, max = 10.0, step = 1.0 }
-min_dist_ema21_pct   = { type = "float", min = -1.0, max = 20.0, step = 1.0 }
+min_dist_21ema_pct   = { type = "float", min = -1.0, max = 20.0, step = 1.0 }
 min_vol_surge_21   = { type = "float", min = 0.5, max = 5.0, step = 0.1 }
 min_adr_pct_21     = { type = "float", min = 1.0, max = 6.0, step = 0.5 }
 max_sma50_atr_mult = { type = "float", min = 2.0, max = 8.0, step = 0.5 }
@@ -224,7 +224,7 @@ max_hits_per_day = 10
 sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
 min_change_1d_pct = 9.0 
-min_dist_ema21_pct = 1.0 
+min_dist_21ema_pct = 1.0 
 min_vol_surge_21 = 2.8 
 min_adr_pct_21 = 1.0 
 max_sma50_atr_mult = 6.0 
@@ -239,7 +239,7 @@ max_allowed_dd = 35.0   # MTM 再校正（旧: 未設定=デフォルト 20.0）
 
 [strategy.optimization]
 min_change_1d_pct    = { type = "float", min = 4.0, max = 10.0, step = 1.0 }
-min_dist_ema21_pct   = { type = "float", min = -1.0, max = 20.0, step = 1.0 }
+min_dist_21ema_pct   = { type = "float", min = -1.0, max = 20.0, step = 1.0 }
 min_vol_surge_21   = { type = "float", min = 1.5, max = 5.0, step = 0.1 }
 min_adr_pct_21     = { type = "float", min = 1.0, max = 6.0, step = 0.5 }
 max_sma50_atr_mult = { type = "float", min = 2.0, max = 8.0, step = 0.5 }
@@ -302,8 +302,8 @@ max_hits_per_day = 5
 sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
 is_close_gt_sma50 = true
-min_dist_ema21_pct = -2.0
-max_dist_ema21_pct = 2.0
+min_dist_21ema_pct = -2.0
+max_dist_21ema_pct = 2.0
 max_sma50_atr_mult = 4.0
 min_rs_ratio_rank_e21 = 0.7
 min_up_down_vol_ratio_50 = 1.2
@@ -312,8 +312,8 @@ is_trend_template = true
 max_allowed_dd = 25.0   # MTM 再校正（旧: 未設定=デフォルト 20.0。押し目系はやや厳しめ）
 
 [strategy.optimization]
-min_dist_ema21_pct   = { type = "float", min = -4.0, max = -1.0, step = 0.5 }
-max_dist_ema21_pct   = { type = "float", min = 0.5,  max = 4.0,  step = 0.5 }
+min_dist_21ema_pct   = { type = "float", min = -4.0, max = -1.0, step = 0.5 }
+max_dist_21ema_pct   = { type = "float", min = 0.5,  max = 4.0,  step = 0.5 }
 max_sma50_atr_mult   = { type = "float", min = 2.0,  max = 6.0,  step = 0.5 }
 min_rs_ratio_rank_e21 = { type = "float", min = 0.50, max = 0.90, step = 0.05 }
 min_market_cap       = { type = "categorical", choices = [1e8, 3e8, 5e8, 1e9] }
