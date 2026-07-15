@@ -484,6 +484,54 @@ def clear_pipeline_data_for_date(db, target_date: date):
     db.query(DailyPrice).filter(DailyPrice.date == target_date).delete(synchronize_session=False)
     db.commit()
 
+def verify_pipeline_integrity(db, categories: Optional[List[str]] = None):
+    """
+    Validates data integrity of the pipeline output:
+    1. Ensures SPY latest date is aligned with the overall max price date in the database.
+    2. Ensures DailyPrice count and Indicator count match exactly on the latest date.
+    
+    Raises ValueError if any integrity check fails, triggering transaction rollback.
+    """
+    from db.models import Symbol, DailyPrice, Indicator
+    from sqlalchemy import func
+    
+    # 1. Check SPY date alignment
+    spy = db.query(Symbol).filter(Symbol.ticker == "SPY", Symbol.active == 1).first()
+    if not spy:
+        # If SPY is not registered, we can't align it. (This should only happen in bare tests)
+        return
+        
+    spy_latest_date = db.query(func.max(DailyPrice.date)).filter(DailyPrice.symbol_id == spy.id).scalar()
+    overall_latest_date = db.query(func.max(DailyPrice.date)).scalar()
+    
+    if overall_latest_date and spy_latest_date != overall_latest_date:
+        raise ValueError(
+            f"SPY date is not aligned with the latest market data. "
+            f"SPY: {spy_latest_date}, Overall Max: {overall_latest_date}"
+        )
+        
+    # 2. Check DailyPrice vs Indicator count matching on latest date
+    # Only perform count audit if we ran a full execution (categories is None)
+    if categories is None and spy_latest_date:
+        t2_count = db.query(func.count(DailyPrice.id)).filter(DailyPrice.date == spy_latest_date).scalar() or 0
+        t3_count = db.query(func.count(Indicator.id)).filter(Indicator.date == spy_latest_date).scalar() or 0
+        
+        if t2_count != t3_count:
+            # Find symbols having DailyPrice on spy_latest_date but lacking Indicator for troubleshooting
+            prices_query = db.query(DailyPrice.symbol_id).filter(DailyPrice.date == spy_latest_date)
+            missing_indicators = db.query(Symbol.ticker)\
+                .filter(Symbol.id.in_(prices_query), Symbol.active == 1)\
+                .filter(~Symbol.id.in_(
+                    db.query(Indicator.symbol_id).filter(Indicator.date == spy_latest_date)
+                )).all()
+            missing_tickers = [row[0] for row in missing_indicators]
+            
+            raise ValueError(
+                f"Mismatched record counts on latest date {spy_latest_date}. "
+                f"DailyPrices: {t2_count}, Indicators: {t3_count}. "
+                f"Missing indicators for tickers: {missing_tickers[:20]}"
+            )
+
 def run_pipeline(config, db_path, logger: logging.Logger, rebuild_from: Optional[str] = None, categories: Optional[List[str]] = None, skip_fetch: bool = False, skip_sync: bool = False, skip_t3: bool = False, recalculate_all: bool = False):
     """
     Main Orchestrator for Step 3 Pipeline.
@@ -626,6 +674,10 @@ def run_pipeline(config, db_path, logger: logging.Logger, rebuild_from: Optional
                 from pipeline.utils import update_pipeline_meta
                 logger.info(f"Saving pipeline metadata: start_time={start_time_utc}, spy_date={spy_latest_date}")
                 update_pipeline_meta(db, start_time_utc, spy_latest_date)
+
+            # Run final data integrity audits before committing the transaction
+            logger.info("Running final pipeline data integrity verification...")
+            verify_pipeline_integrity(db, categories=categories)
 
             logger.info("--- Step 3 Pipeline COMPLETED SUCCESSFULLY ---")
     except Exception as e:

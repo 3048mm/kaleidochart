@@ -46,7 +46,7 @@ group = "Check"
 use_hysteresis = false
 [rise.filters]
 min_change_1d_pct = 7.0 
-min_dist_ema21_pct = 8.0 
+min_dist_21ema_pct = 8.0 
 min_vol_surge_21 = 0.6 
 min_adr_pct_21 = 6.0 
 max_sma50_atr_mult = 4.0 
@@ -72,7 +72,7 @@ is_close_gt_ema63 = true
 #win_rate 36.59942363112392
 #------------------------------
 #min_change_1d_pct = 7.0 
-#min_dist_ema21_pct = 1.0 
+#min_dist_21ema_pct = 1.0 
 #min_vol_surge_21 = 3.8 
 #vol_surge_rel_spy_21 = 4.7 
 #min_adr_pct_21 = 6.0 
@@ -108,7 +108,7 @@ use_hysteresis = false
 [rise.filters]
 is_rs_ratio_rank_e21_gt_e63 = true
 min_change_1d_pct = 7.0
-min_change_oc_pct = 7.0
+min_change_intraday_pct = 7.0
 min_vol_surge_21 = 2.8
 min_adr_pct_21 = 6.0
 max_sma50_atr_mult = 6.5
@@ -162,7 +162,7 @@ min_market_cap = 5e6
 #min_adr_pct_21 = 6.0
 #max_dist_sma50_atr = 4.5
 #min_market_cap = 5e6
-#theme_rs_rank_21_gt_63 = true
+#is_theme_rs_ratio_rank_e21_gt_e63 = true
 #  Expectancy:     3.071%
 #  Avg Gain/Trade: 3.071%
 #  Avg SPY Gain:   0.057%
@@ -297,8 +297,8 @@ name = "21EMA Pullback"
 subtitle = "21EMA 押し目買い"
 group = "Check"
 [rise.filters]
-min_dist_ema21_pct = -4.0
-max_dist_ema21_pct = 0.5
+min_dist_21ema_pct = -4.0
+max_dist_21ema_pct = 0.5
 max_sma50_atr_mult = 2.0 
 min_rs_ratio_rank_e21 = 0.5 
 min_market_cap = 3e8

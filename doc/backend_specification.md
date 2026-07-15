@@ -600,8 +600,8 @@ python backend/backtest/backtest_runner.py --refresh-cache
 # backtest_config.toml 内に追加
 
 [optimization.D]
-min_dist_ema21_pct   = { type = "float", min = -4.0, max = -1.0, step = 0.5 }
-max_dist_ema21_pct   = { type = "float", min = 0.5,  max = 4.0,  step = 0.5 }
+min_dist_21ema_pct   = { type = "float", min = -4.0, max = -1.0, step = 0.5 }
+max_dist_21ema_pct   = { type = "float", min = 0.5,  max = 4.0,  step = 0.5 }
 max_sma50_atr_mult   = { type = "float", min = 2.0,  max = 6.0,  step = 0.5 }
 min_rs_ratio_rank_e21 = { type = "float", min = 0.70, max = 0.95, step = 0.05 }
 min_market_cap       = { type = "categorical", choices = [1e8, 3e8, 5e8, 1e9] }

@@ -33,6 +33,7 @@ def run_update():
     
     if process.returncode != 0:
         logger.error(f"update_pipeline.py exited with error code {process.returncode}")
+        sys.exit(process.returncode)
     else:
         logger.info("Database update completed successfully.")
 

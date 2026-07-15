@@ -96,7 +96,7 @@ name = "D_ema21_pullback"
 
 [strategy.optimization]
 # 既存のパラメータ...
-min_dist_ema21_pct   = { type = "float", min = -4.0, max = -1.0, step = 0.5 }
+min_dist_21ema_pct   = { type = "float", min = -4.0, max = -1.0, step = 0.5 }
 
 # 新規追加: 出来高急増も探索対象にする
 min_vol_surge_21     = { type = "float", min = 0.5, max = 3.0, step = 0.5 }
