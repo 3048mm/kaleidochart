@@ -69,9 +69,9 @@ study_name = "E1_vcp_breakout_mid"
 
 [[job]]
 name = "E2"
-strategy_code = "E2_vcp_basic"
+strategy_code = "E2_vcp_breakout_52w"
 source = "optuna"
-study_name = "E2_vcp_basic"
+study_name = "E2_vcp_breakout_52w"
 
 
 [[job]]
