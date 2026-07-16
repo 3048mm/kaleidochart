@@ -808,21 +808,25 @@ def get_screener(
     if not results:
         return []
         
-    symbol_ids = [r.Symbol.id for r in results]
-    
     # Ranks must be synced with the indicator date
     latest_rank_date = db.query(func.max(RelativeRank.date)).filter(RelativeRank.date <= latest_date_result).scalar()
     
+    # BULK-load ranks for this date to avoid massive IN-clause performance bottleneck
     ranks = db.query(RelativeRank).filter(
-        RelativeRank.date == latest_rank_date,
-        RelativeRank.symbol_id.in_(symbol_ids)
+        RelativeRank.date == latest_rank_date
     ).all() if latest_rank_date else []
     
     # Map ranks
     rank_map_21 = {r.symbol_id: r.rs_ratio_rank_e21 for r in ranks if r.rs_ratio_rank_e21 is not None}
     rank_map_63 = {r.symbol_id: r.rs_ratio_rank_e63 for r in ranks if r.rs_ratio_rank_e63 is not None}
     
-    # Sparkline data: Need the past 21 days for these symbols
+    # Slice to top 200 items by rs_ratio_21_rank before querying price history (huge optimization!)
+    results.sort(key=lambda r: rank_map_21.get(r.Symbol.id, 0.0), reverse=True)
+    results = results[:200]
+    
+    symbol_ids = [r.Symbol.id for r in results]
+    
+    # Sparkline data: Need the past 21 days only for the top 200 sliced symbols
     start_date_sparkline = latest_date_result - timedelta(days=40)
     history = db.query(DailyPrice.symbol_id, DailyPrice.close, DailyPrice.date).filter(
         DailyPrice.symbol_id.in_(symbol_ids),
