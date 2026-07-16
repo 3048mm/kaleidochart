@@ -663,7 +663,8 @@ def main():
         
     study.optimize(
         lambda t: objective(t, actual_name, config, config_app, exit_rules, periods),
-        n_trials=args.trials
+        n_trials=args.trials,
+        n_jobs=-1
     )
     
     print("-" * 60)

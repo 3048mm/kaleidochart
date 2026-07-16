@@ -136,11 +136,55 @@ def build_mts_v3_raw_timeline(
     
     mts_timeline = {}
     
-    # 1. Skip loading from DB to ensure fresh calculation using the updated MTS raw logic
-    print("  Forcing fresh calculation of MTS v3 Raw for all dates...", flush=True)
+    # 1. Try to load precomputed market_trend_score from Parquet signals master for speed
+    from backend.pipeline.parquet_cache_manager import (
+        get_parquet_master_dir,
+        get_pointer_file_path,
+        get_latest_master_files,
+    )
+    from backend.db.database import get_active_db_path
     
-    # 2. For missing dates, compute on-the-fly using MarketTrendScorer for all dates
-    missing_dates = trading_dates
+    db_path = get_active_db_path()
+    if not db_path:
+        try:
+            import tomli
+            config_path = pathlib.Path(__file__).parents[2] / "config.toml"
+            with open(config_path, "rb") as f:
+                config = tomli.load(f)
+            db_path = config.get("system", {}).get("db_path", "data/stocktool.db")
+        except Exception:
+            db_path = "data/stocktool.db"
+            
+    parquet_dir = get_parquet_master_dir(db_path)
+    pointer_file = get_pointer_file_path(parquet_dir)
+    latest_files = get_latest_master_files(pointer_file)
+    
+    if latest_files and "signals" in latest_files:
+        try:
+            print("  Attempting to load computed market_trend_score from Parquet signals...", flush=True)
+            df_signals = pd.read_parquet(latest_files["signals"])
+            df_signals['date'] = pd.to_datetime(df_signals['date']).dt.date
+            
+            # Map values to dict
+            df_sig_filtered = df_signals[df_signals['date'].isin(trading_dates)]
+            for _, row in df_sig_filtered.iterrows():
+                d = row['date']
+                score = row['market_trend_score']
+                if score is not None and not pd.isna(score):
+                    mts_timeline[d] = float(score)
+            
+            missing_dates = [d for d in trading_dates if d not in mts_timeline]
+            if not missing_dates:
+                print(f"  Successfully loaded all {len(trading_dates)} MTS v3 Raw scores from Parquet signals cache.", flush=True)
+                return mts_timeline
+            else:
+                print(f"  Loaded {len(trading_dates) - len(missing_dates)} scores from Parquet, {len(missing_dates)} dates remain to compute dynamically.", flush=True)
+        except Exception as se:
+            print(f"  Warning: Failed to load signals from Parquet: {se}. Falling back to dynamic calculation.", flush=True)
+            missing_dates = trading_dates
+    else:
+        missing_dates = trading_dates
+        
     daily_metrics = {}
     if missing_dates:
         from backend.pipeline.parquet_cache_manager import (

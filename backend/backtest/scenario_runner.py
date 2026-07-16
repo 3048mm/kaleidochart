@@ -420,6 +420,31 @@ def run_scenario_test(
                 left_on='symbol_id', right_on='id', how='inner'
             )
             
+            # Optimization: Pre-merge daily ranks once here to prevent S x D merges inside the filter loop
+            import bisect
+            idx = bisect.bisect_right(ranks_dates_sorted, c_date)
+            if idx > 0:
+                rank_date = ranks_dates_sorted[idx - 1]
+                ranks_day = ranks_day_cache.get(rank_date)
+            else:
+                ranks_day = None
+
+            if ranks_day is not None:
+                for num in ('14', '21', '63'):
+                    # Merge ratio ranks
+                    r_col = f'rs_ratio_rank_e{num}'
+                    r_df = ranks_day[ranks_day['indicator_name'] == r_col][['symbol_id', 'percent_rank']].rename(
+                        columns={'percent_rank': f'rs{num}_rank'}
+                    )
+                    base_merged = base_merged.merge(r_df, on='symbol_id', how='left').reset_index(drop=True)
+                    
+                    # Merge trend condition ranks
+                    c_col = f'rs_trend_rank_s{num}'
+                    c_df = ranks_day[ranks_day['indicator_name'] == c_col][['symbol_id', 'percent_rank']].rename(
+                        columns={'percent_rank': f'rs_condition_{num}_rank'}
+                    )
+                    base_merged = base_merged.merge(c_df, on='symbol_id', how='left').reset_index(drop=True)
+            
             for strat_name, strat_rules in strategies.items():
                 if not strat_name.startswith('Rise - Check'):
                     continue

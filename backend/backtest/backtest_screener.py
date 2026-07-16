@@ -226,23 +226,35 @@ def apply_filters_to_df(
     )
 
     if needs_rs14 or needs_rs21 or needs_rs63:
-        # Use bisect to find the nearest previous date (ranks may not exist for every trading day)
-        if ranks_dates_sorted is not None:
-            cache_dates = ranks_dates_sorted
-        elif ranks_day_cache is not None:
-            cache_dates = sorted(ranks_day_cache.keys())
-        else:
-            cache_dates = sorted(df_ranks['date'].unique())
+        # Check if ranks are already pre-merged in 'merged' to avoid redundant merges
+        has_all_premerged = True
+        if needs_rs14 and ('rs14_rank' not in merged.columns or 'rs_condition_14_rank' not in merged.columns):
+            has_all_premerged = False
+        if needs_rs21 and ('rs21_rank' not in merged.columns or 'rs_condition_21_rank' not in merged.columns):
+            has_all_premerged = False
+        if needs_rs63 and ('rs63_rank' not in merged.columns or 'rs_condition_63_rank' not in merged.columns):
+            has_all_premerged = False
 
-        idx = bisect.bisect_right(cache_dates, target_date)
-        if idx > 0:
-            rank_date = cache_dates[idx - 1]
-            if ranks_day_cache is not None:
-                ranks_day = ranks_day_cache.get(rank_date)
-            else:
-                ranks_day = df_ranks[df_ranks['date'] == rank_date]
-        else:
+        if has_all_premerged:
             ranks_day = None
+        else:
+            # Use bisect to find the nearest previous date (ranks may not exist for every trading day)
+            if ranks_dates_sorted is not None:
+                cache_dates = ranks_dates_sorted
+            elif ranks_day_cache is not None:
+                cache_dates = sorted(ranks_day_cache.keys())
+            else:
+                cache_dates = sorted(df_ranks['date'].unique())
+
+            idx = bisect.bisect_right(cache_dates, target_date)
+            if idx > 0:
+                rank_date = cache_dates[idx - 1]
+                if ranks_day_cache is not None:
+                    ranks_day = ranks_day_cache.get(rank_date)
+                else:
+                    ranks_day = df_ranks[df_ranks['date'] == rank_date]
+            else:
+                ranks_day = None
 
         if ranks_day is not None:
             if needs_rs14:
