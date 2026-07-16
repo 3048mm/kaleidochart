@@ -105,6 +105,7 @@ def get_db_session():
     db = SessionLocal()
     try:
         yield db
+        db.commit()
     except Exception as e:
         db.rollback()
         raise e
@@ -151,6 +152,7 @@ def get_write_db():
     db = SessionLocalWrite()
     try:
         yield db
+        db.commit()
     except Exception as e:
         db.rollback()
         raise e

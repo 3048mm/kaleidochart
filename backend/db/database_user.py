@@ -77,6 +77,7 @@ def get_user_db_session():
     db = SessionLocalUser()
     try:
         yield db
+        db.commit()
     except Exception as e:
         db.rollback()
         raise e

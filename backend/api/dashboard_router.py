@@ -14,7 +14,7 @@ router = APIRouter()
 
 from api.panel_builders import (
     _get_sparkline_data, _build_panel_item, _build_leading_item, _build_etf_feature,
-    build_panel_preload, preload_sparklines,
+    build_panel_preload, preload_sparklines, preload_constituent_details,
 )
 
 @router.get("/ranking", response_model=List[schemas.RankingResponse])
@@ -369,8 +369,11 @@ def get_theme_detail(
 
     # Get constituent stocks
     mappings = db.query(ThemeConstituent).filter(ThemeConstituent.theme_id == symbol_id).all()
-    constituent_symbols = [db.query(Symbol).filter(Symbol.id == m.symbol_id).first() for m in mappings]
-    constituent_symbols = [s for s in constituent_symbols if s is not None]
+    c_ids_mapped = [m.symbol_id for m in mappings]
+    if c_ids_mapped:
+        constituent_symbols = db.query(Symbol).filter(Symbol.id.in_(c_ids_mapped)).all()
+    else:
+        constituent_symbols = []
 
     # Tag-based lookup for ETF themes
     if not constituent_symbols and sym.theme_type == 'etf':
@@ -384,27 +387,24 @@ def get_theme_detail(
     # ランク行は価格行より新しい日付を持たないため per-symbol の date <= c_dp.date と等価
     c_spark_preload = preload_sparklines(db, [s.id for s in constituent_symbols], None)
 
+    # Preload details (prices and indicators) for all constituents in bulk
+    c_ids = [s.id for s in constituent_symbols]
+    c_details_preload = preload_constituent_details(db, c_ids)
+
     constituents = []
     for c_sym in constituent_symbols:
         c_id = c_sym.id
-        c_dp = db.query(DailyPrice).filter(DailyPrice.symbol_id == c_id).order_by(desc(DailyPrice.date)).first()
+        c_dp = c_details_preload["latest_price"].get(c_id)
         if not c_dp:
             continue
 
-        c_hist = db.query(DailyPrice.close).filter(
-            DailyPrice.symbol_id == c_id,
-            DailyPrice.date <= c_dp.date
-        ).order_by(desc(DailyPrice.date)).limit(21).all()
-        c_closes = [h[0] for h in c_hist]
+        c_closes = c_details_preload["recent_closes_21"].get(c_id, [])
 
         c_1d = pct(c_dp.close, c_closes[1]) if len(c_closes) > 1 else 0.0
         c_1w = pct(c_dp.close, c_closes[4]) if len(c_closes) >= 5 else 0.0
         c_1m = pct(c_dp.close, c_closes[20]) if len(c_closes) >= 21 else 0.0
 
-        c_ind = db.query(Indicator).filter(
-            Indicator.symbol_id == c_id,
-            Indicator.date == c_dp.date
-        ).first()
+        c_ind = c_details_preload["latest_indicator"].get(c_id)
         c_rs14 = c_ind.rs_ratio_e14 if c_ind else None
         c_rs21 = c_ind.rs_ratio_e21 if c_ind else None
         c_rs63 = c_ind.rs_ratio_e63 if c_ind else None
@@ -412,15 +412,8 @@ def get_theme_detail(
         c_rs_spark = _get_sparkline_data(db, c_id, str(c_dp.date), 21, preloaded=c_spark_preload)
 
         # short history for RRG
-        c_full_hist = db.query(DailyPrice).filter(
-            DailyPrice.symbol_id == c_id,
-            DailyPrice.date <= c_dp.date
-        ).order_by(desc(DailyPrice.date)).limit(126).all()
-        c_inds = db.query(Indicator).filter(
-            Indicator.symbol_id == c_id,
-            Indicator.date.in_([h.date for h in c_full_hist])
-        ).all()
-        c_ind_dict = {str(r.date): r for r in c_inds}
+        c_full_hist = c_details_preload["price_history_126"].get(c_id, [])
+        c_ind_dict = c_details_preload["indicator_history_126"].get(c_id, {})
         c_chart_data = []
         for h in reversed(c_full_hist):
             ds = str(h.date)
@@ -463,17 +456,8 @@ def get_theme_detail(
                 rel_vol_vs_spy_21=i.vol_surge_rel_spy_21 if i else None,
             ))
 
-        # Fetch ranks for constituent (highly optimized single query!)
-        r_row = db.query(
-            RelativeRank.rs_ratio_rank_e14, 
-            RelativeRank.rs_ratio_rank_e21, 
-            RelativeRank.rs_ratio_rank_e63, 
-            RelativeRank.rs_momentum_rank_e21, 
-            RelativeRank.rs_momentum_rank_e63
-        ).filter(
-            RelativeRank.symbol_id == c_id, 
-            RelativeRank.date == c_dp.date
-        ).first()
+        # Match preloaded RelativeRank for constituent
+        r_row = c_details_preload["latest_rank"].get(c_id)
         
         rank_14 = (r_row.rs_ratio_rank_e14 or 0.0) if r_row else 0.0
         rank_21 = (r_row.rs_ratio_rank_e21 or 0.0) if r_row else 0.0

@@ -261,20 +261,7 @@ def purge_sqlite_cache_older_than_2_years(db, db_path: str, logger: logging.Logg
     logger.info(f"    RelativeRanks: {ranks_after} left (Deleted {deleted_ranks} records)")
     
     # Reclaim SQLite unused pages physically via VACUUM
-    # VACUUM はトランザクション内で実行できない（write セッションは autobegin で
-    # BEGIN IMMEDIATE を発行するため "cannot VACUUM from within a transaction" になる）。
-    # セッションを commit した後、SQLAlchemy を迂回した素の sqlite3 接続
-    # （トランザクション・イベント層なし）で実行する。
-    logger.info("  Executing database VACUUM...")
-    db.commit()
-    import sqlite3 as _sqlite3
-    vacuum_conn = _sqlite3.connect(db_path)
-    try:
-        vacuum_conn.execute("PRAGMA busy_timeout = 60000")
-        vacuum_conn.execute("VACUUM")
-    finally:
-        vacuum_conn.close()
-    
+    # (週次メンテナンスバッチ weekly_maintenance.py へ移行されたため、日次パイプラインでの実行はスキップします)
     final_db_size = os.path.getsize(db_path)
     reclaimed = initial_db_size - final_db_size
     logger.info(f"  Final SQLite File Size: {final_db_size / 1024 / 1024:.2f} MB "

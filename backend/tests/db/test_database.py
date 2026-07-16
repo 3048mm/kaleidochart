@@ -234,3 +234,43 @@ def test_purge_vacuum_runs_under_write_session(sandbox_db):
         db.execute(text("SELECT 1"))  # autobegin させた状態で呼ぶ
 
         purge_sqlite_cache_older_than_2_years(db, sandbox_db, logging.getLogger("test"))
+
+
+def test_get_db_session_auto_commits_on_success(sandbox_db):
+    """Verify that get_db_session auto-commits uncommitted changes upon normal context exit."""
+    # Write without explicit commit
+    with database_module.get_db_session() as db:
+        db.execute(text("INSERT INTO t_lock_test (v) VALUES ('auto-committed-1')"))
+        # No db.commit() is called
+
+    # Read in a new session and verify it was committed
+    with database_module.get_db_session() as db:
+        rows = db.execute(text("SELECT v FROM t_lock_test WHERE v = 'auto-committed-1'")).fetchall()
+        assert len(rows) == 1
+
+
+def test_get_db_session_rolls_back_on_failure(sandbox_db):
+    """Verify that get_db_session rolls back changes if an exception occurs."""
+    try:
+        with database_module.get_db_session() as db:
+            db.execute(text("INSERT INTO t_lock_test (v) VALUES ('should-rollback')"))
+            raise ValueError("Forced error")
+    except ValueError:
+        pass
+
+    # Verify not committed
+    with database_module.get_db_session() as db:
+        rows = db.execute(text("SELECT v FROM t_lock_test WHERE v = 'should-rollback'")).fetchall()
+        assert len(rows) == 0
+
+
+def test_get_write_db_auto_commits_on_success(sandbox_db):
+    """Verify that get_write_db also auto-commits upon normal context exit."""
+    with database_module.get_write_db() as db:
+        db.execute(text("INSERT INTO t_lock_test (v) VALUES ('auto-committed-write')"))
+        # No db.commit()
+
+    with database_module.get_db_session() as db:
+        rows = db.execute(text("SELECT v FROM t_lock_test WHERE v = 'auto-committed-write'")).fetchall()
+        assert len(rows) == 1
+

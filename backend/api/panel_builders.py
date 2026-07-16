@@ -168,6 +168,98 @@ def build_panel_preload(db: Session, symbol_ids, target_date: str) -> PanelPrelo
     )
 
 
+def preload_constituent_details(db: Session, symbol_ids: List[int]) -> dict:
+    """
+    Preloads prices, indicators and relative ranks for constituent symbols in a few SQL queries.
+    Avoids delayed ORM attribute loading and parameter-binding limits.
+    """
+    import pandas as pd
+    from sqlalchemy import tuple_
+    
+    preload = {
+        "latest_price": {},
+        "recent_closes_21": {},
+        "latest_indicator": {},
+        "price_history_126": {},
+        "indicator_history_126": {},
+        "latest_rank": {},
+    }
+    if not symbol_ids:
+        return preload
+
+    # Fetch max date first to establish cutoff
+    max_date = db.query(func.max(DailyPrice.date)).scalar()
+    if not max_date:
+        return preload
+        
+    cutoff_date = max_date - timedelta(days=250)
+    
+    # 1. Fetch DailyPrice history for all symbols
+    price_rows = db.query(DailyPrice).filter(
+        DailyPrice.symbol_id.in_(symbol_ids),
+        DailyPrice.date >= cutoff_date
+    ).order_by(DailyPrice.symbol_id, DailyPrice.date.desc()).all()
+    
+    prices_by_symbol = {}
+    for dp in price_rows:
+        if isinstance(dp.date, str):
+            dp.date = pd.to_datetime(dp.date).date()
+        prices_by_symbol.setdefault(dp.symbol_id, []).append(dp)
+
+    # 2. Fetch Indicator history for all symbols
+    indicator_rows = db.query(Indicator).filter(
+        Indicator.symbol_id.in_(symbol_ids),
+        Indicator.date >= cutoff_date
+    ).order_by(Indicator.symbol_id, Indicator.date.desc()).all()
+    
+    indicators_by_symbol = {}
+    for ind in indicator_rows:
+        if isinstance(ind.date, str):
+            ind.date = pd.to_datetime(ind.date).date()
+        indicators_by_symbol.setdefault(ind.symbol_id, []).append(ind)
+
+    # 3. Fetch RelativeRank records for latest dates
+    target_pairs = []
+    for sid in symbol_ids:
+        s_prices = prices_by_symbol.get(sid, [])
+        if s_prices:
+            target_pairs.append((sid, s_prices[0].date))
+
+    ranks_by_pair = {}
+    if target_pairs:
+        rank_rows = db.query(RelativeRank).filter(
+            tuple_(RelativeRank.symbol_id, RelativeRank.date).in_(target_pairs)
+        ).all()
+        for r in rank_rows:
+            if isinstance(r.date, str):
+                r.date = pd.to_datetime(r.date).date()
+            ranks_by_pair[(r.symbol_id, r.date)] = r
+
+    # Populate mapped outputs with slicing
+    for sid in symbol_ids:
+        s_prices = prices_by_symbol.get(sid, [])
+        if not s_prices:
+            continue
+            
+        s_prices_126 = s_prices[:126]
+        preload["latest_price"][sid] = s_prices_126[0]
+        preload["recent_closes_21"][sid] = [p.close for p in s_prices_126[:21]]
+        preload["price_history_126"][sid] = list(reversed(s_prices_126))
+        
+        s_indicators = indicators_by_symbol.get(sid, [])
+        if s_indicators:
+            preload["latest_indicator"][sid] = s_indicators[0]
+            preload["indicator_history_126"][sid] = {
+                (i.date.strftime('%Y-%m-%d') if not isinstance(i.date, str) else i.date): i 
+                for i in s_indicators[:126]
+            }
+        else:
+            preload["latest_indicator"][sid] = None
+            preload["indicator_history_126"][sid] = {}
+
+    return preload
+
+
 def _get_sparkline_data(db: Session, sym_id: int, target_date: str, period: int = 21,
                         preloaded: Optional[Dict[int, List[float]]] = None):
     if preloaded is not None:
