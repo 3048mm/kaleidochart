@@ -48,12 +48,19 @@ def sync_phase_t5_signals(db, logger: logging.Logger):
     else:
         logger.info(f"Phase 5: Vectorizing breadth and momentum calculations for {len(gap_dates)} dates...")
         
-        query_metrics = """
+        # Optimize query by filtering on the earliest gap date (with 10-day buffer for shift(1))
+        # to prevent loading the entire 5.8+ million rows history.
+        from datetime import timedelta
+        min_gap_date = min(gap_dates)
+        start_filter_date = min_gap_date - timedelta(days=10)
+        start_date_str = start_filter_date.strftime('%Y-%m-%d')
+        
+        query_metrics = f"""
             SELECT dp.date, dp.symbol_id, dp.close, i.sma_50
             FROM daily_prices dp
             JOIN symbols s ON s.id = dp.symbol_id
             JOIN indicators i ON i.symbol_id = dp.symbol_id AND i.date = dp.date
-            WHERE s.active = 1 AND s.category = '個別'
+            WHERE s.active = 1 AND s.category = '個別' AND dp.date >= '{start_date_str}'
             ORDER BY dp.symbol_id, dp.date
         """
         # 自己デッドロック防止: commit してロック解放後、読み取りエンジンで読む

@@ -224,17 +224,7 @@ def purge_sqlite_cache_older_than_2_years(db, db_path: str, logger: logging.Logg
         return
         
     max_date = pd.to_datetime(max_date_str).date()
-    try:
-        import tomli
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        config_path = os.path.join(project_root, "config.toml")
-        with open(config_path, "rb") as f:
-            config = tomli.load(f)
-        default_start_date = config.get("data_collection", {}).get("default_start_date", "2018-04-01")
-        cutoff_date = pd.to_datetime(default_start_date).date()
-    except Exception as e:
-        logger.warning(f"Failed to load config.toml in purge_sqlite_cache_older_than_2_years, using default 2018-04-01: {e}")
-        cutoff_date = pd.to_datetime("2018-04-01").date()
+    cutoff_date = max_date - timedelta(days=730)
     cutoff_str = cutoff_date.isoformat()
     
     logger.info(f"  Latest date in SQLite: {max_date_str}")
