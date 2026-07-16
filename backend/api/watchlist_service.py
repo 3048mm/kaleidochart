@@ -189,6 +189,8 @@ def clear_removed(user_db: Session) -> int:
     return count
 
 
+from sqlalchemy import func
+
 def get_watchlist(db: Session, user_db: Session) -> dict:
     """
     Get all watchlist items with computed metrics.
@@ -196,17 +198,70 @@ def get_watchlist(db: Session, user_db: Session) -> dict:
     heal_watchlist_ids(db, user_db)
 
     items = user_db.query(Watchlist).all()
+    if not items:
+        return {"active": [], "removed": []}
+
     active_list = []
     removed_list = []
 
     s_ids = [wl.symbol_id for wl in items if wl.symbol_id is not None]
-    if not items:
-        return {"active": [], "removed": []}
-        
+    
     sym_map = {}
     if s_ids:
         symbols = db.query(Symbol).filter(Symbol.id.in_(s_ids)).all()
         sym_map = {s.id: s for s in symbols}
+
+    # Preloading metrics in bulk (O(1) query complexity)
+    dp_map = {}
+    ind_map = {}
+    hist_prices_map = {}
+    rank_map = {}
+
+    if s_ids:
+        # Determine latest database dates dynamically
+        latest_price_date = db.query(func.max(DailyPrice.date)).scalar()
+        latest_ind_date = db.query(func.max(Indicator.date)).scalar()
+        latest_rank_date = db.query(func.max(RelativeRank.date)).scalar()
+
+        # 1. Latest price row bulk fetch
+        if latest_price_date:
+            dps = db.query(DailyPrice).filter(
+                DailyPrice.symbol_id.in_(s_ids),
+                DailyPrice.date == latest_price_date
+            ).all()
+            dp_map = {dp.symbol_id: dp for dp in dps}
+
+        # 2. Latest indicator row bulk fetch
+        if latest_ind_date:
+            inds = db.query(Indicator).filter(
+                Indicator.symbol_id.in_(s_ids),
+                Indicator.date == latest_ind_date
+            ).all()
+            ind_map = {ind.symbol_id: ind for ind in inds}
+
+        # 3. Prices in range bulk fetch (since the earliest entry date)
+        valid_entry_dates = [wl.entry_date for wl in items if wl.entry_date and wl.symbol_id]
+        if valid_entry_dates:
+            min_entry_date = min(valid_entry_dates)
+            history_prices = db.query(DailyPrice).filter(
+                DailyPrice.symbol_id.in_(s_ids),
+                DailyPrice.date >= min_entry_date
+            ).all()
+            for hp in history_prices:
+                hist_prices_map.setdefault(hp.symbol_id, []).append(hp)
+
+        # 4. Ranks bulk fetch (last 30 days)
+        if latest_rank_date:
+            rank_start_date = latest_rank_date - timedelta(days=60)  # buffer to ensure 30 trading days
+            ranks = db.query(RelativeRank.symbol_id, RelativeRank.rs_ratio_rank_e21, RelativeRank.date).filter(
+                RelativeRank.symbol_id.in_(s_ids),
+                RelativeRank.date >= rank_start_date,
+                RelativeRank.rs_ratio_rank_e21.isnot(None)
+            ).order_by(RelativeRank.date.desc()).all()
+            for r in ranks:
+                rank_map.setdefault(r.symbol_id, []).append(r.rs_ratio_rank_e21)
+            for sid in rank_map:
+                rank_map[sid] = list(reversed(rank_map[sid][:30]))
 
     for wl in items:
         ticker = wl.ticker
@@ -223,17 +278,12 @@ def get_watchlist(db: Session, user_db: Session) -> dict:
         rs_sparkline = []
 
         if wl.symbol_id:
-            latest_dp = _get_latest_price_row(db, wl.symbol_id)
+            latest_dp = dp_map.get(wl.symbol_id)
             latest_close = latest_dp.close if latest_dp else 0.0
 
-            latest_ind = db.query(Indicator).filter_by(
-                symbol_id=wl.symbol_id
-            ).order_by(Indicator.date.desc()).first()
+            latest_ind = ind_map.get(wl.symbol_id)
 
-            prices_in_range = db.query(DailyPrice).filter(
-                DailyPrice.symbol_id == wl.symbol_id,
-                DailyPrice.date >= wl.entry_date,
-            ).all()
+            prices_in_range = [p for p in hist_prices_map.get(wl.symbol_id, []) if p.date >= wl.entry_date]
 
             if prices_in_range and wl.entry_price:
                 max_close = max(p.close for p in prices_in_range)
@@ -241,11 +291,7 @@ def get_watchlist(db: Session, user_db: Session) -> dict:
                 max_gain_pct = (max_close - wl.entry_price) / wl.entry_price * 100
                 min_gain_pct = (min_close - wl.entry_price) / wl.entry_price * 100
 
-            rs_ranks = db.query(RelativeRank.rs_ratio_rank_e21).filter(
-                RelativeRank.symbol_id == wl.symbol_id,
-                RelativeRank.rs_ratio_rank_e21.isnot(None),
-            ).order_by(RelativeRank.date.desc()).limit(30).all()
-            rs_sparkline = [r[0] for r in reversed(rs_ranks)]
+            rs_sparkline = rank_map.get(wl.symbol_id, [])
         else:
             latest_close = wl.removed_price if wl.status == "removed" and wl.removed_price else wl.entry_price
 

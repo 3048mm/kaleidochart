@@ -4,7 +4,7 @@ Handles CRUD, position management, sell/trim flow, history, and summary.
 """
 from datetime import date
 from sqlalchemy.orm import Session
-from sqlalchemy import desc
+from sqlalchemy import desc, func
 
 from db.models import Symbol, DailyPrice, Indicator, MarketSignal, FxRate
 from db.models_user import Portfolio, PortfolioPosition, PositionHistory, TotalPortfolio, Transaction
@@ -178,18 +178,49 @@ def get_positions_with_metrics(db: Session, user_db: Session, portfolio_id: int)
     positions = user_db.query(PortfolioPosition).filter_by(
         portfolio_id=portfolio_id
     ).all()
+    if not positions:
+        return []
+
+    s_ids = [pos.symbol_id for pos in positions if pos.symbol_id is not None]
+
+    sym_map = {}
+    dp_map = {}
+    ind_map = {}
+
+    if s_ids:
+        # Preload symbols
+        symbols = db.query(Symbol).filter(Symbol.id.in_(s_ids)).all()
+        sym_map = {s.id: s for s in symbols}
+
+        # Determine latest database dates dynamically
+        latest_price_date = db.query(func.max(DailyPrice.date)).scalar()
+        latest_ind_date = db.query(func.max(Indicator.date)).scalar()
+
+        # 1. Latest price row bulk fetch
+        if latest_price_date:
+            dps = db.query(DailyPrice).filter(
+                DailyPrice.symbol_id.in_(s_ids),
+                DailyPrice.date == latest_price_date
+            ).all()
+            dp_map = {dp.symbol_id: dp for dp in dps}
+
+        # 2. Latest indicator row bulk fetch
+        if latest_ind_date:
+            inds = db.query(Indicator).filter(
+                Indicator.symbol_id.in_(s_ids),
+                Indicator.date == latest_ind_date
+            ).all()
+            ind_map = {ind.symbol_id: ind for ind in inds}
 
     result = []
     for pos in positions:
-        sym = db.query(Symbol).filter_by(id=pos.symbol_id).first() if pos.symbol_id else None
-        latest_dp = _get_latest_price(db, pos.symbol_id) if pos.symbol_id else None
+        sym = sym_map.get(pos.symbol_id) if pos.symbol_id else None
+        latest_dp = dp_map.get(pos.symbol_id) if pos.symbol_id else None
         current_price = latest_dp.close if latest_dp else pos.entry_price
 
         eff_stop_pct = pos.stop_loss_pct if pos.stop_loss_pct is not None else pf.default_stop_loss_pct
 
-        latest_ind = db.query(Indicator).filter_by(
-            symbol_id=pos.symbol_id
-        ).order_by(desc(Indicator.date)).first() if pos.symbol_id else None
+        latest_ind = ind_map.get(pos.symbol_id) if pos.symbol_id else None
 
         if pf.stop_loss_method == "atr_multiple" and latest_ind and latest_ind.atr_14:
             stop_price = calc_stop_loss_price(
