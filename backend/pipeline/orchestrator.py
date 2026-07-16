@@ -5,7 +5,7 @@ import os
 import json
 import hashlib
 from typing import Optional, List
-from sqlalchemy import func
+from sqlalchemy import func, text
 
 from db.database import init_db, get_db, get_write_db, get_active_db_path
 from db.models import Symbol, DailyPrice, Indicator, RelativeRank, MarketSignal, ThemeConstituent
@@ -15,6 +15,8 @@ from .phases.t2_prices import sync_phase_t2_prices, sync_fx_rates
 from .phases.t3_indicators import sync_phase_t3_indicators
 from .phases.t4_ranks import sync_phase_t4_ranks
 from .phases.t5_signals import sync_phase_t5_signals
+
+logger = logging.getLogger(__name__)
 
 def sync_symbols_to_db(db, credentials_path, spreadsheet_url, extra_symbols=None):
     sheet_data = fetch_symbols_from_sheet(credentials_path, spreadsheet_url)
@@ -188,18 +190,25 @@ def build_all_virtual_indexes_prices(db, virtual_items: list[dict], symbol_id_ma
     if not c_ids_list:
         return
         
-    c_ids_str = ",".join(map(str, c_ids_list))
-    query = f"SELECT symbol_id, date, open, high, low, close, volume FROM daily_prices WHERE symbol_id IN ({c_ids_str}) AND close IS NOT NULL AND close > 0"
-    # 外側 write セッションの未コミット分を確定してロックを解放してから、
-    # 読み取り専用エンジンでロードする。write エンジン (db.bind) 経由で read_sql
-    # すると新規接続が BEGIN IMMEDIATE を要求し、自セッションの RESERVED ロックと
-    # 自己デッドロックする（休場日=FX 同期が commit しない日にハングしていた根本原因）
+    # チャンク化してクエリを発行しパラメータ制限を回避＆メモリを保護
     db.commit()
     from db.database import get_read_engine_for
-    all_prices_df = pd.read_sql_query(query, get_read_engine_for(db))
-    if all_prices_df.empty:
+    read_engine = get_read_engine_for(db)
+    
+    chunk_size = 500
+    dfs = []
+    for i in range(0, len(c_ids_list), chunk_size):
+        chunk = c_ids_list[i:i + chunk_size]
+        chunk_str = ",".join(map(str, chunk))
+        query = f"SELECT symbol_id, date, open, high, low, close, volume FROM daily_prices WHERE symbol_id IN ({chunk_str}) AND close IS NOT NULL AND close > 0"
+        chunk_df = pd.read_sql_query(query, read_engine)
+        if not chunk_df.empty:
+            dfs.append(chunk_df)
+            
+    if not dfs:
         return
         
+    all_prices_df = pd.concat(dfs, ignore_index=True)
     all_prices_df['date'] = pd.to_datetime(all_prices_df['date']).dt.date
     all_prices_df = all_prices_df.sort_values(['symbol_id', 'date'])
 
@@ -207,8 +216,16 @@ def build_all_virtual_indexes_prices(db, virtual_items: list[dict], symbol_id_ma
     to_delete_indicators = []
     objects_to_insert = []
     
-    for v_id, mode_info in theme_modes.items():
+    total_modes = len(theme_modes)
+    for index, (v_id, mode_info) in enumerate(theme_modes.items(), 1):
         mode, current_hash, last_date = mode_info
+        item = v_id_to_item.get(v_id)
+        ticker = item['ticker'] if item else f"ID {v_id}"
+        
+        # 進行ログの出力
+        if index % 10 == 0 or index == total_modes:
+            logger.info(f"Virtual Index Progress: {index}/{total_modes} - Processing {ticker} ({mode})")
+            
         c_syms = theme_to_symbols.get(v_id, [])
         
         theme_prices_df = all_prices_df[all_prices_df['symbol_id'].isin(c_syms)]
@@ -484,6 +501,17 @@ def clear_pipeline_data_for_date(db, target_date: date):
     db.query(DailyPrice).filter(DailyPrice.date == target_date).delete(synchronize_session=False)
     db.commit()
 
+def safe_wal_checkpoint(db, logger: logging.Logger):
+    """
+    Safely commits the transaction and runs SQLite WAL checkpoint (TRUNCATE).
+    Does not crash the pipeline if checkpoint fails due to concurrent read locks.
+    """
+    try:
+        db.commit()
+        db.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
+    except Exception as e:
+        logger.warning(f"WAL checkpoint (TRUNCATE) skipped/failed (likely active read locks): {e}")
+
 def verify_pipeline_integrity(db, categories: Optional[List[str]] = None):
     """
     Validates data integrity of the pipeline output:
@@ -595,6 +623,8 @@ def run_pipeline(config, db_path, logger: logging.Logger, rebuild_from: Optional
                 sheet_data = [{'ticker': s.ticker, 'exchange': s.exchange, 'category': s.category, 'theme_type': s.theme_type} for s in symbols]
                 symbol_id_map = {(s.ticker, s.exchange): s.id for s in symbols}
             
+            safe_wal_checkpoint(db, logger)
+            
             if categories:
                 sheet_data = [s for s in sheet_data if s['category'] in categories or s['ticker'] == 'SPY']
             
@@ -641,6 +671,8 @@ def run_pipeline(config, db_path, logger: logging.Logger, rebuild_from: Optional
                 t_start = time.time()
                 build_all_virtual_indexes_prices(db, virtual_items, symbol_id_map)
                 logger.info(f"Virtual Index Build completed in {time.time() - t_start:.2f}s")
+            
+            safe_wal_checkpoint(db, logger)
 
             if not skip_t3:
                 logger.info("Starting T3: Indicators...")
@@ -648,13 +680,17 @@ def run_pipeline(config, db_path, logger: logging.Logger, rebuild_from: Optional
                 sync_phase_t3_indicators(db, sheet_data, symbol_id_map, spy_latest_date, skip_fetch, db_path, logger)
                 logger.info(f"T3: Indicators completed in {time.time() - t_start:.2f}s")
             
+            safe_wal_checkpoint(db, logger)
+            
             logger.info("Starting T4: Ranks...")
             t_start = time.time()
             default_start_str = config.get("data_collection", {}).get("default_start_date", "2018-04-01")
             default_start_val = datetime.strptime(default_start_str, "%Y-%m-%d").date()
             sync_phase_t4_ranks(db, spy_latest_date, logger, default_start_date=default_start_val)
             logger.info(f"T4: Ranks completed in {time.time() - t_start:.2f}s")
-
+            
+            safe_wal_checkpoint(db, logger)
+            
             logger.info("Starting T5: Signals...")
             t_start = time.time()
             sync_phase_t5_signals(db, logger)
@@ -674,6 +710,8 @@ def run_pipeline(config, db_path, logger: logging.Logger, rebuild_from: Optional
                 from pipeline.utils import update_pipeline_meta
                 logger.info(f"Saving pipeline metadata: start_time={start_time_utc}, spy_date={spy_latest_date}")
                 update_pipeline_meta(db, start_time_utc, spy_latest_date)
+
+            safe_wal_checkpoint(db, logger)
 
             # Run final data integrity audits before committing the transaction
             logger.info("Running final pipeline data integrity verification...")
