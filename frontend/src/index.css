@@ -175,7 +175,7 @@ body {
     justify-content: space-between;
     width: 100% !important;
     max-width: 100% !important;
-    overflow: hidden;
+    overflow: visible !important;
   }
 
   .app-header nav {

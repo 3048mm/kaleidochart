@@ -604,8 +604,11 @@ def run_pipeline(config, db_path, logger: logging.Logger, rebuild_from: Optional
     lvl_map = {'T2': 2, 'T3': 3, 'T4': 4, 'T5': 5}
     active_lvl = lvl_map.get(str(rebuild_from).upper(), 0)
     if recalculate_all: active_lvl = 2
+    sheet_data = None
+    symbol_id_map = None
 
     try:
+        # T1: Symbol Sync & Cascaded Rebuild (if needed)
         with get_write_db() as db:
             if not skip_sync:
                 logger.info("Starting T1: Symbol Sync...")
@@ -647,6 +650,8 @@ def run_pipeline(config, db_path, logger: logging.Logger, rebuild_from: Optional
                         q.delete(synchronize_session=False)
                 db.commit()
 
+        # T2: Prices & FX Rates Sync & Virtual Index
+        with get_write_db() as db:
             logger.info("Starting T2: Prices...")
             t_start = time.time()
             spy_latest_date = sync_phase_t2_prices(
@@ -674,28 +679,35 @@ def run_pipeline(config, db_path, logger: logging.Logger, rebuild_from: Optional
             
             safe_wal_checkpoint(db, logger)
 
-            if not skip_t3:
+        # T3: Indicators (if not skipped)
+        if not skip_t3:
+            with get_write_db() as db:
                 logger.info("Starting T3: Indicators...")
                 t_start = time.time()
                 sync_phase_t3_indicators(db, sheet_data, symbol_id_map, spy_latest_date, skip_fetch, db_path, logger)
                 logger.info(f"T3: Indicators completed in {time.time() - t_start:.2f}s")
-            
-            safe_wal_checkpoint(db, logger)
-            
+                safe_wal_checkpoint(db, logger)
+
+        # T4: Ranks
+        with get_write_db() as db:
             logger.info("Starting T4: Ranks...")
             t_start = time.time()
             default_start_str = config.get("data_collection", {}).get("default_start_date", "2018-04-01")
             default_start_val = datetime.strptime(default_start_str, "%Y-%m-%d").date()
             sync_phase_t4_ranks(db, spy_latest_date, logger, default_start_date=default_start_val)
             logger.info(f"T4: Ranks completed in {time.time() - t_start:.2f}s")
-            
             safe_wal_checkpoint(db, logger)
-            
+
+        # T5: Signals
+        with get_write_db() as db:
             logger.info("Starting T5: Signals...")
             t_start = time.time()
             sync_phase_t5_signals(db, logger)
             logger.info(f"T5: Signals completed in {time.time() - t_start:.2f}s")
+            safe_wal_checkpoint(db, logger)
 
+        # Archive & Purge & Metadata & Verification
+        with get_write_db() as db:
             # Hot/Cold Hybrid Data Architecture: Archive to Parquet master & Purge SQLite cache
             try:
                 from pipeline.parquet_cache_manager import rotate_and_archive_to_parquet, purge_sqlite_cache_older_than_2_years
@@ -703,7 +715,6 @@ def run_pipeline(config, db_path, logger: logging.Logger, rebuild_from: Optional
                 purge_sqlite_cache_older_than_2_years(db, db_path, logger)
             except Exception as pe:
                 logger.error(f"Failed to run Hot/Cold archiving & purging: {pe}")
-                # We do not crash the pipeline if archiving fails to keep daily updates robust
 
             # Save pipeline execution metadata to allow self-determining updates next run
             if spy_latest_date:

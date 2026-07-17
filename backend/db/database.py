@@ -57,9 +57,9 @@ def init_db(db_path: str):
     database_url = f"sqlite:///{db_path}"
     
     # Read engine (API): DEFERRED transactions so SELECTs never take the write
-    # lock. timeout=30s — WAL readers never wait on writers, so a long busy
+    # lock. timeout=5s — WAL readers never wait on writers, so a long busy
     # timeout here would only mask configuration bugs as infinite spinners.
-    engine = create_engine(database_url, connect_args={"check_same_thread": False, "timeout": 30})
+    engine = create_engine(database_url, connect_args={"check_same_thread": False, "timeout": 5})
 
     # Write engine (pipeline): BEGIN IMMEDIATE prevents deadlocks from lock
     # upgrade (DEFERRED → EXCLUSIVE). timeout=3600s tolerates long batch jobs.

@@ -67,7 +67,9 @@ def get_latest_master_files(pointer_file: str) -> dict | None:
             return None
 
 def clean_old_parquet_versions(parquet_dir: str, logger: logging.Logger, keep_count=2):
-    """Cleans up older timestamps of Parquet masters, keeping only the latest versions."""
+    """Cleans up older timestamps of Parquet masters, keeping only the latest versions,
+    with a 15-minute grace period to prevent deleting files currently read by long-running jobs.
+    """
     all_pointers = sorted(glob.glob(os.path.join(parquet_dir, "data_version_*.json")))
     if len(all_pointers) <= keep_count:
         return
@@ -75,6 +77,13 @@ def clean_old_parquet_versions(parquet_dir: str, logger: logging.Logger, keep_co
     pointers_to_delete = all_pointers[:-keep_count]
     for ptr_file in pointers_to_delete:
         try:
+            # Check modification time to enforce 15-minute grace period
+            mtime = os.path.getmtime(ptr_file)
+            age_seconds = time.time() - mtime
+            if age_seconds < 900:  # 15 minutes
+                logger.info(f"Skipping cleanup of recent version pointer {os.path.basename(ptr_file)} (age: {age_seconds/60:.1f} mins < 15 mins)")
+                continue
+
             with open(ptr_file, 'r', encoding='utf-8') as f:
                 version_files = json.load(f)
             # Delete associated parquet files
