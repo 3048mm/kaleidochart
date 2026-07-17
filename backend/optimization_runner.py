@@ -619,7 +619,19 @@ def main():
     
     # Load periods from TOML config
     periods = parse_optimization_periods(config)
-    
+
+    # 2026-07-18: n_jobs=-1（後段の study.optimize）は複数トライアルを並列スレッドで
+    # 実行するため、_cached_data_dict（get_cached_data のグローバルキャッシュ）に
+    # ロックが無いと、起動直後に全スレッドが同じ期間へ同時にキャッシュミスし、
+    # 各スレッドが独立に同一データ（indicators だけで1〜3GB/期間）をロードしてしまう
+    # （8コア環境で実測: 同一期間が8重にロードされ物理メモリ35GB超で MemoryError）。
+    # 並列実行が始まる前に全期間を逐次ロードしてキャッシュを温めておくことで、
+    # 各スレッドは読み取り専用アクセスのみになりレースが起きない。
+    print("Pre-warming period data cache (sequential, before parallel trials start)...")
+    for start_date, end_date in periods:
+        get_cached_data(config_app, start_date, end_date)
+    print("Pre-warm complete.")
+
     # Setup storage
     db_path = os.path.join(project_root, 'data', 'optimization_trials.db')
     
