@@ -592,13 +592,15 @@ def main():
     parser.add_argument("--strategy", type=str, required=True, help="Strategy name or short code (A, B, C...)")
     parser.add_argument("--trials", type=int, default=30)
     # 2026-07-18: n_jobs=-1（全コア並列）は RDBStorage(SQLite) の並行書き込み耐性の低さと
-    # 衝突し、"ValueError: Cannot tell a COMPLETE trial" が発生する（2スレッドが同一trialの
-    # 完了を同時に study.tell しようとして SQLite 側でレース）。加えて過去には
-    # get_cached_data のキャッシュ未ロックによるメモリ枯渇も引き起こした（pre-warm で解消済み）。
-    # SQLite バックエンドでの高並列は Optuna 側でも既知の弱点のため、デフォルトを保守的な値に。
-    parser.add_argument("--n-jobs", type=int, default=4,
-                        help="並列トライアル数。SQLite storage の並行書き込み耐性の都合で "
-                             "既定は保守的な4（-1=全コアは非推奨。COMPLETE trial エラーの原因）")
+    # 衝突し、"ValueError: Cannot tell a COMPLETE trial" が発生する（複数スレッドが同一trialの
+    # 完了を同時に study.tell しようとして SQLite 側でレース）。n_jobs=4 に下げても再発を確認
+    # （2026-07-17）— 並列度を下げるだけでは解消せず、SQLite storage + スレッド並列という
+    # 組み合わせ自体が構造的に不安定。確実性を優先し既定を 1（完全逐次）にする。
+    # 加えて過去には get_cached_data のキャッシュ未ロックによるメモリ枯渇も引き起こした
+    # （並列時のみ発生する問題だったため、これも n_jobs=1 なら再発しない）。
+    parser.add_argument("--n-jobs", type=int, default=1,
+                        help="並列トライアル数。SQLite storage は並列(>1)だと "
+                             "COMPLETE trial エラーで停止しうるため既定は1（完全逐次・最も安全）")
     args = parser.parse_args()
     
     # Use config just to load exit rules
