@@ -591,6 +591,14 @@ def main():
     parser = argparse.ArgumentParser(description="Optimize backtest parameters with Optuna")
     parser.add_argument("--strategy", type=str, required=True, help="Strategy name or short code (A, B, C...)")
     parser.add_argument("--trials", type=int, default=30)
+    # 2026-07-18: n_jobs=-1（全コア並列）は RDBStorage(SQLite) の並行書き込み耐性の低さと
+    # 衝突し、"ValueError: Cannot tell a COMPLETE trial" が発生する（2スレッドが同一trialの
+    # 完了を同時に study.tell しようとして SQLite 側でレース）。加えて過去には
+    # get_cached_data のキャッシュ未ロックによるメモリ枯渇も引き起こした（pre-warm で解消済み）。
+    # SQLite バックエンドでの高並列は Optuna 側でも既知の弱点のため、デフォルトを保守的な値に。
+    parser.add_argument("--n-jobs", type=int, default=4,
+                        help="並列トライアル数。SQLite storage の並行書き込み耐性の都合で "
+                             "既定は保守的な4（-1=全コアは非推奨。COMPLETE trial エラーの原因）")
     args = parser.parse_args()
     
     # Use config just to load exit rules
@@ -676,7 +684,7 @@ def main():
     study.optimize(
         lambda t: objective(t, actual_name, config, config_app, exit_rules, periods),
         n_trials=args.trials,
-        n_jobs=-1
+        n_jobs=args.n_jobs
     )
     
     print("-" * 60)
