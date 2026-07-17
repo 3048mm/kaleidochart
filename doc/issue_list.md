@@ -35,6 +35,11 @@
     - **B. フィルタ関数は実装済だが戦略 TOML で未採用**: `is_rs_trend_rank_s21_gt_s63`・`is_theme_rs_trend_rank_s21_gt_s63`（`rs_trend_rank_s63`）／ `is_theme_rs_ratio_e14_gt_e21`・`_e21_gt_e63`（テーマ RS Ratio 生値比較）／ `min_rs_macd_hist_rank_21`
     - **C. backtest の `merged` にランク未配管（露出作業が前提）**: T4 ランクのうち `rs_momentum_rank_e*`(5種)・`rs_roc_ema_rank_e*`(5種)・`rs_value_rank`・`rs_ratio_rank_e5/e200`・`rs_trend_rank_s5/s200`。`apply_filters_to_df` のランクマージ拡張が必要（現状マージは `rs_ratio_rank_e14/e21/e63` と `rs_trend_rank_s14/s21/s63` の6種のみ）
     - **中間生成物（検証対象外）**: `rs_value_e*`・`rs_roc_ema_*`・`rs_macd_line_21`/`rs_macd_signal_21`・`atr_14`/`atr_pct_14`（`sma50_atr_mult` に内包）・別ウィンドウ重複の MA 群
+- [x] **`optimization_runner.py` の並列実行（n_jobs）が不安定でOptuna最適化が途中停止する** — 修正済み（2026-07-17〜18、E1/E2再最適化中に発見）
+  - **① メモリ枯渇**: `get_cached_data`（学習期間データのグローバルキャッシュ）にロックが無く、`study.optimize(n_jobs=-1)`（8コア環境で最大8並列スレッド）が起動直後に全スレッド同時に同一期間へキャッシュミスし、各スレッドが独立に `preload_data`（indicators だけで1〜3GB/期間）を実行。実測で同一期間のロードログが8回重複し物理メモリ35〜38GB消費、`pd.read_parquet` が `MemoryError`。**修正**: `study.optimize()` 呼び出し前に全学習期間を逐次でプリウォームし、並列開始時点でキャッシュを読み取り専用化（読み込みログが1回に減少したことを確認）。
+  - **② SQLite storage の並行書き込み競合**: ①修正後も `ValueError: Cannot tell a COMPLETE trial` が発生（複数スレッドが同一trialの完了を同時に `study.tell` しようとして `RDBStorage`(SQLite) 側でレース。Optuna側の既知の弱点）。`n_jobs=-1→4` に下げても再発を確認（2026-07-17）— 並列度を下げるだけでは解消しない構造的な不安定さと判断し、`n_jobs` の既定を **1（完全逐次）** に変更（`--n-jobs` で上書き可能）。速度は犠牲になるが確実性を優先。`run_optimization.bat` は `--n-jobs` を渡さないため新既定が自動適用される。
+  - 対象: `backend/optimization_runner.py`（E1/E2 に限らず全戦略の Optuna 最適化に影響していた共通インフラのバグ）。
+
 - [ ] **バックテスト戦略 TOML の設定不備の修正（2026-07-05 パラメータレビューで発見）**
   - [x] 🔴 **E1/E2 の 52週高値フィルタが無効 + 最適化レンジが逆方向** — 修正済み（2026-07-05）: `min_dist_52w_high_pct = -10.0` に転換、探索レンジは `[-25 .. -2.5]`。フィルタ実効化により E 系のシグナル数は大幅減（2025Q4 サニティ: E1=3件/E2=1件）— 旧結果は no-op フィルタ + 再エントリー水増しの産物だったため、E 系は再最適化が前提
   - [x] 🔴 B3 のベースライン/探索キー不一致 — 修正済み（2026-07-05）: 探索を `min_rs_ratio_rank_e14`（0.2〜0.7）に統一。**併せて `min_rs_ratio_rank_e14/e63`（個別）が `needs_rs14/rs63` トリガーに未登録で、単独使用時に黙って素通しになるバグを発見・修正**（backtest_screener.py + 回帰テスト2件。I-6 と同じ「静かな失敗」パターン、エイリアス正規化層 issue の実例）
