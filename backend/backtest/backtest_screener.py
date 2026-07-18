@@ -289,7 +289,15 @@ def apply_filters_to_df(
                     columns={'percent_rank': 'rs_condition_63_rank'}
                 )
                 merged = merged.merge(c63, on='symbol_id', how='left').reset_index(drop=True)
-        else:
+        elif not has_all_premerged:
+            # ranks_day is None かつ「既に事前マージ済みで取得不要」ではない場合のみ、
+            # ランクデータが本当に手に入らなかったとみなして deny-by-default。
+            # has_all_premerged=True の場合の ranks_day=None は「取得済みなのでスキップ」
+            # という意味であり、ここに来てはならない（2026-07-18 発見・修正: 呼び出し側
+            # （scenario_runner.py 等）がランクを事前マージしていると has_all_premerged=True
+            # になり ranks_day=None がセットされるが、旧コードはこれを「データ無し」と誤認して
+            # 常に空 DataFrame を返していた。B2/B4/B6 等のテーマ・RSランク系フィルタを使う
+            # 戦略が型3シナリオで常に0件になるサイレント障害の原因だった）。
             if (
                 'min_rs_ratio_rank_e21' in strategy
                 or 'min_rs_ratio_rank_e14' in strategy
