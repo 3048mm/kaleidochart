@@ -342,6 +342,14 @@ min_up_down_vol_ratio_50 = { type = "float", min = 1.0, max = 1.5, step = 0.1 }
 # VCP の「質」コンセプト（静かな値動き・大型株）が探索空間内で崩れたのが主因と判断。
 # B2 で min_adr_pct_21 の探索下限を上げてコンセプトを防衛した前例と同型の対処として、
 # 以下の探索レンジを引き締めた（詳細: doc/issue_list.md の該当項目）。
+#
+# 2026-07-18: 型3実測で E1/E2 は B2/B4/B6 と比べて PF・DD は圧倒的に優れる（PF 3.1〜5.2 vs
+# 1.4〜2.4、DD 8%台 vs 20〜28%）が、CAGR は最下位（7〜14% vs 18〜82%）。原因はトレード数の
+# 少なさ（4年強で117〜213件 vs B系228〜312件）で、最大8ポジションの枠が遊び複利が効かない。
+# さらに型1最適化は vcr/vol_surge をより厳しくして取引数を減らす方向（213→136 for E1）へ振れ、
+# CAGR をむしろ悪化させていた。static な「質」ゲート（vcr/adr/vol_surge/dist）は 2026-07-16/17
+# の引き締めのまま維持しつつ、min_market_cap の下限のみ緩めて機会を増やす実験を行う
+# （B2等は mcap 下限が桁違いに低くても質が保てているため、まず mcap 単独で頻度を稼げるか検証）。
 
 [[strategy]]
 name = "E1_vcp_breakout_mid"
@@ -369,7 +377,9 @@ max_vol_surge_21     = { type = "float", min = 0.7, max = 1.3, step = 0.1 }
 min_dist_63d_high_pct = { type = "float", min = -25.0, max = -2.5, step = 2.5 }
 min_up_down_vol_ratio_50 = { type = "float", min = 1.0, max = 3.0, step = 0.5 }
 # 2026-07-16: 最小選択肢 1e8→3e8 に引き上げ（旧レンジで最適化が1e8＝最小を選び小型株へ寄った）
-min_market_cap       = { type = "categorical", choices = [3e8, 1e9] }
+# 2026-07-18: 1e8 を再度追加（vcr/adr/vol_surge は引き締めたまま維持しているため、
+# mcap 単独の緩和がトレード頻度を増やせるかの検証。質ゲートは他で防衛済み）
+min_market_cap       = { type = "categorical", choices = [1e8, 3e8, 1e9] }
 
 [[strategy]]
 name = "E2_vcp_breakout_52w"
@@ -400,7 +410,9 @@ max_vol_surge_21     = { type = "float", min = 0.7, max = 1.3, step = 0.1 }
 min_dist_52w_high_pct = { type = "float", min = -15.0, max = -2.5, step = 2.5 }
 min_up_down_vol_ratio_50 = { type = "float", min = 1.0, max = 3.0, step = 0.5 }
 # 2026-07-16: 最小選択肢 1e7→3e8 に引き上げ（旧レンジで最適化が1e7＝最小を選び超小型株へ寄った）
-min_market_cap       = { type = "categorical", choices = [3e8, 1e9] }
+# 2026-07-18: 1e8 を再度追加（vcr/adr/vol_surge は引き締めたまま維持しているため、
+# mcap 単独の緩和がトレード頻度を増やせるかの検証。質ゲートは他で防衛済み）
+min_market_cap       = { type = "categorical", choices = [1e8, 3e8, 1e9] }
 is_close_gt_ema63    = { type = "categorical", choices = [true] }
 
 [[strategy]]
