@@ -166,7 +166,7 @@ def main():
     start_date = "2022-01-01"
     end_date = "2026-03-26"
     num_runs = 10
-    max_workers = 3
+    max_workers = 2
 
     print("=" * 60)
     print(f"Scenario Batch: {len(jobs)} jobs x {len(models)} models x {num_runs} MC runs")

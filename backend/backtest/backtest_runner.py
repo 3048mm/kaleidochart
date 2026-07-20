@@ -105,12 +105,16 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
     log(f"Loading data from Parquet Master cache: {pathlib.Path(latest_files['prices']).name} ...")
     
     try:
-        # 3. Read Parquet full-history masters into memory
+        # Calculate date buffer for prices rolling calculation (window=21 -> safe buffer 45 days)
+        sd_dt = dt_date.fromisoformat(start_date)
+        prices_sd_str = (sd_dt - timedelta(days=45)).isoformat()
+        
+        # 3. Read Parquet full-history masters into memory with pushdown date filters to minimize RAM usage
         t_load = time.time()
         df_symbols = pd.read_parquet(latest_files['symbols'])
-        df_prices = pd.read_parquet(latest_files['prices'])
-        df_indicators = pd.read_parquet(latest_files['indicators'])
-        df_ranks = pd.read_parquet(latest_files['ranks'])
+        df_prices = pd.read_parquet(latest_files['prices'], filters=[('date', '>=', prices_sd_str), ('date', '<=', end_date)])
+        df_indicators = pd.read_parquet(latest_files['indicators'], filters=[('date', '>=', start_date), ('date', '<=', end_date)])
+        df_ranks = pd.read_parquet(latest_files['ranks'], filters=[('date', '>=', start_date), ('date', '<=', end_date)])
         df_theme_constituents = pd.read_parquet(latest_files['tc'])
         log(f"  -> Parquet file loading completed in {time.time()-t_load:.2f}s")
         

@@ -95,18 +95,23 @@ def load_etf_data(
     print(f"  Loading prices for {len(valid_ids)} tickers from Parquet...", flush=True)
 
     t0 = time.time()
+    sd = datetime.date.fromisoformat(start_date)
+    # Warm-up: load data from 365 days before start_date to calculate SMA200 correctly
+    sd_warmup = sd - datetime.timedelta(days=365)
+    ed = datetime.date.fromisoformat(end_date)
+
     df_prices = pd.read_parquet(
         latest_files["prices"],
-        filters=[("symbol_id", "in", valid_ids)],
+        filters=[
+            ("symbol_id", "in", valid_ids),
+            ("date", ">=", sd_warmup.isoformat()),
+            ("date", "<=", end_date)
+        ],
     )
     print(f"  -> Price loading completed in {time.time() - t0:.2f}s", flush=True)
 
     # Normalize dates
     df_prices["date"] = pd.to_datetime(df_prices["date"]).dt.date
-    sd = datetime.date.fromisoformat(start_date)
-    # Warm-up: load data from 365 days before start_date to calculate SMA200 correctly
-    sd_warmup = sd - datetime.timedelta(days=365)
-    ed = datetime.date.fromisoformat(end_date)
     df_prices = df_prices[(df_prices["date"] >= sd_warmup) & (df_prices["date"] <= ed)]
 
     # Build trading dates from the target ETF prices (limited to start_date onwards for simulation)
