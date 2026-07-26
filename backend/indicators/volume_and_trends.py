@@ -7,6 +7,12 @@ def calc_volume_and_trends(df: pd.DataFrame) -> pd.DataFrame:
     high = df['high']
     volume = df['volume'].astype(float)
 
+    # --- Average Dollar Volume (21日) ---
+    # 全戦略共通の流動性ハード制約(min_avg_dollar_volume_21)用。従来は最適化バックテスト
+    # エンジン内でのみオンザフライ計算されていたが、生スクリーナーAPI・個別銘柄シナリオ
+    # テストでも同じ基準を使えるよう正式なインジケーターとして追加する（2026-07-27）。
+    df['avg_dollar_volume_21'] = (close * volume).rolling(window=21, min_periods=1).mean()
+
     # --- Relative Volume vs SPY ---
     if 'spy_volume' in df.columns:
         vol_sma_21     = volume.rolling(window=21, min_periods=1).mean()

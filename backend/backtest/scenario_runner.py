@@ -71,6 +71,23 @@ def get_scenario_progress(output_dir: str = "output/scenario") -> Dict[str, Any]
         logger.warning("Failed to read progress file: %s", e)
         return {"status": "error"}
 
+def inject_liquidity_floor(strategies: Dict[str, Dict[str, Any]], min_avg_dollar_volume_21) -> Dict[str, Dict[str, Any]]:
+    """全戦略共通の流動性ハード制約(min_avg_dollar_volume_21)を、未設定の戦略にのみ注入する。
+
+    2026-07-26 追加: `backend/backtest/backtest_runner.py`（最適化バックテスト）は
+    `[general] min_avg_dollar_volume_21` を全戦略に自動注入するが、個別銘柄シナリオテスト
+    （本モジュール）にはこの注入が無く、21日平均売買代金が閾値を大きく下回る
+    （実質取引不可能な）銘柄のシグナルが素通りしていた。optimization_runner.py /
+    backtest_runner.py と同じ解決順序（戦略側の明示指定があれば尊重）で扱う。
+    """
+    if min_avg_dollar_volume_21 is None:
+        return strategies
+    for filters in strategies.values():
+        if 'min_avg_dollar_volume_21' not in filters:
+            filters['min_avg_dollar_volume_21'] = float(min_avg_dollar_volume_21)
+    return strategies
+
+
 def load_scenario_config(config_path: str = "data/screener_presets.toml") -> Dict[str, Any]:
     import tomli
     
@@ -322,6 +339,7 @@ def run_scenario_test(
     # Exit Rules for the simulator adapter from backtest_config.toml
     import tomli
     bt_config_path = os.path.join(project_root, "backend/backtest/backtest_config.toml")
+    bt_config = {}
     try:
         with open(bt_config_path, "rb") as f:
             bt_config = tomli.load(f)
@@ -329,12 +347,15 @@ def run_scenario_test(
     except Exception as e:
         print(f"Warning: Failed to load backtest_config.toml: {e}, using default exit rules.")
         exit_rules = ExitRules()
-        
+
     # Override if custom values are passed via run_scenario_test args (ScenarioRunner uses decimal like -0.08, convert to percent like -8.0)
     if stop_loss_pct != -0.08:
         exit_rules.stop_loss_pct = stop_loss_pct * 100.0
     if profit_target_pct != 0.20:
         exit_rules.partial_take_profit_pct = profit_target_pct * 100.0
+
+    # 全戦略共通の流動性ハード制約（最適化バックテストと同じ [general] 値。2026-07-26 追加）
+    strategies = inject_liquidity_floor(strategies, bt_config.get('general', {}).get('min_avg_dollar_volume_21'))
 
     # 3. Daily Loop
     dates = trading_dates # Use the canonical trading dates from preload_data
@@ -410,8 +431,11 @@ def run_scenario_test(
         
         if ind_day is not None and price_day is not None:
             # Merge once per day
+            price_cols = ['symbol_id', 'date', 'open', 'high', 'low', 'close', 'volume', 'market_cap']
+            if 'avg_dollar_volume_21' in price_day.columns:
+                price_cols.append('avg_dollar_volume_21')
             base_merged = ind_day.merge(
-                price_day[['symbol_id', 'date', 'open', 'high', 'low', 'close', 'volume', 'market_cap']],
+                price_day[price_cols],
                 on=['symbol_id', 'date'],
                 how='inner'
             )

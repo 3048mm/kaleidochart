@@ -10,6 +10,7 @@ import { GroupPage } from './pages/GroupPage'
 import { TotalPortfolioPage } from './pages/TotalPortfolioPage'
 import { PortfolioDetailPage } from './pages/PortfolioDetailPage'
 import { BacktestPage } from './pages/BacktestPage'
+import { UniversePage } from './pages/UniversePage'
 
 
 const API = '/api'
@@ -200,6 +201,7 @@ export default function App() {
                     <Link to="/watchlist" style={{ color: location.pathname === '/watchlist' ? '#00ff88' : '#d1d4dc', textDecoration: 'none' }}>Watchlist</Link>
                     <Link to="/portfolio" style={{ color: location.pathname.startsWith('/portfolio') ? '#00ff88' : '#d1d4dc', textDecoration: 'none' }}>Portfolio</Link>
                     <Link to="/backtest" style={{ color: location.pathname.startsWith('/backtest') || location.pathname.startsWith('/scenariotest') || location.pathname.startsWith('/etf-backtest') ? '#00ff88' : '#d1d4dc', textDecoration: 'none' }}>Backtest</Link>
+                    <Link to="/universe" style={{ color: location.pathname === '/universe' ? '#00ff88' : '#d1d4dc', textDecoration: 'none' }}>Universe</Link>
                 </nav>
                 
                 {systemHealth && (
@@ -516,6 +518,7 @@ export default function App() {
                     <Route path="/backtest" element={<BacktestPage />} />
                     <Route path="/scenariotest" element={<BacktestPage />} />
                     <Route path="/etf-backtest" element={<BacktestPage />} />
+                    <Route path="/universe" element={<UniversePage />} />
                 </Routes>
             </main>
         </div>

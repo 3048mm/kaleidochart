@@ -297,7 +297,7 @@ def apply_filters_to_df(
             # （scenario_runner.py 等）がランクを事前マージしていると has_all_premerged=True
             # になり ranks_day=None がセットされるが、旧コードはこれを「データ無し」と誤認して
             # 常に空 DataFrame を返していた。B2/B4/B6 等のテーマ・RSランク系フィルタを使う
-            # 戦略が型3シナリオで常に0件になるサイレント障害の原因だった）。
+            # 戦略が個別銘柄シナリオテストで常に0件になるサイレント障害の原因だった）。
             if (
                 'min_rs_ratio_rank_e21' in strategy
                 or 'min_rs_ratio_rank_e14' in strategy
@@ -362,6 +362,10 @@ def apply_filters_to_df(
         'rs_trend_rank_s63': 'rs_condition_63_rank',
         'change_intraday_pct': 'change_intraday_pct',
         'dist_21ema_pct': 'dist_21ema_pct',
+        # 2026-07-22 追加: is_ プレフィックス除去で 'rs_blue_dot'/'rs_red_dot' になるが、
+        # 実列名は is_ 付きのまま（is_rs_blue_dot/is_rs_red_dot）。無いとサイレント素通し。
+        'rs_blue_dot': 'is_rs_blue_dot',
+        'rs_red_dot': 'is_rs_red_dot',
     }
 
     for key, value in strategy.items():

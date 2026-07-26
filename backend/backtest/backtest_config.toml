@@ -102,8 +102,8 @@ sort_ascending = false
 min_change_1d_pct = 9.0 
 min_vol_surge_21 = 2.7 
 min_adr_pct_21 = 6.0 
-max_sma50_atr_mult = 5.0 
-min_market_cap = 5e6 
+max_sma50_atr_mult = 5.0
+min_market_cap = 1e7
 is_theme_rs_ratio_rank_e21_gt_e63 = true
 min_rs_ratio_rank_e21 = 0.4
 is_close_gt_ema63 = true
@@ -117,7 +117,11 @@ min_vol_surge_21   = { type = "float", min = 0.5, max = 3.0, step = 0.1 }
 # 変質するのを防ぐ）
 min_adr_pct_21     = { type = "float", min = 3.0, max = 6.0, step = 0.5 }
 max_sma50_atr_mult = { type = "float", min = 2.0, max = 8.0, step = 0.5 }
-min_market_cap     = { type = "categorical", choices = [1e5, 5e5, 1e6, 5e6, 1e7, 5e7, 1e8, 3e8, 1e9] }
+# 2026-07-24: 探索下限を 1e5→1e7 に引き上げ（1e5〜5e6 は企業として小さすぎ、売買代金床
+# 導入後は無駄な探索だった。B1/B4/B5 で既に適用済みの防衛パターンに統一。
+# max_avg_hits_per_day 引き締め後、この低すぎる選択肢が「大量の超小型株を拾って
+# プルーニングを回避する」抜け道になっていたことが判明したため）
+min_market_cap     = { type = "categorical", choices = [1e7, 5e7, 1e8, 3e8, 1e9] }
 is_theme_rs_ratio_rank_e21_gt_e63   = { type = "categorical", choices = [true] }
 min_rs_ratio_rank_e21 = { type = "float", min = 0.3, max = 0.7, step = 0.1 }
 is_close_gt_ema63 = { type = "categorical", choices = [true] }
@@ -133,7 +137,7 @@ min_vol_surge_21 = 3.0
 min_adr_pct_21 = 6.0
 min_dist_21ema_pct = 1.0
 max_sma50_atr_mult = 7.0
-min_market_cap = 5e6
+min_market_cap = 1e7
 is_theme_rs_ratio_rank_e14_gt_e21 = true
 min_rs_ratio_rank_e14 = 0.5
 is_close_gt_ema63 = true
@@ -145,7 +149,8 @@ min_dist_21ema_pct   = { type = "float", min = -1.0, max = 20.0, step = 1.0 }
 min_vol_surge_21   = { type = "float", min = 0.5, max = 3.0, step = 0.1 }
 min_adr_pct_21     = { type = "float", min = 1.0, max = 6.0, step = 0.5 }
 max_sma50_atr_mult = { type = "float", min = 2.0, max = 8.0, step = 0.5 }
-min_market_cap     = { type = "categorical", choices = [1e5, 5e5, 1e6, 5e6, 1e7, 5e7, 1e8, 3e8, 1e9] }
+# 2026-07-24: 探索下限を 1e5→1e7 に引き上げ（B2 と同一理由。詳細は B2 側コメント参照）
+min_market_cap     = { type = "categorical", choices = [1e7, 5e7, 1e8, 3e8, 1e9] }
 is_theme_rs_ratio_rank_e14_gt_e21   = { type = "categorical", choices = [true] }
 # 2026-07-05 修正: ベースライン（min_rs_ratio_rank_e14）と探索キーが不一致だったのを e14 に統一
 min_rs_ratio_rank_e14 = { type = "float", min = 0.2, max = 0.7, step = 0.1 }
@@ -206,9 +211,13 @@ max_allowed_dd = 35.0   # MTM 再校正（旧: 未設定=デフォルト 20.0）
 [strategy.optimization]
 min_change_1d_pct    = { type = "float", min = 2.0, max = 10.0, step = 1.0 }
 min_dist_21ema_pct   = { type = "float", min = -1.0, max = 20.0, step = 1.0 }
-min_vol_surge_21   = { type = "float", min = 0.5, max = 5.0, step = 0.1 }
+# 2026-07-24: 探索下限を 0.5→1.5 に引き上げ（B2 で min_adr_pct_21 にやったのと同じ
+# コンセプト防衛。vol_surge_21<1.0 は21日平均"以下"の出来高＝そもそも「サージ」の体を
+# なしておらず、出来高の裏付けが薄い銘柄まで通っていた。max_sma50_atr_mult の上限も
+# 8.0→6.0 に引き締め、既に伸びきった銘柄を追いかけるのを抑制する）
+min_vol_surge_21   = { type = "float", min = 1.5, max = 5.0, step = 0.1 }
 min_adr_pct_21     = { type = "float", min = 1.0, max = 6.0, step = 0.5 }
-max_sma50_atr_mult = { type = "float", min = 2.0, max = 8.0, step = 0.5 }
+max_sma50_atr_mult = { type = "float", min = 2.0, max = 6.0, step = 0.5 }
 min_market_cap     = { type = "categorical", choices = [1e7, 1e8] }
 #min_market_cap     = { type = "categorical", choices = [1e5, 5e5, 1e6, 5e6, 1e7, 5e7, 1e8, 3e8, 1e9] }
 min_rs_trend_s21 = { type = "float", min = 0.8, max = 2.0, step = 0.1 }
@@ -227,9 +236,9 @@ min_change_1d_pct = 9.0
 min_dist_21ema_pct = 1.0 
 min_vol_surge_21 = 2.8 
 min_adr_pct_21 = 1.0 
-max_sma50_atr_mult = 6.0 
-min_market_cap = 1e5
-min_rs_trend_rank_s21 = 0.9 
+max_sma50_atr_mult = 6.0
+min_market_cap = 1e7
+min_rs_trend_rank_s21 = 0.9
 min_rs_macd_hist_21 = 0.0 
 min_theme_rs_trend_s21 = 0.9 
 is_theme_rs_trend_rank_s14_gt_s21 = true
@@ -243,7 +252,8 @@ min_dist_21ema_pct   = { type = "float", min = -1.0, max = 20.0, step = 1.0 }
 min_vol_surge_21   = { type = "float", min = 1.5, max = 5.0, step = 0.1 }
 min_adr_pct_21     = { type = "float", min = 1.0, max = 6.0, step = 0.5 }
 max_sma50_atr_mult = { type = "float", min = 2.0, max = 8.0, step = 0.5 }
-min_market_cap     = { type = "categorical", choices = [1e5, 5e5, 1e6, 5e6, 1e7, 5e7, 1e8, 3e8, 1e9] }
+# 2026-07-24: 探索下限を 1e5→1e7 に引き上げ（B2 と同一理由。詳細は B2 側コメント参照）
+min_market_cap     = { type = "categorical", choices = [1e7, 5e7, 1e8, 3e8, 1e9] }
 min_rs_trend_rank_s21 = { type = "float", min = 0.4, max = 0.9, step = 0.1 }
 min_rs_macd_hist_21 = { type = "float", min = 0.0, max = 0.5, step = 0.1 }
 min_theme_rs_trend_s21 = { type = "float", min = 0.9, max = 2.0, step = 0.1 }
@@ -323,8 +333,8 @@ min_up_down_vol_ratio_50 = { type = "float", min = 1.0, max = 1.5, step = 0.1 }
 
 
 # E1/E2 は 2026-07-05 に状態版 VCP から「ブレイクアウトイベント版」へ、
-# 2026-07-14 に再び状態版へ復元（型3シナリオで大敗・PF0.7〜1.3。ブレイク日の引けで
-# 追いかけ買いする構造が実運用と噛み合わなかった。型1が求めた「シグナルの独立性」は
+# 2026-07-14 に再び状態版へ復元（個別銘柄シナリオテストで大敗・PF0.7〜1.3。ブレイク日の引けで
+# 追いかけ買いする構造が実運用と噛み合わなかった。最適化バックテストが求めた「シグナルの独立性」は
 # 2026-07-05 の再エントリーブロック（exit まで同一銘柄スキップ）で既に測定器側で解決済み
 # だったため、イベント化の当初動機は別の対策で不要になっていた）。詳細:
 # doc/completed/e3_vcp_breakout_plan.md（イベント化の経緯）/
@@ -335,18 +345,18 @@ min_up_down_vol_ratio_50 = { type = "float", min = 1.0, max = 1.5, step = 0.1 }
 # テスト済みの汎用フィルタとして温存（将来「ブレイク通知」用途で使う可能性）。
 # 旧 study は E1_old/E2_old 等でユーザーが退避してから再最適化する運用。
 #
-# 2026-07-16: 2026-07-15 の型1再最適化ベストを型3で実測したところ、baseline手動値
-# （型3実測 E1 +71.7%/PF3.12・E2 +66.2%/PF4.54）に対し明確に見劣りした
-# （型1ベストの型3実測: E1 +43〜48%/PF3.0〜3.3・E2 +42.3%/PF3.42）。最適化が
+# 2026-07-16: 2026-07-15 の最適化バックテスト再最適化ベストを個別銘柄シナリオテストで実測したところ、
+# baseline手動値（実測 E1 +71.7%/PF3.12・E2 +66.2%/PF4.54）に対し明確に見劣りした
+# （最適化バックテストベストの実測: E1 +43〜48%/PF3.0〜3.3・E2 +42.3%/PF3.42）。最適化が
 # max_adr_pct_21（静けさ）を大幅に緩め・min_market_cap を大幅に下げる方向へ振れ、
 # VCP の「質」コンセプト（静かな値動き・大型株）が探索空間内で崩れたのが主因と判断。
 # B2 で min_adr_pct_21 の探索下限を上げてコンセプトを防衛した前例と同型の対処として、
 # 以下の探索レンジを引き締めた（詳細: doc/issue_list.md の該当項目）。
 #
-# 2026-07-18: 型3実測で E1/E2 は B2/B4/B6 と比べて PF・DD は圧倒的に優れる（PF 3.1〜5.2 vs
+# 2026-07-18: 個別銘柄シナリオテスト実測で E1/E2 は B2/B4/B6 と比べて PF・DD は圧倒的に優れる（PF 3.1〜5.2 vs
 # 1.4〜2.4、DD 8%台 vs 20〜28%）が、CAGR は最下位（7〜14% vs 18〜82%）。原因はトレード数の
 # 少なさ（4年強で117〜213件 vs B系228〜312件）で、最大8ポジションの枠が遊び複利が効かない。
-# さらに型1最適化は vcr/vol_surge をより厳しくして取引数を減らす方向（213→136 for E1）へ振れ、
+# さらに最適化バックテストは vcr/vol_surge をより厳しくして取引数を減らす方向（213→136 for E1）へ振れ、
 # CAGR をむしろ悪化させていた。static な「質」ゲート（vcr/adr/vol_surge/dist）は 2026-07-16/17
 # の引き締めのまま維持しつつ、min_market_cap の下限のみ緩めて機会を増やす実験を行う
 # （B2等は mcap 下限が桁違いに低くても質が保てているため、まず mcap 単独で頻度を稼げるか検証）。
@@ -501,17 +511,19 @@ max_sma50_atr_mult = { type = "float", min = 4.0, max = 10.0, step = 0.5 }
 min_market_cap     = { type = "categorical", choices = [1e8, 3e8, 1e9] }
 is_close_gt_sma50  = { type = "categorical", choices = [true] }
 
-# ⚠️ G3 前提条件: is_rs_blue_dot は現状 backtest_screener.py の alias 不一致で
-#   サイレント素通し（全銘柄通過＝フィルタ無効）。有効化するには alias_map に
-#   'rs_blue_dot': 'is_rs_blue_dot' を追加すること。未修正のまま回すと blue_dot が効かず
-#   「月次モメンタム＋地合い」だけのスクリーンになる点に注意。
+# 2026-07-22 修正済み: is_rs_blue_dot は backtest_screener.py の alias_map に
+# 'rs_blue_dot': 'is_rs_blue_dot' を追加してサイレント素通しバグを解消した
+# （2026-07-09〜2026-07-22の間、G3は実質「月次モメンタム＋地合い」だけのスクリーンとして
+# 動作しており、is_rs_blue_dot（全体の約0.36%のみ点灯するレア条件）が全く効いていなかった。
+# 200 trialの最適化が全滅する形で発覚。修正後は実際にフィルタが効くため検出件数が大幅に
+# 減る＝再最適化が前提。min_avg_hits_per_day 以下の値も実測を見て校正し直すこと）。
 [[strategy]]
 name = "G3_bluedot_leader"
-description = "RS 先行新高値(blue dot)×月次モメンタムのリーダー先取り。※ is_rs_blue_dot の alias 修正が前提"
+description = "RS 先行新高値(blue dot)×月次モメンタムのリーダー先取り"
 max_hits_per_day = 10
 sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
-is_rs_blue_dot = true           # ★ alias 修正が入るまで無効（サイレント素通し）
+is_rs_blue_dot = true
 min_change_1m_pct = 10.0
 is_close_gt_sma50 = true
 min_adr_pct_21 = 2.5
@@ -566,17 +578,23 @@ windows = [ { start = "2023-01-01", end = "2023-12-31" }, { start = "2026-01-01"
 # =============================================================
 [optimization_pruning]
 min_avg_hits_per_day = 1.0     # 期間中の1日平均ヒット件数の下限
-max_avg_hits_per_day = 20.0    # 期間中の1日平均ヒット件数の上限
+# 2026-07-21: 20.0→5.0 に引き下げ。スクリーナーとして毎日大量に検出し続けるのは
+# 「選別」の役割を果たさないという判断（ユーザー合意）。min_avg 同様、戦略側
+# [[strategy]] に max_avg_hits_per_day を書けば個別に上書き可能（既に対応済みの仕組み。
+# 現状どの戦略も上書きしておらず全戦略がこのグローバル値を共有している点に注意）。
+max_avg_hits_per_day = 5.0     # 期間中の1日平均ヒット件数の上限
 min_hit_rate_pct = 5.0         # 期間中、1件でもシグナルが出た営業日数の割合（極端な偏りを防ぐ）
 
-# --- 検出件数の実用帯 detect_band（2026-07-06 目的関数再設計）---
+# --- 検出件数の実用帯 detect_band（2026-07-06 目的関数再設計 / 2026-07-21 解決順序を修正）---
 # スコア = 期間CAGR / DDペナルティ × detect_adequacy(avg件/日)。
-# 型1は無限資金だがスクリーンは型3（有限資産）で使うため、検出件数を実用帯に寄せる係数。
-# 上のハード境界（min/max_avg_hits）が門番、これはその内側での「多すぎず少なすぎず」のソフト選好。
-# 戦略側 [[strategy]] に detect_lo/detect_hi/detect_floor を書けば個別に上書き可能。
-# hi/floor はドライ実行で avg件/日 の実分布を見てから実測校正すること（暫定値）。
-detect_lo = 1.0        # 実用帯の下限（件/日）。lo〜hi は減点なし=1.0
-detect_hi = 12.0       # 実用帯の上限（件/日）。超過は hi/x で割引
+# 最適化バックテストは無限資金だがスクリーンは個別銘柄シナリオテスト（有限資産）で使うため、
+# 検出件数を実用帯に寄せる係数。上のハード境界（min/max_avg_hits）が門番、
+# これはその内側での「多すぎず少なすぎず」のソフト選好。
+# 2026-07-21: detect_lo/hi のグローバル既定値（旧: 1.0/12.0固定）を撤去。
+# 未指定時は resolve_detect_band() が上のハード境界（min_avg/max_avg_hits_per_day、
+# 既に戦略ごとに校正済み）にそのまま連動する。ハード側だけ戦略別に緩めてもソフト側が
+# 一律のグローバル値のまま割り引く、という不整合を解消するため（詳細: doc/issue_list.md）。
+# 戦略側 [[strategy]] に detect_lo/detect_hi/detect_floor を書けば依然として個別に上書き可能。
 detect_floor = 0.4     # 帯外でもこれ以上は割り引かない係数の下限（優秀なスクリーンを件数だけで抹殺しない）
 
 # --- expectancy_lcb ソフトゲート（2026-07-08 追加。CAGR主指標の右裾過適合対策）---

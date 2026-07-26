@@ -203,6 +203,34 @@ def get_groupby_cache(df, col_name='date'):
     return _GROUPBY_CACHE[meta_key]
 
 
+def count_signal_episodes(trading_dates: list, signals_by_date: dict) -> int:
+    """生シグナル（`scan_signals_for_date` の日次結果）を「エピソード数」へ合算する。
+
+    同一銘柄が連続営業日で戦略の全条件を満たし続けても1エピソードとしてカウントする
+    （間が空けば新規エピソード）。fast_prune のハード境界（min/max_avg_hits_per_day）が
+    「実トレード数」に近い量を見られるようにするための近似（2026-07-23 追加）。
+
+    背景: 状態が何日も持続するタイプの戦略（RSトレンド・テーマモメンタム等）は、
+    Phase 2 のトレードシミュレーション（再エントリー禁止ロジック適用後）で数えられる
+    `total_trades` よりも、Phase 1 の生シグナル数の方がずっと大きくなりがちで、
+    ハードプルーニングだけがこの食い違いの影響を受けていた。厳密な重複排除には
+    出口シミュレーション（実際の保有日数）が必要だが、それでは fast_prune の
+    「シミュレーションを回さず安く弾く」という速度上の役割が失われる。連続日数の合算は
+    追加のマジックナンバー（クールダウン日数等）を持ち込まずに近似する方法。
+    """
+    total_episodes = 0
+    prev_symbols = set()
+    for td in trading_dates:
+        signals = signals_by_date.get(td)
+        if not signals:
+            prev_symbols = set()
+            continue
+        current_symbols = {s.symbol_id for s in signals}
+        total_episodes += len(current_symbols - prev_symbols)
+        prev_symbols = current_symbols
+    return total_episodes
+
+
 def run_single_strategy(strat_dict: dict, df_indicators, df_prices, df_ranks, df_symbols, df_theme_constituents, trading_dates, exit_rules, show_progress=True, fast_prune=False, prune_bounds=(1.0, 15.0, 5.0), consider_tax=0.0,
                         allow_reentry_during_hold=False, entry_mode="close"):
     """
@@ -264,7 +292,11 @@ def run_single_strategy(strat_dict: dict, df_indicators, df_prices, df_ranks, df
 
     total_days = len(trading_dates)
     if total_days > 0:
-        avg_per_day = total_signals / total_days
+        # 2026-07-23: avg_per_day はエピソード数（連続日数を合算した近似実トレード数）ベースに変更。
+        # 生シグナル数(total_signals)のままだと、状態が持続する戦略でハードプルーニングが
+        # 実トレード数(スコア側が見ている値)より遥かに厳しく効いてしまう問題への対処。
+        total_episodes = count_signal_episodes(trading_dates, signals_by_date)
+        avg_per_day = total_episodes / total_days
         hit_rate_pct = (days_with_signals / total_days) * 100.0
     else:
         avg_per_day = 0

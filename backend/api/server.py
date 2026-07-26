@@ -19,8 +19,10 @@ from api import dashboard_router
 from api import watchlist_router
 from api import portfolio_router
 from api import backtest_router
+from api import universe_router
 from db.database import init_db
 from db.database_user import init_user_db
+from db.database_universe import init_universe_db
 
 app = FastAPI(title="Stock Analyzer API", version="0.1.0")
 
@@ -37,6 +39,10 @@ init_db(config["system"]["db_path"])
 # Initialize User Database
 user_db_path = config["system"].get("user_db_path", os.path.join(os.path.dirname(config["system"]["db_path"]), "user_data.db"))
 init_user_db(user_db_path)
+
+# Initialize Universe Database
+universe_db_path = config["system"].get("universe_db_path", os.path.join(os.path.dirname(config["system"]["db_path"]), "universe.db"))
+init_universe_db(universe_db_path)
 
 # Configure CORS for frontend access (Vite default dev server is 5173)
 app.add_middleware(
@@ -69,6 +75,8 @@ app.include_router(watchlist_router.router, prefix="/api")
 app.include_router(portfolio_router.router, prefix="/api")
 # Include backtest API router
 app.include_router(backtest_router.router, prefix="/api")
+# Include universe manager API router
+app.include_router(universe_router.router, prefix="/api")
 
 @app.get("/")
 def read_root():

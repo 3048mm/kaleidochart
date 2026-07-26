@@ -67,11 +67,11 @@ def reset_db():
     # 1. Stocks data
     # AAPL (Rise candidate: +1.5%)
     dp1 = DailyPrice(symbol_id=1, date=d, open=180, high=185, low=178, close=183, volume=1000)
-    ind1 = Indicator(symbol_id=1, date=d, change_1d_pct=1.5, sma50_atr_mult=4.0)
-    
+    ind1 = Indicator(symbol_id=1, date=d, change_1d_pct=1.5, sma50_atr_mult=4.0, avg_dollar_volume_21=5e6)
+
     # MSFT (Fall candidate: -3.0%)
     dp4 = DailyPrice(symbol_id=4, date=d, open=400, high=402, low=385, close=388, volume=1200)
-    ind4 = Indicator(symbol_id=4, date=d, change_1d_pct=-3.0, sma50_atr_mult=4.0, vol_surge_21=2.0)
+    ind4 = Indicator(symbol_id=4, date=d, change_1d_pct=-3.0, sma50_atr_mult=4.0, vol_surge_21=2.0, avg_dollar_volume_21=5e6)
     
     db.add_all([dp1, ind1, dp4, ind4])
 
@@ -197,4 +197,28 @@ def test_screener_api_legacy_alias_normalization(client):
     tickers2 = [x["ticker"] for x in items2]
     assert "AAPL" in tickers2
     assert "MSFT" not in tickers2
+
+
+def test_screener_api_excludes_illiquid_symbols(client):
+    """2026-07-27: 全戦略共通の流動性ハード制約(min_avg_dollar_volume_21)が
+    生スクリーナーAPIでも常時適用され、クエリパラメータに関わらず低流動性銘柄が
+    除外されること（doc/issue_list.md P0 対応）。
+    """
+    db = _TestSession()
+    from datetime import date
+    d = date(2026, 5, 20)
+
+    # AAPL(symbol_id=1)は基本fixtureで avg_dollar_volume_21=5e6 (閾値$2M超で通過)。
+    # MSFT(symbol_id=4)の avg_dollar_volume_21 を閾値未満まで下げて低流動性化する。
+    ind4 = db.query(Indicator).filter(Indicator.symbol_id == 4, Indicator.date == d).first()
+    ind4.avg_dollar_volume_21 = 500_000.0
+    db.commit()
+    db.close()
+
+    # フィルタ無し（全銘柄対象のはず）でも、低流動性銘柄は常に除外される
+    resp = client.get("/api/screener?target_date=2026-05-20")
+    assert resp.status_code == 200
+    tickers = [x["ticker"] for x in resp.json()]
+    assert "AAPL" in tickers
+    assert "MSFT" not in tickers
 

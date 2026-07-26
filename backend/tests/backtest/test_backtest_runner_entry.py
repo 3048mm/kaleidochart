@@ -11,7 +11,7 @@ from datetime import date, timedelta
 import pandas as pd
 import pytest
 
-from backend.backtest.backtest_runner import run_single_strategy
+from backend.backtest.backtest_runner import run_single_strategy, count_signal_episodes
 from backend.backtest.backtest_simulator import ExitRules
 
 # 10 営業日（土日を含まない連続日として単純化）
@@ -229,3 +229,64 @@ def test_entry_mode_next_open_uses_next_day_open():
     assert trades[0].entry_price == pytest.approx(101.0)  # 翌日の open
     assert trades[0].exit_date == DATES[2]                # exit タイミングは不変
     assert trades[0].pnl_pct == pytest.approx((100.0 - 101.0) / 101.0 * 100.0)
+
+
+# =============================================================
+# 2026-07-23: fast_prune のハード境界を「生シグナル数」ではなく
+# 「エピソード数（連続日数を合算した近似実トレード数）」に寄せる
+# =============================================================
+
+class _FakeSignal:
+    """count_signal_episodes のテスト用軽量モック（symbol_id のみ必要）。"""
+    def __init__(self, symbol_id):
+        self.symbol_id = symbol_id
+
+
+def test_count_signal_episodes_collapses_consecutive_days():
+    # 同一銘柄が3日連続で発火 → 1エピソード
+    dates = [date(2024, 1, 1), date(2024, 1, 2), date(2024, 1, 3)]
+    signals_by_date = {d: [_FakeSignal(1)] for d in dates}
+    assert count_signal_episodes(dates, signals_by_date) == 1
+
+
+def test_count_signal_episodes_resets_after_gap():
+    # 3日連続発火 → 間が空く → 再度発火 = 2エピソード
+    dates = [date(2024, 1, 1) + timedelta(days=i) for i in range(6)]
+    signals_by_date = {
+        dates[0]: [_FakeSignal(1)],
+        dates[1]: [_FakeSignal(1)],
+        dates[2]: [_FakeSignal(1)],
+        # dates[3]: 発火なし（間が空く）
+        dates[4]: [_FakeSignal(1)],
+    }
+    assert count_signal_episodes(dates, signals_by_date) == 2
+
+
+def test_count_signal_episodes_counts_symbols_independently():
+    # 同日に2銘柄が発火し、片方だけ翌日も継続 → 2エピソード（新規1・継続1）
+    dates = [date(2024, 1, 1), date(2024, 1, 2)]
+    signals_by_date = {
+        dates[0]: [_FakeSignal(1), _FakeSignal(2)],
+        dates[1]: [_FakeSignal(1)],  # symbol 1 のみ継続
+    }
+    assert count_signal_episodes(dates, signals_by_date) == 2
+
+
+def test_count_signal_episodes_no_signals_is_zero():
+    dates = [date(2024, 1, 1), date(2024, 1, 2)]
+    assert count_signal_episodes(dates, {}) == 0
+
+
+def test_fast_prune_uses_episode_count_not_raw_signal_count():
+    """状態が持続する戦略で、生シグナル数ではなくエピソード数がプルーニング判定に使われること。
+
+    フィクスチャ: 1銘柄が10営業日中5日連続で発火（1エピソードのみ）。
+    生シグナル数ベースなら avg=5/10=0.5/日でmin_avg=0.3を通過してしまうが、
+    エピソード数ベースなら avg=1/10=0.1/日で min_avg=0.3 を下回りプルーニングされるべき。
+    """
+    frames = _build_frames(signal_days=range(5), n_symbols=1)
+    metrics, trades = _run(
+        _strategy(), frames, fast_prune=True, prune_bounds=(0.3, 15.0, 5.0))
+
+    assert metrics.get("fast_pruned") is True
+    assert metrics["avg_per_day"] == pytest.approx(0.1)  # 1エピソード / 10日

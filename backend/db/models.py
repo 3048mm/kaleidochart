@@ -154,6 +154,7 @@ class Indicator(Base):
     vol_surge_rel_spy_21  = Column(Float)    # vol_surge_21 / SPY_vol_surge_21
     up_down_vol_ratio_50  = Column(Float)    # Sum(Vol on Up days) / Sum(Vol on Down days, 50d)
     vol_accum_days_5      = Column(Integer)  # Accumulation days in last 5d (Close>Prev & Vol>1.1x SMA21)
+    avg_dollar_volume_21  = Column(Float)    # (close*volume) の21日平均。全戦略共通の流動性ハード制約用
     
     # --- Price Range from Highs ---
     dist_63d_high_pct  = Column(Float)   # % below 63-day high (swing)

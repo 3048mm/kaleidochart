@@ -57,6 +57,24 @@ for _col_name, _col_obj in Indicator.__table__.columns.items():
 _INDICATOR_COLUMNS["market_cap"] = DailyPrice.market_cap
 _INDICATOR_COLUMN_TYPES["market_cap"] = "float"
 
+# --- 全戦略共通の流動性ハード制約 (min_avg_dollar_volume_21) ---
+# 最適化バックテスト・個別銘柄シナリオテストと同じ基準値を backtest_config.toml の
+# [general] から読む（値のソースを1箇所に保つ）。UIには出さず常時適用する
+# （2026-07-27、doc/issue_list.md P0 参照）。
+_BACKTEST_CONFIG_PATH = os.path.join(_PROJECT_ROOT, "backend", "backtest", "backtest_config.toml")
+
+def _load_min_avg_dollar_volume_21() -> Optional[float]:
+    try:
+        with open(_BACKTEST_CONFIG_PATH, "rb") as f:
+            bt_config = tomli.load(f)
+        val = bt_config.get("general", {}).get("min_avg_dollar_volume_21")
+        return float(val) if val is not None else None
+    except Exception as e:
+        logger.error(f"Failed to load min_avg_dollar_volume_21 from backtest_config.toml: {e}")
+        return None
+
+_MIN_AVG_DOLLAR_VOLUME_21 = _load_min_avg_dollar_volume_21()
+
 # --- Virtual (computed) columns ---
 _VIRTUAL_COLUMNS = {
     "change_oc_pct":  lambda: (DailyPrice.close - DailyPrice.open) / DailyPrice.open * 100,
@@ -744,6 +762,10 @@ def get_screener(
 
     # Filter by the determined date
     query = query.filter(Indicator.date == latest_date_result)
+
+    # ---- 全戦略共通の流動性ハード制約（最適化対象外・常時適用。UIには出さない） ----
+    if _MIN_AVG_DOLLAR_VOLUME_21 is not None and "avg_dollar_volume_21" in _INDICATOR_COLUMNS:
+        query = query.filter(_INDICATOR_COLUMNS["avg_dollar_volume_21"] >= _MIN_AVG_DOLLAR_VOLUME_21)
 
     # ---- Dynamic filters from query params ----
     # Collect all query params except reserved ones

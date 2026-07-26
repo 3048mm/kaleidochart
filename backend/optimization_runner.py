@@ -46,7 +46,7 @@ def get_cached_data(config_app, start_date, end_date):
 def detect_adequacy(avg_hits_per_day: float, detect_band: tuple = (1.0, 12.0, 0.4)) -> float:
     """検出件数の「実用帯」係数（0〜1）を返す。多すぎず少なすぎずを緩やかに選好する。
 
-    型1は無限資金だが、そのスクリーンは型3（有限資産）で使われる。日に多数ヒットしても
+    最適化バックテストは無限資金だが、そのスクリーンは個別銘柄シナリオテスト（有限資産）で使われる。日に多数ヒットしても
     有限資産では取り切れず、逆に枯れると枠が遊ぶ。そこで avg件/日 を実用帯に収めるための
     ソフトな選好係数を CAGR スコアに掛ける。ハードな門番は prune 境界（min/max_avg_hits_per_day）
     が担うため、ここは帯外でも floor 未満には割り引かない（優秀なスクリーンを件数だけで抹殺しない）。
@@ -132,6 +132,25 @@ def calculate_custom_score(metrics, total_trading_days, max_allowed_dd: float = 
         score *= lcb_gate_penalty
 
     return score
+
+def resolve_detect_band(strat_base: dict, prune_conf: dict, min_avg: float, max_avg: float) -> tuple:
+    """detect_band=(lo, hi, floor) を解決する（2026-07-21 追加）。
+
+    以前は detect_lo/hi がハードプルーニング境界（min/max_avg_hits_per_day）とは無関係な
+    独立のグローバル既定値（1.0, 12.0）を持っていたため、ハード側だけ戦略ごとに緩めても
+    ソフト側の「実用帯」は一律のグローバル値のまま割り引く不整合があった。
+    detect_lo/hi の既定値を、既に戦略ごとに校正済みのハード境界（min_avg/max_avg）に
+    連動させることでこれを解消する。
+
+    解決順序: 戦略側（strat_base の detect_lo/hi/floor）
+            > [optimization_pruning] のグローバル指定（prune_conf）
+            > ハードプルーニング境界（min_avg/max_avg。floor はコード既定 0.4）
+    """
+    band_lo = strat_base.get('detect_lo', prune_conf.get('detect_lo', min_avg))
+    band_hi = strat_base.get('detect_hi', prune_conf.get('detect_hi', max_avg))
+    band_floor = strat_base.get('detect_floor', prune_conf.get('detect_floor', 0.4))
+    return (float(band_lo), float(band_hi), float(band_floor))
+
 
 def calculate_prune_penalty(avg_hits: float, hit_rate_pct: float, bounds: tuple):
     """
@@ -431,7 +450,7 @@ def objective(trial: optuna.Trial, strategy_name: str, config, config_app, exit_
         # Extract prune bounds from config if available (allow strategy-specific overrides)
         prune_conf = config.get('optimization_pruning', {})
         min_avg = strat_base.get('min_avg_hits_per_day', prune_conf.get('min_avg_hits_per_day', 1.0))
-        max_avg = strat_base.get('max_avg_hits_per_day', prune_conf.get('max_avg_hits_per_day', 15.0))
+        max_avg = strat_base.get('max_avg_hits_per_day', prune_conf.get('max_avg_hits_per_day', 5.0))
         min_hit_rate = strat_base.get('min_hit_rate_pct', prune_conf.get('min_hit_rate_pct', 5.0))
         prune_bounds = (min_avg, max_avg, min_hit_rate)
         
@@ -440,11 +459,9 @@ def objective(trial: optuna.Trial, strategy_name: str, config, config_app, exit_
         consider_tax = float(config.get('general', {}).get('consider_tax', 0.0))
         entry_mode = config.get('general', {}).get('entry_mode', 'close')
 
-        # 検出件数の実用帯 detect_band=(lo, hi, floor)。戦略側 > [optimization_pruning] > コード既定 の順で解決
-        band_lo = strat_base.get('detect_lo', prune_conf.get('detect_lo', 1.0))
-        band_hi = strat_base.get('detect_hi', prune_conf.get('detect_hi', 12.0))
-        band_floor = strat_base.get('detect_floor', prune_conf.get('detect_floor', 0.4))
-        detect_band = (float(band_lo), float(band_hi), float(band_floor))
+        # 検出件数の実用帯 detect_band=(lo, hi, floor)。
+        # 既定値はハードプルーニング境界(min_avg/max_avg)に連動させる（resolve_detect_band 参照）
+        detect_band = resolve_detect_band(strat_base, prune_conf, min_avg, max_avg)
 
         # expectancy_lcb ソフトゲート係数。戦略側 > [optimization_pruning] > コード既定 の順で解決
         lcb_gate_penalty = float(strat_base.get('lcb_gate_penalty',

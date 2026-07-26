@@ -1,5 +1,5 @@
 """
-test_optimization_score.py — 型1最適化の目的関数（再設計後）の純関数テスト。
+test_optimization_score.py — 最適化バックテストの目的関数（再設計後）の純関数テスト。
 
 再設計の要点（doc/in_progress/objective_redesign_plan.md）:
   score = period_CAGR / dd_penalty × detect_adequacy(avg_hits_per_day)
@@ -10,7 +10,7 @@ test_optimization_score.py — 型1最適化の目的関数（再設計後）の
 import math
 import pytest
 
-from optimization_runner import calculate_custom_score, detect_adequacy
+from optimization_runner import calculate_custom_score, detect_adequacy, resolve_detect_band
 
 
 # =============================================================
@@ -165,3 +165,43 @@ def test_lcb_gate_penalty_is_configurable():
     gated = calculate_custom_score(
         _metrics(strat_multiplier=1.3, expectancy_lcb=-0.1), 252, 20.0, BAND, lcb_gate_penalty=0.25)
     assert gated == pytest.approx(base * 0.25, rel=1e-9)
+
+
+# =============================================================
+# resolve_detect_band（2026-07-21 追加）
+#
+# 背景: detect_band(ソフトな実用帯)が、既に戦略ごとに個別校正されている
+# prune_bounds(min/max_avg_hits_per_day、ハードな門番)と無関係な独立の
+# グローバル既定値を持っていたため、ハード側だけ緩めた戦略でもソフト側は
+# 一律のグローバル値のまま割引かれる不整合があった。detect_lo/hiの既定値を
+# min_avg/max_avg（呼び出し側で解決済みのハード境界）に連動させることで解消する。
+# 解決順序は従来通り: 戦略側 > [optimization_pruning] > ハード境界(min_avg/max_avg)。
+# =============================================================
+
+def test_resolve_detect_band_defaults_to_hard_prune_bounds():
+    # detect_lo/hi/floorが戦略側にもグローバル設定にも無い場合、
+    # ソフト帯はハードプルーニングのmin_avg/max_avgにそのまま追従する
+    band = resolve_detect_band(strat_base={}, prune_conf={}, min_avg=0.05, max_avg=3.0)
+    assert band == (0.05, 3.0, 0.4)
+
+
+def test_resolve_detect_band_strategy_override_wins():
+    # 戦略側で明示指定すればハード境界より優先される
+    strat_base = {'detect_lo': 2.0, 'detect_hi': 8.0, 'detect_floor': 0.3}
+    band = resolve_detect_band(strat_base=strat_base, prune_conf={}, min_avg=0.05, max_avg=3.0)
+    assert band == (2.0, 8.0, 0.3)
+
+
+def test_resolve_detect_band_global_override_wins_over_hard_bounds():
+    # [optimization_pruning] のグローバル指定は、戦略側指定が無ければハード境界より優先される
+    prune_conf = {'detect_lo': 1.0, 'detect_hi': 12.0}
+    band = resolve_detect_band(strat_base={}, prune_conf=prune_conf, min_avg=0.05, max_avg=3.0)
+    assert band == (1.0, 12.0, 0.4)
+
+
+def test_resolve_detect_band_strategy_override_wins_over_global():
+    # 戦略側指定はグローバル指定よりも優先される（解決順序: 戦略 > グローバル > ハード境界）
+    strat_base = {'detect_lo': 2.0}
+    prune_conf = {'detect_lo': 1.0, 'detect_hi': 12.0}
+    band = resolve_detect_band(strat_base=strat_base, prune_conf=prune_conf, min_avg=0.05, max_avg=3.0)
+    assert band == (2.0, 12.0, 0.4)

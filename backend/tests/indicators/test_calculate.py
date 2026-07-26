@@ -170,6 +170,7 @@ def test_calculate_indicators_protection():
         'up_down_vol_ratio_50': None,
         'is_rs_blue_dot': 0.000000,
         'is_trend_template': 1.000000,
+        'avg_dollar_volume_21': 128010376.666667,
     }
     
     for col, expected in EXPECTATIONS.items():

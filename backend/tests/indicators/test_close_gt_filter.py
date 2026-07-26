@@ -57,12 +57,12 @@ def reset_db():
     # Stock A: close (150) > ema_63 (140) → should PASS the filter
     sym_a = Symbol(id=1, ticker="ABOVE", name="Above EMA63", category="個別", active=1)
     dp_a = DailyPrice(symbol_id=1, date=d, open=145, high=155, low=144, close=150, volume=1000)
-    ind_a = Indicator(symbol_id=1, date=d, ema_63=140.0, change_1d_pct=5.0)
+    ind_a = Indicator(symbol_id=1, date=d, ema_63=140.0, change_1d_pct=5.0, avg_dollar_volume_21=5e6)
 
     # Stock B: close (130) < ema_63 (140) → should FAIL the filter
     sym_b = Symbol(id=2, ticker="BELOW", name="Below EMA63", category="個別", active=1)
     dp_b = DailyPrice(symbol_id=2, date=d, open=135, high=138, low=128, close=130, volume=800)
-    ind_b = Indicator(symbol_id=2, date=d, ema_63=140.0, change_1d_pct=3.0)
+    ind_b = Indicator(symbol_id=2, date=d, ema_63=140.0, change_1d_pct=3.0, avg_dollar_volume_21=5e6)
 
     db.add_all([sym_a, dp_a, ind_a, sym_b, dp_b, ind_b])
     db.commit()

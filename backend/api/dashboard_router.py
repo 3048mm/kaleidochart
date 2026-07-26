@@ -197,13 +197,16 @@ def get_dashboard(
             resp.qqq_feature = _build_etf_feature(db, s, dp, target_date)
             continue
 
-        # 「指標」カテゴリは panel item を使わない（leading / SPY feature 専用ビルダー）
-        if s.category == "指標":
-            if s.ticker == "SPY":
-                resp.spy_feature = _build_etf_feature(db, s, dp, target_date)
-            else:
-                resp.leading.append(_build_leading_item(db, s, dp, target_date, preload=preload))
+        # SPY は category にかかわらず別格扱い (spy_feature) とする
+        if s.ticker == "SPY":
+            resp.spy_feature = _build_etf_feature(db, s, dp, target_date)
             continue
+
+        # 「指標」カテゴリおよび先行指標兼任ティッカー (IBIT, CPER) は leading パネルに追加
+        if s.category == "指標" or s.ticker in ("IBIT", "CPER"):
+            resp.leading.append(_build_leading_item(db, s, dp, target_date, preload=preload))
+            if s.category == "指標":
+                continue
 
         r14_rank = rank_14_dict.get(sym_id, 0.0) or 0.0
         r21_rank = rank_21_dict.get(sym_id, 0.0) or 0.0
