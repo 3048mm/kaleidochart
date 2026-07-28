@@ -350,14 +350,20 @@ def write_maintenance_report(report: dict, dry_run: bool):
         
     logger.info(f"Audit report saved to: {report_file}")
     
-    # 2. Sheets Delisting recommendations CSV
+    # 2. Delisting recommendations CSV
+    #    T1 のソースが universe.db へ移行したため、除外先は Google スプレッドシートではなく
+    #    universe.db の symbols_master.active=0 になる（計画書 W8）。
     if report["stale_symbols"]:
-        csv_file = os.path.join(report_dir, "sheets_delisting_recommendations.csv")
+        csv_file = os.path.join(report_dir, "delisting_recommendations.csv")
         with open(csv_file, "w", encoding="utf-8") as f:
             f.write("ticker,reason\n")
             for sym in report["stale_symbols"]:
                 f.write(f"{sym},Stale data (Not updated for 5+ days relative to SPY)\n")
-        logger.info(f"Sheets delisting recommendation list exported to: {csv_file}")
+        logger.info(f"Delisting recommendation list exported to: {csv_file}")
+        logger.info(
+            "  → universe.db へ反映するには: "
+            "python backend/scripts/retire_stale_symbols.py --from-report"
+        )
 
 def main():
     parser = argparse.ArgumentParser(description="Stocktool Weekly Maintenance Script.")

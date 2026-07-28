@@ -1,4 +1,5 @@
 import logging
+import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from sqlalchemy import func
@@ -102,6 +103,20 @@ def sync_phase_t2_prices(db, sheet_data: List[Dict], symbol_id_map: Dict, index_
                     
     return spy_latest_date
 
+def _is_production_db(db) -> bool:
+    """セッションの接続先が本番 DB (stocktool.db) かどうかを判定する。
+
+    グローバルな init_db の状態ではなくセッション自身の bind を見るため、
+    テストや sandbox のセッションを渡された場合は必ず False になる。
+    """
+    try:
+        url = db.get_bind().url
+        return os.path.basename(str(url.database or "")) == "stocktool.db"
+    except Exception:
+        # 判定できない場合は安全側（本番扱い）に倒す
+        return True
+
+
 def sync_fx_rates(db, skip_fetch: bool = False, logger: Optional[logging.Logger] = None) -> bool:
     """
     為替レート (USD/JPY) を取得し、fx_rates テーブルを同期します。
@@ -125,6 +140,18 @@ def sync_fx_rates(db, skip_fetch: bool = False, logger: Optional[logging.Logger]
         if skip_fetch:
             # テストおよびスキップ用：ダミー為替データの登録
             # start_date から今日までの日付に対してダミー値を挿入
+            #
+            # 【重要】本番 DB にはダミーを書き込まない。fx_rates は
+            # (currency_pair, date, rate) しか持たずダミーと実データを後から区別できず、
+            # 一度混入すると portfolio の円換算が誤った値で動き続けるため
+            # （2026-07-27 に実際に発生し、31行全てがダミーになった）。
+            if _is_production_db(db):
+                logger.warning(
+                    "[Skip Fetch] 本番 DB のためダミー為替の投入をスキップしました "
+                    "（fx_rates はダミーと実データを区別できないため）。"
+                )
+                return True
+
             today = date.today()
             curr = start_date
             count = 0

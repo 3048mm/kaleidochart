@@ -177,12 +177,31 @@ def rotate_and_archive_to_parquet(db, db_path: str, logger: logging.Logger) -> d
     
     logger.info("  2. Merging SQL updates into Parquet masters...")
     # Merge and update df master instances
-    df_symbols = process_and_merge_table("symbols", ["ticker", "exchange"], df_symbols_sql, old_paths.get('symbols'))
+    # --- 全期間同期テーブル: SQLite を正として「置換」する ---------------
+    #   symbols / theme_constituents は SQLite 側が常に完全集合を持つ
+    #   （architecture.md §11.1 の「全期間（同期）」）。
+    #   ここでマージすると SQLite での削除が Parquet に伝播せず、
+    #   Parquet を直読みするバックテストが古いテーマ構成を見続ける。
+    #   実例: universe.db 移行で CPER のテーマ構成3ペア・孤児4ペア・重複12ペアを
+    #   削除したが、マージのままでは Parquet 側に残り続けた。
+    df_symbols = df_symbols_sql
+    df_tc = df_tc_sql
+
+    # --- 時系列テーブル: SQLite はホット期間のみのため「マージ」する ------
     df_prices = process_and_merge_table("daily_prices", ["symbol_id", "date"], df_prices_sql, old_paths.get('prices'))
     df_indicators = process_and_merge_table("indicators", ["symbol_id", "date"], df_indicators_sql, old_paths.get('indicators'))
     df_ranks = process_and_merge_table("relative_ranks", ["symbol_id", "date"], df_ranks_sql, old_paths.get('ranks'))
-    df_tc = process_and_merge_table("theme_constituents", ["theme_id", "symbol_id"], df_tc_sql, old_paths.get('tc'))
     df_signals = process_and_merge_table("market_signals", ["date"], df_signals_sql, old_paths.get('signals'))
+
+    # 安全弁: 全期間同期テーブルが空なら置換せず旧世代を維持する
+    # （SQLite が何らかの理由で空になったときに銘柄マスタを失わないため）
+    for name, df_new, old_key in (("symbols", df_symbols, "symbols"), ("theme_constituents", df_tc, "tc")):
+        if df_new.empty and old_paths.get(old_key) and os.path.exists(old_paths[old_key]):
+            logger.warning(f"  {name} が空のため置換を中止し、旧世代の Parquet を維持します")
+            if name == "symbols":
+                df_symbols = pd.read_parquet(old_paths['symbols'])
+            else:
+                df_tc = pd.read_parquet(old_paths['tc'])
     
     # Save the updated full history masters
     logger_fn = logger.info

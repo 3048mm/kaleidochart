@@ -131,3 +131,41 @@ def test_fx_rate_independent_fetching(db_session):
     saved = db_session.query(FxRate).filter_by(currency_pair="USD/JPY").first()
     assert saved is not None
     assert saved.rate > 0.0
+
+
+# ============================================================
+# TEST-E: skip_fetch のダミー値が本番 DB を汚染しないことの検証
+#   背景: 2026-07-27 に --skip-fetch でパイプラインが走り、本番 fx_rates の
+#   31行全てがダミー値 (155.0 + day%5*0.2) になった。fx_rates は
+#   (currency_pair, date, rate) しか持たずダミーと実データを区別できないため、
+#   portfolio の円換算が実勢 163.7 に対し 155.x で動き続けた。
+# ============================================================
+def test_skip_fetch_does_not_write_dummy_to_production(tmp_path):
+    """TEST-E: 接続先が stocktool.db の場合、skip_fetch はダミーを投入しない"""
+    from pipeline.phases.t2_prices import sync_fx_rates, _is_production_db
+
+    # 本番と同名のファイル (stocktool.db) を一時ディレクトリに作る
+    prod_like_path = tmp_path / "stocktool.db"
+    prod_engine = create_engine(f"sqlite:///{prod_like_path}")
+    Base.metadata.create_all(bind=prod_engine)
+    ProdSession = sessionmaker(autocommit=False, autoflush=False, bind=prod_engine)
+    prod_db = ProdSession()
+
+    try:
+        assert _is_production_db(prod_db) is True
+
+        success = sync_fx_rates(prod_db, skip_fetch=True)
+
+        # 正常終了しつつ、1行も書かれていないこと
+        assert success is True
+        assert prod_db.query(FxRate).filter_by(currency_pair="USD/JPY").count() == 0
+    finally:
+        prod_db.close()
+        prod_engine.dispose()
+
+
+def test_is_production_db_detects_non_production(db_session):
+    """TEST-E2: sandbox / テスト用 DB は本番と判定されない"""
+    from pipeline.phases.t2_prices import _is_production_db
+
+    assert _is_production_db(db_session) is False

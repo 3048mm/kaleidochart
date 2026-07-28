@@ -8,8 +8,10 @@ from typing import Optional, List
 from sqlalchemy import func, text
 
 from db.database import init_db, get_db, get_write_db, get_active_db_path
+from db.database_universe import init_universe_db, get_universe_db
 from db.models import Symbol, DailyPrice, Indicator, RelativeRank, MarketSignal, ThemeConstituent
 from data_collection.spreadsheet_sync import fetch_symbols_from_sheet
+from data_collection.universe_sync import sync_symbols_from_universe
 
 from .phases.t2_prices import sync_phase_t2_prices, sync_fx_rates
 from .phases.t3_indicators import sync_phase_t3_indicators
@@ -18,23 +20,35 @@ from .phases.t5_signals import sync_phase_t5_signals
 
 logger = logging.getLogger(__name__)
 
+
+def _resolve_universe_db_path(config: dict) -> str:
+    """config から universe.db のパスを解決する（api/server.py と同じ規約）。"""
+    system = config.get("system", {})
+    return system.get(
+        "universe_db_path",
+        os.path.join(os.path.dirname(system["db_path"]), "universe.db"),
+    )
+
+
 def sync_symbols_to_db(db, credentials_path, spreadsheet_url, extra_symbols=None):
+    """【レガシー】Google スプレッドシートから T1 を同期する。
+
+    T1 のソースは universe.db に移行済み（`data_collection.universe_sync`）。
+    本関数はロールバック用に残しているが、通常経路では使用しない。
+
+    `extra_symbols` の注入は廃止した。注入時の exchange が 'US' 固定だったため、
+    同じ銘柄がスプレッドシートに別の exchange で載ると (ticker, exchange) 自然キーが
+    外れて別 id の重複行が生まれ、価格履歴が孤児化する事故要因になっていた
+    （2026-07-28 に GBTC で実際に発生。計画書 §7.6）。
+    """
     sheet_data = fetch_symbols_from_sheet(credentials_path, spreadsheet_url)
-    
+
     if extra_symbols:
-        existing_tickers = {item['ticker'] for item in sheet_data}
-        for ticker in extra_symbols:
-            if ticker not in existing_tickers:
-                sheet_data.append({
-                    "ticker": ticker,
-                    "exchange": "US",
-                    "name": ticker,
-                    "category": "市場",
-                    "asset_class": "System",
-                    "tags": None,
-                    "theme_type": "etf"
-                })
-    
+        logger.warning(
+            "extra_symbols は廃止されました（%d 件を無視します）。"
+            "銘柄の追加は universe.db で行ってください。", len(extra_symbols)
+        )
+
     db.query(Symbol).update({"active": 0})
     symbol_ids = {}
     for item in sheet_data:
@@ -611,15 +625,13 @@ def run_pipeline(config, db_path, logger: logging.Logger, rebuild_from: Optional
         # T1: Symbol Sync & Cascaded Rebuild (if needed)
         with get_write_db() as db:
             if not skip_sync:
-                logger.info("Starting T1: Symbol Sync...")
+                logger.info("Starting T1: Symbol Sync (source: universe.db)...")
                 t_start = time.time()
-                extra_symbols = config.get("data_collection", {}).get("symbols", [])
-                sheet_data, symbol_id_map = sync_symbols_to_db(
-                    db, 
-                    config["system"].get("credentials_path", "credentials.json"), 
-                    config["system"].get("spreadsheet_url", "https://docs.google.com/spreadsheets/d/1pkwMVl6FaurinU2Z1Mm_fW_zepMe6YLXE0e-v-vcp1k/edit#gid=0"),
-                    extra_symbols=extra_symbols
-                )
+                # T1 のソースは universe.db。(ticker, exchange) 自然キーで upsert し
+                # 既存 symbols.id を温存する（価格履歴の孤児化を防ぐため）
+                init_universe_db(_resolve_universe_db_path(config))
+                with get_universe_db() as udb:
+                    sheet_data, symbol_id_map = sync_symbols_from_universe(db, udb, logger_=logger)
                 logger.info(f"T1: Symbol Sync completed in {time.time() - t_start:.2f}s")
             else:
                 symbols = db.query(Symbol).filter(Symbol.active == True).all()

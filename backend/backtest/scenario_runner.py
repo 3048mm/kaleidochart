@@ -432,8 +432,6 @@ def run_scenario_test(
         if ind_day is not None and price_day is not None:
             # Merge once per day
             price_cols = ['symbol_id', 'date', 'open', 'high', 'low', 'close', 'volume', 'market_cap']
-            if 'avg_dollar_volume_21' in price_day.columns:
-                price_cols.append('avg_dollar_volume_21')
             base_merged = ind_day.merge(
                 price_day[price_cols],
                 on=['symbol_id', 'date'],

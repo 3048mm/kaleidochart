@@ -30,7 +30,24 @@
 
 #### 3.1 T1: 銘柄メタデータ (`symbols`)
 
-株価データの主体となる銘柄そのものの定義です。Googleスプレッドシートから同期されます。
+株価データの主体となる銘柄そのものの定義です。**`data/universe.db`（`symbols_master` / `theme_members`）から同期されます。**
+
+> [!IMPORTANT]
+> **同期は `(ticker, exchange)` を自然キーとした upsert で行い、既存の `symbols.id` を必ず温存します。**
+> `daily_prices` / `indicators` / `relative_ranks`（各約157万行）と Parquet マスター全期間が
+> `symbols.id` の整数FKで紐付いているため、id が振り直されると価格履歴が孤児化します。
+> `universe.db` は独自の id 空間を持ちますが、**その id は一切持ち込みません**。
+>
+> 実装: `backend/data_collection/universe_sync.py` の `sync_symbols_from_universe()`
+>
+> `exchange` が変わると自然キーが外れて新 id が採番されるため、同一 ticker の既存行が
+> 一意に定まる場合は**新規採番せず `exchange` を更新して id を温存**します（警告ログを出力）。
+> 2026-07-28 に `GBTC` が `(GBTC,'US')` → `(GBTC,'NASDAQ')` となり、この救済が無かったため
+> id=3256 と id=3258 の重複行が実際に発生しました。
+>
+> 旧経路（Google スプレッドシート同期 `orchestrator.sync_symbols_to_db()`）はロールバック用に
+> 残していますが、通常経路では使用しません。`config.toml` の `extra_symbols` による銘柄注入は
+> 廃止されました（注入時の `exchange` が `'US'` 固定で、上記の重複事故の原因になったため）。
 
 | カラム名 | 型 | 説明・用途 |
 | :--- | :--- | :--- |
@@ -38,13 +55,48 @@
 | `ticker` | STRING | 銘柄のティッカーシンボル（例: AAPL, SPY, _PHNC_）。 |
 | `exchange` | STRING | 取引所コード（NYSE, NASDAQ 等）。仮想インデックスは `VIRTUAL`。 |
 | `name` | STRING | 銘柄名称。 |
-| `category` | STRING | 銘柄の分類（市場, 指標, セクタ, テーマ, 個別）。 |
+| `category` | STRING | 銘柄の分類（市場, 指標, セクタ, テーマ, 個別, レバレッジ）。 |
 | `asset_class` | STRING | 資産クラス・属性（Industryなど）。 |
-| `theme_type` | STRING | 詳細タイプ（`etf`: 実在ETF, `virtual`: 仮想指数, `sector`: セクタ指標）。 |
-| `tags` | STRING | カンマ区切りの属性タグ。仮想テーマの構成銘柄紐付けに利用。 |
+| `theme_type` | STRING | 詳細タイプ（`etf`: 実在ETF, `virtual`: 仮想指数, `sector`: セクタ指標, `theme`: テーマETF, NULL: 個別・レバレッジ）。**導出は `data_collection/symbol_classify.derive_theme_type()` に一元化**（後述）。 |
+| `tags` | STRING | **カテゴリごとに意味が異なる多義カラム**（後述）。 |
 | `active` | SMALLINT| ソフトデリートフラグ（1:有効, 0:無効）。 |
 | `next_earnings_date` | DATE | 次回決算発表予定日。 |
 | `updated_at` | DATETIME | 最終更新日時。 |
+
+##### `theme_type` の導出規則
+
+判定はかつて `spreadsheet_sync` / `universe_router` / `import_universe` の3箇所に分散し、
+実データに不整合（IBIT / CPER が `theme` ではなく `etf`）を生んでいたため、
+**`backend/data_collection/symbol_classify.py` の `derive_theme_type()` に一元化**しています。
+
+```
+exchange == 'VIRTUAL' もしくは ticker が `_..._` 形式 → 'virtual'
+category == 'セクタ'                                  → 'sector'
+category == 'テーマ'                                  → 'theme'
+category in ('市場', '指標')                          → 'etf'
+それ以外（個別 / レバレッジ）                          → None
+```
+
+> [!WARNING]
+> ティッカーパターン（`_..._`）を第2の判定材料に加えているのは、`exchange` の設定漏れで
+> 仮想テーマが実在銘柄として扱われる事故を防ぐためです。`_MRAD_` は `exchange='NYSE'` で
+> 登録されていたため `theme_type='theme'` となり、**T2 は存在しないティッカーを yfinance に
+> 取りに行って失敗し、仮想指数合成は `theme_type == 'virtual'` で対象を選ぶため対象外**という
+> 板挟みで、構成銘柄12件を持ちながら価格系列が空のまま放置されていました。
+
+##### `tags` のカテゴリ別意味論
+
+`tags` は単一の意味を持たず、`category` によって格納される内容が変わります。
+
+| category | `tags` の内容 | 例 |
+| :--- | :--- | :--- |
+| 個別 | **所属テーマのティッカーを CSV で列挙** | `AAPL` → `_AIED66_, _HRDW5E_, _VRLTC4_` |
+| テーマ | **親セクタETF**（1件） | `IBIT` → `BLOK` / `GLD` → `GLTR` |
+| 指標 | **分類ラベル** | `^VIX` → `Risk` / `TLT` → `Bond` / `UUP` → `Currency` |
+| レバレッジ | **原資産ETF** | `TQQQ` → `QQQ` / `SOXL` → `SOXX` |
+| 市場 / セクタ | 空（未使用） | — |
+
+テーマの構成銘柄解決に使われるのは **個別カテゴリの `tags` のみ**です（§3.2 参照）。
 
 ### 3.2 構成銘柄連携 (`theme_constituents`)
 
@@ -58,8 +110,15 @@
 | `weight` | FLOAT | 構成比率（現在は主に 1.0 = 均等ウェイト）。 |
 
 **紐付けロジック:**
-- 仮想テーマ（exchangeが `VIRTUAL` または ticker が `_` で囲まれている等）の場合、`symbols.tags` にテーマ名（PHNC等）を含む銘柄を自動的に抽出して紐付けます。
-- 実在するETF（GDX, WCLD等）についても、同様にタグベースで構成銘柄を特定し、テーマ全体の強さを個別銘柄に波及させるために利用されます。
+- 親となるのは `category='テーマ'` の銘柄のみです。仮想テーマ（`theme_type='virtual'`）も実在ETF（GDX, WCLD 等）も同じ仕組みで扱い、テーマ全体の強さを個別銘柄に波及させるために利用されます。
+- 構成銘柄は、**個別カテゴリの `symbols.tags` にテーマのティッカーが含まれる銘柄**を抽出して決定します（`tags` の多義性については §3.1 参照）。
+- `weight` は `1 / 構成銘柄数` で均等配分されます。
+
+> [!NOTE]
+> `tags` は自由記述の CSV であるため、重複（`ANET` の `_HRDW4F_` が2回）や自己参照
+> （`BODI` が `BODI` を含む）といった不正データが混入しうる欠点があります。
+> 銘柄マスタの `universe.db` 移行に伴い、構成銘柄の正は正規化テーブル
+> （`universe.db` の `theme_members`）へ移行し、`tags` はそこから逆生成する方針です。
 
 ### 3.3 T2: 日足データ (`daily_prices`)
 
@@ -159,6 +218,42 @@ S&P500（SPY）の動向や市場全体の統計から算出される、市場�
 | `follow_through_day` | SMALLINT | フォロースルーデーの発生フラグ（1:発生）。 | 下落局面からの反発（+1.7%以上かつ出来高増） |
 | `market_phase` | STRING | 市場のフェーズ（BULL, CORRECTION, BEAR 等）。 | SPYのトレンドと売りの圧力により判定 |
 | `market_trend_score` | FLOAT | 市場全体の健康度を 0〜100 で数値化したもの。 | 右記5項目の等価20%合計: ①VXV/VIXレシオ, ②市場の幅, ③50EMA/ATR乖離, ④200EMA/ATR乖離, ⑤Distribution Days |
+
+#### 3.6.1 為替レート (`fx_rates`)
+
+ポートフォリオの円換算に使用する為替レートです。**日足テーブル（T2）ではなく専用テーブルで管理**します。
+
+| カラム名 | 型 | 説明・用途 |
+| :--- | :--- | :--- |
+| `id` | INTEGER | 主キー。 |
+| `currency_pair` | STRING(10) | 通貨ペア。現在は `USD/JPY` のみ。 |
+| `date` | DATE | 対象日。 |
+| `rate` | FLOAT | レート（1ドルあたりの円）。 |
+
+`(currency_pair, date)` に一意制約があります。Parquet マスターの対象外で、SQLite に全期間永続保持します（軽量なため）。
+
+**取得フロー（`pipeline/phases/t2_prices.py`）:**
+- `sync_fx_rates()` が yfinance から `JPY=X` を取得し `USD/JPY` として格納します。
+- **`JPY=X` は T2（`daily_prices`）から明示的に除外**されており（`sync_phase_t2_prices` の `real_items` 構築時）、銘柄マスタにも登録しません。`sync_fx_rates()` はティッカーをハードコードで保持し `symbols` を参照しません。
+- `tools/db_health_check.py` はティッカーに `=X` を含む銘柄をチェック対象外にします。
+
+**参照側:**
+- `api/portfolio_service.py` の `get_historical_fx_rate(db, target_date)` … `date <= target_date` の最新レート。無い場合は最古レートにフォールバック。
+- 同 `get_total_portfolio_summary()` … 最新レートで `total_equity_jpy` / `current_exchange_rate` を算出。
+
+> [!WARNING]
+> **`--skip-fetch` 実行時のダミー値を本番 DB に書き込んではいけません。** 本テーブルは
+> `(currency_pair, date, rate)` しか持たず、投入後にダミーと実データを区別できません。
+> 2026-07-27 に実際に混入し、31行すべてがダミー値（`155.0 + day%5*0.2`）となって
+> ポートフォリオの円換算が実勢 163.6 に対し 155.x で動き続けました。
+> 現在は `_is_production_db()` により、接続先が `stocktool.db` の場合はダミー投入を
+> スキップします（回帰テスト: `backend/tests/pipeline/test_fx_rates_refactoring.py`）。
+
+> [!TIP]
+> 全期間の再取得には `backend/scripts/backfill_fx_rates.py` を使用します（冪等・`--dry-run` 対応）。
+> `yf.download` は HTTP 429 を "possibly delisted" として握り潰すため、本スクリプトは
+> Yahoo chart API を直接呼びます。日付変換は `meta.exchangeTimezoneName`（`Europe/London`）で
+> 行うこと。**UTC で変換すると金曜バーが土日にずれ込み、為替に存在しない土日行が生成されます。**
 
 **Market Trend Score (MTS v3_B) の内訳:**
 - **VXV/VIX レシオ (20pt)**: VXV/VIX 比率が 0.90〜1.25 の間で線形補完。
@@ -376,7 +471,13 @@ S&P500（SPY）の動向や市場全体の統計から算出される、市場�
 ダッシュボード、ウォッチリスト、およびグループ詳細画面間での指標表示の整合性を保つため、バックエンド側で以下の共通ヘルパー関数を定義しています。
 - **`_build_etf_feature`**: ETF の主要騰落率、SMA 乖離率、およびミニチャート用時系列データを構築。
 - **`_build_panel_item`**: 銘柄一覧（Sectors, Themes, Stocks）の 1 行分のデータ（RS ランク、スパークライン、1D/1W/1M 騰落率）を構築。
-- **`_build_leading_item`**: 先行指標用のコンパクトなメトリクスを構築。
+- **`_build_leading_item`**: 先行指標用のコンパクトなメトリクスを構築。**相対ランクを引数に取りません**（`_build_panel_item` との差異）。先行指標は資産クラスがばらばらで相互のパーセンタイル比較に意味がないためです。
+
+> [!NOTE]
+> leading パネルの対象は **`category='指標'` のみ**です。かつて IBIT / CPER をティッカー
+> 直指定でテーマと兼任させていましたが、暗号資産は GBTC、銅は CPER 自身を正式に
+> `category='指標'` へ移したためハードコードは撤廃しました（`dashboard_router.py` /
+> `universe_router.py`）。
 
 これらの関数は内部で **None 安全な数値変換 (float coercion)** を行い、フロントエンドでのレンダリングエラーを防止しています。
 

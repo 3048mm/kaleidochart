@@ -23,6 +23,7 @@ if _backend_dir not in sys.path:
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
+from data_collection.symbol_classify import derive_theme_type
 from db.database_universe import init_universe_db, get_universe_write_db
 from db.models_universe import SymbolMaster, ThemeMember
 
@@ -45,18 +46,14 @@ def _parse_tsv(filepath: str) -> list[dict]:
     return rows
 
 
-def _detect_theme_type(exchange: str, ticker: str) -> str | None:
-    """Determine theme_type from exchange / ticker pattern."""
-    if exchange == "VIRTUAL" or (ticker.startswith("_") and ticker.endswith("_")):
-        return "virtual"
-    # Known sector ETFs (top-level SPDR sectors)
-    sector_etfs = {
-        "XLK", "XLF", "XLV", "XLE", "XLI", "XLY", "XLP", "XLB",
-        "XLC", "XLRE", "XLU", "SETM",
-    }
-    if ticker in sector_etfs:
-        return "sector"
-    return "etf"
+def _detect_theme_type(exchange: str, ticker: str, category: str | None = None) -> str | None:
+    """theme_type の判定は data_collection.symbol_classify に一元化している。
+
+    旧実装は ticker パターンと既知セクタETF集合で判定し、既定値が 'etf' だったため、
+    本番 T1 経路 (spreadsheet_sync) と食い違って IBIT / CPER が 'theme' ではなく
+    'etf' になる不整合を生んでいた。後方互換のため薄いラッパーとして残す。
+    """
+    return derive_theme_type(exchange, category, ticker)
 
 
 # ---------------------------------------------------------------------------
@@ -74,10 +71,11 @@ def import_themes(rows: list[dict], session, *, source: str = "spreadsheet") -> 
             .filter(SymbolMaster.ticker == ticker, SymbolMaster.exchange == exchange)
             .first()
         )
-        theme_type = _detect_theme_type(exchange, ticker)
+        category = row.get("category", "") or (existing.category if existing else "") or "テーマ"
+        theme_type = _detect_theme_type(exchange, ticker, category)
         if existing:
             existing.name = row.get("Name", existing.name)
-            existing.category = row.get("category", existing.category) or "テーマ"
+            existing.category = category
             existing.industry = row.get("Industry", existing.industry)
             existing.theme_type = theme_type
             existing.sector_etf = row.get("Tags", existing.sector_etf)
@@ -87,7 +85,7 @@ def import_themes(rows: list[dict], session, *, source: str = "spreadsheet") -> 
                 ticker=ticker,
                 exchange=exchange,
                 name=row.get("Name", ""),
-                category=row.get("category", "") or "テーマ",
+                category=category,
                 industry=row.get("Industry", ""),
                 theme_type=theme_type,
                 sector_etf=row.get("Tags", ""),

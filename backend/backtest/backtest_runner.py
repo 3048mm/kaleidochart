@@ -36,18 +36,6 @@ def load_config(config_path: str) -> dict:
     """Load TOML configuration file."""
     with open(config_path, 'rb') as f:
         return tomli.load(f)
-def add_avg_dollar_volume(df_prices: 'pd.DataFrame', window: int = 21) -> 'pd.DataFrame':
-    """close×volume のローリング平均（`avg_dollar_volume_{window}` 列）を銘柄ごとに付与する。
-
-    最適化対象外の流動性ハード制約（min_avg_dollar_volume_21）用。
-    min_periods=1 のため上場直後の銘柄は在籍日数分の平均になる。
-    ローリングは全履歴に対して行うこと（期間スライス後だと先頭 window 日が歪む）。
-    """
-    df = df_prices.sort_values(['symbol_id', 'date'])
-    dv = df['close'] * df['volume']
-    rolled = dv.groupby(df['symbol_id']).rolling(window, min_periods=1).mean()
-    df[f'avg_dollar_volume_{window}'] = rolled.reset_index(level=0, drop=True)
-    return df
 
 
 def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = False):
@@ -123,9 +111,6 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
         df_indicators['date'] = pd.to_datetime(df_indicators['date']).dt.date
         df_ranks['date'] = pd.to_datetime(df_ranks['date']).dt.date
         
-        # 流動性ハード制約用の売買代金平均（スライス前の全履歴で計算する）
-        df_prices = add_avg_dollar_volume(df_prices, window=21)
-
         # 4. In-memory slicing based on start_date and end_date
         t_slice = time.time()
         sd = dt_date.fromisoformat(start_date)

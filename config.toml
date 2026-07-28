@@ -6,8 +6,11 @@ user_db_path = "d:/My Documents/Programing/stocktool/data/user_data.db"
 log_level = "INFO"
 
 [data_collection]
-# Extra index, FX, or individual symbols to force-sync in addition to spreadsheet symbols
-symbols = ["SPY", "QQQ", "AAPL", "^VIX", "^VIX3M", "DX-Y.NYB", "GLD", "SLV", "GBTC", "IBIT", "ETHA", "JPY=X"]
+# 銘柄の定義は data/universe.db (symbols_master / theme_members) に一元化されている。
+# かつてここに extra_symbols を置いてスプレッドシートに載せられない銘柄を注入していたが、
+# 注入時の exchange が 'US' 固定だったため (ticker, exchange) 自然キーが外れて
+# 別 id の重複行を生む事故要因になっていた（2026-07-28 に GBTC で実際に発生）。
+# 銘柄を追加したい場合は Universe 画面か universe.db を編集すること。
 # Start dates for initial historical data fetch
 index_start_date = "2010-04-01"
 default_start_date = "2018-04-01"

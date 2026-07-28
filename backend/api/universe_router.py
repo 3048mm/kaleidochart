@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
+from data_collection.symbol_classify import derive_theme_type
 from db.database_universe import get_universe_db, get_universe_write_db
 from db.models_universe import SymbolMaster, ThemeMember
 
@@ -124,25 +125,12 @@ def _get_write_db():
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _derive_theme_type(exchange: str | None, category: str) -> str | None:
-    """exchange と category から theme_type を自動判定する。
+def _derive_theme_type(exchange: str | None, category: str, ticker: str | None = None) -> str | None:
+    """theme_type の判定は data_collection.symbol_classify に一元化している。
 
-    既存パイプライン (spreadsheet_sync.py) と同じロジック:
-      - exchange == 'VIRTUAL'         → 'virtual'
-      - category == 'セクタ'          → 'sector'
-      - category == 'テーマ'          → 'theme'
-      - category in ('市場', '指標')  → 'etf'
-      - otherwise                     → None
+    後方互換のため本名の薄いラッパーとして残す。
     """
-    if exchange and exchange.strip().upper() == "VIRTUAL":
-        return "virtual"
-    if category == "セクタ":
-        return "sector"
-    if category == "テーマ":
-        return "theme"
-    if category in ("市場", "指標"):
-        return "etf"
-    return None
+    return derive_theme_type(exchange, category, ticker)
 
 
 # ---------------------------------------------------------------------------
@@ -182,27 +170,22 @@ def list_symbols(
     if not include_inactive:
         query = query.filter(SymbolMaster.active == 1)
 
-    # Filter: category (IBIT, CPER, BLOK 等の実ETFを『指標』タブと『テーマ』タブの両方に存在させるマルチヒット表示)
+    # Filter: category
+    #   「テーマ」タブのみ、テーマ本体に加えて theme_members の親になっている銘柄と
+    #   セクタETF の BLOK をマルチヒット表示する。
+    #   かつて IBIT / CPER をティッカー直指定で『指標』タブにも出していたが、
+    #   GBTC / CPER を正式に category='指標' へ移したため撤廃した（W1 / W2b）。
     if category:
-        if category in ("指標", "テーマ", "セクタ"):
-            extra_tickers = ["IBIT", "CPER"] if category in ("指標", "テーマ") else (["BLOK"] if category in ("セクタ", "テーマ") else [])
-            if category == "テーマ":
-                theme_parent_subq = db.query(ThemeMember.theme_ticker).distinct()
-                query = query.filter(
-                    SymbolMaster.category != "個別",
-                    or_(
-                        SymbolMaster.category == "テーマ",
-                        SymbolMaster.ticker.in_(extra_tickers),
-                        SymbolMaster.ticker.in_(theme_parent_subq)
-                    )
+        if category == "テーマ":
+            theme_parent_subq = db.query(ThemeMember.theme_ticker).distinct()
+            query = query.filter(
+                SymbolMaster.category != "個別",
+                or_(
+                    SymbolMaster.category == "テーマ",
+                    SymbolMaster.ticker == "BLOK",
+                    SymbolMaster.ticker.in_(theme_parent_subq),
                 )
-            else:
-                query = query.filter(
-                    or_(
-                        SymbolMaster.category == category,
-                        SymbolMaster.ticker.in_(extra_tickers)
-                    )
-                )
+            )
         else:
             query = query.filter(SymbolMaster.category == category)
 
@@ -307,7 +290,7 @@ def create_symbol(
         name=body.name,
         category=body.category,
         industry=body.industry,
-        theme_type=_derive_theme_type(body.exchange, body.category),
+        theme_type=_derive_theme_type(body.exchange, body.category, body.ticker),
         sector_etf=body.sector_etf,
         active=body.active,
         source="manual",
@@ -367,9 +350,9 @@ def update_symbol(
         )
         db.add(history)
 
-    # Auto-derive theme_type when exchange or category changes
-    if "exchange" in update_data or "category" in update_data:
-        sym.theme_type = _derive_theme_type(sym.exchange, sym.category)
+    # Auto-derive theme_type when exchange / category / ticker changes
+    if "exchange" in update_data or "category" in update_data or "ticker" in update_data:
+        sym.theme_type = _derive_theme_type(sym.exchange, sym.category, sym.ticker)
 
     db.flush()
     db.refresh(sym)

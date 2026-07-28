@@ -46,12 +46,19 @@ def _build_frames(signal_days=range(5), n_symbols=1, dollar_volume=None):
                 "open": 101.0, "high": 102.0, "low": 99.0, "close": close,
                 "volume": vol, "market_cap": 1e9,
             })
-            ind_rows.append({
+            ind_row = {
                 "symbol_id": sid, "date": d,
                 "change_1d_pct": 9.0 if i in signal_days else 0.0,
                 "ema_21": 999.0, "sma_50": 100.0, "atr_14": 1.0,
                 "sma50_atr_mult": 0.0,
-            })
+            }
+            if dollar_volume is not None:
+                # 実プロダクションでは avg_dollar_volume_21 は indicators 側の列
+                # （T3 パイプライン、backend/indicators/volume_and_trends.py）。
+                # ここで price 側に同名列を足すと merge で _x/_y にサフィックスされ、
+                # フィルタが列を見つけられずサイレントに素通りする(2026-07-28 発見の実障害)。
+                ind_row["avg_dollar_volume_21"] = dollar_volume[sid]
+            ind_rows.append(ind_row)
             rank_rows.append({
                 "symbol_id": sid, "date": d,
                 "indicator_name": "rs_ratio_rank_e21", "percent_rank": 0.9,
@@ -177,36 +184,14 @@ def test_entry_mode_default_is_close():
     assert trades[0].pnl_pct == pytest.approx(0.0)
 
 
-def test_add_avg_dollar_volume_rolling_per_symbol():
-    """close×volume の21日ローリング平均が銘柄ごとに独立して計算されること。"""
-    from backend.backtest.backtest_runner import add_avg_dollar_volume
-
-    rows = []
-    for i, d in enumerate(DATES[:3]):
-        rows.append({"symbol_id": 1, "date": d, "close": 100.0, "volume": 1000 * (i + 1)})
-        rows.append({"symbol_id": 2, "date": d, "close": 10.0, "volume": 50})
-    df = pd.DataFrame(rows)
-
-    out = add_avg_dollar_volume(df, window=21)
-
-    s1 = out[out["symbol_id"] == 1].sort_values("date")["avg_dollar_volume_21"].tolist()
-    s2 = out[out["symbol_id"] == 2].sort_values("date")["avg_dollar_volume_21"].tolist()
-    # sym1: dv = 100k, 200k, 300k → 累積平均（min_periods=1）
-    assert s1 == pytest.approx([100_000.0, 150_000.0, 200_000.0])
-    # sym2: dv = 500 一定（sym1 と混ざらない）
-    assert s2 == pytest.approx([500.0, 500.0, 500.0])
-
-
 def test_min_avg_dollar_volume_filter_blocks_illiquid_symbols():
     """min_avg_dollar_volume_21 未満の銘柄はシグナルが出ないこと（ハード足切り）。
 
     sym1: $1M/日（足切り）、sym2: $5M/日（通過）。閾値 $2M。
+    avg_dollar_volume_21 は indicators 側の列として渡す（実プロダクションの形）。
     """
-    from backend.backtest.backtest_runner import add_avg_dollar_volume
-
     symbols, df_prices, df_ind, df_ranks, df_tc = _build_frames(
         signal_days={0}, n_symbols=2, dollar_volume={1: 1e6, 2: 5e6})
-    df_prices = add_avg_dollar_volume(df_prices)
     frames = (symbols, df_prices, df_ind, df_ranks, df_tc)
 
     strat = _strategy(min_avg_dollar_volume_21=2e6)

@@ -9,7 +9,7 @@
 
 ## P0 — 最優先（データ信頼性・ツールの根幹に直結）
 
-- [ ] **「全戦略共通のハード制約」のはずの流動性フィルタ（`min_avg_dollar_volume_21`、$2M/日）が、個別銘柄シナリオテストと生スクリーナーAPIには実装されておらず、最適化バックテストにしか存在しなかった（2026-07-25〜26発見）** — 個別銘柄シナリオテスト側は修正済み（2026-07-26）。生スクリーナーAPI側はコード実装完了（2026-07-27、`avg_dollar_volume_21`を正式インジケーター化）、**サンドボックス実データ検証・本番プロモーションが残作業**
+- [x] **「全戦略共通のハード制約」のはずの流動性フィルタ（`min_avg_dollar_volume_21`、$2M/日）が、個別銘柄シナリオテストと生スクリーナーAPIには実装されておらず、最適化バックテストにしか存在しなかった（2026-07-25〜26発見）** — 両経路とも修正・本番反映済み（2026-07-27）
   - **発見の経緯**: 直近のシナリオテスト結果分析で、E1/E2の全期間利益の過半数が単一トレード（`BETR`、2023-07-18〜25に1週間で$518→$1676へ+223%）に依存していることが判明。この銘柄の実測21日平均売買代金を独自計算したところ**わずか$2,758**（本来の閾値$2,000,000の725分の1）で、明らかに実質取引不可能な銘柄だった。生成された個別銘柄シナリオテスト用presetTOML（`tmp/preset_E1_opt.toml`等）を確認したところ、`min_avg_dollar_volume_21`が一切書き出されていないことを確認。
   - **範囲確認**: `grep`で`min_avg_dollar_volume_21`／`dollar_volume`関連の実装箇所を全backend横断で確認した結果、**`backend/optimization_runner.py`と`backend/backtest/backtest_runner.py`（CLI実行パス）の2箇所にのみ独立して重複実装**されており、`screener_filters.py`（本来フィルタを一元化しているはずの場所、D-2監査で確立された設計）・`scenario_runner.py`・`backend/api/`のどこにも存在しない。
     - ✅ **最適化バックテストは無関係**（Optuna経由・CLI直接実行のどちらも正しく制約が効いていることを確認済み）。
@@ -36,8 +36,17 @@
     - **検証**: TDDでテスト4件（純関数の単体テスト3件＋`run_scenario_test`経由の結合テスト1件。低流動性銘柄MICROと高流動性銘柄AAPLを同一条件で用意し、MICROだけ除外されることを確認）を追加してREDを確認後に実装。REDの再現性も確認（注入呼び出しを一時的に無効化してテストが失敗することを確認してから復元）。バックエンド全体413件 pytest 全件合格。
   - **生スクリーナーAPI側の対策（2026-07-27、コード実装完了）**: `avg_dollar_volume_21`（`(close×volume)`の21日ローリング平均、`min_periods=1`）を`backend/indicators/volume_and_trends.py`に正式インジケーターとして追加し、`backend/db/models.py`の`Indicator`にカラムを新設（既存の`adr_pct_21`と同じ実装パターン）。`screener_router.py`は`Indicator`テーブルの全カラムを自動走査して`min_/max_`フィルタとして使える仕組みを持つため、**カラムを追加するだけで`min_avg_dollar_volume_21`はコード変更なしに使えるようになる**設計だったが、常時適用（ユーザー判断でUIには出さない）のため`get_screener()`に`backtest_config.toml`の`[general]`値を読んで無条件フィルタとして注入する処理を追加。
     - **検証**: TDDでテスト（インジケーターの解析的検証2件＋protectionテスト追記＋API側の低流動性銘柄除外テスト1件）を追加してREDを確認後に実装。既存テスト2ファイル（`test_screener_api.py`・`test_close_gt_filter.py`）のフィクスチャに`avg_dollar_volume_21`を追加する必要があった（新しい常時適用フィルタにより、この値が無いテストデータは軒並み除外されてしまうため）。バックエンド全体416件 pytest 全件合格。
-    - **計画書**: `doc/in_progress/avg_dollar_volume_21_indicator_plan.md`
-  - **残作業（未着手）**: ①サンドボックス環境で本番Parquetをコピーし`--rebuild-from T3`を実行（全銘柄・全期間の再計算、所要時間未計測）→SQLで新カラムの値をサンプル検証→`db_health_check.py`→フロントエンド目視確認、という一連のサンドボックス検証（`.claude/skills/sandbox-workflow`必須）。②検証後、本番へプロモーション（Parquet差し替え＋SQLiteホットキャッシュ再構築、日次更新と衝突しない時間帯での実施が前提）。③個別銘柄シナリオテストの全戦略再実行（過去の分析結果はノイズを含んだ状態での評価だった）。
+    - **計画書**: `doc/in_progress/avg_dollar_volume_21_indicator_plan.md`（完了、`doc/completed/`へ移動予定）
+  - **本番反映（2026-07-27、ユーザー実施）**: ユーザーが別件（T1再構築が必要な状況）と合わせて本番`stocktool.db`をT1から直接再構築（サンドボックスを経由しない実施判断。作業中`run_production_restore.py`が「active lock」を検知し`drop_all`フォールバックで一時的に復旧が難航したが、原因（週次メンテナンスタスクとの競合疑い。別項目参照）を解消して最終的に成功）。
+    - **本番データでの検証結果**: SQLiteホットキャッシュの`indicators`テーブル（2024-07-24〜2026-07-24、505営業日・約310万行）の**最古日・最新日ともに`avg_dollar_volume_21`のNULLは0件**であることをSQLで直接確認（`db_health_check.py --check-nulls`の固定チェック対象列に`avg_dollar_volume_21`が含まれていなかったため、別途直接検証）。T2/T3行数不一致も無し。`db_health_check.py`で検出された52銘柄のNGは全て「SPY非同期（失効/上場廃止銘柄疑い）」由来で本件と無関係（既知のstale_symbol検知パターン）。
+    - **残作業**: 個別銘柄シナリオテストの全戦略再実行（過去の分析結果はノイズを含んだ状態での評価だった）。
+
+  - **⚠️ 再発（2026-07-28発見・修正済み）: 上記「本番反映」後に再実行した全戦略分のシナリオテストバッチ（2026-07-27 08:04〜14:17、12戦略×10 Monte Carlo runs）で、`min_avg_dollar_volume_21`フィルタが依然として無効化されたままだったことが判明。汚染率は修正前とほぼ同一（例: E1 75.8%、E2 75.9%、worst tickerも同じATLX/FER）。**
+    - **原因**: `avg_dollar_volume_21`という同名列が、2026-07-27の生スクリーナーAPI対策で`df_indicators`（T3インジケーター）側に正式追加されたのに対し、`backend/backtest/backtest_runner.py::add_avg_dollar_volume()`が2026-07-26の対策でこれとは独立に`df_prices`側でも同じ列名を計算していた。`scan_signals_for_date`（`backtest_screener.py`）と`scenario_runner.py`の日次ループがそれぞれ`ind_day.merge(price_day[price_cols], on=['symbol_id','date'])`で両者を結合する際、**両側に同名列があるためpandasが自動的に`avg_dollar_volume_21_x`/`_y`にサフィックスを付与**し、`apply_filters_to_df`の汎用`min_/max_`フィルタループが素の列名`avg_dollar_volume_21`を探しても見つからず、**フィルタ自体が例外もログも無しに丸ごとスキップされていた**。この経路は最適化バックテスト（`backtest_runner.py::run_single_strategy`が同じ`scan_signals_for_date`を使用）にも共通するため、**シナリオテストだけでなく最適化バックテストの流動性ハード制約も同時に無効化されていた**（2026-07-26〜28の間に実行された全ての最適化・シナリオテスト結果は本制約が効いていない状態での評価だった可能性が高い）。
+    - **既存テストがすり抜けた理由**: `test_min_avg_dollar_volume_filter_blocks_illiquid_symbols`（`test_backtest_runner_entry.py`）は`add_avg_dollar_volume(df_prices)`のみでフィクスチャを作り、`df_ind`側にはこの列を持たせていなかった（インジケーター側追加より前に書かれたテストのため）。`test_scenario_runner_excludes_illiquid_symbols`（`test_scenario_runner.py`）も同様に`prices`フィクスチャにのみ列を置いていた。どちらも本番のマージ衝突を再現しない構成だったため、コード上は「動いているはず」でもテストが検出できなかった。
+    - **対策**: 重複計算を廃止し、`avg_dollar_volume_21`はインジケーター側（`df_indicators`、T3パイプライン由来）を単一の情報源とする。`backend/backtest/backtest_runner.py`の`add_avg_dollar_volume()`関数と`preload_data()`内の呼び出しを削除。`backtest_screener.py`・`scenario_runner.py`の`price_cols.append('avg_dollar_volume_21')`条件分岐（price側から列を持ち込む処理）を削除し、`ind_day`側の列がそのままマージ結果に残る形に統一。
+    - **検証**: 上記2テストのフィクスチャを実プロダクションと同じ形（`avg_dollar_volume_21`をindicators側に配置）に修正し、衝突が実際に再現しテストが機能することを確認。実データ（本番Parquet、strategy A、ATLX@2022-10-24、実測$151.86/日）に対して修正前後で直接`apply_filters_to_df`を呼び出し、修正前は`min_avg_dollar_volume_21=$2,000,000`を満たさないATLXが素通り、修正後は正しく除外されることを確認。バックエンド全体466件 pytest 全件合格。
+    - **残作業（重要）**: 2026-07-27に取得した全戦略のシナリオテストバッチ結果（`output/scenario/`配下）は**本修正前のものであり無効**。本修正後に全戦略・全モデルで再実行が必要。
 
 ## P1 — 高（正確性・データ保全。P0 の次）
 
@@ -106,6 +115,31 @@
   - 済: B1 は 2026-07-05 にコンセプト転換済み（→完了済みセクション）
 
 ## P2 — 中（体感改善・保守性・運用安全性）
+
+- [ ] **`stocktool.db` の肥大化（2026-07-28 発見）**
+  - 実測 `stocktool.db` 6.3GB + `-wal` 3.6GB。`architecture.md` §11.1 の想定は **1.7GB 前後**で大幅超過。WAL が 3.6GB のまま残っておりチェックポイントが効いていない。
+  - `restore_sqlite_cache_from_parquet()` によるホットキャッシュ再構築で解消できる（Parquet から直近730日を復元するだけなのでネットワーク不要・安全）。週次メンテの `VACUUM` が効いているかも併せて確認する。
+
+- [ ] **価格系列がゼロのまま放置されている active 銘柄が 19 件ある（2026-07-28 発見）**
+  - 内訳: 親テーマなのに価格が無いもの 1 件（`SIXG`／構成銘柄16件）と、上場廃止・改称と思われる個別株 17 件（`ACLX` `APLS` `ASGN` `BK` `CSGS` `CTLP` `EHAB` `EWCZ` `GDEN` `GLPG` `MEG` `ONTF` `SEMR` `STKL` `TERN` `TPH` `XWIN`）。
+  - 別途、SPY 最新日に追いついていない active 銘柄が 31 件（`CNCR` は最終 2025-06-03、`LUX` は 2025-08-08 と1年以上停止）。
+  - W8 で用意した `backend/scripts/retire_stale_symbols.py --from-report` で universe.db 側を一括退役できる。`SIXG` はテーマ親のため同スクリプトが保護対象としてスキップする（手動判断が必要）。
+
+- [ ] **`/ranking` エンドポイントがデッドコード（2026-07-28 発見）**
+  - `dashboard_router.get_rankings()`、`schemas.RankingItem` / `RankingResponse`、`frontend/src/types.ts` の `RankingItem`、`index.css` の `.ranking-*` が**すべてフロントエンドから未使用**（`fetch` 呼び出しがゼロ）。掃除候補。
+  - 復活させる場合は設計上の欠陥に注意: カテゴリ横断でパーセンタイル上位を並べるため、母集団の小さいカテゴリ（当時 指標7件・セクタ16件・市場26件）が構造的に上位を占める（実測で上位5件が「各カテゴリの1位」で埋まった）。カテゴリ別に返す設計が必要。
+
+- [ ] **現物暗号資産（BTC-USD / ETH-USD）の取り込みには土日対応が必要（2026-07-28 調査）**
+  - yfinance で取得可能（BTC-USD 4,332行 2014-09-17〜、ETH-USD 3,183行 2017-11-09〜）だが **7日/週**。現在 `daily_prices` の土日行は 0 件で、全銘柄が営業日ベースである前提にパイプラインが依存している。
+  - 影響: ① T2 は `date <= spy_latest_date` でしか絞らず土日行が入る ② T3 の EMA/ATR が暦日ベースになり他銘柄と期間の意味がズレる、SPY 対比の RS も土日は破綻 ③ T4 は土日に当該銘柄が単独パーティションになる ④ 健全性チェックは検知しない。
+  - 対策案: T2 取り込み時に SPY の取引日へリインデックスする。**種別B**（sandbox 検証必須）。暗号資産の先行指標は当面 ETF（`GBTC`）で代替する方針に決定済み（`doc/completed/universe_db_migration_plan.md` §2.2）。
+
+- [ ] **universe.db の import replace モードが手動追加行を消す（2026-07-28 発見）**
+  - `data_collection/sheet_importer.py` の replace モードは `symbols_master` / `theme_members` を無条件に全 DELETE する。`source IN ('pipeline','manual','system')` を保護対象にすべき。
+  - 痕跡: `ticker_history` に `_DRONE_`（旧 `ARKX`）が残っているが `symbols_master` に実体が無い。過去に手動リネームが replace で消えたことを示す。
+
+- [ ] **`^VIX3M` のデータが停滞している（2026-07-28 発見）**
+  - 最新 2026-07-17（SPY は 2026-07-24）。T4 の 指標 カテゴリが 8 件中 7 件しか無かった原因。W7 で 指標 は T4 対象外になったが、データ停滞自体は未解消。
 
 - [ ] **週次メンテナンス（`weekly_maintenance.py`）がタスクスケジューラ経由での初回実行時に、手動のDB再構築作業とロック競合を起こした疑い（2026-07-27 発見）**
   - **経緯**: `avg_dollar_volume_21`インジケーター追加に伴う本番`stocktool.db`の再構築作業中、`run_production_restore.py`が`data/stocktool.db`への「active lock」を繰り返し検知し、`drop_all`フォールバック後の復元が失敗する事象が発生。APIサーバー（uvicorn）を停止しても解消せず、原因不明のタスクをキルしたところ復旧した。ユーザーの推測では、ちょうどこの日が週次メンテナンスのタスクスケジューラ登録後**初めての自動実行**タイミングと重なっていた可能性がある。

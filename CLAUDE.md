@@ -125,6 +125,7 @@ The system inverts the usual "DB is master" relationship:
 - **Hot cache (UI/API only)**: `stocktool.db` (SQLite), last 730 days only, tuned for high-frequency OLTP random access. Old rows are purged by the pipeline.
 - **Backtest engine reads Parquet directly** and never touches SQLite — this guarantees zero lock contention between batch/backtest and the live API.
 - `user_data.db` is separate and holds only user-owned state (watchlist, portfolios, transactions) — never purged/rebuilt from Parquet.
+- `universe.db` is the **symbol-definition editing master** (`symbols_master` / `theme_members` / `ticker_history`) — T1 syncs from it into `stocktool.db`. Treat it like `user_data.db`: back up + in-place migration only, never swap/rebuild (it holds manual edits and rename history). **The T1 sync upserts on the `(ticker, exchange)` natural key and must preserve `symbols.id`** — ~1.57M rows × 3 tables plus all of Parquet reference it as an integer FK. See `doc/backend_specification.md` §3.1.
 - Schema (columns) is identical between Parquet and SQLite for any given table.
 
 ### Pipeline phases (T1–T5), `backend/pipeline/`

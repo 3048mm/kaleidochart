@@ -3,6 +3,8 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from typing import List, Dict, Any
 
+from data_collection.symbol_classify import derive_theme_type
+
 logger = logging.getLogger(__name__)
 
 # Config map for what each sheet represents
@@ -52,17 +54,9 @@ def fetch_symbols_from_sheet(credentials_path: str, spreadsheet_url: str) -> Lis
                 if not ticker:
                     continue  # Skip rows without a ticker
                 
-                # Determine theme_type
-                theme_type = None
-                if exchange.upper() == 'VIRTUAL':
-                    theme_type = 'virtual'
-                elif base_category == 'セクタ':
-                    theme_type = 'sector'
-                elif base_category == 'テーマ':
-                    theme_type = 'theme'  # Categorize as theme for better identification
-                elif base_category == '指標' or base_category == '市場':
-                    theme_type = 'etf' if exchange.upper() != 'VIRTUAL' else 'virtual'
-                
+                # theme_type の判定は symbol_classify.derive_theme_type に一元化している
+                theme_type = derive_theme_type(exchange, base_category, ticker)
+
                 all_symbols.append({
                     "ticker": ticker,
                     "exchange": exchange,

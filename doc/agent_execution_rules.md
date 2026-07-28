@@ -125,7 +125,12 @@ Windows のデフォルトエンコーディング (Shift-JIS / CP932) と、Pyt
 | :--- | :--- | :--- |
 | 再生成可能 | `stocktool.db`、Parquet の T3〜T5 | 本番 Parquet から新コードで再生成 → swap |
 | 原本 | Parquet の T2 価格系列 | swap 可。ただし health check 合格まで旧世代を prune 禁止（MVCC 旧世代がバックアップを兼ねる） |
-| ユーザー資産 | `user_data.db`、`optimization_trials.db` | **swap・クリア・再構築は禁止**。バックアップ取得 → 本番ファイルへの冪等な in-place マイグレーションのみ |
+| ユーザー資産 | `user_data.db`、`optimization_trials.db`、`universe.db` | **swap・クリア・再構築は禁止**。バックアップ取得 → 本番ファイルへの冪等な in-place マイグレーションのみ |
+
+> [!NOTE]
+> `universe.db`（銘柄定義の編集マスター）がユーザー資産に入るのは、手動編集と
+> `ticker_history` を再生成できないため。T1 同期の下流（`stocktool.db` の `symbols` /
+> `theme_constituents` と Parquet）は「再生成可能」に分類される。詳細: `architecture.md` §11.1.1
 
 ### 10.2 変更の4種別（エージェントは完了報告に必須記載）
 

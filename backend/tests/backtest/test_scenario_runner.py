@@ -138,8 +138,6 @@ def test_scenario_runner_excludes_illiquid_symbols(mock_preload, mock_session, t
         'change_1d_pct': [0.01]*10 + [0.0]*10 + [0.05]*10 + [0.05]*10,
         'ftd_signal': [False]*40,
         'dd_signal': [False]*40,
-        # AAPL(symbol_id=3): 閾値$2Mを大きく上回る。MICRO(symbol_id=4): 大きく下回る。
-        'avg_dollar_volume_21': [1e8]*10 + [1e8]*10 + [1e8]*10 + [5e5]*10,
     })
 
     symbols = pd.DataFrame({
@@ -158,7 +156,11 @@ def test_scenario_runner_excludes_illiquid_symbols(mock_preload, mock_session, t
         'ema_21': [95.0]*40,
         'sma_50': [90.0]*40,
         'atr_14': [2.0]*40,
-        'sma50_atr_mult': [5.0]*40
+        'sma50_atr_mult': [5.0]*40,
+        # avg_dollar_volume_21 は実プロダクションでは indicators 側の列
+        # （T3 パイプライン、backend/indicators/volume_and_trends.py）。
+        # AAPL(symbol_id=3): 閾値$2Mを大きく上回る。MICRO(symbol_id=4): 大きく下回る。
+        'avg_dollar_volume_21': [1e8]*10 + [1e8]*10 + [1e8]*10 + [5e5]*10,
     })
 
     mock_preload.return_value = (

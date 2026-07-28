@@ -141,3 +141,114 @@ def test_clean_old_parquet_versions_grace_period(tmp_path):
     assert os.path.exists(v3_json)
     assert os.path.exists(v3_file)
 
+
+
+# ---------------------------------------------------------------------------
+# rotate_and_archive_to_parquet の「全期間同期テーブルは置換」の回帰テスト
+#
+# 背景（universe.db 移行 2026-07-28）:
+# process_and_merge_table は concat + drop_duplicates の追記型マージのため、
+# SQLite での「削除」が Parquet に伝播しない。symbols / theme_constituents は
+# SQLite が完全集合を持つ全期間同期テーブル（architecture.md §11.1）なので、
+# マージのままだと削除済みのテーマ構成が Parquet に残り、Parquet を直読みする
+# バックテストが古い構成を見続ける。
+# ---------------------------------------------------------------------------
+import os
+
+from db.models import Base
+from pipeline.parquet_cache_manager import rotate_and_archive_to_parquet
+from sqlalchemy.orm import sessionmaker
+
+
+def _make_db_with_data(tmp_path, symbols, tc_rows):
+    db_file = str(tmp_path / "stocktool_rotate_test.db")
+    engine = create_engine(f"sqlite:///{db_file}")
+    Base.metadata.create_all(bind=engine)
+    conn = sqlite3.connect(db_file)
+    conn.executemany(
+        "INSERT INTO symbols (id, ticker, exchange, category, active) VALUES (?,?,?,?,?)", symbols)
+    conn.executemany(
+        "INSERT INTO theme_constituents (id, theme_id, symbol_id, weight) VALUES (?,?,?,?)", tc_rows)
+    conn.commit()
+    conn.close()
+    return db_file, engine
+
+
+def test_deletions_propagate_to_parquet_for_full_sync_tables(tmp_path):
+    """SQLite で削除した theme_constituents / symbols が Parquet からも消えること。"""
+    os.makedirs(tmp_path / "parquet_master", exist_ok=True)
+
+    symbols = [(1, "SPY", "NYSEARCA", "市場", 1),
+               (2, "COPX", "NYSEARCA", "テーマ", 1),
+               (3, "FCX", "NYSE", "個別", 1),
+               (4, "OLDCO", "NYSE", "個別", 1)]
+    tc_rows = [(1, 2, 3, 0.5), (2, 2, 4, 0.5)]
+    db_file, engine = _make_db_with_data(tmp_path, symbols, tc_rows)
+
+    Session = sessionmaker(bind=engine)
+
+    # 1回目: 4銘柄 / 2ペアを書き出す
+    db = Session()
+    rotate_and_archive_to_parquet(db, db_file, logger)
+    db.close()
+
+    from pipeline.parquet_cache_manager import get_latest_master_files, get_pointer_file_path, get_parquet_master_dir
+    pointer = get_pointer_file_path(get_parquet_master_dir(db_file))
+    files = get_latest_master_files(pointer)
+    assert len(pd.read_parquet(files["symbols"])) == 4
+    assert len(pd.read_parquet(files["tc"])) == 2
+
+    # SQLite 側から 1銘柄と 1ペアを削除
+    conn = sqlite3.connect(db_file)
+    conn.execute("DELETE FROM theme_constituents WHERE theme_id=2 AND symbol_id=4")
+    conn.execute("DELETE FROM symbols WHERE ticker='OLDCO'")
+    conn.commit()
+    conn.close()
+
+    # 2回目: 削除が Parquet に伝播していること
+    db = Session()
+    rotate_and_archive_to_parquet(db, db_file, logger)
+    db.close()
+
+    files = get_latest_master_files(pointer)
+    df_sym = pd.read_parquet(files["symbols"])
+    df_tc = pd.read_parquet(files["tc"])
+    assert len(df_sym) == 3, "削除した symbols が Parquet に残っている"
+    assert "OLDCO" not in set(df_sym["ticker"])
+    assert len(df_tc) == 1, "削除した theme_constituents が Parquet に残っている"
+    assert set(zip(df_tc["theme_id"], df_tc["symbol_id"])) == {(2, 3)}
+    engine.dispose()
+
+
+def test_timeseries_tables_still_merge_history(tmp_path):
+    """時系列テーブルは従来通りマージされ、ホット期間外の履歴が保持されること。"""
+    os.makedirs(tmp_path / "parquet_master", exist_ok=True)
+    symbols = [(1, "SPY", "NYSEARCA", "市場", 1)]
+    db_file, engine = _make_db_with_data(tmp_path, symbols, [])
+    Session = sessionmaker(bind=engine)
+
+    conn = sqlite3.connect(db_file)
+    conn.execute("INSERT INTO daily_prices (symbol_id, date, close) VALUES (1,'2020-01-02',100.0)")
+    conn.commit()
+    conn.close()
+
+    db = Session()
+    rotate_and_archive_to_parquet(db, db_file, logger)
+    db.close()
+
+    # ホットキャッシュのパージを模して古い行を消す
+    conn = sqlite3.connect(db_file)
+    conn.execute("DELETE FROM daily_prices WHERE date='2020-01-02'")
+    conn.execute("INSERT INTO daily_prices (symbol_id, date, close) VALUES (1,'2026-01-05',500.0)")
+    conn.commit()
+    conn.close()
+
+    db = Session()
+    rotate_and_archive_to_parquet(db, db_file, logger)
+    db.close()
+
+    from pipeline.parquet_cache_manager import get_latest_master_files, get_pointer_file_path, get_parquet_master_dir
+    files = get_latest_master_files(get_pointer_file_path(get_parquet_master_dir(db_file)))
+    dates = set(pd.read_parquet(files["prices"])["date"].astype(str))
+    assert dates == {"2020-01-02", "2026-01-05"}, "パージされた履歴が Parquet から失われた"
+    engine.dispose()

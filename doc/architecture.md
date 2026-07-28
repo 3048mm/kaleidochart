@@ -209,8 +209,8 @@ graph TD
 
 | テーブル/データカテゴリ | コールド (Parquetマスター) | ホット (SQLiteキャッシュ) | 備考 |
 | :--- | :--- | :--- | :--- |
-| **symbols (T1)** | **全期間（無制限）** | **全期間（同期）** | マスタマッピングテーブル。全期間同期 |
-| **theme_constituents** | **全期間（無制限）** | **全期間（同期）** | テーマの構成銘柄関係。全期間同期 |
+| **symbols (T1)** | **全期間（無制限）** | **全期間（同期）** | マスタマッピングテーブル。**定義の正は `universe.db`**（下記） |
+| **theme_constituents** | **全期間（無制限）** | **全期間（同期）** | テーマの構成銘柄関係。**定義の正は `universe.db` の `theme_members`** |
 | **daily_prices (T2)** | **全7年分〜最新日すべて** | **直近2年分のみ（730日）** | 日足。SQLite側は毎日古いデータがパージされる |
 | **indicators (T3)** | **全7年分〜最新日すべて** | **直近2年分のみ（730日）** | 日足指標（48カラム）。SQLite側は2年分のみ保持 |
 | **relative_ranks (T4)**| **全7年分〜最新日すべて** | **直近2年分のみ（730日）** | 相対モメンタム順位。SQLite側は2年分のみ保持 |
@@ -219,6 +219,35 @@ graph TD
 
 > [!NOTE]
 > スキーマ（列定義）は Parquet と SQLite で完全に同一です。Parquet は Snappy 圧縮による省スペースバイナリ、SQLite は高速ランダム検索用のインデックスインジケータ付きキャッシュテーブルとして機能します。
+
+### 11.1.1 銘柄マスタ `universe.db` の位置づけ
+
+`data/universe.db` は **銘柄定義の編集マスター**です。上表のホット/コールドとは別系統で、
+データの3分類（`agent_execution_rules.md` §10.1）では **ユーザー資産**に相当します。
+
+| 観点 | 内容 |
+| :--- | :--- |
+| **テーブル** | `symbols_master` / `theme_members` / `ticker_history` |
+| **役割** | 銘柄の定義（分類・名称・テーマ構成）を人間が編集する唯一の場所 |
+| **編集手段** | Universe 画面（`/universe`）、スプレッドシート import/export、`backend/scripts/` の各スクリプト |
+| **下流** | T1 同期で `stocktool.db` の `symbols` / `theme_constituents` を生成 → Parquet へ退避 |
+| **本番反映** | **swap・クリア・再構築は禁止。** バックアップ取得 → in-place マイグレーションのみ（手動編集と `ticker_history` は再生成できないため） |
+
+```mermaid
+graph LR
+    Sheet["スプレッドシート<br>(import/export)"] <--> Universe["universe.db<br>【銘柄定義の編集マスター】"]
+    UI["Universe 画面"] <--> Universe
+    Universe -->|"T1 同期<br>(ticker, exchange) 自然キー<br>symbols.id を温存"| SQLite["stocktool.db<br>symbols / theme_constituents"]
+    SQLite -->|退避| Parquet["Parquet マスター"]
+
+    style Universe fill:#7c2d12,stroke:#ea580c,stroke-width:2px,color:#fff
+```
+
+> [!WARNING]
+> T1 同期は `symbols.id` を**絶対に温存**します。`daily_prices` / `indicators` /
+> `relative_ranks` と Parquet 全期間が `symbols.id` の整数FKで紐付いているため、
+> id が振り直されると価格履歴が孤児化します。詳細と `exchange` 変更時の救済:
+> `backend_specification.md` §3.1。
 
 ### 11.2 Windows同時ロック競合の完全回避（MVCC世代管理）
 Windows OS環境特有の「ファイル共有ロック（PermissionError WinError 32/5）」を完全に回避するため、タイムスタンプ世代管理を導入しています。

@@ -202,11 +202,12 @@ def get_dashboard(
             resp.spy_feature = _build_etf_feature(db, s, dp, target_date)
             continue
 
-        # 「指標」カテゴリおよび先行指標兼任ティッカー (IBIT, CPER) は leading パネルに追加
-        if s.category == "指標" or s.ticker in ("IBIT", "CPER"):
+        # 「指標」カテゴリは leading パネルへ。
+        # かつて IBIT / CPER をティッカー直指定で兼任させていたが、GBTC / CPER を
+        # 正式に category='指標' へ移したためハードコードは不要になった（W1 / W2b）。
+        if s.category == "指標":
             resp.leading.append(_build_leading_item(db, s, dp, target_date, preload=preload))
-            if s.category == "指標":
-                continue
+            continue
 
         r14_rank = rank_14_dict.get(sym_id, 0.0) or 0.0
         r21_rank = rank_21_dict.get(sym_id, 0.0) or 0.0

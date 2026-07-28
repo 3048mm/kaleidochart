@@ -35,6 +35,15 @@ def sync_phase_t4_ranks(db, spy_latest_date: Optional[date], logger: logging.Log
     total_dates = len(gap_dates)
     logger.info(f"Phase 4: Processing relative ranks for {total_dates} dates.")
     
+    # 相対ランクは `PARTITION BY s.category` の同一カテゴリ内パーセンタイル。
+    # 除外対象（クエリ末尾の WHERE 句）:
+    #   - レバレッジ: 原資産の増幅であり単独比較に意味がない
+    #   - 指標      : ARKK/BDRY/HYG/TLT/USO/UUP/^VIX 等で資産クラスがばらばら。
+    #                 相互のパーセンタイルに解釈可能な意味がなく、消費側でも未使用
+    #                 （leading パネルの `_build_leading_item` はランク引数を取らない）
+    #   - active=0  : 上場廃止・重複採番で無効化された銘柄が母集団に混入するのを防ぐ
+    #                 （2026-07-28 に GBTC の重複行が 市場 カテゴリを汚染した実例あり）
+    #
     # indicators テーブルの計算元カラム → relative_ranks テーブルのランクカラムのマッピング
     # (indicator_col, rank_col) の順
     indicators_to_rank = [
@@ -91,7 +100,9 @@ def sync_phase_t4_ranks(db, spy_latest_date: Optional[date], logger: logging.Log
             {ranks_joined}
         FROM indicators i
         JOIN symbols s ON i.symbol_id = s.id
-        WHERE i.date = :d AND s.category != 'レバレッジ'
+        WHERE i.date = :d
+          AND s.category NOT IN ('レバレッジ', '指標')
+          AND s.active = 1
     """
     
     for i, d in enumerate(gap_dates):
