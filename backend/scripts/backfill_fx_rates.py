@@ -55,7 +55,7 @@ def _is_dummy_rate(d: date, rate: float) -> bool:
     return abs(rate - (155.0 + (d.day % 5) * 0.2)) < 1e-9
 
 
-def fetch_usdjpy_history() -> pd.DataFrame:
+def fetch_usdjpy_history() -> tuple[pd.DataFrame, int]:
     """Yahoo chart API から JPY=X の全期間日足を取得する。
 
     yfinance (yf.download) はレート制限 (HTTP 429) を "possibly delisted" として
@@ -63,6 +63,9 @@ def fetch_usdjpy_history() -> pd.DataFrame:
 
     日付は meta.exchangeTimezoneName (Europe/London) で変換する。UTC で変換すると
     金曜バーが土日にずれ込み、為替に存在しないはずの土日行が生成される。
+
+    Returns:
+        (日足の DataFrame, 除外した土日行の件数)
     """
     url = (
         f"https://query1.finance.yahoo.com/v8/finance/chart/{YF_TICKER}"
@@ -83,7 +86,20 @@ def fetch_usdjpy_history() -> pd.DataFrame:
     df = df.dropna(subset=["rate"])
     df = df[df["rate"] > 0]
     df = df.drop_duplicates(subset=["date"], keep="last")
-    return df[["date", "rate"]].sort_values("date").reset_index(drop=True)
+
+    # 為替に土日のバーは存在しない。混入する経路は2つあり、扱いが違う。
+    #   (1) タイムゾーン変換の誤り … 大量に発生する。UTC で変換すると金曜バーが
+    #       土日にずれ込む（実測: Fri649/Sun903）。これは中断すべき異常。
+    #   (2) Yahoo の当日・部分バー … 末尾に1本だけ出る。2026-08-01(土) に
+    #       157.40 が返り、金曜終値 160.18 と 1.7% 乖離していた。取引していない
+    #       日のスナップショットなので捨てる。
+    weekend = df[[d.weekday() >= 5 for d in df["date"]]]
+    if not weekend.empty:
+        for r in weekend.itertuples():
+            print(f"    土日行を除外: {r.date} rate={r.rate:.4f}")
+        df = df[[d.weekday() < 5 for d in df["date"]]]
+
+    return df[["date", "rate"]].sort_values("date").reset_index(drop=True), len(weekend)
 
 
 def run(dry_run: bool = False, skip_retire: bool = False):
@@ -97,21 +113,41 @@ def run(dry_run: bool = False, skip_retire: bool = False):
 
     # --- 1) 取得（DB を触る前に確保する。失敗したら何も壊さない） ---
     print("\n[1] Yahoo chart API から USD/JPY 全期間を取得中...")
-    hist = fetch_usdjpy_history()
+    hist, dropped_weekend = fetch_usdjpy_history()
     if hist.empty:
         print("[ERROR] 為替データを取得できませんでした。中断します。")
         sys.exit(1)
-    weekend = sum(1 for d in hist["date"] if d.weekday() >= 5)
     print(f"    取得: {len(hist):,} 行  {hist['date'].min()} 〜 {hist['date'].max()}")
-    print(f"    土日行: {weekend} 件（0 であること）")
-    if weekend:
-        print("[ERROR] 土日行が含まれています。タイムゾーン変換を確認してください。中断します。")
+    print(f"    除外した土日行: {dropped_weekend} 件")
+
+    # 土日行が大量に出るのはタイムゾーン変換の誤り（UTC で変換すると金曜バーが
+    # 土日にずれ込む）。末尾の当日バー1〜2本とは桁が違うので、そこで切り分ける。
+    if dropped_weekend > 5:
+        print(f"[ERROR] 土日行が {dropped_weekend} 件と多すぎます。"
+              "タイムゾーン変換（meta.exchangeTimezoneName）を確認してください。中断します。")
+        sys.exit(1)
+    if any(d.weekday() >= 5 for d in hist["date"]):
+        print("[ERROR] 除外後も土日行が残っています。中断します。")
         sys.exit(1)
 
     with get_write_db() as db:
         # --- 2) ダミー行の検出と削除 ---
         existing = db.query(FxRate).filter(FxRate.currency_pair == CURRENCY_PAIR).all()
         dummies = [r for r in existing if _is_dummy_rate(r.date, r.rate)]
+
+        # 為替に土日は存在しない。パイプラインの sync_fx_rates は yfinance が返す
+        # 当日バーをそのまま入れるため、土曜に実行すると土曜行が入りうる
+        # （2026-08-01 に実際に混入）。ここで併せて掃除する。
+        weekend_rows = [r for r in existing if r.date.weekday() >= 5]
+        if weekend_rows:
+            print(f"\n[2a] 土日行を検出: {len(weekend_rows)} 行")
+            for r in weekend_rows:
+                print(f"     {r.date} ({'土日'}) rate={r.rate:.4f} → 削除")
+            if not dry_run:
+                for r in weekend_rows:
+                    db.delete(r)
+                db.flush()
+
         print(f"\n[2] 既存 fx_rates: {len(existing)} 行 / うちダミー判定: {len(dummies)} 行")
         if dummies:
             span = f"{min(r.date for r in dummies)} 〜 {max(r.date for r in dummies)}"
