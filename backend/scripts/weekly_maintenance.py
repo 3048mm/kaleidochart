@@ -21,7 +21,15 @@ from db.database import get_active_db_path, get_write_db, init_db
 from db.database_user import get_active_user_db_path, init_user_db
 
 # Lock file path (same as update_pipeline.py to prevent concurrent run)
-LOCK_FILE = os.path.join(project_root, "update_pipeline.lock")
+#
+# 本番では update_pipeline.py と同じファイルを共有して排他する（architecture.md §13.2）。
+# ただしテストはこのスクリプトをサブプロセス起動するため、本番ロックをそのまま使うと
+# **日次パイプラインの実行中はテストが必ず失敗する**（2026-07-31 に実際に発生。
+# パイプラインが5時間超ロックを保持し、test_weekly_maintenance.py の
+# サブプロセステスト5件が軒並み落ちた）。
+# --lock-file で差し替え可能にして、テストを本番の実行状況から独立させる。
+DEFAULT_LOCK_FILE = os.path.join(project_root, "update_pipeline.lock")
+LOCK_FILE = DEFAULT_LOCK_FILE
 lock_fd = None
 
 def setup_logging():
@@ -116,6 +124,55 @@ def run_physical_maintenance(db_path: str, label: str, dry_run: bool):
     logger.info(f"[{label}] Database size after maintenance: {final_size / 1024 / 1024:.2f} MB "
                 f"(Reclaimed: {reclaimed / 1024 / 1024:.2f} MB, {reclaimed / initial_size * 100:.1f}% space reclaimed)")
 
+                                                                   # noqa: E305
+# ---------------------------------------------------------------------------
+# 銘柄の鮮度分類
+# ---------------------------------------------------------------------------
+#
+# 「SPY の最新日より古い」だけで上場廃止候補としていたため、履歴取得が
+# そもそも成立していない銘柄と、一時的に1日取りこぼした銘柄を区別できず、
+# 現役銘柄を退役候補に混ぜていた（2026-07-29 発見）。保有行数を併せて見る。
+#
+LOW_HISTORY_ROWS = 20      # これ以下は「履歴がそもそも無い」= 上場廃止・改称の疑い
+STALE_CALENDAR_DAYS = 7    # 5営業日相当。これ以上古いと供給停止とみなす
+
+# Market Trend Score の直接入力。退役対象には絶対にならないため、
+# 上場廃止候補（stale_symbols / CSV）から外し、専用セクションで報告する。
+#
+# 2026-07-20〜07-29 に Yahoo が ^VIX3M を 8営業日 null で返した際、
+# 2,085行の履歴があるため `no_history` には該当せず、`delisted`（退役候補）に
+# 紛れて埋もれていた。MTS の入力という重要性が判定に反映されていなかった。
+MTS_INPUT_TICKERS = ("^VIX", "^VIX3M")
+
+
+def classify_symbol_freshness(
+    row_count: int,
+    last_date,
+    spy_latest_date,
+    low_history_rows: int = LOW_HISTORY_ROWS,
+    stale_days: int = STALE_CALENDAR_DAYS,
+) -> str:
+    """銘柄の T2 鮮度を4分類する。
+
+    Returns:
+        ``"no_history"`` — 保有行数が極端に少ない。上場廃止・ティッカー改称の疑い。
+            取り直しても供給側にデータが無いことが多いため、バックフィルではなく退役が対応。
+        ``"delisted"``   — 十分な履歴があるのに供給が止まった。退役候補。
+        ``"lagging"``    — 完全な履歴があり直近数日だけ欠けている。次回実行が
+            ``current_max + 1`` から取りに行くため**自己回復する**ので放置してよい。
+        ``"ok"``         — SPY の最新日に追いついている。
+    """
+    from datetime import timedelta
+
+    if row_count <= low_history_rows or last_date is None:
+        return "no_history"
+    if last_date < spy_latest_date - timedelta(days=stale_days):
+        return "delisted"
+    if last_date < spy_latest_date:
+        return "lagging"
+    return "ok"
+
+
 def audit_and_fix_weekly(db, dry_run: bool) -> dict:
     """
     Scans the database for weekly anomalies and applies fixes if dry_run=False.
@@ -131,34 +188,72 @@ def audit_and_fix_weekly(db, dry_run: bool) -> dict:
     from indicators.calculate import calculate_indicators
     
     report = {
-        "stale_symbols": [],
+        "stale_symbols": [],       # 退役候補 = delisted + no_history（後方互換のティッカー列）
+        "delisted_symbols": [],    # (ticker, last_date, rows)
+        "no_history_symbols": [],  # (ticker, last_date, rows)
+        "lagging_symbols": [],     # (ticker, last_date, rows) — 自己回復するので放置
+        "mts_input_status": [],    # (ticker, last_date, rows, 遅延営業日数, 判定)
         "empty_themes": [],
         "invalid_constituents": [],
         "mismatched_indicators_count": 0,
         "fixed_indicators_count": 0,
         "split_anomalies": [],
     }
-    
+
     # 1. Delisted / Stale active symbols detection
     spy = db.query(Symbol).filter(Symbol.ticker == "SPY", Symbol.active == 1).first()
     if spy:
         spy_latest_date = db.query(func.max(DailyPrice.date)).filter(DailyPrice.symbol_id == spy.id).scalar()
         if spy_latest_date:
-            # 5 trading days delta threshold (approx 7 calendar days)
-            stale_threshold_date = spy_latest_date - timedelta(days=7)
-            
             sub = db.query(
                 DailyPrice.symbol_id,
-                func.max(DailyPrice.date).label("max_date")
+                func.max(DailyPrice.date).label("max_date"),
+                func.count(DailyPrice.id).label("row_count"),
             ).group_by(DailyPrice.symbol_id).subquery()
-            
-            stale_active = db.query(Symbol.ticker, sub.c.max_date)\
-                .join(sub, Symbol.id == sub.c.symbol_id)\
-                .filter(Symbol.active == 1, Symbol.ticker != "SPY")\
-                .filter(sub.c.max_date < stale_threshold_date).all()
-                
-            report["stale_symbols"] = [row[0] for row in stale_active]
-            
+
+            # outerjoin にすることで「1行も無い銘柄」も検出対象に含める
+            # （旧実装は inner join だったため、最も重症な 0 行の銘柄を取りこぼしていた）
+            candidates = db.query(Symbol.ticker, sub.c.max_date, sub.c.row_count)\
+                .outerjoin(sub, Symbol.id == sub.c.symbol_id)\
+                .filter(Symbol.active == 1, Symbol.ticker != "SPY").all()
+
+            for ticker, max_date, row_count in candidates:
+                kind = classify_symbol_freshness(row_count or 0, max_date, spy_latest_date)
+
+                # MTS 入力は退役対象になりえないので専用枠へ回す（ok でも状態を残す）
+                if ticker in MTS_INPUT_TICKERS:
+                    lag = (spy_latest_date - max_date).days if max_date else None
+                    report["mts_input_status"].append(
+                        (ticker, str(max_date) if max_date else "", int(row_count or 0),
+                         lag, kind)
+                    )
+                    continue
+
+                if kind == "ok":
+                    continue
+                entry = (ticker, str(max_date) if max_date else "", int(row_count or 0))
+                if kind == "delisted":
+                    report["delisted_symbols"].append(entry)
+                elif kind == "no_history":
+                    report["no_history_symbols"].append(entry)
+                else:
+                    report["lagging_symbols"].append(entry)
+
+            # ok だった MTS 入力も漏らさず記録する（candidates には ok も含まれる）
+            recorded = {e[0] for e in report["mts_input_status"]}
+            for ticker in MTS_INPUT_TICKERS:
+                if ticker not in recorded:
+                    report["mts_input_status"].append((ticker, "", 0, None, "missing"))
+
+            for key in ("delisted_symbols", "no_history_symbols", "lagging_symbols"):
+                report[key].sort(key=lambda e: (e[2], e[0]))
+
+            # 退役候補（バックフィルでは解決しないもの）だけを stale_symbols に載せる。
+            # lagging は次回実行で自己回復するため含めない。
+            report["stale_symbols"] = [
+                e[0] for e in report["delisted_symbols"] + report["no_history_symbols"]
+            ]
+
     # 2. Empty active themes
     active_themes = db.query(Symbol.id, Symbol.ticker).filter(Symbol.active == 1, Symbol.category == "テーマ").all()
     for theme_id, ticker in active_themes:
@@ -296,11 +391,24 @@ def audit_and_fix_weekly(db, dry_run: bool) -> dict:
                 
     return report
 
-def write_maintenance_report(report: dict, dry_run: bool):
+def resolve_report_dir(db_path: str | None) -> str:
+    """レポート出力先を「監査対象 DB と同じ階層」に解決する。
+
+    出力先を `data/maintenance_reports/` 固定にしていたため、テストが
+    `--db-path <一時DB>` で起動したサブプロセスの監査結果（空 DB なので全項目ゼロ）が
+    **本番のレポートと退役候補 CSV を上書き・削除していた**（2026-07-29 発見）。
+    対象 DB に紐付けることで、本番実行だけが本番のレポートを書くようにする。
     """
-    Writes weekly audit reports and Sheets-delisting recommendations to data/maintenance_reports/
+    if db_path:
+        return os.path.join(os.path.dirname(os.path.abspath(db_path)), "maintenance_reports")
+    return os.path.join(project_root, "data", "maintenance_reports")
+
+
+def write_maintenance_report(report: dict, dry_run: bool, db_path: str | None = None):
     """
-    report_dir = os.path.join(project_root, "data", "maintenance_reports")
+    Writes weekly audit reports and delisting recommendations next to the audited DB.
+    """
+    report_dir = resolve_report_dir(db_path)
     os.makedirs(report_dir, exist_ok=True)
     
     # 1. Audit Text Report
@@ -311,14 +419,44 @@ def write_maintenance_report(report: dict, dry_run: bool):
         f.write(f"Generated at: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
         f.write("==================================================\n\n")
         
-        f.write("1. Delisted/Stale active symbols (no updates for 5+ days relative to SPY):\n")
-        if report["stale_symbols"]:
-            for sym in report["stale_symbols"]:
-                f.write(f"  - {sym}\n")
+        f.write("1. Symbol freshness audit (classified by history depth + last date):\n\n")
+
+        f.write("  1-a. DELISTED - sufficient history but supply stopped (retire):\n")
+        if report.get("delisted_symbols"):
+            for ticker, last, rows in report["delisted_symbols"]:
+                f.write(f"    - {ticker:<10} rows={rows:<6} last={last}\n")
         else:
-            f.write("  None\n")
+            f.write("    None\n")
         f.write("\n")
-        
+
+        f.write("  1-b. NO HISTORY - almost no rows; delisting or ticker rename (retire + investigate):\n")
+        if report.get("no_history_symbols"):
+            for ticker, last, rows in report["no_history_symbols"]:
+                f.write(f"    - {ticker:<10} rows={rows:<6} last={last or '(none)'}\n")
+        else:
+            f.write("    None\n")
+        f.write("\n")
+
+        f.write("  1-c. LAGGING - complete history, just behind by a day or two (self-heals; no action):\n")
+        if report.get("lagging_symbols"):
+            for ticker, last, rows in report["lagging_symbols"]:
+                f.write(f"    - {ticker:<10} rows={rows:<6} last={last}\n")
+        else:
+            f.write("    None\n")
+        f.write("\n")
+
+        # MTS の直接入力は退役対象にならないため専用枠。供給が止まると
+        # market_signals 側の ffill が直前値を持ち越し続け、気づきにくい。
+        f.write("  1-d. MARKET TREND SCORE INPUTS (never retired; staleness silently ffill'd):\n")
+        for ticker, last, rows, lag, kind in report.get("mts_input_status", []):
+            if kind == "missing":
+                f.write(f"    - {ticker:<10} !! NOT FOUND in symbols table\n")
+                continue
+            flag = "  <<< STALE" if kind != "ok" else ""
+            lag_s = f"{lag}d behind SPY" if lag else "up to date"
+            f.write(f"    - {ticker:<10} rows={rows:<6} last={last}  ({lag_s}){flag}\n")
+        f.write("\n")
+
         f.write("2. Active themes with zero constituents:\n")
         if report["empty_themes"]:
             for theme in report["empty_themes"]:
@@ -353,30 +491,55 @@ def write_maintenance_report(report: dict, dry_run: bool):
     # 2. Delisting recommendations CSV
     #    T1 のソースが universe.db へ移行したため、除外先は Google スプレッドシートではなく
     #    universe.db の symbols_master.active=0 になる（計画書 W8）。
-    if report["stale_symbols"]:
-        csv_file = os.path.join(report_dir, "delisting_recommendations.csv")
-        with open(csv_file, "w", encoding="utf-8") as f:
-            f.write("ticker,reason\n")
-            for sym in report["stale_symbols"]:
-                f.write(f"{sym},Stale data (Not updated for 5+ days relative to SPY)\n")
+    #    判定根拠（分類・保有行数・最終日）を含めることで、退役してよいか人間が検証できるようにする。
+    csv_file = os.path.join(report_dir, "delisting_recommendations.csv")
+    rows_out = [("delisted", t, last, n) for t, last, n in report.get("delisted_symbols", [])]
+    rows_out += [("no_history", t, last, n) for t, last, n in report.get("no_history_symbols", [])]
+
+    if rows_out:
+        with open(csv_file, "w", encoding="utf-8", newline="\n") as f:
+            f.write("ticker,classification,rows,last_date,reason\n")
+            for kind, ticker, last, n in rows_out:
+                reason = ("Sufficient history but supply stopped"
+                          if kind == "delisted"
+                          else "Almost no history; delisting or ticker rename")
+                f.write(f"{ticker},{kind},{n},{last},{reason}\n")
         logger.info(f"Delisting recommendation list exported to: {csv_file}")
+        logger.info(
+            f"  delisted={len(report.get('delisted_symbols', []))} / "
+            f"no_history={len(report.get('no_history_symbols', []))} / "
+            f"lagging={len(report.get('lagging_symbols', []))} (lagging は自己回復するため対象外)"
+        )
         logger.info(
             "  → universe.db へ反映するには: "
             "python backend/scripts/retire_stale_symbols.py --from-report"
         )
+    elif os.path.exists(csv_file):
+        # 前回の候補が解消したのに古い CSV が残っていると誤って退役させる恐れがある
+        os.remove(csv_file)
+        logger.info("退役候補が解消したため、古い delisting_recommendations.csv を削除しました")
 
 def main():
     parser = argparse.ArgumentParser(description="Stocktool Weekly Maintenance Script.")
     parser.add_argument("--dry-run", action="store_true", help="Perform checks only without modifying databases.")
     parser.add_argument("--fix", action="store_true", help="Perform actual maintenance operations.")
     parser.add_argument("--db-path", type=str, help="Optional custom database path to target.")
+    parser.add_argument("--lock-file", type=str, default=None,
+                        help="排他ロックのパス（既定は update_pipeline.py と共有）。"
+                             "テストや検証実行を本番の実行状況から独立させたいときに指定する。")
     args = parser.parse_args()
     
     if not args.dry_run and not args.fix:
         logger.error("Error: Either --dry-run or --fix must be specified.")
         parser.print_help()
         sys.exit(1)
-        
+
+    if args.lock_file:
+        global LOCK_FILE
+        LOCK_FILE = os.path.abspath(args.lock_file)
+        os.makedirs(os.path.dirname(LOCK_FILE), exist_ok=True)
+        logger.info(f"排他ロックを {LOCK_FILE} に切り替えました（本番ロックとは独立）")
+
     # Check lock
     if not acquire_lock():
         logger.error("Another instance of the update script or maintenance is already running. Exiting.")
@@ -411,7 +574,20 @@ def main():
                 
             # Log summary
             logger.info(f"Audit Summary:")
-            logger.info(f"  Stale symbols detected: {len(report['stale_symbols'])}")
+            logger.info(f"  Retirement candidates: {len(report['stale_symbols'])}"
+                        f"  (delisted={len(report.get('delisted_symbols', []))},"
+                        f" no_history={len(report.get('no_history_symbols', []))})")
+            logger.info(f"  Lagging (self-healing, no action): {len(report.get('lagging_symbols', []))}")
+            for ticker, last, rows, lag, kind in report.get("mts_input_status", []):
+                if kind == "missing":
+                    logger.error(f"  MTS input {ticker}: symbols テーブルに存在しません")
+                elif kind == "ok":
+                    logger.info(f"  MTS input {ticker}: OK (last={last})")
+                else:
+                    logger.warning(
+                        f"  MTS input {ticker}: 供給停止の疑い last={last} "
+                        f"({lag}日 SPY より遅延) — market_signals は直前値を持ち越して計算しています"
+                    )
             logger.info(f"  Empty themes detected: {len(report['empty_themes'])}")
             logger.info(f"  Invalid constituents detected: {len(report['invalid_constituents'])}")
             logger.info(f"  Mismatched indicators count: {report['mismatched_indicators_count']}")
@@ -419,8 +595,9 @@ def main():
             if not args.dry_run:
                 logger.info(f"  Fixed indicators count: {report['fixed_indicators_count']}")
                 
-            # Write text/csv audit reports to data/
-            write_maintenance_report(report, dry_run=args.dry_run)
+            # Write text/csv audit reports next to the audited DB
+            # （本番以外の DB を監査したときに本番のレポートを壊さないため）
+            write_maintenance_report(report, dry_run=args.dry_run, db_path=db_path)
             
         logger.info("=== Weekly Maintenance Sequence Completed Successfully ===")
     except Exception as e:

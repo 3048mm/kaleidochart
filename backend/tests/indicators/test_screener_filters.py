@@ -170,7 +170,9 @@ class TestThemeRs21Gt63:
         )
         tickers = {s.ticker for s in signals}
         assert "AAAA" in tickers, "Stock in leading theme (THM1) should pass"
-        assert "THM1" in tickers, "Leading theme itself should pass"
+        # 2026-07-29: テーマは実売買不可能なため、リーディングテーマ自体はシグナルに含めない
+        # （構成銘柄への波及にのみ使う）
+        assert "THM1" not in tickers, "Theme itself must never appear as a tradeable signal"
         assert "BBBB" not in tickers, "Stock in lagging theme (THM2) should fail"
         assert "CCCC" not in tickers, "Stock in no theme should fail"
 
@@ -225,7 +227,9 @@ class TestThemeRsRank21Gt63:
         )
         tickers = {s.ticker for s in signals}
         assert "AAAA" in tickers, "Stock in leading rank theme (THM1) should pass"
-        assert "THM1" in tickers, "Leading rank theme itself should pass"
+        # 2026-07-29: テーマは実売買不可能なため、リーディングテーマ自体はシグナルに含めない
+        # （構成銘柄への波及にのみ使う）
+        assert "THM1" not in tickers, "Theme itself must never appear as a tradeable signal"
         assert "BBBB" not in tickers, "Stock in lagging rank theme (THM2) should fail"
         assert "CCCC" not in tickers, "Stock in no theme should fail"
 

@@ -252,3 +252,165 @@ def test_timeseries_tables_still_merge_history(tmp_path):
     dates = set(pd.read_parquet(files["prices"])["date"].astype(str))
     assert dates == {"2020-01-02", "2026-01-05"}, "パージされた履歴が Parquet から失われた"
     engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# fx_rates の Parquet 対象化に関する回帰テスト
+#
+# 背景（2026-08-01）:
+# fx_rates は長らく SQLite のみで Parquet に含まれていなかった。そのため
+# 2026-07-30 の完全再構築（空DBから作り直し）で為替履歴 7,711行(1996-2026) が
+# 22行(直近30日) に消えた。architecture.md では market_signals も「SQLiteのみ」と
+# 書かれていたが実装では Parquet 対象になっており、fx_rates だけが取り残されていた。
+# ---------------------------------------------------------------------------
+from db.models import FxRate
+from datetime import date as _date
+
+
+def _seed_fx(db_file, rows):
+    conn = sqlite3.connect(db_file)
+    conn.executemany(
+        "INSERT INTO fx_rates (currency_pair, date, rate) VALUES (?,?,?)", rows)
+    conn.commit()
+    conn.close()
+
+
+def _seed_price(db_file, symbol_id=1, d="2026-01-05", close=100.0):
+    """restore_sqlite_cache_from_parquet は daily_prices の最大日付から
+    ホット期間の cutoff を決めるため、価格が1行も無いと算出に失敗する。"""
+    conn = sqlite3.connect(db_file)
+    conn.execute(
+        "INSERT INTO daily_prices (symbol_id, date, close) VALUES (?,?,?)",
+        (symbol_id, d, close))
+    conn.commit()
+    conn.close()
+
+
+def test_fx_rates_are_archived_to_parquet(tmp_path):
+    """fx_rates が Parquet に書き出されること。"""
+    os.makedirs(tmp_path / "parquet_master", exist_ok=True)
+    db_file, engine = _make_db_with_data(
+        tmp_path, [(1, "SPY", "NYSEARCA", "市場", 1)], [])
+    _seed_fx(db_file, [("USD/JPY", "2020-01-02", 108.5), ("USD/JPY", "2020-01-03", 108.7)])
+
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    rotate_and_archive_to_parquet(db, db_file, logger)
+    db.close()
+
+    from pipeline.parquet_cache_manager import (
+        get_latest_master_files, get_parquet_master_dir, get_pointer_file_path)
+    files = get_latest_master_files(
+        get_pointer_file_path(get_parquet_master_dir(db_file)))
+    assert "fx" in files, "latest_master.json に fx キーが無い"
+    df = pd.read_parquet(files["fx"])
+    assert len(df) == 2
+    assert set(df["date"].astype(str)) == {"2020-01-02", "2020-01-03"}
+    engine.dispose()
+
+
+def test_fx_rates_deletions_propagate(tmp_path):
+    """SQLite で消した行が Parquet からも消えること（マージではなく置換）。
+
+    ダミー値を実データに入れ替えるような修正が Parquet に伝播しないと、
+    再構築のたびに古い値が復活する。
+    """
+    os.makedirs(tmp_path / "parquet_master", exist_ok=True)
+    db_file, engine = _make_db_with_data(
+        tmp_path, [(1, "SPY", "NYSEARCA", "市場", 1)], [])
+    _seed_fx(db_file, [("USD/JPY", "2020-01-02", 155.4), ("USD/JPY", "2020-01-03", 155.6)])
+    Session = sessionmaker(bind=engine)
+
+    db = Session()
+    rotate_and_archive_to_parquet(db, db_file, logger)
+    db.close()
+
+    # ダミー値を消して実データに入れ替える
+    conn = sqlite3.connect(db_file)
+    conn.execute("DELETE FROM fx_rates")
+    conn.execute("INSERT INTO fx_rates (currency_pair, date, rate) VALUES ('USD/JPY','2020-01-02',108.5)")
+    conn.commit()
+    conn.close()
+
+    db = Session()
+    rotate_and_archive_to_parquet(db, db_file, logger)
+    db.close()
+
+    from pipeline.parquet_cache_manager import (
+        get_latest_master_files, get_parquet_master_dir, get_pointer_file_path)
+    files = get_latest_master_files(get_pointer_file_path(get_parquet_master_dir(db_file)))
+    df = pd.read_parquet(files["fx"])
+    assert len(df) == 1, "削除した fx_rates が Parquet に残っている"
+    assert df["rate"].iloc[0] == pytest.approx(108.5)
+    engine.dispose()
+
+
+def test_restore_keeps_fx_when_pointer_has_no_fx_key(tmp_path):
+    """'fx' キーの無い旧世代から復元しても fx_rates を消さないこと。
+
+    無条件クリアにすると、Parquet 対象化より前の世代へロールバックした瞬間に
+    為替履歴が全滅する。
+    """
+    import json
+    from pipeline.parquet_cache_manager import (
+        restore_sqlite_cache_from_parquet, get_parquet_master_dir, get_pointer_file_path)
+
+    os.makedirs(tmp_path / "parquet_master", exist_ok=True)
+    db_file, engine = _make_db_with_data(
+        tmp_path, [(1, "SPY", "NYSEARCA", "市場", 1)], [])
+    _seed_fx(db_file, [("USD/JPY", "2020-01-02", 108.5)])
+    _seed_price(db_file)
+    Session = sessionmaker(bind=engine)
+
+    db = Session()
+    rotate_and_archive_to_parquet(db, db_file, logger)
+    db.close()
+
+    # ポインタから 'fx' を取り除いて旧世代を再現する
+    pointer = get_pointer_file_path(get_parquet_master_dir(db_file))
+    files = json.load(open(pointer, encoding="utf-8"))
+    files.pop("fx", None)
+    with open(pointer, "w", encoding="utf-8") as f:
+        json.dump(files, f)
+
+    db = Session()
+    restore_sqlite_cache_from_parquet(db, db_file, logger)
+    db.close()
+
+    conn = sqlite3.connect(db_file)
+    n = conn.execute("SELECT COUNT(*) FROM fx_rates").fetchone()[0]
+    conn.close()
+    assert n == 1, "旧世代からの復元で fx_rates が消えた"
+    engine.dispose()
+
+
+def test_restore_reloads_fx_from_parquet(tmp_path):
+    """'fx' キーがあれば Parquet の内容で置き換えること。"""
+    from pipeline.parquet_cache_manager import restore_sqlite_cache_from_parquet
+
+    os.makedirs(tmp_path / "parquet_master", exist_ok=True)
+    db_file, engine = _make_db_with_data(
+        tmp_path, [(1, "SPY", "NYSEARCA", "市場", 1)], [])
+    _seed_fx(db_file, [("USD/JPY", "2020-01-02", 108.5), ("USD/JPY", "2020-01-03", 108.7)])
+    _seed_price(db_file)
+    Session = sessionmaker(bind=engine)
+
+    db = Session()
+    rotate_and_archive_to_parquet(db, db_file, logger)
+    db.close()
+
+    # SQLite 側を壊してから復元する
+    conn = sqlite3.connect(db_file)
+    conn.execute("DELETE FROM fx_rates")
+    conn.commit()
+    conn.close()
+
+    db = Session()
+    restore_sqlite_cache_from_parquet(db, db_file, logger)
+    db.close()
+
+    conn = sqlite3.connect(db_file)
+    n = conn.execute("SELECT COUNT(*) FROM fx_rates").fetchone()[0]
+    conn.close()
+    assert n == 2, "Parquet から fx_rates が復元されていない"
+    engine.dispose()

@@ -24,6 +24,17 @@ LOCK_FILE = os.path.join(PROJECT_ROOT, "update_pipeline.lock")
 
 
 @pytest.fixture
+def temp_lock(tmp_path):
+    """テスト専用のロックファイル。
+
+    本番の update_pipeline.lock を使うと、日次パイプラインの実行中に
+    テストが必ず失敗する（2026-07-31 に発生。パイプラインが5時間超保持し、
+    サブプロセステスト5件が軒並み落ちた）。テストは本番の実行状況から独立させる。
+    """
+    return str(tmp_path / "test_pipeline.lock")
+
+
+@pytest.fixture
 def temp_db(tmp_path):
     """Create a temporary real sqlite file for testing VACUUM and REINDEX."""
     db_file = tmp_path / "test_maintenance.db"
@@ -45,34 +56,40 @@ def temp_db(tmp_path):
 class TestWeeklyMaintenancePhysical:
     """Tests the CLI parameters and physical maintenance steps."""
 
-    def test_dry_run_success(self, temp_db):
+    def test_dry_run_success(self, temp_db, temp_lock):
         """Verify that --dry-run completes successfully without raising errors."""
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
         env["PYTHONUTF8"] = "1"
         
         result = subprocess.run(
-            [PYTHON_EXEC, SCRIPT_PATH, "--dry-run", "--db-path", temp_db],
+            [PYTHON_EXEC, SCRIPT_PATH, "--dry-run", "--db-path", temp_db,
+             "--lock-file", temp_lock],
             env=env,
             capture_output=True,
-            text=True
+            text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         
         assert result.returncode == 0
         assert "Database integrity check: OK" in result.stdout
         assert "Dry-run mode: skipping REINDEX and VACUUM" in result.stdout
 
-    def test_fix_mode_success(self, temp_db):
+    def test_fix_mode_success(self, temp_db, temp_lock):
         """Verify that --fix runs REINDEX and VACUUM on the database."""
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
         env["PYTHONUTF8"] = "1"
         
         result = subprocess.run(
-            [PYTHON_EXEC, SCRIPT_PATH, "--fix", "--db-path", temp_db],
+            [PYTHON_EXEC, SCRIPT_PATH, "--fix", "--db-path", temp_db,
+             "--lock-file", temp_lock],
             env=env,
             capture_output=True,
-            text=True
+            text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         
         assert result.returncode == 0
@@ -80,7 +97,7 @@ class TestWeeklyMaintenancePhysical:
         assert "Rebuilding indexes (REINDEX)" in result.stdout
         assert "Reclaiming database pages (VACUUM)" in result.stdout
 
-    def test_lock_concurrency_error(self, temp_db):
+    def test_lock_concurrency_error(self, temp_db, temp_lock):
         """Verify that lock file blocks execution when actively held."""
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
@@ -89,15 +106,18 @@ class TestWeeklyMaintenancePhysical:
         import msvcrt
         
         # Acquire lock in this process
-        lock_fd = os.open(LOCK_FILE, os.O_CREAT | os.O_RDWR)
+        lock_fd = os.open(temp_lock, os.O_CREAT | os.O_RDWR)
         msvcrt.locking(lock_fd, msvcrt.LK_NBLCK, 1)
         
         try:
             result = subprocess.run(
-                [PYTHON_EXEC, SCRIPT_PATH, "--dry-run", "--db-path", temp_db],
+                [PYTHON_EXEC, SCRIPT_PATH, "--dry-run", "--db-path", temp_db,
+             "--lock-file", temp_lock],
                 env=env,
                 capture_output=True,
-                text=True
+                text=True,
+                encoding="utf-8",
+                errors="replace",
             )
             
             assert result.returncode != 0
@@ -105,9 +125,9 @@ class TestWeeklyMaintenancePhysical:
         finally:
             msvcrt.locking(lock_fd, msvcrt.LK_UNLCK, 1)
             os.close(lock_fd)
-            if os.path.exists(LOCK_FILE):
+            if os.path.exists(temp_lock):
                 try:
-                    os.remove(LOCK_FILE)
+                    os.remove(temp_lock)
                 except:
                     pass
 
@@ -230,3 +250,111 @@ class TestWeeklyMaintenanceAudits:
         assert len(report["split_anomalies"]) == 1
         assert report["split_anomalies"][0]["ticker"] == "AAPL"
         assert report["split_anomalies"][0]["ratio"] == 0.5
+
+
+# ---------------------------------------------------------------------------
+# 銘柄の鮮度分類（classify_symbol_freshness）の単体テスト
+#
+# 背景（2026-07-29 発見）:
+# 旧実装は「SPY 最新日より5営業日以上古い」だけで上場廃止候補としていたため、
+# 履歴が数行しか無い銘柄（供給側にデータが無い＝改称・廃止）と、完全な履歴があって
+# 直近1日だけ取りこぼした銘柄（次回実行で自己回復）を区別できず、両者を同列に扱っていた。
+# さらに inner join だったため「1行も無い」最も重症な銘柄を取りこぼしていた。
+# ---------------------------------------------------------------------------
+from datetime import date as _date
+
+# `sys.path.insert(0, backend/scripts)` は使わないこと。pytest は収集時に全テストモジュールを
+# import するため、scripts/ が sys.path の先頭に入って以降のモジュール解決を汚染し、
+# 無関係なテスト（backtest 側）が順序依存で落ちる。PYTHONPATH=backend 前提の
+# `scripts.` プレフィックス形式で読む（このファイル既存の import と同じ作法）。
+from scripts.weekly_maintenance import classify_symbol_freshness, resolve_report_dir  # noqa: E402
+
+SPY_LATEST = _date(2026, 7, 27)
+
+
+class TestClassifySymbolFreshness:
+    def test_up_to_date_is_ok(self):
+        assert classify_symbol_freshness(500, _date(2026, 7, 27), SPY_LATEST) == "ok"
+
+    def test_ahead_of_spy_is_ok(self):
+        """為替など SPY より進んだ日付を持つケースでも ok 扱い"""
+        assert classify_symbol_freshness(500, _date(2026, 7, 28), SPY_LATEST) == "ok"
+
+    def test_one_day_behind_with_full_history_is_lagging(self):
+        """回帰: WM / JBHT / MTD 等が 2,090 行を持ちながら1日遅れただけで
+        上場廃止候補に混ざっていた。自己回復するので放置が正しい。"""
+        assert classify_symbol_freshness(2090, _date(2026, 7, 24), SPY_LATEST) == "lagging"
+
+    def test_long_stale_with_full_history_is_delisted(self):
+        """CNCR: 1,804 行あって最終日が1年以上前 = 本当の上場廃止"""
+        assert classify_symbol_freshness(1804, _date(2025, 6, 3), SPY_LATEST) == "delisted"
+
+    def test_boundary_of_stale_window(self):
+        # 7日ちょうどは境界の内側（まだ delisted ではない）
+        assert classify_symbol_freshness(500, _date(2026, 7, 20), SPY_LATEST) == "lagging"
+        assert classify_symbol_freshness(500, _date(2026, 7, 19), SPY_LATEST) == "delisted"
+
+    @pytest.mark.parametrize("rows,last", [
+        (0, None),                      # BK / ASGN: Yahoo に存在せず1行も無い
+        (1, _date(2026, 7, 17)),        # IAC / VSCO: 直近だが1行だけ
+        (3, _date(2026, 6, 12)),        # MASI: 3行だけ
+        (7, _date(2026, 7, 27)),        # LC: 最新日に追いついていても行数が足りない
+    ])
+    def test_almost_no_history_is_no_history(self, rows, last):
+        """回帰: 供給側にデータが無い銘柄。取り直しても取得できないため
+        バックフィルではなく退役が正しい対応。"""
+        assert classify_symbol_freshness(rows, last, SPY_LATEST) == "no_history"
+
+    def test_row_count_threshold_boundary(self):
+        assert classify_symbol_freshness(20, _date(2026, 7, 27), SPY_LATEST) == "no_history"
+        assert classify_symbol_freshness(21, _date(2026, 7, 27), SPY_LATEST) == "ok"
+
+    def test_none_last_date_is_no_history_regardless_of_count(self):
+        assert classify_symbol_freshness(9999, None, SPY_LATEST) == "no_history"
+
+    def test_thresholds_are_configurable(self):
+        assert classify_symbol_freshness(
+            30, _date(2026, 7, 27), SPY_LATEST, low_history_rows=50) == "no_history"
+        assert classify_symbol_freshness(
+            500, _date(2026, 7, 24), SPY_LATEST, stale_days=1) == "delisted"
+
+
+class TestReportDirIsolation:
+    """回帰: レポート出力先が監査対象 DB に紐付くこと。
+
+    出力先が `data/maintenance_reports/` 固定だったため、テストが `--db-path <一時DB>` で
+    起動したサブプロセスの結果（空 DB なので全項目ゼロ）が本番のレポートを上書きし、
+    さらに退役候補 CSV を削除していた（2026-07-29 実際に発生）。
+    """
+
+    def test_report_dir_follows_db_path(self, tmp_path):
+        target = str(tmp_path / "sub" / "stocktool_test.db")
+        assert resolve_report_dir(target) == os.path.join(
+            os.path.dirname(os.path.abspath(target)), "maintenance_reports")
+
+    def test_report_dir_falls_back_to_project_data(self):
+        assert resolve_report_dir(None) == os.path.join(
+            PROJECT_ROOT, "data", "maintenance_reports")
+
+    def test_temp_db_run_does_not_touch_production_reports(self, temp_db, temp_lock, tmp_path):
+        """一時 DB を監査しても本番の maintenance_reports に触れないこと。"""
+        prod_dir = os.path.join(PROJECT_ROOT, "data", "maintenance_reports")
+        before = set(os.listdir(prod_dir)) if os.path.isdir(prod_dir) else set()
+
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUTF8"] = "1"
+        result = subprocess.run(
+            [PYTHON_EXEC, SCRIPT_PATH, "--dry-run", "--db-path", temp_db,
+             "--lock-file", temp_lock],
+            env=env, capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
+        )
+        assert result.returncode == 0
+
+        after = set(os.listdir(prod_dir)) if os.path.isdir(prod_dir) else set()
+        assert after == before, "本番の maintenance_reports が変化した"
+
+        # 一時 DB 側に出力されていること
+        own_dir = os.path.join(os.path.dirname(temp_db), "maintenance_reports")
+        assert os.path.isfile(os.path.join(own_dir, "weekly_maintenance_report.txt"))

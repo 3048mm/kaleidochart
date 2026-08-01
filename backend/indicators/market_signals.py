@@ -1,5 +1,22 @@
+import logging
+
 import pandas as pd
 import numpy as np
+
+logger = logging.getLogger(__name__)
+
+# MTS の入力（^VIX / ^VIX3M）が供給停止したとき、直前値の持ち越し（ffill）が
+# 何営業日続いたら警告するか。
+#
+# ffill 自体は残す。VIX3M は3ヶ月物で動きが緩やかなため、短い空白なら
+# 直前値の持ち越しは良い近似である。2026-07-20〜07-29 に Yahoo が VIX3M を
+# 8営業日 null で返した際、空白直前 20.54 / 空白明け 20.51 とほぼ動いておらず、
+# ffill の MTS 誤差は平均 0.055pt だった（VIX 単独の代替式に切り替えると
+# 平均 4.055pt ずれ、73倍悪化する）。
+#
+# 問題は精度ではなく「黙って・無制限に続くこと」。長期化すれば持ち越しは
+# 信頼できなくなるので、閾値を超えたら気づけるようにする。
+STALE_INPUT_WARN_DAYS = 10
 
 # --- Tuning Parameters for MTS v3 ---
 # 1. VXV/VIX Ratio bounds (Low = panic/0.0, High = overheat/1.0)
@@ -23,6 +40,50 @@ WEIGHT_BREADTH    = 0.25
 WEIGHT_EMA50_ATR  = 0.25
 WEIGHT_EMA200_ATR = 0.25
 
+
+
+def find_stale_input_gaps(df: pd.DataFrame, col: str) -> list[tuple]:
+    """`col` が欠損している連続区間を (開始日, 終了日, 営業日数) で返す。
+
+    ffill で埋められる直前に呼ぶこと。値そのものは変更しない。
+    """
+    if col not in df.columns or 'date' not in df.columns:
+        return []
+
+    missing = df[col].isna().to_numpy()
+    dates = df['date'].tolist()
+    gaps = []
+    start = None
+    for i, is_na in enumerate(missing):
+        if is_na and start is None:
+            start = i
+        elif not is_na and start is not None:
+            gaps.append((dates[start], dates[i - 1], i - start))
+            start = None
+    if start is not None:
+        gaps.append((dates[start], dates[len(missing) - 1], len(missing) - start))
+    return gaps
+
+
+def report_stale_input_gaps(df: pd.DataFrame, col: str, ticker: str,
+                            warn_days: int = STALE_INPUT_WARN_DAYS) -> list[tuple]:
+    """MTS 入力の供給停止をログに出す（`STALE_INPUT_WARN_DAYS` 超過で WARNING）。
+
+    ffill は行わない。呼び出し側が ffill する前に「何日ぶん持ち越すことになるか」を
+    記録するのが目的。持ち越し自体は短期なら妥当な近似なので、値は変えない。
+    """
+    gaps = find_stale_input_gaps(df, col)
+    for start, end, n in gaps:
+        msg = (f"MTS 入力 {ticker} が {start} 〜 {end} の {n} 営業日ぶん欠損しています"
+               f"（直前値を持ち越して計算します）")
+        if n >= warn_days:
+            logger.warning(
+                f"{msg}。{warn_days} 営業日以上の持ち越しは信頼できません — "
+                f"供給元を確認してください"
+            )
+        else:
+            logger.info(msg)
+    return gaps
 
 
 def calculate_market_signals(
@@ -90,6 +151,7 @@ def calculate_market_signals(
     if df_vix is not None and not df_vix.empty:
         vix_ref = df_vix[['date', 'close']].rename(columns={'close': 'vix_close'})
         df = pd.merge(df, vix_ref, on='date', how='left')
+        report_stale_input_gaps(df, 'vix_close', '^VIX')
         df['vix_close'] = df['vix_close'].ffill()
     else:
         df['vix_close'] = 20.0
@@ -98,6 +160,7 @@ def calculate_market_signals(
     if df_vxv is not None and not df_vxv.empty:
         vxv_ref = df_vxv[['date', 'close']].rename(columns={'close': 'vxv_close'})
         df = pd.merge(df, vxv_ref, on='date', how='left')
+        report_stale_input_gaps(df, 'vxv_close', '^VIX3M')
         df['vxv_close'] = df['vxv_close'].ffill()
         df['vxv_vix_ratio'] = df['vxv_close'] / df['vix_close']
     else:

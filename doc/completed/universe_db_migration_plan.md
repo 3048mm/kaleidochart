@@ -1,6 +1,6 @@
 # universe.db 移行 計画書
 
-- **ステータス**: 🚧 Phase 1 + Phase 2 コード完了・検証済み / **本番適用（パイプライン1回実行＋昇格）待ち**
+- **ステータス**: ✅ 完了（2026-07-29）— T1 のソースを Google スプレッドシートから `universe.db` へ移行。`symbols.id` を1件も変えずに本番適用完了、全整合性チェック合格
 - **実施者**: AI エージェント (Claude Opus 5) — オーケストレーター + implementer 委譲
 - **開始日**: 2026-07-28 / **完了日**: —
 - **作業ブランチ**: 未定（`.claude/worktrees/universe-db-migration` を推奨）
@@ -233,8 +233,16 @@ Phase 3 を分離する理由: Phase 2 が完了して初めて「universe.db �
 - [x] **W6**: `orchestrator.py` の T1 呼び出しを `sync_symbols_from_universe()` に差し替え
 - [x] **W8**: `weekly_maintenance.py` の出力先を `delisting_recommendations.csv` に改称し、反映スクリプト `backend/scripts/retire_stale_symbols.py` を新設
 - [x] Phase 2 検証（§6.2）→ **23/23 合格**、全 pytest **466 passed**
-- [ ] **本番適用**: 日次パイプラインを1回実行して T1 切替を反映（`StockTool_DailyUpdate` は無効化済み）
-- [ ] 昇格（`tools/deploy_after_merge.ps1`）— 本番適用で Parquet の `symbols` / `theme_constituents` が更新される
+- [x] **本番適用**（2026-07-28 22:28 〜 23:56、正常完了）。日次パイプライン1回実行で T1 切替・Parquet 更新まで完結
+- [x] ~~昇格（`tools/deploy_after_merge.ps1`）~~ → **実行不要**（下記）
+
+> [!CAUTION]
+> **`deploy_after_merge.ps1` は本移行には使えない。** `deploy_after_merge.py:108` が
+> `update_pipeline.py --skip-sync` で回すため **T1 をスキップする**。indicator 追加・
+> スキーマ変更向けの道具であり、T1 変更には効かないどころか、本番 Parquet をワークスペースへ
+> コピーして T3 以降を再計算し swap するため通常実行の結果を上書きするリスクがある。
+> **T1 の変更は通常の日次実行そのものが昇格を兼ねる**（パイプライン末尾の
+> `rotate_and_archive_to_parquet` が Parquet を更新するため）。
 
 > [!IMPORTANT]
 > 本番適用時に発生する変更（sandbox で実測済み）:
@@ -323,9 +331,34 @@ $env:STOCKTOOL_ENV="sandbox"; $env:PYTHONPATH="backend"
 
 上記以外の差分（特に `id` の変化、theme ペアの増減、`tags` の並び順違い）が1件でも出たら **切替を中止**し §7 に記録する。
 
-### 6.3 結果
+### 6.3 結果（2026-07-29 本番適用後の実測）
 
-（実施時に追記）
+| 検証項目 | 結果 |
+| :--- | :--- |
+| **`symbols.id` の変化** | **0 件**（新規採番 0・MAX(id) 不変） |
+| **T2 行数 == T3 行数** | **不一致 0 件**（全 3,255 active 銘柄） |
+| **孤児 FK** | `daily_prices` / `indicators` / `relative_ranks` / `theme_constituents`（`symbol_id`・`theme_id` とも）すべて **0 件** |
+| SQLite `theme_constituents` | 4,710 |
+| **Parquet `theme_constituents`** | **4,710**（SQLite と完全一致＝削除が伝播） |
+| Parquet `symbols` | 3,257（SQLite と一致） |
+| W7 の効果 | `relative_ranks` は 個別 2846 / テーマ 268 / 市場 24 / セクタ 16 のみ。**指標・レバレッジ・`active=0` の混入 0 件** |
+| `db_health_check --parquet` | 合格（ID 列すべて数値型） |
+| pytest 全体 | **468 passed** |
+
+移行後の主要銘柄:
+
+```
+GBTC     id=3258  NASDAQ    指標   Crypto      active=1   （重複行なし）
+CPER     id=30    NYSEARCA  指標   Commodity   active=1
+IBIT     id=34    NASDAQ    テーマ  BLOK        active=1
+DX-Y.NYB id=3255  US        市場   -           active=0   （退役）
+JPY=X    id=3257  US        市場   -           active=0   （退役、fx_rates へ移行済み）
+```
+
+**`db_health_check --all` の NG 75 件について**: すべて「SPY 最新日より古い」＝鮮度の指摘で、
+データ完全性の破損ではない（T2/T3 行数一致・孤児 FK ゼロ）。内訳は T2 が 0 行の 18 銘柄
+（従来 19 銘柄から JPY=X が退役して 18）と、当日分を取得できなかった 57 銘柄。
+本移行による回帰ではなく、上場廃止銘柄の棚卸し課題として `doc/issue_list.md` に起票済み。
 
 ---
 

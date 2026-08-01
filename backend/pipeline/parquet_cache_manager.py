@@ -15,7 +15,7 @@ if backend_dir not in sys.path:
     sys.path.append(backend_dir)
 
 from db.database import get_db
-from db.models import Symbol, DailyPrice, Indicator, RelativeRank, ThemeConstituent, MarketSignal
+from db.models import Symbol, DailyPrice, Indicator, RelativeRank, ThemeConstituent, MarketSignal, FxRate
 
 def get_parquet_master_dir(db_path: str) -> str:
     """Returns the Parquet master storage directory path relative to the active db_path."""
@@ -122,7 +122,11 @@ def rotate_and_archive_to_parquet(db, db_path: str, logger: logging.Logger) -> d
         'indicators': os.path.join(parquet_dir, f"indicators_{timestamp}.parquet"),
         'ranks': os.path.join(parquet_dir, f"ranks_{timestamp}.parquet"),
         'tc': os.path.join(parquet_dir, f"theme_constituents_{timestamp}.parquet"),
-        'signals': os.path.join(parquet_dir, f"market_signals_{timestamp}.parquet")
+        'signals': os.path.join(parquet_dir, f"market_signals_{timestamp}.parquet"),
+        # fx_rates は長らく SQLite のみだったが、完全再構築（空DBから作り直し）で
+        # 為替履歴が丸ごと失われる事故が起きたため Parquet 対象に加えた（2026-08-01）。
+        # 実際 2026-07-30 の再構築で 7,711行(1996-2026) が 22行(直近30日) に消えた。
+        'fx': os.path.join(parquet_dir, f"fx_rates_{timestamp}.parquet"),
     }
     
     latest_pointers = get_latest_master_files(pointer_file)
@@ -171,7 +175,8 @@ def rotate_and_archive_to_parquet(db, db_path: str, logger: logging.Logger) -> d
     df_ranks_sql = pd.read_sql("SELECT * FROM relative_ranks", engine)
     df_tc_sql = pd.read_sql("SELECT * FROM theme_constituents", engine)
     df_signals_sql = pd.read_sql("SELECT * FROM market_signals", engine)
-    
+    df_fx_sql = pd.read_sql("SELECT * FROM fx_rates", engine)
+
     # Resolve previous versions for incremental merges
     old_paths = latest_pointers if latest_pointers else {}
     
@@ -184,8 +189,12 @@ def rotate_and_archive_to_parquet(db, db_path: str, logger: logging.Logger) -> d
     #   Parquet を直読みするバックテストが古いテーマ構成を見続ける。
     #   実例: universe.db 移行で CPER のテーマ構成3ペア・孤児4ペア・重複12ペアを
     #   削除したが、マージのままでは Parquet 側に残り続けた。
+    #   fx_rates も同じく SQLite が全期間を持つ（ホット期間のパージ対象外）。
+    #   マージにすると「ダミー値を消して実データに入れ替える」ような修正が
+    #   Parquet に伝播しない。
     df_symbols = df_symbols_sql
     df_tc = df_tc_sql
+    df_fx = df_fx_sql
 
     # --- 時系列テーブル: SQLite はホット期間のみのため「マージ」する ------
     df_prices = process_and_merge_table("daily_prices", ["symbol_id", "date"], df_prices_sql, old_paths.get('prices'))
@@ -195,26 +204,31 @@ def rotate_and_archive_to_parquet(db, db_path: str, logger: logging.Logger) -> d
 
     # 安全弁: 全期間同期テーブルが空なら置換せず旧世代を維持する
     # （SQLite が何らかの理由で空になったときに銘柄マスタを失わないため）
-    for name, df_new, old_key in (("symbols", df_symbols, "symbols"), ("theme_constituents", df_tc, "tc")):
+    for name, old_key in (("symbols", "symbols"), ("theme_constituents", "tc"), ("fx_rates", "fx")):
+        df_new = {"symbols": df_symbols, "theme_constituents": df_tc, "fx_rates": df_fx}[name]
         if df_new.empty and old_paths.get(old_key) and os.path.exists(old_paths[old_key]):
             logger.warning(f"  {name} が空のため置換を中止し、旧世代の Parquet を維持します")
+            recovered = pd.read_parquet(old_paths[old_key])
             if name == "symbols":
-                df_symbols = pd.read_parquet(old_paths['symbols'])
+                df_symbols = recovered
+            elif name == "theme_constituents":
+                df_tc = recovered
             else:
-                df_tc = pd.read_parquet(old_paths['tc'])
+                df_fx = recovered
     
     # Save the updated full history masters
     logger_fn = logger.info
     logger_fn(f"  Writing updated masters - Symbols: {len(df_symbols)}, Prices: {len(df_prices)}, "
               f"Indicators: {len(df_indicators)}, Ranks: {len(df_ranks)}, ThemeConstituents: {len(df_tc)}, "
-              f"MarketSignals: {len(df_signals)}")
-    
+              f"MarketSignals: {len(df_signals)}, FxRates: {len(df_fx)}")
+
     df_symbols.to_parquet(files['symbols'], index=False)
     df_prices.to_parquet(files['prices'], index=False)
     df_indicators.to_parquet(files['indicators'], index=False)
     df_ranks.to_parquet(files['ranks'], index=False)
     df_tc.to_parquet(files['tc'], index=False)
     df_signals.to_parquet(files['signals'], index=False)
+    df_fx.to_parquet(files['fx'], index=False)
     
     # Save version-specific pointer list
     version_json_path = os.path.join(parquet_dir, f"{version_id}.json")
@@ -373,8 +387,21 @@ def restore_sqlite_cache_from_parquet(db, db_path: str, logger: logging.Logger):
     db.query(RelativeRank).delete(synchronize_session=False)
     db.query(Symbol).delete(synchronize_session=False)
     db.query(ThemeConstituent).delete(synchronize_session=False)
+
+    # fx_rates は「復元元が存在するときだけ」クリアする。
+    # 'fx' キーを持たない旧世代の Parquet から復元する場合、無条件にクリアすると
+    # 復元されずに為替履歴が全滅する（Parquet 対象化は 2026-08-01 から）。
+    _fx_source = latest_files.get('fx') if latest_files else None
+    _fx_restorable = bool(_fx_source) and os.path.exists(_fx_source)
+    if _fx_restorable:
+        db.query(FxRate).delete(synchronize_session=False)
+    else:
+        logger.warning(
+            "  fx_rates は復元元の Parquet が無いため、現在の SQLite の内容を維持します"
+            "（旧世代の Parquet から復元しています）"
+        )
     db.commit()
-    
+
     logger.info("  2. Loading historical records from Parquet...")
     
     # Load only 'date' column first to find the latest date efficiently
@@ -442,7 +469,19 @@ def restore_sqlite_cache_from_parquet(db, db_path: str, logger: logging.Logger):
         bulk_insert_df_to_sqlite(engine, df_signals_cached, "market_signals", logger)
     else:
         logger.warning("    market_signals Parquet not found in pointer - will be recalculated on next pipeline run.")
-    
+
+    # Import fx_rates (full history - small table, SQLite holds every row)
+    # ホット期間でパージされないため date フィルタは掛けない。
+    if _fx_restorable:
+        logger.info("    Loading & importing fx rates...")
+        df_fx_cached = pd.read_parquet(latest_files['fx'])
+        bulk_insert_df_to_sqlite(engine, df_fx_cached, "fx_rates", logger)
+    else:
+        logger.warning(
+            "    fx_rates Parquet not found in pointer - 既存の SQLite の内容をそのまま維持しました。"
+            "履歴が不足している場合は backend/scripts/backfill_fx_rates.py で復旧できます。"
+        )
+
     db.commit()
     
     logger.info(f"SQLite Cache restored successfully in {time.time()-t0:.2f}s!")

@@ -169,23 +169,48 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
         log(f"  Critical Error: Failed to preload Parquet cache: {e}")
         raise e
 _GROUPBY_CACHE = {}
+_GROUPBY_CACHE_MAX = 30
+
 
 def get_groupby_cache(df, col_name='date'):
     """
     Cache pandas groupby('date') dictionary to prevent memory allocation explosion
     and dramatic overhead reduction during Optuna optimization runs.
+
+    【重要】キャッシュエントリは DataFrame への強参照を保持する。
+
+    キーに `id(df)` を使うが、`id()` が一意なのは**生存中のオブジェクト間だけ**である。
+    DataFrame が GC されると CPython は同じアドレスを次の同サイズ確保に即座に再利用するため、
+    強参照を持たないと「解放済み DataFrame の id」と「新しい DataFrame の id」が一致し、
+    行数・列数も同じなら**別データの groupby 結果が黙って返る**。
+    実測: 同形状の DataFrame 3,000 個を生成・破棄すると、3,000 個すべてが同一キーになった。
+
+    これは 2026-07-29 に `backend/tests/backtest/test_backtest_runner_entry.py` の複数テストが
+    間欠的に失敗する（トレード数が合わない）現象として顕在化した。テストだけの問題ではなく、
+    DataFrame の生成・破棄を繰り返す Optuna 最適化で**誤ったシグナルが静かに混入**しうる。
+
+    対策: エントリに DataFrame 自身を持たせて生存を保証し（＝id の再利用を防ぎ）、
+    取り出し時に `is` で同一性を検証する。
     """
     global _GROUPBY_CACHE
-    df_id = id(df)
-    meta_key = (df_id, len(df), len(df.columns))
-    
-    if meta_key not in _GROUPBY_CACHE:
-        # Prevent cache leak over multiple optimization scenarios
-        if len(_GROUPBY_CACHE) >= 30:
-            _GROUPBY_CACHE.clear()
-        _GROUPBY_CACHE[meta_key] = {d: group for d, group in df.groupby(col_name)}
-        
-    return _GROUPBY_CACHE[meta_key]
+    meta_key = (id(df), len(df), len(df.columns), col_name)
+
+    entry = _GROUPBY_CACHE.get(meta_key)
+    if entry is not None and entry[0] is df:
+        return entry[1]
+
+    # Prevent cache leak over multiple optimization scenarios
+    if len(_GROUPBY_CACHE) >= _GROUPBY_CACHE_MAX:
+        _GROUPBY_CACHE.clear()
+
+    grouped = {d: group for d, group in df.groupby(col_name)}
+    _GROUPBY_CACHE[meta_key] = (df, grouped)
+    return grouped
+
+
+def clear_groupby_cache():
+    """groupby キャッシュを明示的に破棄する（テスト・長時間バッチの区切り用）。"""
+    _GROUPBY_CACHE.clear()
 
 
 def count_signal_episodes(trading_dates: list, signals_by_date: dict) -> int:

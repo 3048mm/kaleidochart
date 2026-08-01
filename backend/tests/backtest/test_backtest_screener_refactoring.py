@@ -337,3 +337,85 @@ def test_apply_filters_is_theme_rs_trend_rank_s14_gt_s21():
     assert len(active_stocks) == 1
     assert active_stocks.iloc[0]['ticker'] == 'STK1'
 
+
+
+def test_apply_filters_excludes_theme_rows_from_final_output():
+    """テーマ（仮想指数含む）は売買対象外。他の条件を満たしても最終出力には含めない。
+
+    2026-07-29 発見: category='テーマ' 行がリーディングテーマ判定用の中間データ
+    としてだけでなく、そのまま買いシグナルとして最終出力に混入していた
+    （個別銘柄シナリオテストで実在しない仮想指数ティッカーが売買される実害あり）。
+    """
+    merged = pd.DataFrame([
+        # symbol_id, ticker, name, category, active, change_1d_pct
+        [1, 'STK1', 'Stock 1', '個別', 1, 10.0],
+        [10, '_THEME_A_', 'Theme A', 'テーマ', 1, 10.0],  # 通常フィルタは満たすが除外対象
+    ], columns=['symbol_id', 'ticker', 'name', 'category', 'active', 'change_1d_pct'])
+
+    strategy = {
+        'name': 'test_strat',
+        'min_change_1d_pct': 5.0,
+    }
+
+    filtered = apply_filters_to_df(
+        merged=merged,
+        target_date='2026-06-26',
+        df_ind=pd.DataFrame(columns=['date', 'symbol_id']),
+        df_ranks=pd.DataFrame(columns=['date', 'symbol_id', 'indicator_name', 'percent_rank']),
+        df_symbols=pd.DataFrame(),
+        df_theme_constituents=pd.DataFrame(),
+        strategy=strategy
+    )
+
+    assert len(filtered) == 1
+    assert filtered.iloc[0]['ticker'] == 'STK1'
+    assert not (filtered['category'] == 'テーマ').any()
+
+
+def test_apply_filters_theme_leadership_filter_still_works_after_theme_exclusion():
+    """テーマ自体は最終出力から除外されても、リーディングテーマ判定
+    （min_theme_rs_ratio_rank_e14 等）による構成銘柄の絞り込みは従来通り機能すること。
+    """
+    merged = pd.DataFrame([
+        [1, 'STK1', 'Stock 1', '個別', 1],
+        [2, 'STK2', 'Stock 2', '個別', 1],
+        [10, 'THEME_A', 'Theme A', 'テーマ', 1],
+        [11, 'THEME_B', 'Theme B', 'テーマ', 1],
+    ], columns=['symbol_id', 'ticker', 'name', 'category', 'active'])
+
+    strategy = {
+        'name': 'test_strat',
+        'min_theme_rs_ratio_rank_e14': 0.7
+    }
+
+    df_ind = pd.DataFrame(columns=['date', 'symbol_id'])
+    df_ranks = pd.DataFrame([
+        ['2026-06-26', 10, 'rs_ratio_rank_e14', 0.8],
+        ['2026-06-26', 11, 'rs_ratio_rank_e14', 0.5],
+    ], columns=['date', 'symbol_id', 'indicator_name', 'percent_rank'])
+
+    df_symbols = pd.DataFrame([
+        [1, 'STK1', '個別'],
+        [2, 'STK2', '個別'],
+        [10, 'THEME_A', 'テーマ'],
+        [11, 'THEME_B', 'テーマ'],
+    ], columns=['id', 'ticker', 'category'])
+
+    df_theme_constituents = pd.DataFrame([
+        [10, 1],
+        [11, 2],
+    ], columns=['theme_id', 'symbol_id'])
+
+    filtered = apply_filters_to_df(
+        merged=merged,
+        target_date='2026-06-26',
+        df_ind=df_ind,
+        df_ranks=df_ranks,
+        df_symbols=df_symbols,
+        df_theme_constituents=df_theme_constituents,
+        strategy=strategy
+    )
+
+    # リーディングテーマ(THEME_A)の構成銘柄STK1のみが残り、テーマ自体は出力に含まれない
+    assert len(filtered) == 1
+    assert filtered.iloc[0]['ticker'] == 'STK1'

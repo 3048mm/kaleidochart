@@ -24,8 +24,13 @@
 
 import argparse
 import csv
+import datetime as dt
+import json
 import os
 import sys
+import time
+import urllib.error
+import urllib.request
 
 _this_dir = os.path.dirname(os.path.abspath(__file__))
 _backend_dir = os.path.dirname(_this_dir)
@@ -43,6 +48,11 @@ REPORT_PATH = os.path.join(
 
 
 def _load_report(path: str) -> list[tuple[str, str]]:
+    """weekly_maintenance が出す退役候補 CSV を読む。
+
+    CSV には判定根拠（classification / rows / last_date）が入っている。
+    `lagging`（自己回復する一時的な取得漏れ）はそもそも書き出されない。
+    """
     if not os.path.exists(path):
         print(f"[ERROR] レポートが見つかりません: {path}")
         print("  先に weekly_maintenance.py を実行してください。")
@@ -51,12 +61,66 @@ def _load_report(path: str) -> list[tuple[str, str]]:
     with open(path, encoding="utf-8") as f:
         for r in csv.DictReader(f):
             ticker = (r.get("ticker") or "").strip()
-            if ticker:
-                rows.append((ticker, (r.get("reason") or "").strip()))
+            if not ticker:
+                continue
+            kind = (r.get("classification") or "").strip()
+            n = (r.get("rows") or "").strip()
+            last = (r.get("last_date") or "").strip()
+            if kind:
+                label = f"{kind} (rows={n}, last={last or 'none'})"
+            else:
+                label = (r.get("reason") or "").strip()
+            rows.append((ticker, label))
     return rows
 
 
-def run(tickers: list[tuple[str, str]], dry_run: bool, assume_yes: bool):
+_UA = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+    )
+}
+
+
+def probe_supply(ticker: str) -> tuple[str, int, str | None]:
+    """供給側（Yahoo）に本当にデータが無いかを確認する。
+
+    週次メンテの判定は自分の DB しか見ていないため、「供給が止まった」のか
+    「こちらの取得が失敗し続けている」のかを区別できない。実際 `EDOC` は
+    DB が 2026-07-17 で止まっていたが Yahoo には 07-28 まで存在した（2026-07-29 実測）。
+    退役は不可逆な運用判断なので、実行前に必ず供給側を照会する。
+
+    yfinance は HTTP 404 も 429 も同じメッセージに畳むため、chart API を直接叩いて
+    HTTP ステータスを見る。
+
+    Returns:
+        (status, 直近1ヶ月の有効行数, 最終日)
+        status は "gone"（404＝存在しない） / "alive"（データあり） /
+        "empty"（応答はあるがデータなし） / "error"（判定不能）
+    """
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range=1mo&interval=1d"
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=_UA), timeout=30) as r:
+            payload = json.load(r)
+    except urllib.error.HTTPError as e:
+        return ("gone" if e.code == 404 else "error"), 0, None
+    except Exception:
+        return "error", 0, None
+
+    result = (payload.get("chart") or {}).get("result")
+    if not result:
+        return "empty", 0, None
+    r0 = result[0]
+    ts = r0.get("timestamp") or []
+    closes = (r0.get("indicators", {}).get("quote") or [{}])[0].get("close") or []
+    valid = [(t, c) for t, c in zip(ts, closes) if c is not None]
+    if not valid:
+        return "empty", 0, None
+    last = dt.datetime.fromtimestamp(valid[-1][0], dt.timezone.utc).date()
+    return "alive", len(valid), str(last)
+
+
+def run(tickers: list[tuple[str, str]], dry_run: bool, assume_yes: bool, verify: bool = True):
     with open(os.path.join(_project_root, "config.toml"), "rb") as f:
         config = tomli.load(f)
     universe_db_path = config["system"].get(
@@ -86,6 +150,24 @@ def run(tickers: list[tuple[str, str]], dry_run: bool, assume_yes: bool):
                     skipped.append((ticker, f"テーマの親（構成銘柄 {as_parent} 件）のため要手動判断"))
                 else:
                     targets.append((sym, reason))
+
+        # --- 供給側の検証（退役は不可逆なので既定で実施） -------------------
+        if verify and targets:
+            print(f"\n供給側の検証中（{len(targets)} 件を Yahoo に照会）...")
+            verified = []
+            for sym, reason in targets:
+                status, n, last = probe_supply(sym.ticker)
+                if status == "alive":
+                    skipped.append((
+                        sym.ticker,
+                        f"供給側にデータあり（直近1ヶ月 {n} 行・最終 {last}）→ 退役ではなく取得側の問題",
+                    ))
+                elif status == "error":
+                    skipped.append((sym.ticker, "供給側を照会できず判定不能（要再実行）"))
+                else:
+                    verified.append((sym, f"{reason} / 供給側={status}"))
+                time.sleep(0.5)
+            targets = verified
 
         print(f"\n退役対象: {len(targets)} 件")
         for sym, reason in targets:
@@ -122,6 +204,8 @@ if __name__ == "__main__":
     src.add_argument("--tickers", type=str, help="カンマ区切りのティッカー")
     parser.add_argument("--dry-run", action="store_true", help="変更せず内容だけ表示")
     parser.add_argument("--yes", action="store_true", help="確認プロンプトを出さない")
+    parser.add_argument("--no-verify", action="store_true",
+                        help="供給側（Yahoo）への照会をスキップする（非推奨）")
     args = parser.parse_args()
 
     if args.from_report:
@@ -129,4 +213,4 @@ if __name__ == "__main__":
     else:
         entries = [(t.strip(), "manual") for t in args.tickers.split(",") if t.strip()]
 
-    run(entries, dry_run=args.dry_run, assume_yes=args.yes)
+    run(entries, dry_run=args.dry_run, assume_yes=args.yes, verify=not args.no_verify)

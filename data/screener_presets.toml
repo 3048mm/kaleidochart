@@ -39,190 +39,138 @@ active_rise_ids = [
 # ───────────────────────────────────────────────────
 
 [[rise]]
-id = "RS Trend and Theme"
-name = "RS Trend and Theme"
-subname = "RSTrend & Theme Momentum"
+id = "Theme RSRank Momentum"
+name = "Theme RSRank Momentum"
+subname = "Theme RSRank Momentum"
 group = "Check"
 use_hysteresis = false
 [rise.filters]
-min_change_1d_pct = 7.0 
-min_dist_21ema_pct = 8.0 
-min_vol_surge_21 = 0.6 
+min_change_1d_pct = 6.0 
+min_vol_surge_21 = 2.2 
 min_adr_pct_21 = 6.0 
-max_sma50_atr_mult = 4.0 
-min_market_cap = 1e6 
-min_rs_trend_s21 = 1.0 
-min_theme_rs_ratio_rank_e21 = 0.6
-is_rs_trend_s21_lt_s63 = true 
-is_theme_rs_ratio_rank_e14_gt_e21 = true 
+max_sma50_atr_mult = 4.5 
+min_market_cap = 1e7 
+is_theme_rs_ratio_rank_e21_gt_e63 = true 
+min_rs_ratio_rank_e21 = 0.4 
 is_close_gt_ema63 = true
 # [backtest results]
-#alpha 3.068
-#avg_gain 3.15
-#avg_spy_gain 0.081
-#expectancy 3.15
-#max_drawdown -27.58646386615293
-#port_cagr 110.61
-#port_total_return 582.8
-#port_vs_spy 107.82
-#port_vs_spy_total 575.42
-#spy_cagr 2.8
-#spy_total_return 7.37
-#total_trades 694
-#win_rate 36.59942363112392
-#------------------------------
-#min_change_1d_pct = 7.0 
-#min_dist_21ema_pct = 1.0 
-#min_vol_surge_21 = 3.8 
-#vol_surge_rel_spy_21 = 4.7 
-#min_adr_pct_21 = 6.0 
-#max_sma50_atr_mult = 4.5 
-#min_market_cap = 5e5 
-#min_rs_trend_s21 = 1.0 
-#min_rs_trend_rank_s21 = 0.9
-#min_theme_rs_trend_s21 = 1.8 
-#min_theme_rs_trend_rank_s21 = 0.9 
-#is_rs_trend_s21_lt_s63 = true 
-#is_theme_rs_trend_rank_s14_gt_s21 = true 
-#is_close_gt_ema63 = true
-# [backtest results]
-# alpha 3.55
-# avg_gain 3.648
-# avg_spy_gain 0.098
-# expectancy 3.648
-# max_drawdown -32.28953278841228
-# port_cagr 1149.76
-# port_vs_spy 1142.38
-# spy_cagr 7.37
-# total_trades 913
-# win_rate 33.9539978094195
-#------------------------------
+# alpha 3.993
+# avg_gain 4.2
+# avg_spy_gain 0.207
+# expectancy 4.2
+# expectancy_lcb 1.099
+# max_drawdown -57.526638694022374
+# port_cagr 147.62
+# port_total_return 936.56
+# port_vs_spy 144.82
+# port_vs_spy_total 929.19
+# spy_cagr 2.8
+# spy_total_return 7.37
+# total_trades 766
+# win_rate 35.900783289817234
 
 
 [[rise]]
-id = "momentum_breakout"
-name = "momentum_breakout"
-subname = "出来高を伴った急騰銘柄"
+id = "RS MACD and Theme"
+name = "RS MACD and Theme"
+subname = "RS MACD and Theme"
 group = "Check"
 use_hysteresis = false
 [rise.filters]
-is_rs_ratio_rank_e21_gt_e63 = true
-min_change_1d_pct = 7.0
-min_change_intraday_pct = 7.0
-min_vol_surge_21 = 2.8
-min_adr_pct_21 = 6.0
-max_sma50_atr_mult = 6.5
-min_market_cap = 1e8
-#min_avg_hits_per_day = 0.1
-#min_hit_rate_pct = 1.0
-# [backtest results]
-# alpha 6.013
-# avg_gain 7.004
-# avg_spy_gain 0.991
-# expectancy 7.004
-# max_drawdown -16.086735522075042
-# port_cagr 743.25
-# port_vs_spy 711.27
-# spy_cagr 31.98
-# total_trades 843
-# win_rate 40.569395017793596
-#------------------------------
+min_change_1d_pct = 9.0 
+min_dist_21ema_pct = 3.0 
+min_vol_surge_21 = 1.8 
+min_adr_pct_21 = 6.0 
+max_sma50_atr_mult = 7.5 
+min_market_cap = 1e7 
+min_rs_trend_rank_s21 = 0.9 
+min_rs_macd_hist_21 = 0.0 
+min_theme_rs_trend_s21 = 0.9 
+is_theme_rs_trend_rank_s14_gt_s21 = true 
+is_close_gt_ema63 = true 
+is_rs_macd_hist_rising_21 = true
 
+# [backtest results]
+# alpha 2.518
+# avg_gain 2.504
+# avg_spy_gain -0.013
+# expectancy 2.504
+# expectancy_lcb -0.212
+# max_drawdown -77.70041807167917
+# port_cagr 93.27
+# port_total_return 447.05
+# port_vs_spy 90.47
+# port_vs_spy_total 439.68
+# spy_cagr 2.8
+# spy_total_return 7.37
+# total_trades 840
+# win_rate 39.04761904761905
 
 
 [[rise]]
-id = "theme_momentum"
-name = "Theme Momentum"
-subname = "強いテーマに属する銘柄のモメンタム"
+id = "RS Trend with Theme"
+name = "RS Trend with Theme"
+subname = "RS Trend with Theme"
 group = "Check"
 use_hysteresis = false
 [rise.filters]
-is_theme_rs_ratio_e21_gt_e63 = true
-min_change_1d_pct = 7.0
-min_vol_surge_21 = 2.8
-min_adr_pct_21 = 6.0
-max_sma50_atr_mult = 7.0
-min_market_cap = 5e6
-# [backtest results]
-# alpha 2.956
-# avg_gain 2.979
-# avg_spy_gain 0.023
-# expectancy 2.979
-# max_drawdown -55.512558603726674
-# port_cagr 934.9
-# port_vs_spy 927.53
-# spy_cagr 7.37
-# total_trades 2547
-# win_rate 35.02159403219474
-#------------------------------
-
-
-#min_change_1d_pct = 7.0
-#min_vol_surge_21 = 2.8
-#min_adr_pct_21 = 6.0
-#max_dist_sma50_atr = 4.5
-#min_market_cap = 5e6
-#is_theme_rs_ratio_rank_e21_gt_e63 = true
-#  Expectancy:     3.071%
-#  Avg Gain/Trade: 3.071%
-#  Avg SPY Gain:   0.057%
-#  Alpha:          3.014%
-#  Max Drawdown:   -36.4%
-#  Win Rate:       33.9%
-#  Total Trades:   1670
-#  Port CAGR:      913.98%
-#  SPY B&H CAGR:   7.37%
-#  Port vs SPY:    906.61%
-#------------------------------
-
-
-
-
-
-[[rise]]
-id = "check_vcp"
-name = "VCP"
-subtitle = "ボラリティ収縮"
-group = "Check"
-[rise.filters]
-#is_trend_template = true           # ミネルヴィニのトレンドテンプレート適合
-#max_vcr = 0.7                   # 収縮度合い（0.5に近いほどタイト）
-#max_adr_pct_21 = 1.5            # 21日平均の値幅が3.5%以内（静かな動き）
-#max_dist_52w_high_pct = 0.0     # 52週高値から10%以内の位置
-#min_up_down_vol_ratio_50 = 1.5  # 出来高比率（買い集め傾向）
-#min_market_cap = 1e9            # 時価総額300Mドル以上
-# [backtest results]
-# alpha 1.242
-# avg_gain 1.416
-# avg_spy_gain 0.174
-# expectancy 1.416
-# max_drawdown -3.043625573556292
-# port_cagr 71.0
-# port_vs_spy 63.63
-# spy_cagr 7.37
-# total_trades 1338
-# win_rate 52.167414050822124
-#------------------------------
-is_trend_template = true 
-max_vcr = 0.65 
-max_adr_pct_21 = 1.5 
-max_dist_52w_high_pct = 5.0 
-min_up_down_vol_ratio_50 = 1.5 
-min_market_cap = 1e9 
+min_change_1d_pct = 5.0 
+min_dist_21ema_pct = 9.0 
+min_vol_surge_21 = 1.9 
+min_adr_pct_21 = 6.0 
+max_sma50_atr_mult = 5.5 
+min_market_cap = 1e8 
+min_rs_trend_s21 = 0.8 
+min_theme_rs_trend_s21 = 0.9 
+is_rs_trend_s14_lt_s21 = true 
+is_theme_rs_trend_rank_s14_gt_s21 = true 
 is_close_gt_ema63 = true
 # [backtest results]
-# alpha 1.447
-# avg_gain 1.622
+# alpha 3.445
+# avg_gain 3.62
 # avg_spy_gain 0.175
-# expectancy 1.622
-# max_drawdown -4.622023926056705
-# port_cagr 78.45
-# port_vs_spy 71.08
-# spy_cagr 7.37
-# total_trades 909
-# win_rate 54.12541254125413
-#------------------------------
+# expectancy 3.62
+# expectancy_lcb 0.38
+# max_drawdown -68.55782805908876
+# port_cagr 118.67
+# port_total_return 652.19
+# port_vs_spy 115.87
+# port_vs_spy_total 644.82
+# spy_cagr 2.8
+# spy_total_return 7.37
+# total_trades 695
+# win_rate 37.55395683453238
 
+
+[[rise]]
+id = "Momentum no exhaust"
+name = "Momentum no exhaust"
+subname = "Momentum no exhaust"
+group = "Check"
+use_hysteresis = false
+[rise.filters]
+min_change_1w_pct = 8.0 
+min_change_1m_pct = 23.0 
+max_td9 = 6 
+min_vol_surge_21 = 2.5 
+max_sma50_atr_mult = 4.5 
+min_market_cap = 1e8
+is_close_gt_sma50 = true
+# [backtest results]
+# alpha 2.677
+# avg_gain 2.896
+# avg_spy_gain 0.218
+# expectancy 2.896
+# expectancy_lcb 0.241
+# max_drawdown -55.75359510344244
+# port_cagr 78.86
+# port_total_return 347.98
+# port_vs_spy 76.07
+# port_vs_spy_total 340.61
+# spy_cagr 2.8
+# spy_total_return 7.37
+# total_trades 662
+# win_rate 37.46223564954683
 
 
 

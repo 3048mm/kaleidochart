@@ -146,11 +146,23 @@ def test_get_system_health_integrity_failure(db_session):
     assert integrity["indicators_count"] == 1
     assert integrity["is_consistent"] is False
 
-def test_get_system_health_pipeline_status(db_session):
+def test_get_system_health_pipeline_status(db_session, tmp_path, monkeypatch):
+    """回帰: 本番の update_pipeline.lock を参照・削除しないこと。
+
+    旧実装はロックパスがエンドポイント内に直書きで、テストが本番ロックを
+    os.remove しようとしていた。日次パイプラインの実行中はロックが消せず
+    `is_running` が True のままになり、テストが必ず落ちた（2026-07-31 発生）。
+    さらに削除できてしまった場合は、実行中のパイプラインの排他が壊れる。
+    """
     # Seed PipelineMeta
     meta = PipelineMeta(id=1, last_completed_at=datetime(2026, 7, 12, 12, 30, 0), last_spy_date=date(2026, 7, 10))
     db_session.add(meta)
     db_session.commit()
+
+    # エンドポイントが見るロックをテスト専用のものへ差し替える
+    lock_path = str(tmp_path / "test_pipeline.lock")
+    import api.routers as routers_module
+    monkeypatch.setattr(routers_module, "get_pipeline_lock_path", lambda: lock_path)
 
     app = FastAPI()
     app.include_router(router, prefix="/api")
@@ -158,13 +170,6 @@ def test_get_system_health_pipeline_status(db_session):
     client = TestClient(app)
 
     # 1. Test when pipeline is NOT running (lock file not locked)
-    lock_path = os.path.join(project_root, "update_pipeline.lock")
-    if os.path.exists(lock_path):
-        try:
-            os.remove(lock_path)
-        except OSError:
-            pass
-            
     response = client.get("/api/system/health")
     assert response.status_code == 200
     data = response.json()

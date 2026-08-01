@@ -11,6 +11,20 @@ from api import schemas
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+
+def get_pipeline_lock_path() -> str:
+    """パイプラインの排他ロックのパスを返す。
+
+    `/system/health` はこのファイルのロック状態で「パイプライン実行中か」を判定する。
+    関数に切り出しているのはテストから差し替えられるようにするため。
+    直書きだと**テストが本番のロックファイルを参照・削除してしまい**、
+    日次パイプラインの実行中はテストが必ず落ちる（2026-07-31 に実際に発生）。
+    """
+    backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    project_root = os.path.dirname(backend_dir)
+    return os.path.join(project_root, "update_pipeline.lock")
+
+
 @router.get("/ping")
 def ping():
     return {"ping": "pong"}
@@ -91,9 +105,9 @@ def get_system_health(db: Session = Depends(get_api_db)):
     # 3. Pipeline Status (File Lock & Metadata)
     import msvcrt
     backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    project_root = os.path.dirname(backend_dir)
-    lock_file = os.path.join(project_root, "update_pipeline.lock")
-    
+    project_root = os.path.dirname(backend_dir)   # 後段の TOML プリセット検証でも使う
+    lock_file = get_pipeline_lock_path()
+
     is_running = False
     if os.path.exists(lock_file):
         try:
