@@ -8,6 +8,7 @@ from sqlalchemy import desc, func
 
 from db.models import Symbol, DailyPrice, Indicator, MarketSignal, FxRate
 from db.models_user import Portfolio, PortfolioPosition, PositionHistory, TotalPortfolio, Transaction
+from indicators.fx_calendar import resolve_fx_rate
 from api.portfolio_logic import (
     calc_max_investment,
     calc_stop_loss_price,
@@ -658,9 +659,8 @@ def get_total_portfolio_summary(db: Session, user_db: Session) -> dict:
         recommended_cash = calculate_recommended_cash(phase, score)
 
 
-    # Fetch latest USD/JPY from FxRate
-    latest_fx = db.query(FxRate).filter_by(currency_pair="USD/JPY").order_by(desc(FxRate.date)).first()
-    current_exchange_rate = latest_fx.rate if latest_fx else 150.0
+    # 最新の USD/JPY。非営業日（土日）の行が混入していても読み飛ばす
+    current_exchange_rate = resolve_fx_rate(db)
 
     total_equity_jpy = total_equity_value * current_exchange_rate
     total_unrealized_pnl_jpy = total_equity_jpy - net_injected_jpy
@@ -692,19 +692,16 @@ def get_total_portfolio_summary(db: Session, user_db: Session) -> dict:
     }
     
 def get_historical_fx_rate(db: Session, target_date: date) -> float:
-    fx = db.query(FxRate).filter(
-        FxRate.currency_pair == "USD/JPY",
-        FxRate.date <= target_date
-    ).order_by(desc(FxRate.date)).first()
-    
-    if fx:
-        return fx.rate
-    
-    # Fallback to earliest available
-    fx_fallback = db.query(FxRate).filter(
-        FxRate.currency_pair == "USD/JPY"
-    ).order_by(FxRate.date).first()
-    return fx_fallback.rate if fx_fallback else 150.0
+    """指定日に適用する USD/JPY レートを返す。
+
+    解決は `indicators.fx_calendar.resolve_fx_rate` に委譲する。**非営業日（土日）の行が
+    DB に混入していても影響を受けない**のが要点。単なる防御ではなく意味的にも正しく、
+    土曜の取引に適用すべきレートは金曜終値である（土曜に為替は動いていない）。
+
+    混入経路: Yahoo は取引していない日にも「当日・部分バー」を返すことがあり、
+    2026-08-01(土) に 157.40 が本番へ入った（金曜終値 160.18 と 1.7% 乖離）。
+    """
+    return resolve_fx_rate(db, target_date=target_date)
 
 
 def execute_transaction(

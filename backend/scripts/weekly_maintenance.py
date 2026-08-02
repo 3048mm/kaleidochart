@@ -181,11 +181,12 @@ def audit_and_fix_weekly(db, dry_run: bool) -> dict:
     3. Invalid constituents pointing to inactive symbols.
     4. Mismatched indicators (DailyPrice exists but Indicator does not).
     """
-    from db.models import Symbol, DailyPrice, Indicator, ThemeConstituent
+    from db.models import Symbol, DailyPrice, Indicator, ThemeConstituent, FxRate
     from sqlalchemy import func
     from datetime import timedelta, date
     import pandas as pd
     from indicators.calculate import calculate_indicators
+    from indicators.fx_calendar import is_fx_trading_day
     
     report = {
         "stale_symbols": [],       # 退役候補 = delisted + no_history（後方互換のティッカー列）
@@ -198,6 +199,7 @@ def audit_and_fix_weekly(db, dry_run: bool) -> dict:
         "mismatched_indicators_count": 0,
         "fixed_indicators_count": 0,
         "split_anomalies": [],
+        "fx_weekend_rows": [],     # (currency_pair, date, rate) — 為替に存在しないはずの土日行
     }
 
     # 1. Delisted / Stale active symbols detection
@@ -388,7 +390,29 @@ def audit_and_fix_weekly(db, dry_run: bool) -> dict:
                             "curr_close": curr_close,
                             "ratio": ratio
                         })
-                
+
+    # 6. fx_rates の土日行検出（第3層）
+    #
+    # 第1層（sync_fx_rates の営業日フィルタ）と第2層（resolve_fx_rate が土日行を
+    # 読まない）で実害は防いでいるが、それは「混入しても壊れない」だけで
+    # 「混入していない」保証ではない。新たな流入経路（手動投入・別スクリプト・
+    # タイムゾーン変換の退行）が生まれたときに気付けるよう、ここで可視化する。
+    # 定義上ありえない行なので検出したら除去する（invalid_constituents と同じ扱い）。
+    fx_weekend = [
+        r for r in db.query(FxRate).order_by(FxRate.date).all()
+        if not is_fx_trading_day(r.date)
+    ]
+    for r in fx_weekend:
+        report["fx_weekend_rows"].append((r.currency_pair, str(r.date), r.rate))
+        if not dry_run:
+            db.delete(r)
+    if not dry_run and fx_weekend:
+        db.commit()
+        logger.warning(
+            f"fx_rates: 土日行 {len(fx_weekend)} 件を削除しました。"
+            "第1層（sync_fx_rates の営業日フィルタ）を通らない流入経路がある可能性があります。"
+        )
+
     return report
 
 def resolve_report_dir(db_path: str | None) -> str:
@@ -485,7 +509,18 @@ def write_maintenance_report(report: dict, dry_run: bool, db_path: str | None = 
                 f.write(f"  - {item['ticker']} on {item['date']}: {item['prev_close']:.2f} -> {item['curr_close']:.2f} (Ratio: {item['ratio']:.2f})\n")
         else:
             f.write("  None\n")
-        
+        f.write("\n")
+
+        # 検出されたら「防御が効いた」ではなく「第1層を迂回した経路がある」の合図。
+        f.write("6. fx_rates rows on non-trading days (FX has no Sat/Sun bars):\n")
+        if report.get("fx_weekend_rows"):
+            action_taken = "Flagged" if dry_run else "Auto-Deleted"
+            for pair, d, rate in report["fx_weekend_rows"]:
+                f.write(f"  - {pair} {d} rate={rate:.4f} [{action_taken}]\n")
+            f.write("  !! sync_fx_rates の営業日フィルタを通らない流入経路を調査してください\n")
+        else:
+            f.write("  None\n")
+
     logger.info(f"Audit report saved to: {report_file}")
     
     # 2. Delisting recommendations CSV

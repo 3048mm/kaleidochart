@@ -96,6 +96,7 @@ def probe_supply(ticker: str) -> tuple[str, int, str | None]:
     Returns:
         (status, 直近1ヶ月の有効行数, 最終日)
         status は "gone"（404＝存在しない） / "alive"（データあり） /
+        "truncated"（上流が系列を切り落とした） /
         "empty"（応答はあるがデータなし） / "error"（判定不能）
     """
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range=1mo&interval=1d"
@@ -117,7 +118,35 @@ def probe_supply(ticker: str) -> tuple[str, int, str | None]:
     if not valid:
         return "empty", 0, None
     last = dt.datetime.fromtimestamp(valid[-1][0], dt.timezone.utc).date()
+
+    if _is_truncated(r0.get("meta") or {}):
+        return "truncated", len(valid), str(last)
     return "alive", len(valid), str(last)
+
+
+def _is_truncated(meta: dict) -> bool:
+    """上流(Yahoo)が銘柄レコードを作り直して系列を切り落とした状態か判定する。
+
+    2026-08-02 に BLD(TopBuild) など17銘柄で発生。Yahoo は銘柄を認識していて
+    正式名称も取引所も返すのに、chart の時系列だけが最近の日付から始まる。
+
+    決め手は **`firstTradeDate` と 52週レンジの自己矛盾**:
+        BLD  firstTradeDate=2026-06-30（1ヶ月前）  なのに 52週高値=559.47
+    52週高安は1年分のデータが無ければ算出できないので、集計レイヤーには履歴が
+    あるのに時系列だけが孤立している証拠になる。
+
+    この状態は上場廃止でも改称でもないため **退役させてはいけない**。取り直しても
+    直らないので、旧 Parquet 世代から継ぐ
+    （`backend/scripts/restore_truncated_symbol_history.py`）。
+
+    実測: 対象17件を 17/17 で検出、対照群 AAPL/SPY/MSFT は誤検出ゼロ。
+    """
+    ftd = meta.get("firstTradeDate")
+    lo, hi = meta.get("fiftyTwoWeekLow"), meta.get("fiftyTwoWeekHigh")
+    if not ftd or lo is None or hi is None or hi <= lo:
+        return False
+    first_trade = dt.datetime.fromtimestamp(ftd, dt.timezone.utc).date()
+    return (dt.date.today() - first_trade).days < 365
 
 
 def run(tickers: list[tuple[str, str]], dry_run: bool, assume_yes: bool, verify: bool = True):
@@ -157,7 +186,15 @@ def run(tickers: list[tuple[str, str]], dry_run: bool, assume_yes: bool, verify:
             verified = []
             for sym, reason in targets:
                 status, n, last = probe_supply(sym.ticker)
-                if status == "alive":
+                if status == "truncated":
+                    # 「取得側の問題」で片付けると原因不明のまま放置される。
+                    # 打つ手（旧 Parquet 世代からの復元）まで示す。
+                    skipped.append((
+                        sym.ticker,
+                        f"上流が系列を切断（firstTradeDate 打ち直し・直近1ヶ月 {n} 行）"
+                        f" → 退役不可。restore_truncated_symbol_history.py で復元",
+                    ))
+                elif status == "alive":
                     skipped.append((
                         sym.ticker,
                         f"供給側にデータあり（直近1ヶ月 {n} 行・最終 {last}）→ 退役ではなく取得側の問題",

@@ -6,6 +6,7 @@ from sqlalchemy import func
 
 from db.models import DailyPrice, FxRate
 from data_collection.fetcher import fetch_daily_data
+from indicators.fx_calendar import is_fx_trading_day
 from pipeline.utils import sanitize_numeric, attach_market_cap
 
 def sync_phase_t2_prices(db, sheet_data: List[Dict], symbol_id_map: Dict, index_start_date: str, default_start_date: str, skip_fetch: bool, logger: logging.Logger) -> Optional[datetime]:
@@ -156,7 +157,11 @@ def sync_fx_rates(db, skip_fetch: bool = False, logger: Optional[logging.Logger]
             curr = start_date
             count = 0
             while curr <= today:
-                # 土日は為替データが休みの可能性もあるが、テストでは連続で入れる
+                # ダミーであっても土日行は作らない。本番と同じ不変条件
+                # （fx_rates に非営業日の行は存在しない）をテスト側でも保つ。
+                if not is_fx_trading_day(curr):
+                    curr += timedelta(days=1)
+                    continue
                 exists = db.query(FxRate).filter(FxRate.currency_pair == "USD/JPY", FxRate.date == curr).first()
                 if not exists:
                     rate_val = 155.0 + (curr.day % 5) * 0.2  # ダミーレート
@@ -168,13 +173,23 @@ def sync_fx_rates(db, skip_fetch: bool = False, logger: Optional[logging.Logger]
             logger.info(f"[Skip Fetch] Inserted {count} dummy fx rates.")
             return True
             
+        # 取得済みが最新なら開始日が未来になる。yfinance はこれを
+        # "possibly delisted; no price data found" として返すため、
+        # 毎回 ERROR がログに出て「本当の障害」が埋もれる（2026-08-01 発見）。
+        if start_date > date.today():
+            logger.info(
+                f"FX Rates: 既に最新です（次の取得開始日 {start_date} は未来）。フェッチをスキップします。"
+            )
+            return True
+
         # 2. yfinance から JPY=X をフェッチ
         start_str = start_date.strftime('%Y-%m-%d')
         logger.info(f"Fetching JPY=X from {start_str}...")
         df = fetch_daily_data("JPY=X", start_str)
-        
+
         if df is not None and not df.empty:
             count = 0
+            skipped_non_trading = 0
             for _, row in df.iterrows():
                 row_date = row['date']
                 # date オブジェクトに変換
@@ -182,12 +197,20 @@ def sync_fx_rates(db, skip_fetch: bool = False, logger: Optional[logging.Logger]
                     row_date = row_date.date()
                 elif isinstance(row_date, str):
                     row_date = datetime.strptime(row_date, '%Y-%m-%d').date()
-                    
+
+                # 株価の T2 は `row['date'] <= spy_latest_date` という SPY の最新日を
+                # 上限にしているため Yahoo の「当日・部分バー」が自動的に落ちるが、
+                # fx_rates にはその上限が無い。土曜に実行すると取引していない日の
+                # スナップショットが入るので、ここで営業日を上限として弾く。
+                if not is_fx_trading_day(row_date):
+                    skipped_non_trading += 1
+                    continue
+
                 exists = db.query(FxRate).filter(
                     FxRate.currency_pair == "USD/JPY",
                     FxRate.date == row_date
                 ).first()
-                
+
                 if not exists:
                     close_val = sanitize_numeric(row, 'close')
                     if close_val is not None:
@@ -198,6 +221,10 @@ def sync_fx_rates(db, skip_fetch: bool = False, logger: Optional[logging.Logger]
                         )
                         db.add(fx)
                         count += 1
+            if skipped_non_trading:
+                logger.info(
+                    f"FX Rates: 非営業日（土日）のバー {skipped_non_trading} 件を除外しました。"
+                )
             if count > 0:
                 db.commit()
                 logger.info(f"FX Rates updated: +{count} rows of USD/JPY.")
@@ -205,7 +232,7 @@ def sync_fx_rates(db, skip_fetch: bool = False, logger: Optional[logging.Logger]
                 logger.info("FX Rates: No new rows to add.")
         else:
             logger.warning("No FX data fetched from yfinance.")
-            
+
         return True
     except Exception as e:
         db.rollback()

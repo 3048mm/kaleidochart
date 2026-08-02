@@ -169,3 +169,80 @@ def test_is_production_db_detects_non_production(db_session):
     from pipeline.phases.t2_prices import _is_production_db
 
     assert _is_production_db(db_session) is False
+
+
+# ============================================================
+# TEST-F: 土日バーを fx_rates に書き込まないことの検証
+#   背景: 株価の T2 は `row['date'] <= spy_latest_date` で Yahoo の当日・部分バーが
+#   自動的に落ちるが、fx_rates にはその上限が無い。2026-08-01(土) に実行した結果
+#   157.40 の土曜行が本番へ入り、金曜終値 160.18 と 1.7% 乖離した。
+# ============================================================
+def test_sync_fx_rates_skips_weekend_bars(db_session, monkeypatch):
+    """TEST-F: yfinance が土曜バーを返しても土曜行を作らない"""
+    import pandas as pd
+    from pipeline.phases import t2_prices
+
+    # 金(160.18) + 土(157.40) を返す — 2026-08-01 に実際に返ってきた形
+    fake = pd.DataFrame([
+        {"date": date(2026, 7, 31), "close": 160.18},
+        {"date": date(2026, 8, 1), "close": 157.40},
+    ])
+    monkeypatch.setattr(t2_prices, "fetch_daily_data", lambda *a, **kw: fake)
+
+    assert t2_prices.sync_fx_rates(db_session, skip_fetch=False) is True
+
+    rows = db_session.query(FxRate).order_by(FxRate.date).all()
+    assert [r.date for r in rows] == [date(2026, 7, 31)]
+    assert rows[0].rate == 160.18
+
+
+def test_sync_fx_rates_skip_fetch_creates_no_weekend_rows(db_session):
+    """TEST-F2: ダミー投入でも土日行は作らない（本番と同じ不変条件をテスト側でも保つ）"""
+    from pipeline.phases.t2_prices import sync_fx_rates
+
+    assert sync_fx_rates(db_session, skip_fetch=True) is True
+
+    rows = db_session.query(FxRate).all()
+    assert rows, "ダミーが1行も入っていない（テストの前提が崩れている）"
+    assert [r.date for r in rows if r.date.weekday() >= 5] == []
+
+
+# ============================================================
+# TEST-G: 取得済みが最新のときに未来日でフェッチしないことの検証
+#   yfinance は開始日が未来だと "possibly delisted; no price data found" を返し、
+#   毎回 ERROR がログに出て本当の障害が埋もれる（2026-08-01 発見）。
+# ============================================================
+def test_sync_fx_rates_skips_fetch_when_start_date_is_future(db_session, monkeypatch):
+    """TEST-G: 最新レートが今日の場合、フェッチ自体を呼ばない"""
+    from datetime import date as _date
+
+    from pipeline.phases import t2_prices
+
+    db_session.add(FxRate(currency_pair="USD/JPY", date=_date.today(), rate=160.18))
+    db_session.commit()
+
+    called = []
+    monkeypatch.setattr(
+        t2_prices, "fetch_daily_data",
+        lambda *a, **kw: called.append(a) or None
+    )
+
+    assert t2_prices.sync_fx_rates(db_session, skip_fetch=False) is True
+    assert called == [], "開始日が未来なのに yfinance を叩いている"
+
+
+# ============================================================
+# TEST-H: 読み取り側が土日行の影響を受けないことの検証（第2層）
+# ============================================================
+def test_get_historical_fx_rate_ignores_weekend_row(db_session):
+    """TEST-H: 土曜行が既に DB にあっても、円換算には金曜終値が使われる"""
+    from api.portfolio_service import get_historical_fx_rate
+
+    db_session.add_all([
+        FxRate(currency_pair="USD/JPY", date=date(2026, 7, 31), rate=160.18),  # 金
+        FxRate(currency_pair="USD/JPY", date=date(2026, 8, 1), rate=157.40),   # 土（無効）
+    ])
+    db_session.commit()
+
+    assert get_historical_fx_rate(db_session, date(2026, 8, 1)) == 160.18
+    assert get_historical_fx_rate(db_session, date(2026, 8, 3)) == 160.18

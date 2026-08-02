@@ -12,13 +12,18 @@ echo =========================================================
 echo.
 
 :: 1. Prompt for Parquet Master cleaning
-set /p CLEAN_PARQUET="Clean Parquet Master Cold Cache for pure rebuild? (y/N) [default: N]: "
+::    ARCHIVES the Parquet Master instead of deleting it. A full rebuild refetches
+::    from Yahoo, so any symbol whose series was truncated upstream is lost forever
+::    if the old generations were deleted (17 symbols hit this on 2026-08-02).
+::    Details and recovery: backend/scripts/archive_parquet_master.py
+set /p CLEAN_PARQUET="Archive Parquet Master Cold Cache for pure rebuild? (y/N) [default: N]: "
 if /i "%CLEAN_PARQUET%"=="y" (
-    echo Cleaning Parquet Master Cache...
-    if exist data\parquet_master (
-        rd /s /q data\parquet_master
+    python backend\scripts\archive_parquet_master.py
+    if errorlevel 1 (
+        echo Aborting rebuild to avoid data loss.
+        pause
+        exit /b 1
     )
-    echo Clean completed.
     echo.
 )
 

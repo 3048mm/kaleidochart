@@ -251,6 +251,45 @@ class TestWeeklyMaintenanceAudits:
         assert report["split_anomalies"][0]["ticker"] == "AAPL"
         assert report["split_anomalies"][0]["ratio"] == 0.5
 
+    def test_detect_fx_weekend_rows(self, setup_audit_db):
+        """為替に存在しないはずの土日行を検出し、fix モードで除去する（第3層）。
+
+        書き込み側の営業日フィルタと読み取り側の土日無視で実害は防いでいるが、
+        それは「混入しても壊れない」だけ。新たな流入経路が生まれたときに
+        気付けることを保証する。
+        """
+        from db.models import FxRate
+
+        db = setup_audit_db
+        db.add_all([
+            FxRate(currency_pair="USD/JPY", date=date(2026, 7, 31), rate=160.18),  # 金
+            FxRate(currency_pair="USD/JPY", date=date(2026, 8, 1), rate=157.40),   # 土
+            FxRate(currency_pair="USD/JPY", date=date(2026, 8, 2), rate=157.50),   # 日
+        ])
+        db.commit()
+
+        # dry-run: 報告するが消さない
+        report = audit_and_fix_weekly(db, dry_run=True)
+        assert [r[1] for r in report["fx_weekend_rows"]] == ["2026-08-01", "2026-08-02"]
+        assert db.query(FxRate).count() == 3
+
+        # fix: 土日行だけ消え、営業日の行は残る
+        report_fix = audit_and_fix_weekly(db, dry_run=False)
+        assert len(report_fix["fx_weekend_rows"]) == 2
+        remaining = db.query(FxRate).all()
+        assert [r.date for r in remaining] == [date(2026, 7, 31)]
+
+    def test_no_fx_weekend_rows_when_clean(self, setup_audit_db):
+        """平常時（営業日のみ）は何も報告しない＝ノイズにならない"""
+        from db.models import FxRate
+
+        db = setup_audit_db
+        db.add(FxRate(currency_pair="USD/JPY", date=date(2026, 7, 31), rate=160.18))
+        db.commit()
+
+        report = audit_and_fix_weekly(db, dry_run=True)
+        assert report["fx_weekend_rows"] == []
+
 
 # ---------------------------------------------------------------------------
 # 銘柄の鮮度分類（classify_symbol_freshness）の単体テスト

@@ -177,7 +177,8 @@ Check `/api/system/info` (`is_production` flag) to confirm which environment you
 Project-specific skills live in `.claude/skills/` (originals in `.agents/skills/` are kept for other AI tools). Invoke the relevant one before working on its domain:
 
 - **sandbox-workflow** — mandatory before any DB schema / indicator / pipeline-logic change (sandbox isolation → verify → promote to production)
-- **pipeline-debugging** — diagnosing/repairing T1–T5 data inconsistencies (missing ranks, T2/T3 mismatch, stale data)
+- **pipeline-debugging** — diagnosing/repairing T1–T5 data inconsistencies (missing ranks, T2/T3 mismatch, stale data) — 手元側の問題
+- **upstream-data-diagnosis** — 上流(yfinance/Yahoo)起因のデータ異常の切り分けと既知の限界カタログ。履歴が短い・上場廃止候補に出た・価格に段差がある・退役の可否を判断する・完全再構築を実行する前に必ず参照（誤診断で本番データを削除した前例あり）
 - **parquet-data-quality** — reading/writing/merging Parquet master files, dtype-corruption checks, OOM-safe loading
 - **sqlite-wal-handling** — WAL mode, lock/deadlock avoidance
 - **sql-best-practices** — query performance, injection safety, N+1 avoidance

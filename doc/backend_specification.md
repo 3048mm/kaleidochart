@@ -230,16 +230,21 @@ S&P500（SPY）の動向や市場全体の統計から算出される、市場�
 | `date` | DATE | 対象日。 |
 | `rate` | FLOAT | レート（1ドルあたりの円）。 |
 
-`(currency_pair, date)` に一意制約があります。Parquet マスターの対象外で、SQLite に全期間永続保持します（軽量なため）。
+`(currency_pair, date)` に一意制約があります。SQLite に全期間永続保持し（軽量なため 730日パージの対象外）、**Parquet マスターにも含めます**（`latest_master.json` の `fx` キー）。Parquet 対象外だった頃は完全再構築のたびに為替履歴が消えていました（2026-08-01 修正、`doc/issue_list.md` 参照）。
+
+**不変条件: 土日（非営業日）の行は存在しません。** 為替は日曜 17:00 ET 〜 金曜 17:00 ET に連続取引されるため、日足バーは月〜金にしか出ません。**米国の祝日は除外しません**（為替は米国休場日でも動くため、株式の取引日カレンダーと一致させてはいけません）。判定は `indicators/fx_calendar.py` の `is_fx_trading_day()` に一元化されており、書き込み側・読み取り側・バックフィルが同じ定義を使います。
 
 **取得フロー（`pipeline/phases/t2_prices.py`）:**
-- `sync_fx_rates()` が yfinance から `JPY=X` を取得し `USD/JPY` として格納します。
+- `sync_fx_rates()` が yfinance から `JPY=X` を取得し `USD/JPY` として格納します。取り込み時に非営業日のバーを除外します。
+- 次の取得開始日（`max(date) + 1日`）が未来の場合はフェッチ自体をスキップします。yfinance は開始日 > 終了日を `possibly delisted; no price data found` として返すため、そのままだと毎回 ERROR がログに出て本当の障害が埋もれます。
 - **`JPY=X` は T2（`daily_prices`）から明示的に除外**されており（`sync_phase_t2_prices` の `real_items` 構築時）、銘柄マスタにも登録しません。`sync_fx_rates()` はティッカーをハードコードで保持し `symbols` を参照しません。
 - `tools/db_health_check.py` はティッカーに `=X` を含む銘柄をチェック対象外にします。
 
-**参照側:**
-- `api/portfolio_service.py` の `get_historical_fx_rate(db, target_date)` … `date <= target_date` の最新レート。無い場合は最古レートにフォールバック。
-- 同 `get_total_portfolio_summary()` … 最新レートで `total_equity_jpy` / `current_exchange_rate` を算出。
+**参照側:** いずれも `indicators/fx_calendar.py` の `resolve_fx_rate()` を経由します。
+- `api/portfolio_service.py` の `get_historical_fx_rate(db, target_date)` … `date <= target_date` で**最新の営業日**のレート。無い場合は最古の営業日レートにフォールバック。
+- 同 `get_total_portfolio_summary()` … 最新の営業日レートで `total_equity_jpy` / `current_exchange_rate` を算出。
+
+土日行が万一混入しても読み飛ばします。これは単なる防御ではなく**意味的に正しい**動作です — 土曜の取引に適用すべきレートは金曜終値であり、土曜行があってもそれを使ってはいけません。加えて `scripts/weekly_maintenance.py` の監査項目6が土日行を検出します（fix モードで除去）。書き込み側の除外は「混入しても壊れない」ことを保証しますが「混入していない」ことは保証しないため、新たな流入経路に気付くための3層目です。
 
 > [!WARNING]
 > **`--skip-fetch` 実行時のダミー値を本番 DB に書き込んではいけません。** 本テーブルは

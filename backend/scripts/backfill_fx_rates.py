@@ -34,6 +34,7 @@ if _backend_dir not in sys.path:
 import tomli
 from db.database import init_db, get_write_db
 from db.models import FxRate, Symbol
+from indicators.fx_calendar import is_fx_trading_day
 
 CURRENCY_PAIR = "USD/JPY"
 YF_TICKER = "JPY=X"
@@ -93,11 +94,11 @@ def fetch_usdjpy_history() -> tuple[pd.DataFrame, int]:
     #   (2) Yahoo の当日・部分バー … 末尾に1本だけ出る。2026-08-01(土) に
     #       157.40 が返り、金曜終値 160.18 と 1.7% 乖離していた。取引していない
     #       日のスナップショットなので捨てる。
-    weekend = df[[d.weekday() >= 5 for d in df["date"]]]
+    weekend = df[[not is_fx_trading_day(d) for d in df["date"]]]
     if not weekend.empty:
         for r in weekend.itertuples():
             print(f"    土日行を除外: {r.date} rate={r.rate:.4f}")
-        df = df[[d.weekday() < 5 for d in df["date"]]]
+        df = df[[is_fx_trading_day(d) for d in df["date"]]]
 
     return df[["date", "rate"]].sort_values("date").reset_index(drop=True), len(weekend)
 
@@ -126,7 +127,7 @@ def run(dry_run: bool = False, skip_retire: bool = False):
         print(f"[ERROR] 土日行が {dropped_weekend} 件と多すぎます。"
               "タイムゾーン変換（meta.exchangeTimezoneName）を確認してください。中断します。")
         sys.exit(1)
-    if any(d.weekday() >= 5 for d in hist["date"]):
+    if any(not is_fx_trading_day(d) for d in hist["date"]):
         print("[ERROR] 除外後も土日行が残っています。中断します。")
         sys.exit(1)
 
@@ -138,7 +139,7 @@ def run(dry_run: bool = False, skip_retire: bool = False):
         # 為替に土日は存在しない。パイプラインの sync_fx_rates は yfinance が返す
         # 当日バーをそのまま入れるため、土曜に実行すると土曜行が入りうる
         # （2026-08-01 に実際に混入）。ここで併せて掃除する。
-        weekend_rows = [r for r in existing if r.date.weekday() >= 5]
+        weekend_rows = [r for r in existing if not is_fx_trading_day(r.date)]
         if weekend_rows:
             print(f"\n[2a] 土日行を検出: {len(weekend_rows)} 行")
             for r in weekend_rows:
@@ -151,7 +152,7 @@ def run(dry_run: bool = False, skip_retire: bool = False):
         print(f"\n[2] 既存 fx_rates: {len(existing)} 行 / うちダミー判定: {len(dummies)} 行")
         if dummies:
             span = f"{min(r.date for r in dummies)} 〜 {max(r.date for r in dummies)}"
-            wk = sum(1 for r in dummies if r.date.weekday() >= 5)
+            wk = sum(1 for r in dummies if not is_fx_trading_day(r.date))
             print(f"    ダミー範囲: {span}  （土日 {wk} 件を含む＝skip_fetch 由来の裏付け）")
         if not dry_run and dummies:
             for r in dummies:
@@ -199,7 +200,7 @@ def run(dry_run: bool = False, skip_retire: bool = False):
                 latest = max(rows, key=lambda r: r.date)
                 print(f"  期間  : {dates[0]} 〜 {dates[-1]}")
                 print(f"  最新値: {latest.rate:.4f} ({latest.date})")
-                print(f"  土日行: {sum(1 for r in rows if r.date.weekday() >= 5)} 件")
+                print(f"  土日行: {sum(1 for r in rows if not is_fx_trading_day(r.date))} 件")
                 print(f"  残ダミー: {sum(1 for r in rows if _is_dummy_rate(r.date, r.rate))} 件")
 
     # --- 6) universe.db から JPY=X を削除 ---
