@@ -88,6 +88,66 @@ def inject_liquidity_floor(strategies: Dict[str, Dict[str, Any]], min_avg_dollar
     return strategies
 
 
+# 個別銘柄シナリオテストがスキャンする戦略名の接頭辞。
+#
+# `load_scenario_config` が組み立てる戦略名は `f"{section.capitalize()} - {group} - {name}"`
+# なので、preset TOML の `group` が "Check" 以外だと**警告なくスキャン対象外**になっていた
+# （2026-07-20 発見）。現行の preset は全て group="Check" のため実害は出ていないが、
+# 防御が無いままでは新しい preset を足したときに黙って無視される。
+#
+# 定数を1箇所に置き、runner と scorer が同じ値を使う（判定が分裂すると再発する）。
+SCENARIO_TARGET_PREFIX = 'Rise - Check'
+
+
+def split_scannable_strategies(strategies, target_prefix: str = SCENARIO_TARGET_PREFIX):
+    """スキャン対象と対象外に分ける。
+
+    個別銘柄シナリオテストは**ロング専用**であり、`Fall`（下落・売り目線）の preset は
+    `load_scenario_config` がロードはするがシグナルスキャンでは扱わない。
+    ポートフォリオが買い建てしか行わない設計のため、意図的な制限である。
+
+    Returns:
+        (スキャンされる戦略名のリスト, 除外される戦略名のリスト)
+    """
+    scanned, skipped = [], []
+    for name in strategies:
+        (scanned if name.startswith(target_prefix) else skipped).append(name)
+    return scanned, skipped
+
+
+def report_strategy_scan_coverage(strategies, target_prefix: str = SCENARIO_TARGET_PREFIX,
+                                  logger_fn=print) -> list:
+    """スキャン対象外の戦略を明示的に報告し、全滅なら例外を投げる。
+
+    黙って除外されると「実行はできたが1件もシグナルが出ない」結果を
+    正常な結果として受け取ってしまう（D-2/I-6 と同型のサイレント失敗）。
+
+    Returns:
+        スキャンされる戦略名のリスト
+    """
+    scanned, skipped = split_scannable_strategies(strategies, target_prefix)
+
+    if skipped:
+        logger_fn(
+            f"[WARNING] シナリオテストのスキャン対象外の戦略が {len(skipped)} 件あります "
+            f"（接頭辞 '{target_prefix}' に一致しないため）:"
+        )
+        for name in skipped:
+            reason = ("Fall 側はロング専用のため未対応"
+                      if name.startswith('Fall - ')
+                      else "preset の group を 'Check' にしてください")
+            logger_fn(f"    - {name}  ← {reason}")
+
+    if not scanned:
+        raise ValueError(
+            f"シナリオテストの対象となる戦略が1件もありません"
+            f"（接頭辞 '{target_prefix}' に一致する戦略が無い）。\n"
+            f"  ロードされた戦略: {list(strategies)}\n"
+            f"  preset TOML の group を 'Check' にするか、active_rise_ids を確認してください。"
+        )
+    return scanned
+
+
 def load_scenario_config(config_path: str = "data/screener_presets.toml") -> Dict[str, Any]:
     import tomli
     
@@ -291,9 +351,12 @@ def run_scenario_test(
 
     config_dict = load_scenario_config(config_path)
     strategies = config_dict.get('strategies', {})
-    
+
+    # スキャン対象外になる戦略を明示する（黙って除外させない）
+    report_strategy_scan_coverage(strategies)
+
     market_scorer = MarketTrendScorer(prices_df, symbols_df, daily_metrics=daily_metrics, weights=market_weights, use_vxv_vix=use_vxv_vix, scaling_ratio=scaling_ratio)
-    scenario_scorer = ScenarioScorer(target_group_prefix='Rise - Check')
+    scenario_scorer = ScenarioScorer(target_group_prefix=SCENARIO_TARGET_PREFIX)
     
     port_config = PortfolioConfig(
         initial_capital=initial_capital,
@@ -468,7 +531,9 @@ def run_scenario_test(
                     base_merged = base_merged.merge(c_df, on='symbol_id', how='left').reset_index(drop=True)
             
             for strat_name, strat_rules in strategies.items():
-                if not strat_name.startswith('Rise - Check'):
+                # 除外は run_scenario_test 冒頭の report_strategy_scan_coverage() で
+                # 既に報告済み。ここは実際のスキップだけを行う。
+                if not strat_name.startswith(SCENARIO_TARGET_PREFIX):
                     continue
                 
                 # Apply filters to pre-merged data (copy to prevent cross-strategy contamination)

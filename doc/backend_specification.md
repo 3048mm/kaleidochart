@@ -563,6 +563,21 @@ S&P500（SPY）の動向や市場全体の統計から算出される、市場�
 実質的な検証として機能するが、期間が最適化バックテストの学習期間を内包するため、
 未学習期間での汎化確認は最適化バックテストのホールドアウトが担う。
 
+#### 個別銘柄シナリオテストがスキャンする戦略の範囲
+
+**ロング専用**です。`ScenarioPortfolio` が買い建てしか行わないため、`Fall`（下落・売り目線）の
+preset は `load_scenario_config` がロードはしますが、シグナルスキャンでは扱いません。
+
+スキャン対象は戦略名が `Rise - Check` で始まるものだけです。戦略名は
+`f"{section.capitalize()} - {group} - {name}"` で組み立てられるため、**preset TOML の
+`group` が `"Check"` 以外だとスキャン対象外**になります。
+
+この除外は以前は無言で行われており、新しい preset を足すと気づかないまま無視される状態でした
+（2026-07-20 発見）。現在は `scenario_runner.report_strategy_scan_coverage()` が
+除外対象を理由つきで報告し、**対象が1件も無ければ例外で停止**します
+（「実行できたがシグナル0件」を正常な結果として受け取らないため）。
+接頭辞は `SCENARIO_TARGET_PREFIX` に一元化されており、`ScenarioScorer` も同じ値を使います。
+
 ### 6.1.1 最適化バックテストの目的
 スクリーナーの各種フィルタ条件セット（戦略）の有効性を、過去5年分のヒストリカルデータに対してシミュレーションし、**期間CAGR（複利での資産成長）× DD抑制 × 実用的な検出件数**の合成スコアを主軸に定量的に評価・比較する（2026-07-06 再設計。旧: Expectancy LCB 主軸）。「1トレードで勝つか」ではなく「純粋なスクリーンのみで、どこまで資産を伸ばしつつ DD を抑えられるか」を最適化する（実質 Calmar 型）。無限資金・avg_slots 正規化のままで、固定枠・コスト・レジーム連動は個別銘柄シナリオテストの責務（§6.1）。パラメータの調整→再実行を繰り返す反復的なワークフローを前提とした設計。
 
@@ -611,7 +626,7 @@ min_market_cap = 3e8
 
 | 指標 | 説明 |
 |---|---|
-| **最適化スコア** | **最適化スコアの主軸**（2026-07-06 再設計）。期間ごとに `period_CAGR / dd_penalty × detect_adequacy(avg件/日)` を計算し、全学習期間で平均する。<br>・**period_CAGR**: `strat_multiplier` から年率化した複利成長率（無限資金・avg_slots 正規化のまま）。CAGR≤0 は `period_cagr − DD` で罰する。<br>・**dd_penalty**: `max_allowed_dd` 超過分の2乗ペナルティ（Calmar 型）。<br>・**detect_adequacy**: 検出件数を実用帯 `detect_band=(lo,hi,floor)` に寄せるソフト係数（個別銘柄シナリオテストの有限資産で使えるよう「多すぎず少なすぎず」に）。実装: `optimization_runner.calculate_custom_score` / `detect_adequacy`。 |
+| **最適化スコア** | **最適化スコアの主軸**（2026-07-06 再設計）。期間ごとに `period_CAGR / dd_penalty × detect_adequacy(avg件/日)` を計算し、全学習期間で平均する。<br>・**period_CAGR**: `strat_multiplier` から年率化した複利成長率（無限資金・avg_slots 正規化のまま）。CAGR≤0 は `period_cagr − DD` で罰する。<br>・**dd_penalty**: `max_allowed_dd` 超過分の2乗ペナルティ（Calmar 型）。<br>・**detect_adequacy**: 検出件数を実用帯 `detect_band=(lo,hi,floor)` に寄せるソフト係数（個別銘柄シナリオテストの有限資産で使えるよう「多すぎず少なすぎず」に）。・**lcb_gate**: `expectancy_lcb ≤ 0`（1トレード単価の下限で勝てていない＝生存者バイアス疑い）のとき `lcb_gate_penalty`（既定 0.5・`[optimization_pruning]` で戦略別に上書き可）で割り引くソフトゲート（2026-07-09 追加）。CAGR は少数の巨大勝ち＝右の裾に支配されやすいため、**主軸は CAGR のまま**、単価エッジの無いスクリーンを減点する。<br>実装: `optimization_runner.calculate_custom_score` / `detect_adequacy`。 |
 | **Expectancy** | 1トレードあたりの期待値 = (WR × AvgWin) + ((1-WR) × AvgLoss)。補助指標。 |
 | **Expectancy LCB** | 期待値の下側信頼限界 = expectancy − 2×SE（SE = 標本標準偏差/√n、n<2 は expectancy にフォールバック）。**補助指標＝シグナルの質**（少数トレード×高分散の「まぐれ」を炙り出す）。2026-07-05〜07-06 の間はスコア主軸だったが、資産成長との相関が弱く個別銘柄シナリオテストで乖離したため主軸を CAGR 合成へ移した。 |
 | **Avg Gain** | 全トレードの PnL% の単純平均。トレード回数に依存しない「1件あたりの平均品質」。 |

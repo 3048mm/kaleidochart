@@ -1,8 +1,10 @@
 # 型1最適化 目的関数の再設計（CAGR × DD × 検出件数）計画書
 
-- **ステータス**: 🚧 進行中（コード実装・テスト完了 / 実データ校正・型3検証はユーザー実行待ち）
+- **ステータス**: ✅ 完了（2026-08-04 クローズ）
 - **実施者**: AI エージェント（Claude Opus 4.8）
-- **開始日**: 2026-07-06 / **完了日**: —
+- **開始日**: 2026-07-06 / **完了日**: 2026-08-04
+- **注記**: 本タスクの当初の前提（型1/型3 の乖離＝目的関数の設計ズレ）は、2026-08-02 に**誤診と判明**した。
+  目的関数の再設計自体は妥当で本番稼働中だが、乖離の真因は別にある（下記 §6 の結論）。
 - **作業ブランチ**: worktree-objective-redesign
 - **対象 issue / 関連ドキュメント**: `doc/backend_specification.md` §6.1, §6.5 / `backend/optimization_runner.py` / `backend/backtest/backtest_report.py`
 
@@ -95,6 +97,20 @@ def calculate_custom_score(metrics, total_trading_days, max_allowed_dd=20.0, det
 - `doc/backend_specification.md` §6.1.1 / §6.5 の「主指標=Expectancy LCB」記述を新スコア構成へ更新。
 - 完了後この計画書を `doc/completed/` へ移動。
 
+### 3.x 追補: `lcb_gate_penalty` の追加（2026-07-09。当初の計画書に未反映だった分）
+
+再設計後の運用で、CAGR 主軸は**少数の巨大勝ち（右の裾）に支配されやすい**ことが分かった。
+単価のエッジが無いスクリーンでも、稀に出る大勝ちで CAGR が押し上げられる。
+
+そこで `expectancy_lcb <= 0`（1トレード単価の下限で勝てていない＝生存者バイアス疑い）の場合に
+スコアを割り引くソフトゲートを追加した。
+
+    score = period_CAGR / dd_penalty × detect_adequacy(avg_hits_per_day) × lcb_gate
+
+- 実装: `optimization_runner.calculate_custom_score(..., lcb_gate_penalty=0.5)`
+- 設定: `backtest_config.toml` の `[optimization_pruning] lcb_gate_penalty`（戦略別に上書き可）
+- 主軸を LCB に戻したわけではない。**CAGR 主軸のまま、単価エッジが無いものをソフトに減点する**補助ゲート。
+
 ## 4. ユーザー確認事項（2026-07-06 確定）
 
 1. **成長項の定義** → ✅ **絶対CAGR**（対SPY超過ではなく資産成長そのもの）。
@@ -116,9 +132,10 @@ def calculate_custom_score(metrics, total_trading_days, max_allowed_dd=20.0, det
 - [x] 旧LCBテスト（`test_optimization_runner.py::TestCustomScoreUsesLcb`）を撤去し移設コメント化
 - [x] backtest 系テスト全通過確認（117 passed。`test_optimization_cagr.py` 含む）
 - [x] `doc/backend_specification.md` §6.1.1 / §6.5 更新
-- [ ] **（ユーザー実行）** 小規模 study で avg件/日 の実分布を見て `hi`/`floor` を実測校正
-- [ ] **（ユーザー実行）** best params を型3シナリオ（B2/B4/B5）に流し、評価値見直し後もリターンが回復するか確認（本タスクの本来ゴール）
-- [ ] 上記2つの結果を踏まえ、計画書を `doc/completed/` へ移動
+- [x] **（ユーザー実行）** 小規模 study で avg件/日 の実分布を見て `hi`/`floor` を実測校正（2026-07-16〜07-18 実施。`doc/issue_list.md` の該当エントリに記録）
+- [x] **（ユーザー実行）** best params を型3シナリオ（B2/B4/B5）に流し確認（2026-07-16〜08-01 実施。結論は §6 参照）
+- [x] 上記2つの結果を踏まえ、計画書を `doc/completed/` へ移動（2026-08-04）
+- [x] 計画書に未反映だった `calculate_custom_score` への `lcb_gate_penalty` 追加（2026-07-09）を §3 追補として記録
 
 ### 作業中メモ
 - いま: 実装・単体/結合テスト完了（117 passed）。コード側の再設計は一巡。
@@ -141,6 +158,8 @@ def calculate_custom_score(metrics, total_trading_days, max_allowed_dd=20.0, det
 
 ## 8. スコープ外・残作業
 
+- **引き継ぎ先**: `doc/issue_list.md` P1「個別銘柄シナリオテストの『複数戦略で共有資本を奪い合う』
+  という本来の割り当てメカニズムが実際には一度も使われていない」。型1/型3 の乖離の本体はこちら。
 - 型3シナリオテスト側のロジック変更は本タスク対象外（今回は型1の目的関数のみ）。
 - スコアのスケール変更に伴う `optimization_trials.db` の既存 study との非互換（旧スコアと新スコアは直接比較不可）。
   必要なら study 名を分ける／作り直す運用を別途検討。

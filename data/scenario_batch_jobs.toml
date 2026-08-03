@@ -12,6 +12,31 @@
 # - study_name:     (source="optuna" の場合必須) 最良パラメータを取得する Optuna の Study 名。
 # - base_study_name: (source="manual" の場合任意) 上書きパラメータのベースとなる Optuna の Study 名。
 # - override_params: (source="manual" または "optuna" で上書きしたい場合任意) 手動で上書きするパラメータ辞書。
+#
+# ポートフォリオ構成パラメータ（任意・ジョブ単位）:
+#   override_params が「スクリーン条件（どの銘柄を選ぶか）」の上書きなのに対し、
+#   [job.portfolio] は「選んだ銘柄をどう保有するか」の上書きです。
+#   「戦略Xは保有数を絞った方が CAGR が伸びるか」のような構成側の比較検証に使います。
+#
+#   [[job]]
+#   name = "B2_narrow"
+#   strategy_code = "B2_theme_rsrank_momentum"
+#   source = "optuna"
+#   study_name = "B2_theme_rsrank_momentum"
+#     [job.portfolio]
+#     max_positions = 4          # 既定 8
+#     stop_loss_pct = -0.05      # 既定 -0.08
+#
+#   指定できるキーと既定値（run_scenario_batch.DEFAULT_PORTFOLIO と一致）:
+#     initial_capital  = 100000.0
+#     max_positions    = 8
+#     min_score        = 1
+#     stop_loss_pct    = -0.08
+#     profit_target_pct = 0.20
+#
+#   未知のキーを書くとエラーで停止します（黙って無視されて「設定したのに効かない」事故を防ぐため）。
+#   同じ戦略でポートフォリオ設定だけ変えて比べる場合は、name を分けて別ジョブにしてください
+#   （出力先が output/scenario/{name}/ なので、同名だと上書きされます）。
 
 [[job]]
 name = "A"

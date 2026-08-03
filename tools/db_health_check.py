@@ -16,6 +16,11 @@ CRITICAL_COLUMNS = [
     'sma_200', 'ema_21', 'rs_value', 'rs_ratio_e21', 'rs_momentum_e21'
 ]
 
+# 「完全な履歴を持ちながら SPY より遅れているだけ」を NG と区別するための下限行数。
+# これ以下は履歴そのものが足りない＝要調査（NG）扱いにする。
+# weekly_maintenance.classify_symbol_freshness の LOW_HISTORY_ROWS と同じ意図。
+LOW_HISTORY_ROWS = 20
+
 def get_connection():
     return sqlite3.connect(DB_PATH)
 
@@ -119,10 +124,25 @@ def check_symbol_health(ticker: str = None, all_active: bool = False, check_null
             consistent_str = "Yes"
             null_str = "Constituent count is 0"
         else:
-            status = "OK" if is_synced and is_consistent and not has_nulls else "NG"
             synced_str = "Yes" if is_synced else "No"
             consistent_str = "Yes" if is_consistent else "No (Diff: {})".format(t2_count - t3_count)
             null_str = null_info if has_nulls else "None"
+
+            # NG と STALE を分ける。
+            #
+            # 上流(Yahoo)が銘柄レコードを作り直して系列を切り落とすと、その銘柄は
+            # **恒久的に SPY へ追いつけない**（2026-08-02 に17銘柄で発生）。
+            # これを NG のまま扱うと常時 NG が20件以上出続け、本当に対応が要る
+            # 「T2/T3 件数不一致」「NULL 混入」が埋もれる。
+            #
+            # 判定は「こちらで直せるか」で切る:
+            #   NG    … 件数不一致・NULL 混入・履歴不足 → こちら側の問題。要対応
+            #   STALE … 完全な履歴があり最新日だけ遅れている → 上流の供給状況。対応不能
+            # 詳細と切り分け手順: .claude/skills/upstream-data-diagnosis/SKILL.md
+            if is_consistent and not has_nulls and not is_synced and t2_count > LOW_HISTORY_ROWS:
+                status = "STALE"
+            else:
+                status = "OK" if is_synced and is_consistent and not has_nulls else "NG"
         
         res = {
             "Symbol": t,
@@ -136,7 +156,7 @@ def check_symbol_health(ticker: str = None, all_active: bool = False, check_null
         }
         results.append(res)
         
-        if not all_active or status == "NG":
+        if not all_active or status in ("NG", "STALE"):
             print(f"[{t}] Status: {status}")
             if is_empty_virtual_theme:
                 print(f"  - ⚠️ WARNING: Virtual theme index has no constituent symbols. Check spreadsheet theme tags.")
@@ -148,16 +168,27 @@ def check_symbol_health(ticker: str = None, all_active: bool = False, check_null
 
     conn.close()
 
+    # STALE は上流起因で恒久的に解消しないため NG リストに含めない。
+    # 含めると deploy_after_merge のベースライン比較が常時「NG 20件超」になり、
+    # 昇格で新たに壊れた銘柄との差分が読めなくなる。
     ng_tickers = [r['Symbol'] for r in results if r['Status'] == 'NG']
+    stale_tickers = [r['Symbol'] for r in results if r['Status'] == 'STALE']
+
     if all_active:
         df_res = pd.DataFrame(results)
-        ng_count = len(df_res[df_res['Status'] == 'NG'])
+        ng_count = len(ng_tickers)
         print("-" * 60)
-        print(f"スキャン完了: 全{len(df_res)}銘柄中、{ng_count}銘柄に異常あり。")
+        print(f"スキャン完了: 全{len(df_res)}銘柄中、要対応 {ng_count}銘柄 / "
+              f"上流待ち {len(stale_tickers)}銘柄。")
         if ng_count > 0:
-            print("\n異常あり銘柄リスト（上位10件）:")
+            print("\n要対応（NG）— 件数不一致・NULL 混入・履歴不足（上位10件）:")
             print(df_res[df_res['Status'] == 'NG'].head(10))
-    # 呼び出し元（deploy_after_merge 等）が合否判定・差分比較できるよう NG 銘柄リストを返す
+        if stale_tickers:
+            print(f"\n上流待ち（STALE）— 履歴は完全だが最新日が SPY に届いていない {len(stale_tickers)}件:")
+            print(f"  {', '.join(sorted(stale_tickers))}")
+            print("  上流が系列を切り落とした銘柄はこちらでは解消できません。")
+            print("  切り分け手順: .claude/skills/upstream-data-diagnosis/SKILL.md")
+
     return ng_tickers
 
 def check_parquet_health(parquet_dir_override: str = None):

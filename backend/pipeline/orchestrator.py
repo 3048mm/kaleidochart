@@ -618,6 +618,23 @@ def run_pipeline(config, db_path, logger: logging.Logger, rebuild_from: Optional
     lvl_map = {'T2': 2, 'T3': 3, 'T4': 4, 'T5': 5}
     active_lvl = lvl_map.get(str(rebuild_from).upper(), 0)
     if recalculate_all: active_lvl = 2
+
+    # `--rebuild-from T2` は `--category` が無いと T2 の削除分岐が空振りし、
+    # 「T2 を作り直したつもりが実際は T3 以降しか消えていない」状態で正常終了していた
+    # （下の active_lvl <= 2 の分岐は categories が無いと何もしない）。
+    #
+    # 空振りを直す方向＝全銘柄の価格を消して取り直す、は採らない。それは上流(Yahoo)から
+    # の再取得であり、上流が系列を切り落とした銘柄の履歴を永久に失う操作だから
+    # （2026-08-02 に17銘柄の8年分が消えた）。全期間の作り直しは Parquet を退避してから
+    # 行う `run/tool/refresh_All.bat`（内部で --re-calculate）が正しい経路。
+    if active_lvl == 2 and not categories and not recalculate_all:
+        raise ValueError(
+            "--rebuild-from T2 は --category との併用が必要です。\n"
+            "  全銘柄の T2 を作り直す場合は run/tool/refresh_All.bat を使ってください"
+            "（Parquet を退避してから再構築するため、上流が系列を切り落とした銘柄を復元できます）。\n"
+            "  T3 以降を作り直したいだけなら --rebuild-from T3 を指定してください。"
+        )
+
     sheet_data = None
     symbol_id_map = None
 

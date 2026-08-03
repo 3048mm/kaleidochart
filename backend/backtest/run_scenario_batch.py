@@ -13,6 +13,7 @@
 """
 import os
 import sys
+import time
 import optuna
 import tomli
 import pandas as pd
@@ -43,6 +44,42 @@ def load_scenario_batch_jobs(toml_path: str) -> list:
     with open(toml_path, "rb") as f:
         config = tomli.load(f)
     return config.get("job", [])
+
+
+# ポートフォリオ構成パラメータの既定値。
+# ジョブが指定しなければこれが使われる（従来のハードコード値と同一なので、
+# TOML を触らない限り挙動は変わらない）。
+DEFAULT_PORTFOLIO = {
+    "initial_capital": 100000.0,
+    "max_positions": 8,
+    "min_score": 1,
+    "stop_loss_pct": -0.08,
+    "profit_target_pct": 0.20,
+}
+
+
+def resolve_portfolio_params(job: dict) -> dict:
+    """ジョブ定義からポートフォリオ構成パラメータを解決する。
+
+    従来これらは `run_single_mc_scenario()` に全ジョブ共通のハードコードで渡されており、
+    `scenario_batch_jobs.toml` はスクリーン条件（`override_params`）しか変えられなかった。
+    そのため「戦略Xは保有数を絞った方が CAGR が伸びるか」のような
+    **ポートフォリオ構成側の比較検証が構造的に不可能**だった。
+
+    キー名の誤記はサイレントに無視されると「設定したのに効かない」事故になるため、
+    未知のキーは例外にする（D-2/I-6 と同型のサイレント失敗を作らない）。
+    """
+    override = job.get("portfolio", {}) or {}
+    unknown = set(override) - set(DEFAULT_PORTFOLIO)
+    if unknown:
+        raise ValueError(
+            f"ジョブ '{job.get('name')}' の [job.portfolio] に未知のキーがあります: "
+            f"{sorted(unknown)}\n"
+            f"  指定できるキー: {sorted(DEFAULT_PORTFOLIO)}"
+        )
+    params = dict(DEFAULT_PORTFOLIO)
+    params.update(override)
+    return params
 
 
 def get_best_params_from_db(db_path: str, study_name: str) -> dict:
@@ -84,12 +121,18 @@ def generate_preset_toml(strategy_name: str, best_params: dict, toml_path: str):
 
 def run_single_mc_scenario(strat: str, model: str, run_idx: int,
                            start_date: str, end_date: str,
-                           preset_toml_path: str, project_root: str) -> dict:
+                           preset_toml_path: str, project_root: str,
+                           portfolio: dict = None) -> dict:
     """
     単一のモンテカルロ実行を行う。サブプロセス内で呼ばれる。
 
     出力先: output/scenario/{strat}/{model}/run_{run_idx}/
+
+    Args:
+        portfolio: ポートフォリオ構成パラメータ（`resolve_portfolio_params()` の戻り値）。
+                   省略時は既定値。
     """
+    portfolio = portfolio or dict(DEFAULT_PORTFOLIO)
     global _child_preloaded_data
 
     # 3階層の出力ディレクトリ
@@ -114,11 +157,11 @@ def run_single_mc_scenario(strat: str, model: str, run_idx: int,
         res = run_scenario_test(
             start_date=start_date,
             end_date=end_date,
-            initial_capital=100000.0,
-            max_positions=8,
-            min_score=1,
-            stop_loss_pct=-0.08,
-            profit_target_pct=0.20,
+            initial_capital=portfolio["initial_capital"],
+            max_positions=portfolio["max_positions"],
+            min_score=portfolio["min_score"],
+            stop_loss_pct=portfolio["stop_loss_pct"],
+            profit_target_pct=portfolio["profit_target_pct"],
             output_dir=run_output_dir,
             refresh_cache=False,
             config_path=config_rel_path,
@@ -150,6 +193,78 @@ def run_single_mc_scenario(strat: str, model: str, run_idx: int,
         return None
 
 
+def find_stale_run_outputs(failures, project_root: str, batch_start: float) -> list:
+    """失敗した run の出力先に「前回の結果」が残っていないか調べる。
+
+    `run_single_mc_scenario` は例外時に出力を書かず None を返すだけなので、
+    **前回バッチの出力ディレクトリがそのまま残る**。下流の集計はディレクトリの
+    存在だけを見るため、古い結果が新しい結果に混ざったまま比較されてしまう。
+
+    実例（2026-07-29）: 流動性ハード制約フィックス後の全戦略再実行で
+    B2 の full_position/run_9 だけ他より1日以上古いタイムスタンプで取り残されていた。
+    たまたま別のチェックで気づけたが、通常の指標比較では発見できない。
+
+    Args:
+        failures: (strat, model, run_idx) のリスト
+        batch_start: バッチ開始時刻（time.time()）。これより古い出力を stale とみなす
+
+    Returns:
+        [(strat, model, run_idx, パス, 最終更新時刻)] — 汚染リスクのあるものだけ
+    """
+    stale = []
+    for strat, model, run_idx in failures:
+        d = os.path.join(project_root, "output", "scenario", strat, model, f"run_{run_idx}")
+        if not os.path.isdir(d):
+            continue  # 出力が無い＝集計に混ざらないので安全
+        mtimes = [
+            os.path.getmtime(os.path.join(d, f))
+            for f in os.listdir(d)
+            if os.path.isfile(os.path.join(d, f))
+        ]
+        if not mtimes:
+            continue
+        newest = max(mtimes)
+        if newest < batch_start:
+            stale.append((strat, model, run_idx, d, newest))
+    return stale
+
+
+def report_batch_failures(failures, num_runs: int, project_root: str, batch_start: float) -> bool:
+    """バッチ全体の失敗をまとめて報告する。
+
+    個々の失敗は実行中にも出るが、大量のログに埋もれる。**終了直前にまとめて出す**ことで
+    見落としを防ぐ。戻り値は「安全に集計してよいか」。
+
+    Returns:
+        True なら問題なし。False なら失敗あり（呼び出し元は非ゼロ終了すべき）。
+    """
+    if not failures:
+        print("\n全 run が成功しました（集計結果は最新です）。")
+        return True
+
+    print("\n" + "!" * 60)
+    print(f"!! 失敗した run が {len(failures)} 件あります")
+    print("!" * 60)
+    by_job = {}
+    for strat, model, run_idx in failures:
+        by_job.setdefault((strat, model), []).append(run_idx)
+    for (strat, model), idxs in sorted(by_job.items()):
+        print(f"  {strat} / {model}: {len(idxs)}/{num_runs} 件失敗 (run_{sorted(idxs)})")
+
+    stale = find_stale_run_outputs(failures, project_root, batch_start)
+    if stale:
+        print("\n  ** 前回の結果が残っており、集計に混ざる恐れがあります **")
+        for strat, model, run_idx, path, mtime in stale:
+            ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(mtime))
+            print(f"    {strat}/{model}/run_{run_idx}  最終更新 {ts}")
+            print(f"      {path}")
+        print("\n  → 集計・比較の前に、上記を削除して該当 run を再実行してください。")
+    else:
+        print("\n  失敗した run の出力は残っていません（古い結果が混ざる心配はありません）。")
+
+    return False
+
+
 def main():
     _s = os.path.dirname(os.path.abspath(__file__))
     project_root_here = os.path.dirname(os.path.dirname(_s))  # stocktool/
@@ -173,6 +288,10 @@ def main():
     print(f"Period: {start_date} to {end_date}")
     print(f"Jobs file: {jobs_path}")
     print("=" * 60)
+
+    # 失敗した run の出力先に「前回の結果」が残っているかを後で判定するための基準時刻
+    batch_start = time.time()
+    failures = []
 
     for job in jobs:
         strat_name = job["name"]
@@ -212,6 +331,11 @@ def main():
         preset_toml_path = os.path.join(project_root_here, "tmp", f"preset_{strat_name}_opt.toml")
         generate_preset_toml(strategy_code, best_params, preset_toml_path)
 
+        portfolio = resolve_portfolio_params(job)
+        diff = {k: v for k, v in portfolio.items() if v != DEFAULT_PORTFOLIO[k]}
+        if diff:
+            print(f"  Portfolio overrides: {diff}")
+
         for model in models:
             print(f"  > Regime Model: {model} ...")
             strat_runs = []
@@ -222,7 +346,8 @@ def main():
                         run_single_mc_scenario,
                         strat_name, model, run_idx,
                         start_date, end_date,
-                        preset_toml_path, project_root_here
+                        preset_toml_path, project_root_here,
+                        portfolio
                     ): run_idx
                     for run_idx in range(num_runs)
                 }
@@ -233,8 +358,13 @@ def main():
                         res = future.result()
                         if res:
                             strat_runs.append(res)
+                        else:
+                            # run_single_mc_scenario は例外時に None を返す。
+                            # ここで拾わないと「失敗した」という事実が残らない。
+                            failures.append((strat_name, model, run_idx))
                     except Exception as fe:
                         print(f"  Future error for run_{run_idx}: {fe}")
+                        failures.append((strat_name, model, run_idx))
 
             if strat_runs:
                 df_runs = pd.DataFrame(strat_runs)
@@ -244,12 +374,24 @@ def main():
                     f"MaxDD (Avg): {df_runs['max_drawdown_pct'].mean():.2f}% | "
                     f"CAGR (Avg): {df_runs['cagr'].mean():.2f}%"
                 )
+                if len(strat_runs) < num_runs:
+                    # 平均値は成功分だけで算出されるため、件数を見ないと
+                    # 「少ないサンプルの平均」を正常値と誤読する
+                    print(
+                        f"    [WARNING] {num_runs - len(strat_runs)} 件失敗しています。"
+                        f"上記の平均は成功した {len(strat_runs)} 件のみで算出されています。"
+                    )
             else:
                 print(f"    No successful runs for {strat_name}/{model}.")
 
     print("\n" + "=" * 60)
     print("ALL JOBS & REGIMES COMPLETE")
     print("=" * 60)
+
+    ok = report_batch_failures(failures, num_runs, project_root_here, batch_start)
+    if not ok:
+        # 非ゼロ終了にして、バッチを回す側（人間・スケジューラ）が気づけるようにする
+        sys.exit(1)
 
 
 if __name__ == '__main__':

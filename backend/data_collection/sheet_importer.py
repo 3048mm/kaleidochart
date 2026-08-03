@@ -21,6 +21,11 @@ from api.universe_router import _derive_theme_type
 
 logger = logging.getLogger(__name__)
 
+# スプレッドシート由来の行に付く source 値。
+# replace モードで削除してよいのはこの値を持つ行だけで、それ以外
+# （`pipeline` が登録した銘柄・手動追加・手動改称の結果）は保護する。
+SHEET_SOURCE = "spreadsheet_url"
+
 # 対象シートとカテゴリの定義
 SHEET_CONFIG = {
     "MarketList": "市場",
@@ -30,6 +35,16 @@ SHEET_CONFIG = {
     "StockList": "個別",
     "LeverageList": "レバレッジ",
 }
+
+
+def _is_sheet_owned(row) -> bool:
+    """その行をスプレッドシート import が所有している（＝replace で消してよい）か。
+
+    `source` が NULL の行は出所が不明なので**保護側に倒す**。
+    universe.db はユーザー資産（`agent_execution_rules.md` §10.1）で、
+    消えた手動編集は再生成できないため、判断に迷ったら残す。
+    """
+    return getattr(row, "source", None) == SHEET_SOURCE
 
 
 def extract_spreadsheet_id(url: str) -> str:
@@ -252,8 +267,13 @@ def preview_import_diff(
                 })
 
     # 2. 完全置換モード時の削除対象
+    #    スプレッドシート由来の行だけを削除対象にする（保護の詳細は SHEET_SOURCE 参照）。
+    #    プレビューと実行で対象がズレると「消えないはずの行が消えた」事故に気づけないため、
+    #    ここでも execute_import_diff と同じ条件を使う。
     if mode == "replace":
         for existing in existing_symbols:
+            if not _is_sheet_owned(existing):
+                continue
             if existing.ticker.upper() not in parsed_by_ticker:
                 deleted.append({
                     "id": existing.id,
@@ -293,15 +313,28 @@ def execute_import_diff(
     mode: str = "upsert",
 ) -> Dict[str, Any]:
     """解析したデータを DB (universe.db) に適用する"""
+    protected_symbols: List[str] = []
     if mode == "replace":
         if len(parsed_symbols) < 10:
             raise ValueError(
                 f"取得できたデータが極めて少ないため({len(parsed_symbols)}件)、データ誤消去を防止するため置換処理をキャンセルしました。"
                 "スプレッドシートのアクセス権限（「リンクを知っている全員（閲覧）」）をご確認ください。"
             )
-        # 完全置換: 一旦全消去
-        db.query(ThemeMember).delete()
-        db.query(SymbolMaster).delete()
+        # 完全置換: スプレッドシート由来の行だけを消す。
+        # 旧実装は無条件に全 DELETE していたため、パイプラインが登録した銘柄や
+        # 手動追加・手動改称の結果が import のたびに消えていた
+        # （痕跡: ticker_history に _DRONE_（旧 ARKX）が残るのに symbols_master に実体が無い）。
+        # T1 のソースがスプレッドシートから universe.db へ移った今、universe.db は
+        # 「ユーザー資産」であり復元できない。保護は必須。
+        protected_symbols = [
+            s.ticker for s in db.query(SymbolMaster).all() if not _is_sheet_owned(s)
+        ]
+        db.query(ThemeMember).filter(ThemeMember.source == SHEET_SOURCE).delete(
+            synchronize_session=False
+        )
+        db.query(SymbolMaster).filter(SymbolMaster.source == SHEET_SOURCE).delete(
+            synchronize_session=False
+        )
         db.flush()
 
     # 1. 銘柄 Upsert
@@ -373,10 +406,18 @@ def execute_import_diff(
 
     db.flush()
 
+    if protected_symbols:
+        logger.info(
+            f"replace: スプレッドシート由来でない {len(protected_symbols)} 件を保護しました "
+            f"({', '.join(sorted(protected_symbols)[:10])}"
+            f"{' ほか' if len(protected_symbols) > 10 else ''})"
+        )
+
     return {
         "status": "success",
         "added": added_count,
         "updated": updated_count,
         "members_added": members_added_count,
+        "protected": sorted(protected_symbols),
         "mode": mode,
     }
