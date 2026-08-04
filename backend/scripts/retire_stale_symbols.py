@@ -96,7 +96,7 @@ def probe_supply(ticker: str) -> tuple[str, int, str | None]:
     Returns:
         (status, 直近1ヶ月の有効行数, 最終日)
         status は "gone"（404＝存在しない） / "alive"（データあり） /
-        "truncated"（上流が系列を切り落とした） /
+        "corporate_action"（改称・上場廃止などが起きた疑い） /
         "empty"（応答はあるがデータなし） / "error"（判定不能）
     """
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range=1mo&interval=1d"
@@ -119,27 +119,47 @@ def probe_supply(ticker: str) -> tuple[str, int, str | None]:
         return "empty", 0, None
     last = dt.datetime.fromtimestamp(valid[-1][0], dt.timezone.utc).date()
 
-    if _is_truncated(r0.get("meta") or {}):
-        return "truncated", len(valid), str(last)
+    if _looks_like_corporate_action(r0.get("meta") or {}):
+        return "corporate_action", len(valid), str(last)
     return "alive", len(valid), str(last)
 
 
-def _is_truncated(meta: dict) -> bool:
-    """上流(Yahoo)が銘柄レコードを作り直して系列を切り落とした状態か判定する。
+def _looks_like_corporate_action(meta: dict) -> bool:
+    """改称・上場廃止などのコーポレートアクションが起きた疑いを検出する。
 
-    2026-08-02 に BLD(TopBuild) など17銘柄で発生。Yahoo は銘柄を認識していて
-    正式名称も取引所も返すのに、chart の時系列だけが最近の日付から始まる。
+    Yahoo は銘柄を認識していて正式名称も取引所も返すのに、chart の時系列だけが
+    最近の日付から始まる、という状態になる。決め手は
+    **`firstTradeDate` と 52週レンジの自己矛盾**:
 
-    決め手は **`firstTradeDate` と 52週レンジの自己矛盾**:
         BLD  firstTradeDate=2026-06-30（1ヶ月前）  なのに 52週高値=559.47
-    52週高安は1年分のデータが無ければ算出できないので、集計レイヤーには履歴が
-    あるのに時系列だけが孤立している証拠になる。
+        （52週高安は1年分のデータが無ければ算出できない）
 
-    この状態は上場廃止でも改称でもないため **退役させてはいけない**。取り直しても
-    直らないので、旧 Parquet 世代から継ぐ
-    （`backend/scripts/restore_truncated_symbol_history.py`）。
+    ## 判定の意味（2026-08-04 に訂正）
+
+    当初これを「Yahoo が銘柄レコードを作り直したデータ不具合であり、**退役させては
+    いけない**」と解釈したが、**誤診だった**。SEC EDGAR で17銘柄を照会したところ、
+    全件が**実際のコーポレートアクション**だった:
+
+        BLD  TopBuild → QXO Insulation      Form 15-12G 2026-07-13（買収・登録抹消）
+        LC   LendingClub → Happen, Inc.     現ティッカー HAPN（改称）
+        SCVL Shoe Carnival → Shoe Station   現ティッカー SHOE（改称）
+
+    `firstTradeDate` の打ち直しは**結果であって原因ではない**。したがって本判定は
+    「データ不具合」ではなく **「何かが起きたので調べろ」の合図**である。
+
+    ## 検出後にやること
+
+    **この判定だけで退役の可否は決められない。** 改称なら新ティッカーへ付け替え
+    （`rename_symbol.py`）、上場廃止なら退役、と対応が正反対になる。
+    切り分けは Yahoo では不可能で、**SEC EDGAR が唯一の確実な根拠**:
+
+        https://data.sec.gov/submissions/CIK##########.json
+          tickers      … 現在のティッカー（改称後の新ティッカーが分かる）
+          formerNames  … 旧社名と日付範囲
+          filings      … Form 15-12G（登録抹消）の提出があれば上場廃止が確定
 
     実測: 対象17件を 17/17 で検出、対照群 AAPL/SPY/MSFT は誤検出ゼロ。
+    検出精度は高いので、**シグナルとしては有効**。
     """
     ftd = meta.get("firstTradeDate")
     lo, hi = meta.get("fiftyTwoWeekLow"), meta.get("fiftyTwoWeekHigh")
@@ -149,7 +169,14 @@ def _is_truncated(meta: dict) -> bool:
     return (dt.date.today() - first_trade).days < 365
 
 
-def run(tickers: list[tuple[str, str]], dry_run: bool, assume_yes: bool, verify: bool = True):
+def run(tickers: list[tuple[str, str]], dry_run: bool, assume_yes: bool, verify: bool = True,
+        explicit: bool = False):
+    """
+    Args:
+        explicit: `--tickers` で対象が明示指定されたか。明示指定は「人が EDGAR 等で
+            調べた上での判断」とみなし、`corporate_action` を退役対象として通す。
+            `--from-report` の自動リストではスキップする（改称かもしれないため）。
+    """
     with open(os.path.join(_project_root, "config.toml"), "rb") as f:
         config = tomli.load(f)
     universe_db_path = config["system"].get(
@@ -186,14 +213,19 @@ def run(tickers: list[tuple[str, str]], dry_run: bool, assume_yes: bool, verify:
             verified = []
             for sym, reason in targets:
                 status, n, last = probe_supply(sym.ticker)
-                if status == "truncated":
-                    # 「取得側の問題」で片付けると原因不明のまま放置される。
-                    # 打つ手（旧 Parquet 世代からの復元）まで示す。
-                    skipped.append((
-                        sym.ticker,
-                        f"上流が系列を切断（firstTradeDate 打ち直し・直近1ヶ月 {n} 行）"
-                        f" → 退役不可。restore_truncated_symbol_history.py で復元",
-                    ))
+                if status == "corporate_action":
+                    # 改称か上場廃止かは Yahoo では切り分けられない。対応が正反対
+                    # （改称→付け替え / 廃止→退役）なので、自動では退役させない。
+                    # ただし --tickers での明示指定は「人が調べた上での判断」として通す。
+                    if explicit:
+                        verified.append((sym, f"{reason} / 供給側=corporate_action（明示指定）"))
+                    else:
+                        skipped.append((
+                            sym.ticker,
+                            f"コーポレートアクションの疑い（firstTradeDate 打ち直し・直近1ヶ月 {n} 行）"
+                            f" → SEC EDGAR で改称か上場廃止かを確認すること。"
+                            f"改称なら rename_symbol.py、廃止なら --tickers で明示指定して退役",
+                        ))
                 elif status == "alive":
                     skipped.append((
                         sym.ticker,
@@ -250,4 +282,5 @@ if __name__ == "__main__":
     else:
         entries = [(t.strip(), "manual") for t in args.tickers.split(",") if t.strip()]
 
-    run(entries, dry_run=args.dry_run, assume_yes=args.yes, verify=not args.no_verify)
+    run(entries, dry_run=args.dry_run, assume_yes=args.yes, verify=not args.no_verify,
+        explicit=bool(args.tickers))

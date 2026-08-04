@@ -78,7 +78,10 @@ sort_ascending = false
 min_change_1d_pct = 7.0
 min_vol_surge_21 = 2.0
 min_adr_pct_21 = 5.0
-max_sma50_atr_mult = 7.0
+# 2026-08-04: 探索レンジ上限を 10.0→6.0 に引き締めたため、既定値も 7.0→6.0 に合わせた。
+# 既定値がレンジ外に残ると「最適化なしの実行は 7.0 / 最適化ありは 6.0 以下」という
+# 別条件の比較になる。
+max_sma50_atr_mult = 6.0
 min_market_cap = 1e7
 min_theme_rs_ratio_rank_e21 = 0.8
 is_close_gt_ema63 = true
@@ -86,9 +89,15 @@ max_allowed_dd = 35.0   # MTM 再校正（旧 25.0）
 
 [strategy.optimization]
 min_change_1d_pct  = { type = "float", min = 2.0, max = 12.0, step = 1.0 }
-min_vol_surge_21   = { type = "float", min = 0.5, max = 4.0, step = 0.1 }
+# 2026-08-04: B5 と同型の引き締め（B5 は 2026-07-24 に実施済み）。
+# vol_surge 下限 0.5→1.5: 21日平均"以下"の出来高は「サージ」の体をなしておらず、
+#   出来高の裏付けが薄い銘柄まで通っていた。
+# sma50_atr_mult 上限 10.0→6.0: 既に伸びきった銘柄を追いかけるのを抑制する。
+# 検証したい仮説: B1 の再最適化での悪化（score 50.1→35.9 / DD -35.5%→-61.9%）が
+#   この2点で説明できるか。
+min_vol_surge_21   = { type = "float", min = 1.5, max = 4.0, step = 0.1 }
 min_adr_pct_21     = { type = "float", min = 1.0, max = 8.0, step = 0.5 }
-max_sma50_atr_mult = { type = "float", min = 2.0, max = 10.0, step = 0.5 }
+max_sma50_atr_mult = { type = "float", min = 2.0, max = 6.0, step = 0.5 }
 min_market_cap     = { type = "categorical", choices = [1e7, 5e7, 1e8, 3e8, 1e9] }
 min_theme_rs_ratio_rank_e21 = { type = "float", min = 0.6, max = 0.95, step = 0.05 }
 is_close_gt_ema63 = { type = "categorical", choices = [true] }
