@@ -80,3 +80,72 @@ python tools/db_health_check.py --all --check-nulls
 - `NaN` は `df.where(pd.notnull(df), None)` で None（SQL NULL）に変換してから挿入。
 - 自動採番の `id` カラムは `symbols` 以外では drop する（`symbols.id` は他テーブルの FK なので保持必須）。
 - DataFrame のカラムをモデル定義の有効カラムでフィルタしてから挿入（スキーマ差分による失敗防止）。
+
+---
+
+## 6. 修正はどこまで届くか（データを直す前に必ず確認する）
+
+「SQLite を直せば Parquet も直る」は**半分しか正しくない**。テーブルによって伝播の仕方が違う。
+
+| テーブル | アーカイブ時の扱い | 修正の届き方 |
+| :--- | :--- | :--- |
+| `symbols` / `theme_constituents` / `fx_rates` | **置換**（SQLite が全期間を持つ） | SQLite を直せば**必ず届く** |
+| `daily_prices` / `indicators` / `relative_ranks` / `market_signals` | **マージ**（`drop_duplicates(keep='last')` で SQLite 側が勝つ） | **SQLite が持つ範囲（直近730日）だけ届く** |
+
+`rotate_and_archive_to_parquet` の `process_and_merge_table` が
+`pd.concat([df_old, df_sql])` → `keep='last'` なので、**同じ `(symbol_id, date)` は SQLite が上書きする**。
+
+### 730日より古い行を直したいとき
+
+**SQLite 経由では届かない。** 実測（2026-08-05）で Parquet の **73.8%（4,459,171行）**がこの範囲。
+
+選択肢は2つしかない。
+
+1. **Parquet を直接操作して新世代を書く**（`backend/scripts/restore_truncated_symbol_history.py` が実装例）
+2. 全期間再構築 — **推奨しない。** 上流から取り直す操作なので、上流が返せなくなった銘柄の履歴を失う
+   （2026-08-02 に17銘柄・8年分を失った。`backend/scripts/archive_parquet_master.py` 参照）
+
+### 行の削除は伝播しない
+
+マージなので **Parquet から行が消えることはない**。退役銘柄・旧ティッカーの価格は残り続ける
+（2026-08-05 時点で15銘柄・26,649行 = 0.4%）。バックテストは `active == 1` で除外するため
+正しさの問題は起きないが、**Parquet は単調増加する**。
+
+## 7. 世代を跨いで復元するときの落とし穴
+
+旧世代の Parquet から履歴を継ぐ場合（`restore_truncated_symbol_history.py` の実作業で踏んだもの）:
+
+- **世代間で `symbols.id` は一致しない。** 2026-08-02 の復元では対象17件が**全件別 id** だった。
+  **必ず ticker で突合して `symbol_id` を振り直す。** 旧 id のまま入れると別銘柄の系列を破壊する。
+- **旧世代の T3 / T4 を流用してはいけない。** 指標列は 50 → 63、順位列は 17 → 26 に増えている。
+  流用すると新しい列（`avg_dollar_volume_21` / `rs_macd_*` 等）が欠損したままスクリーナーへ入る。
+  **T3 は再計算する。T4 は横断的なので `--rebuild-from T4` で作り直す。**
+- **`date` 列の型は世代で揺れる**（str / `datetime.date` / `Timestamp`）。
+  突合とマージの前に必ず文字列へ正規化する。型が違うと重複排除がすり抜ける。
+- **旧世代を prune しない。** health check 合格まで MVCC 旧世代がバックアップを兼ねる
+  （`agent_execution_rules.md` §10.1）。
+
+## 8. 本番 SQLite を作り直す前のチェック
+
+`run_production_restore.py` は **`stocktool.db` をファイルごと削除**して Parquet から復元する。
+**Parquet に無いデータは消える。**
+
+2026-08-03 に事故一歩手前だった実例:
+
+```
+Parquet fx_rates    24行（2026-07-01〜08-01）
+SQLite  fx_rates 7,715行（1996-10-30〜2026-07-31）  ← バックフィル直後でアーカイブ前だった
+```
+
+そのまま実行していれば **7,715行の為替履歴を再び失っていた**（同じ事故が 2026-07-30 に起きている）。
+
+**削除前に「SQLite の方が新しい/多いテーブル」が無いか必ず確認する:**
+
+```python
+# 置換対象テーブル（symbols / theme_constituents / fx_rates）は特に注意
+for name, key in [("symbols","symbols"), ("theme_constituents","tc"), ("fx_rates","fx")]:
+    p = len(pd.read_parquet(latest[key]))
+    s = con.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0]
+    assert p >= s, f"{name}: Parquet {p} < SQLite {s} — 先にアーカイブすること"
+```
+

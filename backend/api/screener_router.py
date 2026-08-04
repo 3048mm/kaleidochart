@@ -687,6 +687,12 @@ def get_screener_dashboard(
                 merged_cs, df_tc_cs, special_flags, float(thr),
                 params=preset_def.get("filters", {}))
 
+        # テーマ・仮想指数は実売買不可能なため、結果からは常に除外する
+        # （リーディングテーマ判定・構成銘柄への波及には category=='テーマ' 行が必要なため、
+        # 上記フィルタ処理では保持しているが、実際の表示候補にはしない。backtest側の
+        # apply_filters_to_df と同じ扱い。2026-08-05 修正）
+        q = q.filter(Symbol.category != 'テーマ')
+
         # Default sort: by 1Day% (Prev Close base) descending
         q = q.order_by(desc(Indicator.change_1d_pct))
         return q, passing_ids
@@ -820,6 +826,11 @@ def get_screener(
         ).filter(Earning.eps_basic > 0).subquery()
         query = query.filter(Symbol.id.in_(eps_filter_subq))
 
+    # テーマ・仮想指数は実売買不可能なため、結果からは常に除外する
+    # （リーディングテーマ判定・構成銘柄への波及には category=='テーマ' 行が必要なため、
+    # 上記フィルタ処理では保持しているが、実際の表示候補にはしない。backtest側の
+    # apply_filters_to_df と同じ扱い。2026-08-05 修正）
+    query = query.filter(Symbol.category != 'テーマ')
 
     results = query.all()
 

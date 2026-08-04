@@ -222,3 +222,57 @@ def test_screener_api_excludes_illiquid_symbols(client):
     assert "AAPL" in tickers
     assert "MSFT" not in tickers
 
+
+def test_screener_api_excludes_theme_rows_from_results(client):
+    """2026-08-05: category='テーマ'（実在ETF・仮想合成指数）は実売買不可能なため、
+    `/api/screener` の結果行には常に含めない（backtest側の apply_filters_to_df と
+    同じ扱い。doc/issue_list.md 対応、フロントの「RS MACD and Theme」等で
+    仮想テーマティッカーが結果に混入していた実害を受けて修正）。
+    """
+    # THEME1/THEME2 に流動性ハード制約(avg_dollar_volume_21)を満たす値を与える
+    # （テーマの base fixture は未設定=NULLのため、流動性フィルタ自体で偶然除外されて
+    # しまい、テーマ除外ロジックを検証できなくなるのを防ぐ）。
+    db = _TestSession()
+    from datetime import date
+    d = date(2026, 5, 20)
+    for sid in (2, 3):
+        ind = db.query(Indicator).filter(Indicator.symbol_id == sid, Indicator.date == d).first()
+        ind.avg_dollar_volume_21 = 5e6
+    db.commit()
+    db.close()
+
+    # THEME1 (symbol_id=2) は change_1d_pct=2.0 で min_change_1d_pct=1.0 を満たすが、
+    # テーマ自体は結果から除外され、条件を満たす個別銘柄(AAPL)だけが残ること。
+    resp = client.get("/api/screener?target_date=2026-05-20&min_change_1d_pct=1.0")
+    assert resp.status_code == 200
+    tickers = [x["ticker"] for x in resp.json()]
+    assert "AAPL" in tickers
+    assert "THEME1" not in tickers
+    assert "THEME2" not in tickers
+
+
+def test_screener_dashboard_excludes_theme_rows_from_items(client):
+    """2026-08-05: ダッシュボードの各プリセットカードの items にもテーマ自体は含めない。
+
+    THEME1 に実在プリセット `check_1d_gain`（min_change_1d_pct=4.0 /
+    min_vol_surge_rel_spy_21=1.0 / max_sma50_atr_mult=6.0 / min_adr_pct_21=4.0 /
+    min_market_cap=1e9）を満たす値を与える（market_cap はテーマ免除のため未設定でよい）。
+    """
+    db = _TestSession()
+    from datetime import date
+    d = date(2026, 5, 20)
+    ind2 = db.query(Indicator).filter(Indicator.symbol_id == 2, Indicator.date == d).first()
+    ind2.change_1d_pct = 10.0
+    ind2.vol_surge_rel_spy_21 = 2.0
+    ind2.sma50_atr_mult = 1.0
+    ind2.adr_pct_21 = 10.0
+    db.commit()
+    db.close()
+
+    resp = client.get("/api/screener/dashboard")
+    assert resp.status_code == 200
+    data = resp.json()
+    for cat in data.get("rise", []) + data.get("fall", []):
+        for item in cat.get("items", []):
+            assert item["ticker"] not in ("THEME1", "THEME2")
+
