@@ -46,6 +46,26 @@ def load_scenario_batch_jobs(toml_path: str) -> list:
     return config.get("job", [])
 
 
+def filter_jobs_by_names(jobs: list, names) -> list:
+    """`--jobs` 指定でジョブを絞り込む（`jobs` 内の元の順序を維持）。
+
+    `names` が None/空なら全件そのまま返す。指定された名前が1件でも
+    `jobs` に存在しなければ、黙って無視せず例外にする
+    （タイポで「絞り込んだつもりが実は全件スキップ」になる事故を防ぐ）。
+    """
+    if not names:
+        return jobs
+    job_names = {j["name"] for j in jobs}
+    unknown = [n for n in names if n not in job_names]
+    if unknown:
+        raise ValueError(
+            f"--jobs に存在しないジョブ名があります: {unknown}\n"
+            f"  指定できるジョブ名: {sorted(job_names)}"
+        )
+    wanted = set(names)
+    return [j for j in jobs if j["name"] in wanted]
+
+
 # ポートフォリオ構成パラメータの既定値。
 # ジョブが指定しなければこれが使われる（従来のハードコード値と同一なので、
 # TOML を触らない限り挙動は変わらない）。
@@ -265,16 +285,56 @@ def report_batch_failures(failures, num_runs: int, project_root: str, batch_star
     return False
 
 
+def format_elapsed(seconds: float) -> str:
+    """経過秒数を `H:MM:SS` / `M:SS` の読みやすい形式にする。"""
+    seconds = int(seconds)
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    if h:
+        return f"{h}:{m:02d}:{s:02d}"
+    return f"{m}:{s:02d}"
+
+
+def parse_args(argv=None):
+    import argparse
+    parser = argparse.ArgumentParser(description="個別銘柄シナリオテストの並列バッチ実行")
+    parser.add_argument(
+        "--jobs", type=str, default=None,
+        help="実行するジョブ名をカンマ区切りで指定（例: --jobs B1,B2）。省略時は全ジョブ。",
+    )
+    parser.add_argument(
+        "--list-jobs", action="store_true",
+        help="実行せず、scenario_batch_jobs.toml に定義済みのジョブ名一覧だけを表示して終了する。",
+    )
+    args = parser.parse_args(argv)
+    job_names = [n.strip() for n in args.jobs.split(",") if n.strip()] if args.jobs else None
+    return job_names, args.list_jobs
+
+
 def main():
     _s = os.path.dirname(os.path.abspath(__file__))
     project_root_here = os.path.dirname(os.path.dirname(_s))  # stocktool/
     db_path = os.path.join(project_root_here, "data", "optimization_trials.db")
     jobs_path = os.path.join(project_root_here, "data", "scenario_batch_jobs.toml")
 
-    jobs = load_scenario_batch_jobs(jobs_path)
-    if not jobs:
+    job_names, list_jobs_only = parse_args()
+
+    all_jobs = load_scenario_batch_jobs(jobs_path)
+    if not all_jobs:
         print(f"No jobs found in {jobs_path}. Exiting.")
         return
+
+    if list_jobs_only:
+        print(f"利用可能なジョブ名（{jobs_path}）:")
+        for j in all_jobs:
+            print(f"  {j['name']}  (strategy_code={j['strategy_code']}, source={j.get('source', 'optuna')})")
+        return
+
+    try:
+        jobs = filter_jobs_by_names(all_jobs, job_names)
+    except ValueError as e:
+        print(f"[ERROR] {e}")
+        sys.exit(1)
 
     models = ["full_position", "spy_sma200", "spy_sma63", "vxv_vix_ema", "mts_raw"]
 
@@ -282,9 +342,14 @@ def main():
     end_date = "2026-03-26"
     num_runs = 10
     max_workers = 2
+    n_jobs = len(jobs)
+    n_models = len(models)
+    total_blocks = n_jobs * n_models  # 進捗表示・ETA 算出用の「job x model」単位数
 
     print("=" * 60)
-    print(f"Scenario Batch: {len(jobs)} jobs x {len(models)} models x {num_runs} MC runs")
+    print(f"Scenario Batch: {n_jobs} jobs x {n_models} models x {num_runs} MC runs")
+    if job_names:
+        print(f"  (--jobs 指定により {len(all_jobs)} 件中 {n_jobs} 件に絞り込み: {[j['name'] for j in jobs]})")
     print(f"Period: {start_date} to {end_date}")
     print(f"Jobs file: {jobs_path}")
     print("=" * 60)
@@ -292,13 +357,14 @@ def main():
     # 失敗した run の出力先に「前回の結果」が残っているかを後で判定するための基準時刻
     batch_start = time.time()
     failures = []
+    blocks_done = 0  # 完了した (job, model) の数。ETA 算出に使う
 
-    for job in jobs:
+    for job_idx, job in enumerate(jobs, start=1):
         strat_name = job["name"]
         strategy_code = job["strategy_code"]
         source = job.get("source", "optuna")
 
-        print(f"\n>>> Job: {strat_name} (Base Strategy: {strategy_code}, Source: {source}) ...")
+        print(f"\n>>> [Job {job_idx}/{n_jobs}] {strat_name} (Base Strategy: {strategy_code}, Source: {source}) ...")
 
         # Load parameters
         best_params = {}
@@ -306,6 +372,7 @@ def main():
             study_name = job.get("study_name")
             if not study_name:
                 print(f"  Skipping {strat_name}: 'study_name' is missing for optuna source.")
+                blocks_done += n_models
                 continue
             best_params = get_best_params_from_db(db_path, study_name)
         elif source == "manual":
@@ -319,6 +386,7 @@ def main():
 
         if source == "optuna" and not best_params:
             print(f"  Skipping {strat_name}: Optuna params not found in study '{job.get('study_name')}'")
+            blocks_done += n_models
             continue
 
         # Apply manual parameter overrides
@@ -336,9 +404,21 @@ def main():
         if diff:
             print(f"  Portfolio overrides: {diff}")
 
-        for model in models:
-            print(f"  > Regime Model: {model} ...")
+        for model_idx, model in enumerate(models, start=1):
+            block_start = time.time()
+            elapsed = block_start - batch_start
+            # ETA: 完了済みブロックの平均所要時間 x 残りブロック数（雑だが目安としては十分）
+            eta_str = ""
+            if blocks_done > 0:
+                avg_per_block = elapsed / blocks_done
+                remaining = total_blocks - blocks_done
+                eta_str = f", ETA {format_elapsed(avg_per_block * remaining)}"
+            print(
+                f"  > [Model {model_idx}/{n_models}] {model} "
+                f"(elapsed {format_elapsed(elapsed)}{eta_str}) ..."
+            )
             strat_runs = []
+            n_completed = 0
 
             with ProcessPoolExecutor(max_workers=max_workers) as executor:
                 futures = {
@@ -354,22 +434,32 @@ def main():
 
                 for future in as_completed(futures):
                     run_idx = futures[future]
+                    n_completed += 1
                     try:
                         res = future.result()
                         if res:
                             strat_runs.append(res)
+                            print(
+                                f"      run_{run_idx} done ({n_completed}/{num_runs}) "
+                                f"CAGR={res['cagr']:.1f}% DD={res['max_drawdown_pct']:.1f}% "
+                                f"trades={res['total_trades']}",
+                                flush=True,
+                            )
                         else:
                             # run_single_mc_scenario は例外時に None を返す。
                             # ここで拾わないと「失敗した」という事実が残らない。
                             failures.append((strat_name, model, run_idx))
+                            print(f"      run_{run_idx} FAILED ({n_completed}/{num_runs})", flush=True)
                     except Exception as fe:
                         print(f"  Future error for run_{run_idx}: {fe}")
                         failures.append((strat_name, model, run_idx))
 
+            blocks_done += 1
+
             if strat_runs:
                 df_runs = pd.DataFrame(strat_runs)
                 print(
-                    f"    Done ({len(strat_runs)}/{num_runs} runs). "
+                    f"    Done ({len(strat_runs)}/{num_runs} runs, {format_elapsed(time.time() - block_start)}). "
                     f"Return (Avg): {df_runs['total_return_pct'].mean():.2f}% | "
                     f"MaxDD (Avg): {df_runs['max_drawdown_pct'].mean():.2f}% | "
                     f"CAGR (Avg): {df_runs['cagr'].mean():.2f}%"

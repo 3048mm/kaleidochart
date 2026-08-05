@@ -7,7 +7,10 @@ import pandas as pd
 from backend.backtest.run_scenario_batch import (
     load_scenario_batch_jobs,
     get_best_params_from_db,
-    generate_preset_toml
+    generate_preset_toml,
+    filter_jobs_by_names,
+    format_elapsed,
+    parse_args,
 )
 
 
@@ -87,3 +90,74 @@ def test_generate_preset_toml(tmp_path):
     assert filters["min_change_1d_pct"] == 7.0
     assert filters["is_close_gt_ema63"] is True
     assert filters["sort_column"] == "rs_ratio_rank_e21"
+
+
+# ---------------------------------------------------------------------------
+# filter_jobs_by_names — `--jobs` によるジョブ絞り込み（2026-08-06 追加）
+# ---------------------------------------------------------------------------
+_JOBS = [
+    {"name": "A", "strategy_code": "A_momentum_breakout"},
+    {"name": "B1", "strategy_code": "B1_theme_leader"},
+    {"name": "B2", "strategy_code": "B2_theme_rsrank_momentum"},
+]
+
+
+def test_filter_jobs_by_names_none_returns_all():
+    assert filter_jobs_by_names(_JOBS, None) == _JOBS
+
+
+def test_filter_jobs_by_names_empty_returns_all():
+    assert filter_jobs_by_names(_JOBS, []) == _JOBS
+
+
+def test_filter_jobs_by_names_single():
+    result = filter_jobs_by_names(_JOBS, ["B1"])
+    assert [j["name"] for j in result] == ["B1"]
+
+
+def test_filter_jobs_by_names_multiple_preserves_original_order():
+    result = filter_jobs_by_names(_JOBS, ["B2", "A"])
+    # jobs 側の元の順序（A, B1, B2）を維持する。--jobs の指定順ではない。
+    assert [j["name"] for j in result] == ["A", "B2"]
+
+
+def test_filter_jobs_by_names_unknown_name_raises():
+    """タイポで「絞り込んだつもりが全件スキップ」になる事故を防ぐ（D-2/I-6 と同型）。"""
+    with pytest.raises(ValueError, match="B9"):
+        filter_jobs_by_names(_JOBS, ["B9"])
+
+
+# ---------------------------------------------------------------------------
+# format_elapsed / parse_args（2026-08-06 追加: 進捗ログ表示の改善）
+# ---------------------------------------------------------------------------
+def test_format_elapsed_under_a_minute():
+    assert format_elapsed(5) == "0:05"
+
+
+def test_format_elapsed_minutes():
+    assert format_elapsed(125) == "2:05"
+
+
+def test_format_elapsed_hours():
+    assert format_elapsed(3725) == "1:02:05"
+
+
+def test_parse_args_no_jobs_flag_means_all():
+    job_names, list_only = parse_args([])
+    assert job_names is None
+    assert list_only is False
+
+
+def test_parse_args_single_job():
+    job_names, _ = parse_args(["--jobs", "B1"])
+    assert job_names == ["B1"]
+
+
+def test_parse_args_multiple_jobs_comma_separated():
+    job_names, _ = parse_args(["--jobs", "B1,B2, E1"])
+    assert job_names == ["B1", "B2", "E1"]
+
+
+def test_parse_args_list_jobs_flag():
+    _, list_only = parse_args(["--list-jobs"])
+    assert list_only is True

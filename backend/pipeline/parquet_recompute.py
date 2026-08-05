@@ -16,10 +16,10 @@ SQLite はホットキャッシュとして直近730日しか持たないため�
 同じ能力が独立に3箇所で必要になるため部品化する。
 
   - 改称・新規銘柄追加後の T4 補完
-  - 分割・併合の価格補正（`doc/in_progress/split_anomaly_noise_reduction_plan.md`）
+  - 分割・併合の価格補正（`doc/completed/split_anomaly_noise_reduction_plan.md`）
   - `restore_truncated_symbol_history.py`（従来は T4 を外部に投げていた）
 
-詳細: `doc/in_progress/parquet_recompute_plan.md`
+詳細: `doc/completed/parquet_recompute_plan.md`
 """
 
 from __future__ import annotations
@@ -135,6 +135,64 @@ def recompute_ranks(
 
     out = out.rename(columns={"category": "group_name"})
     return out.reset_index(drop=True)
+
+
+def recompute_indicators(
+    symbol_ids: list[int],
+    prices: pd.DataFrame,
+    indicator_columns: list[str],
+    spy_id: int,
+) -> pd.DataFrame:
+    """指定銘柄の T3（indicators）を全期間再計算する。
+
+    価格を修正した銘柄・履歴を継ぎ足した銘柄は、**T3 を作り直さないと
+    指標が古い価格に基づいたまま残る**。
+
+    ## 旧世代の T3 を流用してはいけない
+
+    指標列は増え続けている（実測: 50 → 63 列。`avg_dollar_volume_21` / `rs_macd_*` 等）。
+    旧世代からコピーすると**新しい列が欠損したまま**スクリーナーとバックテストに入る。
+    T4（順位）も同様に 17 → 26 列に増えている。
+
+    Args:
+        symbol_ids: 再計算する銘柄の symbol_id
+        prices:     `symbol_id` / `date` / OHLCV を持つ DataFrame（**全銘柄分**。
+                    SPY の系列を RS 計算に使うため対象銘柄だけでは足りない）
+        indicator_columns: 出力する指標列（既存 indicators の列順に合わせる）
+        spy_id:     SPY の symbol_id
+
+    Returns:
+        `symbol_id` / `date` + 指標列 の DataFrame
+    """
+    # 遅延 import: percent_rank だけ使う呼び出し元に indicators 依存を持ち込まない
+    from indicators.calculate import calculate_indicators
+
+    spy_df = (
+        prices[prices["symbol_id"] == spy_id][["date", "close", "volume"]]
+        .sort_values("date")
+        .reset_index(drop=True)
+    )
+
+    out = []
+    for sid in symbol_ids:
+        px = (
+            prices[prices["symbol_id"] == sid][
+                ["date", "open", "high", "low", "close", "volume"]
+            ]
+            .sort_values("date")
+            .reset_index(drop=True)
+        )
+        if px.empty:
+            continue
+        # SPY 自身は自分との相対強度を計算しない（NULL が正常）
+        df = calculate_indicators(px, None if sid == spy_id else spy_df)
+        if df.empty:
+            continue
+        df = df.reindex(columns=["date"] + list(indicator_columns))
+        df.insert(0, "symbol_id", sid)
+        out.append(df)
+
+    return pd.concat(out, ignore_index=True) if out else pd.DataFrame()
 
 
 def find_affected_virtual_themes(

@@ -26,8 +26,10 @@ SEC EDGAR で確認したところ、対象17銘柄は全件が実際のコー�
 ## やらないこと
 
 - **T4 (relative_ranks) / T5 (market_signals) は再計算しない。** 横断的な
-  パーセンタイル順位なので、17銘柄の履歴が増えると過去日の順位が全銘柄で変わる。
-  完了後に `update_pipeline.py --rebuild-from T4` を別途実行すること。
+  パーセンタイル順位なので、履歴が増えると過去日の順位が全銘柄で変わる。
+  完了後に `backend/scripts/recompute_parquet_ranks.py --apply` を実行すること（約80秒）。
+  **`--rebuild-from T4` では730日窓しか埋まらない**（T4 は SQLite にある日付しか
+  計算できないため）。2026-08-05 にこれで5時間を無駄にした。
 - **旧世代の prune はしない**（`agent_execution_rules.md` §10.1: health check 合格まで
   MVCC 旧世代がバックアップを兼ねる）。
 
@@ -54,7 +56,8 @@ if _backend_dir not in sys.path:
     sys.path.insert(0, _backend_dir)
 
 import tomli  # noqa: E402
-from indicators.calculate import calculate_indicators  # noqa: E402
+from indicators.price_anomaly import is_anomalous_ratio  # noqa: E402
+from pipeline.parquet_recompute import recompute_indicators  # noqa: E402
 from pipeline.parquet_cache_manager import (  # noqa: E402
     get_latest_master_files,
     get_parquet_master_dir,
@@ -71,9 +74,8 @@ DEFAULT_BACKUP_DIR = os.path.join(_project_root, "data", "_bk", "parquet_master"
 CURRENT_ROWS_MAX = 50
 MIN_GAIN = 5
 
-# 接合部の価格比がこの範囲を外れたら分割・併合の疑いとして報告する
-# （weekly_maintenance.py のアノマリー検出と同じしきい値）。
-SEAM_RATIO_LO, SEAM_RATIO_HI = 0.61, 1.79
+# 接合部の価格比の判定は `indicators/price_anomaly.py` に集約している
+# （しきい値を各所に直書きすると、theme_type が3実装に分裂したのと同じことが起きる）。
 
 
 def _norm_date(s: pd.Series) -> pd.Series:
@@ -152,34 +154,6 @@ def build_restore_rows(cand, cur_px, bk_px):
     return (pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()), report
 
 
-def recompute_indicators(sym_ids, merged_px, cur_ind, spy_id):
-    """復元した銘柄の T3 を全期間再計算する。
-
-    旧世代の T3 をそのまま流用してはいけない。指標列は 50 → 63 に増えており
-    （`avg_dollar_volume_21` / `rs_macd_*` 等）、流用すると新しい列が欠損したまま
-    バックテストとスクリーナーに入る。
-    """
-    spy_df = merged_px[merged_px["symbol_id"] == spy_id][
-        ["date", "close", "volume"]
-    ].sort_values("date").reset_index(drop=True)
-
-    ind_cols = [c for c in cur_ind.columns if c not in ("id", "symbol_id", "date")]
-    out = []
-    for sid in sym_ids:
-        px = merged_px[merged_px["symbol_id"] == sid][
-            ["date", "open", "high", "low", "close", "volume"]
-        ].sort_values("date").reset_index(drop=True)
-        if px.empty:
-            continue
-        df = calculate_indicators(px, spy_df)
-        if df.empty:
-            continue
-        df = df.reindex(columns=["date"] + ind_cols)
-        df.insert(0, "symbol_id", sid)
-        out.append(df)
-    return pd.concat(out, ignore_index=True) if out else pd.DataFrame()
-
-
 def run(dry_run: bool, backup_dir: str, explicit: list[str] | None):
     with open(os.path.join(_project_root, "config.toml"), "rb") as f:
         config = tomli.load(f)
@@ -224,7 +198,7 @@ def run(dry_run: bool, backup_dir: str, explicit: list[str] | None):
         ratio = r["seam_ratio"]
         if ratio is None:
             judge, rs = "現行行なし", "    -"
-        elif ratio <= SEAM_RATIO_LO or ratio >= SEAM_RATIO_HI:
+        elif is_anomalous_ratio(ratio):
             judge, rs = "★分割疑い", f"{ratio:7.3f}"
             suspicious.append(r["ticker"])
         else:
@@ -257,7 +231,8 @@ def run(dry_run: bool, backup_dir: str, explicit: list[str] | None):
     cur_ind["date"] = _norm_date(cur_ind["date"])
     spy_id = int(cur_sym[cur_sym["ticker"] == "SPY"]["id"].iloc[0])
     sym_ids = [r["new_id"] for r in report]
-    new_ind = recompute_indicators(sym_ids, merged_px, cur_ind, spy_id)
+    ind_cols = [c for c in cur_ind.columns if c not in ("id", "symbol_id", "date")]
+    new_ind = recompute_indicators(sym_ids, merged_px, ind_cols, spy_id)
     print(f"    再計算 {len(new_ind):,} 行 ({len(sym_ids)} 銘柄)")
 
     # 対象銘柄の既存 T3 を差し替える（断片行が残ると T2/T3 の件数が合わなくなる）

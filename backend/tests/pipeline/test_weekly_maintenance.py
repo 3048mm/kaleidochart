@@ -6,7 +6,7 @@ import sys
 import subprocess
 import pytest
 import sqlite3
-from datetime import date
+from datetime import date, timedelta
 
 from db.models import Base, Symbol, DailyPrice, Indicator, ThemeConstituent
 from sqlalchemy import create_engine
@@ -231,25 +231,61 @@ class TestWeeklyMaintenanceAudits:
         ind = db.query(Indicator).filter(Indicator.symbol_id == 2, Indicator.date == d).first()
         assert ind is not None
 
-    def test_detect_stock_splits(self, setup_audit_db):
-        """Verify that extreme price changes representing suspected splits are flagged."""
+    def test_moderate_drop_is_not_reported_as_split(self, setup_audit_db):
+        """-50% の急落は「分割の疑い」として報告しない。
+
+        旧実装は前日比だけで判定していたため、実際の値動きを全部拾っていた。
+        実測（2026-08-05・Parquet 全期間 1,098件）では要対応はわずか3件で、
+        残りは実際の値動き・低位株の振動・市場全体の急落日・仮想テーマの合成値だった。
+        1:2 前後の帯では売買代金比でも暴落と分割を区別できない。
+        """
         db = setup_audit_db
-        d_old = date(2026, 7, 14)
-        d_new = date(2026, 7, 15)
-        
-        # AAPL prices drop by 50% (suspected split)
+        d_old, d_new = date(2026, 7, 14), date(2026, 7, 15)
         db.add_all([
             DailyPrice(symbol_id=1, date=d_old, open=100, high=100, low=100, close=100, volume=100),
             DailyPrice(symbol_id=1, date=d_new, open=100, high=100, low=100, close=100, volume=100),
             DailyPrice(symbol_id=2, date=d_old, open=200, high=200, low=200, close=200, volume=100),
-            DailyPrice(symbol_id=2, date=d_new, open=100, high=100, low=100, close=100, volume=100), # 200 -> 100
+            DailyPrice(symbol_id=2, date=d_new, open=100, high=100, low=100, close=100, volume=100),
         ])
         db.commit()
-        
+
         report = audit_and_fix_weekly(db, dry_run=True)
-        assert len(report["split_anomalies"]) == 1
-        assert report["split_anomalies"][0]["ticker"] == "AAPL"
-        assert report["split_anomalies"][0]["ratio"] == 0.5
+
+        assert report["split_anomalies"] == [], "実際の値動きを要対応として報告している"
+        assert sum(report["anomaly_excluded"].values()) >= 1, "検出そのものが効いていない"
+
+    def test_extreme_split_with_continuous_dollar_volume_is_reported(self, setup_audit_db):
+        """`SOXS` 型（1146→62・売買代金が連続）は要対応として報告する。
+
+        分割は株数が変わるだけなので売買代金は連続する。極端な比率のときだけ
+        この指標が効く。
+        """
+        db = setup_audit_db
+        d_old, d_new = date(2026, 7, 14), date(2026, 7, 15)
+        rows = [
+            DailyPrice(symbol_id=1, date=d_old, open=100, high=100, low=100, close=100, volume=100),
+            DailyPrice(symbol_id=1, date=d_new, open=100, high=100, low=100, close=100, volume=100),
+        ]
+        # adv21 の下限を超えるため、直前に十分な売買代金の履歴を積む
+        for i in range(25):
+            d = date(2026, 6, 1) + timedelta(days=i)
+            rows.append(DailyPrice(symbol_id=2, date=d, open=1000, high=1000, low=1000,
+                                   close=1000, volume=20000))
+        rows += [
+            DailyPrice(symbol_id=2, date=d_old, open=1000, high=1000, low=1000, close=1000,
+                       volume=20000),
+            # 1:20 併合。株数が20倍になるので売買代金は連続する
+            DailyPrice(symbol_id=2, date=d_new, open=50, high=50, low=50, close=50,
+                       volume=400000),
+        ]
+        db.add_all(rows)
+        db.commit()
+
+        report = audit_and_fix_weekly(db, dry_run=True)
+
+        hits = [a for a in report["split_anomalies"] if a["ticker"] == "AAPL"]
+        assert hits, f"分割の疑いが報告されていない: {report['split_anomalies']}"
+        assert hits[0]["classification"] == "split_suspect"
 
     def test_detect_fx_weekend_rows(self, setup_audit_db):
         """為替に存在しないはずの土日行を検出し、fix モードで除去する（第3層）。

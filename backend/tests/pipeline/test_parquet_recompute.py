@@ -36,6 +36,7 @@ from pipeline.parquet_recompute import (  # noqa: E402
     RANK_EXCLUDED_CATEGORIES,
     find_affected_virtual_themes,
     percent_rank,
+    recompute_indicators,
     recompute_ranks,
 )
 
@@ -72,7 +73,7 @@ def test_null_is_treated_as_smallest():
 
     なお **Parquet の 2024-08 以前には NULL を 1.0 としている行が 1,348 行ある**。
     これは旧コードによる誤りで、本実装での再計算により修正される
-    （詳細: doc/in_progress/parquet_recompute_plan.md §7）。
+    （詳細: doc/completed/parquet_recompute_plan.md §7）。
     """
     s = pd.Series([np.nan, 10.0, 20.0, 30.0, 40.0])
     r = percent_rank(s)
@@ -209,3 +210,83 @@ def test_finds_themes_containing_the_symbol():
     assert find_affected_virtual_themes([1], tc, symbols) == [10, 11]
     assert find_affected_virtual_themes([2], tc, symbols) == [11]
     assert find_affected_virtual_themes([999], tc, symbols) == []
+
+
+# ---------------------------------------------------------------------------
+# recompute_indicators
+#
+# 価格を修正・継ぎ足した銘柄は T3 を作り直さないと指標が古い価格のまま残る。
+# 旧世代の T3 をコピーするのは不可（指標列が 50 → 63 に増えており、
+# 流用すると新しい列が欠損したままスクリーナーとバックテストに入る）。
+# ---------------------------------------------------------------------------
+def _price_frame(n_days: int = 260) -> pd.DataFrame:
+    """SPY(id=1) と対象銘柄(id=2) の OHLCV を作る"""
+    dates = pd.bdate_range("2023-01-02", periods=n_days).strftime("%Y-%m-%d")
+    rows = []
+    for sid, base in [(1, 400.0), (2, 50.0)]:
+        for i, d in enumerate(dates):
+            c = base * (1 + 0.001 * i)
+            rows.append({"symbol_id": sid, "date": d, "open": c * 0.99,
+                         "high": c * 1.01, "low": c * 0.98, "close": c,
+                         "volume": 1_000_000 + i})
+    return pd.DataFrame(rows)
+
+
+def test_recomputes_only_requested_symbols():
+    px = _price_frame()
+    out = recompute_indicators([2], px, ["ema_21", "atr_14"], spy_id=1)
+
+    assert set(out["symbol_id"]) == {2}, "指定外の銘柄まで計算している"
+    assert len(out) == len(px[px.symbol_id == 2]), "全期間ぶん出ていない"
+
+
+def test_output_columns_follow_the_given_order():
+    """既存 indicators の列順に合わせられること。
+
+    列順がズレると Parquet へ書き戻すときに値が入れ替わる。
+    """
+    px = _price_frame()
+    cols = ["atr_14", "ema_21", "sma_50"]
+    out = recompute_indicators([2], px, cols, spy_id=1)
+
+    assert list(out.columns) == ["symbol_id", "date"] + cols
+
+
+def test_unknown_column_becomes_null_not_error():
+    """存在しない指標列を要求されても落ちない（NULL 列になる）。
+
+    指標を追加・削除した直後でもスクリプトが動くようにするため。
+    """
+    px = _price_frame()
+    out = recompute_indicators([2], px, ["ema_21", "no_such_indicator"], spy_id=1)
+
+    assert "no_such_indicator" in out.columns
+    assert out["no_such_indicator"].isna().all()
+
+
+def test_spy_itself_gets_null_relative_strength():
+    """SPY 自身は自分との相対強度を計算しない（NULL が正常）。
+
+    ここで SPY を他銘柄と同じ扱いにすると rs_value が全て同じ値になり、
+    順位計算まで汚染される。
+    """
+    px = _price_frame()
+    out = recompute_indicators([1], px, ["rs_value", "ema_21"], spy_id=1)
+
+    assert out["rs_value"].isna().all(), "SPY に相対強度が入っている"
+    assert out["ema_21"].notna().any(), "SPY の通常指標まで NULL になっている"
+
+
+def test_missing_symbol_is_skipped():
+    """価格が無い銘柄は黙って飛ばす（空の DataFrame を返さない）"""
+    px = _price_frame()
+    out = recompute_indicators([2, 999], px, ["ema_21"], spy_id=1)
+
+    assert set(out["symbol_id"]) == {2}
+
+
+def test_empty_input_returns_empty_frame():
+    px = _price_frame()
+    out = recompute_indicators([], px, ["ema_21"], spy_id=1)
+    assert out.empty
+

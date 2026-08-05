@@ -71,6 +71,38 @@ is_close_gt_ema63 = true
 
 
 [[rise]]
+id = "Theme Leader"
+name = "Theme Leader"
+subname = "Theme Leader"
+group = "Check"
+use_hysteresis = false
+[rise.filters]
+min_change_1d_pct = 6.0 
+min_vol_surge_21 = 1.7 
+min_adr_pct_21 = 5.5 
+max_sma50_atr_mult = 3.0 
+min_market_cap = 10000000.0 
+min_theme_rs_ratio_rank_e21 = 0.75 
+is_close_gt_ema63 = true
+# [backtest results]
+# alpha 3.925
+# avg_gain 4.132
+# avg_spy_gain 0.207
+# expectancy 4.132
+# expectancy_lcb 1.384
+# max_drawdown -58.892046688078715
+# port_cagr 148.27
+# port_total_return 943.59
+# port_vs_spy 145.47
+# port_vs_spy_total 936.21
+# spy_cagr 2.8
+# spy_total_return 7.37
+# total_trades 730
+# win_rate 36.57534246575342
+
+
+
+[[rise]]
 id = "RS MACD and Theme"
 name = "RS MACD and Theme"
 subname = "RS MACD and Theme"

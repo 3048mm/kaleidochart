@@ -6,7 +6,7 @@
 - **作業ブランチ**: 本体（`git add` まで）
 - **対象 issue / 関連ドキュメント**:
   `doc/issue_list.md`「改称した6銘柄の T4 が2024-08以降しか無い」/
-  `doc/in_progress/split_anomaly_noise_reduction_plan.md`（本部品に依存）/
+  `doc/completed/split_anomaly_noise_reduction_plan.md`（本部品に依存）/
   `doc/in_progress/sec_ticker_tracking_plan.md`（改称後の再計算で使う）/
   `backend/scripts/restore_truncated_symbol_history.py`（T3 再計算の既存実装）
 
@@ -56,9 +56,10 @@ parquet_recompute（本計画）
 ### 2.1 変更すること
 
 1. **`backend/pipeline/parquet_recompute.py`**（新規）— 再計算の共通部品
-   - `recompute_ranks()` … T4 を日付×カテゴリで再計算（全期間4分）
-   - `recompute_indicators()` … T3 を銘柄単位で再計算（既存実装を移設）
+   - `recompute_ranks()` … T4 を日付×カテゴリで再計算（全期間81秒）
+   - `recompute_indicators()` … T3 を銘柄単位で再計算（`restore_truncated_symbol_history.py` から移設）
    - `find_affected_virtual_themes()` … 補正銘柄 → 所属仮想テーマの逆引き
+   - `percent_rank()` … SQL の `PERCENT_RANK()` を厳密に再現
 2. **今回の T4 欠落6銘柄を解消**（本番 Parquet に適用）
 3. `restore_truncated_symbol_history.py` を本部品へ寄せる
 
@@ -138,13 +139,16 @@ MVCC で新世代を書き、pointer を更新する。**旧世代は prune し�
 - [x] 本番 Parquet で dry-run し、差分の規模を実測
 - [x] 新世代を書き出して pointer 更新（`data_version_20260805_082955`。旧世代は保持）
 - [x] 検証: 6銘柄の T4 == T3 / 非 active の残骸 0行 / SQLite と完全一致
-- [ ] `restore_truncated_symbol_history.py` を本部品へ寄せる（残作業）
+- [x] `restore_truncated_symbol_history.py` を本部品へ寄せる（`recompute_indicators` を移設。案内も新手順へ）
 - [x] `pipeline-debugging` §7 を本部品の手順へ更新
 - [x] `doc/issue_list.md` の該当エントリを解決済みにする
 
 ### 作業中メモ
 
 - 完了。旧世代 `20260805_064525` を保持している（ロールバック先）。
+- **デイリー更新後も修正が保たれることを確認**（世代 `20260805_140829`）。
+  Parquet の時系列はマージなので、SQLite が持たない過去分は上書きされない。
+  6銘柄とも T4 == T3（2,097行）、非 active の残骸も 0 行のまま。
 
 ## 6. 検証プラン / 結果
 

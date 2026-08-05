@@ -187,6 +187,7 @@ def audit_and_fix_weekly(db, dry_run: bool) -> dict:
     import pandas as pd
     from indicators.calculate import calculate_indicators
     from indicators.fx_calendar import is_fx_trading_day
+    from indicators.price_anomaly import classify_price_jump, is_anomalous_ratio
     
     report = {
         "stale_symbols": [],       # 退役候補 = delisted + no_history（後方互換のティッカー列）
@@ -198,7 +199,8 @@ def audit_and_fix_weekly(db, dry_run: bool) -> dict:
         "invalid_constituents": [],
         "mismatched_indicators_count": 0,
         "fixed_indicators_count": 0,
-        "split_anomalies": [],
+        "split_anomalies": [],      # 要対応のみ（split_suspect / undecided）
+        "anomaly_excluded": {},     # 除外した分類 → 件数
         "fx_weekend_rows": [],     # (currency_pair, date, rate) — 為替に存在しないはずの土日行
     }
 
@@ -363,33 +365,71 @@ def audit_and_fix_weekly(db, dry_run: bool) -> dict:
                         
                 report["fixed_indicators_count"] = fixed_count
                 
-    # 5. Stock split / consolidation anomaly detection (last 730 days)
+    # 5. 価格アノマリーの検出と分類（直近730日）
+    #
+    # 旧実装は「前日比 0.61 以下 / 1.79 以上」だけを見て全件を報告していたため、
+    # **大きな値動きを全部拾うだけ**になっていた。実測（2026-08-05・全期間）では
+    # 1,098件のうち要対応はわずか3件で、残りは実際の値動き・低位株の振動・
+    # 市場全体の急落日・仮想テーマの合成値だった。
+    #
+    # 判定は `indicators/price_anomaly.py` に集約している（閾値の直書きをしない）。
+    # 全期間の把握は `scripts/scan_price_anomalies.py`（Parquet 直読み）が担う。
     if active_symbol_ids and max_date:
         lookback_cutoff = max_date - timedelta(days=730)
-        for sid in active_symbol_ids:
-            ticker = db.query(Symbol.ticker).filter(Symbol.id == sid).scalar()
-            prices = db.query(DailyPrice.date, DailyPrice.close)\
-                .filter(DailyPrice.symbol_id == sid)\
-                .filter(DailyPrice.date >= lookback_cutoff)\
-                .order_by(DailyPrice.date).all()
-                
-            if len(prices) < 2:
-                continue
-                
-            for i in range(1, len(prices)):
-                prev_date, prev_close = prices[i-1]
-                curr_date, curr_close = prices[i]
-                
-                if prev_close and prev_close > 0 and curr_close and curr_close > 0:
-                    ratio = curr_close / prev_close
-                    if ratio <= 0.61 or ratio >= 1.79:
-                        report["split_anomalies"].append({
-                            "ticker": ticker,
-                            "date": curr_date,
-                            "prev_close": prev_close,
-                            "curr_close": curr_close,
-                            "ratio": ratio
-                        })
+
+        # 旧実装は銘柄ごとにクエリを投げる N+1 だった。1本にまとめる。
+        rows = (
+            db.query(DailyPrice.symbol_id, DailyPrice.date,
+                     DailyPrice.close, DailyPrice.volume, Symbol.ticker)
+            .join(Symbol, DailyPrice.symbol_id == Symbol.id)
+            .filter(Symbol.active == 1)
+            .filter(DailyPrice.date >= lookback_cutoff)
+            .order_by(DailyPrice.symbol_id, DailyPrice.date)
+            .all()
+        )
+
+        if rows:
+            df = pd.DataFrame(rows, columns=["symbol_id", "date", "close", "volume", "ticker"])
+            df = df[df["close"].notna() & (df["close"] > 0)]
+            g = df.groupby("symbol_id", sort=False)
+            df["prev_close"] = g["close"].shift(1)
+            df["prev_volume"] = g["volume"].shift(1)
+            df["dv"] = df["close"] * df["volume"]
+            df["adv21"] = g["dv"].transform(
+                lambda x: x.shift(1).rolling(21, min_periods=5).mean())
+
+            d = df.dropna(subset=["prev_close"])
+            d = d[d["prev_close"] > 0].copy()
+            d["ratio"] = d["close"] / d["prev_close"]
+            a = d[d["ratio"].map(is_anomalous_ratio)].copy()
+
+            if not a.empty:
+                prev_dv = a["prev_close"] * a["prev_volume"]
+                a["dv_ratio"] = (a["dv"] / prev_dv).where(prev_dv > 0)
+                # 前日が取引停止だと代金比が取れない。21日平均との比で代替する
+                a["dv_vs_adv"] = (a["dv"] / a["adv21"]).where(a["adv21"] > 0)
+                a["same_day_count"] = a["date"].map(a.groupby("date").size())
+
+                for r in a.itertuples():
+                    cls = classify_price_jump({
+                        "ticker": r.ticker, "ratio": r.ratio, "prev_close": r.prev_close,
+                        "adv21": None if pd.isna(r.adv21) else r.adv21,
+                        "dv_ratio": None if pd.isna(r.dv_ratio) else r.dv_ratio,
+                        "dv_vs_adv": None if pd.isna(r.dv_vs_adv) else r.dv_vs_adv,
+                        "same_day_count": r.same_day_count,
+                    })
+                    entry = {
+                        "ticker": r.ticker, "date": r.date,
+                        "prev_close": r.prev_close, "curr_close": r.close,
+                        "ratio": r.ratio, "classification": cls,
+                    }
+                    # 要対応（分割の疑い・判定不能）だけを split_anomalies に載せる。
+                    # それ以外は件数だけ残す（報告をノイズで埋めない）。
+                    if cls in ("split_suspect", "undecided"):
+                        report["split_anomalies"].append(entry)
+                    else:
+                        report["anomaly_excluded"][cls] = (
+                            report["anomaly_excluded"].get(cls, 0) + 1)
 
     # 6. fx_rates の土日行検出（第3層）
     #

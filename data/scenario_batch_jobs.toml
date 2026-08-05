@@ -46,9 +46,9 @@ study_name = "A_momentum_breakout"
 
 [[job]]
 name = "B1"
-strategy_code = "B1_theme_momentum"
+strategy_code = "B1_theme_leader"
 source = "optuna"
-study_name = "B1_theme_momentum"
+study_name = "B1_theme_leader"
 
 [[job]]
 name = "B2"

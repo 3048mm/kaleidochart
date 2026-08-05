@@ -285,7 +285,7 @@ execute_import_diff(mode="replace")
 
 ## 8. スコープ外・残作業
 
-- **分割・併合への対応**は本計画の対象外。`doc/in_progress/split_anomaly_noise_reduction_plan.md` を参照。
+- **分割・併合への対応**は本計画の対象外。`doc/completed/split_anomaly_noise_reduction_plan.md` を参照。
 - 過去のティッカー履歴の一括復元はできない（EDGAR は現在のスナップショットのみ）。
   週次スナップショットの保存は監査証跡としては有用だが、処理には使わない。
 - 米国外の銘柄・OTC のカバー率は未検証（現ユニバースはほぼ米国上場のため未着手）。

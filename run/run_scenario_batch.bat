@@ -11,11 +11,14 @@ set PYTHONPATH=%cd%\backend;%cd%\backend\backtest
 set PYTHONIOENCODING=utf-8
 set PYTHONUTF8=1
 
+echo Usage: run_scenario_batch.bat [--jobs B1,B2] [--list-jobs]
+echo   --jobs      Comma-separated job names to run (default: all jobs)
+echo   --list-jobs List available job names and exit
+echo.
 echo Starting parallel scenario batch run...
-echo (6 strategies x 5 models x 10 MC runs = 300 runs)
 echo.
 
-.\venv\Scripts\python.exe backend\backtest\run_scenario_batch.py
+.\venv\Scripts\python.exe backend\backtest\run_scenario_batch.py %*
 
 echo.
 pause
