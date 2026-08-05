@@ -144,16 +144,40 @@ T4 は「日付」を単位に delete-insert するため、**銘柄が増えて
 >   AAPL  T3=2096  T4=2096   ← 対照（過去の全期間再構築で埋まっている）
 > ```
 
-**全期間を埋めるには §6 の手順を通す必要がある。**
+**Parquet 上で直接再計算する。約80秒で終わる。**
 
 ```powershell
-# 1. SQLite を Parquet から復元（default_start_date=2018-04-01 から全期間が入る）
-python backend/scripts/run_production_restore.py
-# 2. その状態で T4 を再構築すれば全期間の順位が作られる
+python backend/scripts/recompute_parquet_ranks.py --dry-run   # 差分を確認
+python backend/scripts/recompute_parquet_ranks.py --apply
+```
+
+SQLite に一切触れないため、API サーバー・パイプラインとのロック競合が起きない。
+実装は `backend/pipeline/parquet_recompute.py`。
+SQLite の `relative_ranks` と 4日付 × 22列で最大誤差 0.000e+00 を確認済み。
+
+<details><summary>旧手順（SQLite 経由・約3.5時間）</summary>
+
+```powershell
+python backend/scripts/run_production_restore.py           # SQLite を全期間復元
 python backend/scripts/update_pipeline.py --rebuild-from T4
 ```
 
-所要は約3.5時間（§6 の内訳参照）。**順序が逆だと意味がない。**
+**`--rebuild-from T4` 単体では730日窓しか埋まらない**ため、復元が先に必要だった。
+Parquet 直接再計算が使えるなら、この経路を選ぶ理由はない。
+</details>
+
+### 再計算の副作用（実行前に理解する）
+
+**現在の `active` フラグで計算する。** Parquet は行削除が伝播しないため、
+退役・改称した銘柄の古い順位が残っている。再計算するとそれらは母集団から外れる。
+
+- バックテスト結果への直接影響はない（`backtest_screener.py` が `active == 1` で除外）
+- **他銘柄のパーセンタイル値はわずかに変わる**（母集団の変動による）
+- したがって**過去の最適化結果は厳密には再現しなくなる**
+
+2026-08-05 の実績: 26,649行が消え（退役銘柄の残骸）、8,307行が増え（改称先の過去分）、
+さらに**旧コードが NULL を 1.0 とランク付けしていた1,348行も修正**された
+（SQLite の `PERCENT_RANK` は NULL に 0.0 を返す。合成テストと本番データで確認済み）。
 
 ### 影響を見積もってから判断する
 

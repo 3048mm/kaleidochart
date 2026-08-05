@@ -441,7 +441,7 @@
   - 履歴20行以下を `STALE` に逃がさないのは、**復元漏れに気づけなくなる**ため（上流切断の復元前がこの状態）。
   - テスト: `backend/tests/tools/test_db_health_check.py`（5件）。
 
-- [ ] **改称した6銘柄の T4（順位）が2024-08以降しか無い（2026-08-05 発見）**
+- [x] **改称した6銘柄の T4（順位）が2024-08以降しか無い（2026-08-05 発見・同日解決）**
   - **事象**: 改称した `HAPN` `SHOE` `FOCL` `NSLR` `FLZH` `CIRC` は Parquet の T2/T3 が全期間
     （最大2,096行）あるのに、**T4 は730日窓の500行だけ**。
   - **原因**: T4 は **SQLite の `indicators` に存在する日付しか計算できない**。SQLite は730日分
@@ -454,7 +454,11 @@
   - **設計通りで問題ないケース**（誤検知しないこと）:
     `市場` カテゴリの T3=4109 / T4=2096 は仕様（T2 は `index_start_date`=2010、
     T4 は `min_allowed_date`=2018 から）。`レバレッジ` / `指標` の T4=0 も対象外指定によるもの。
-  - **判断待ち**: 3.5時間かけて全期間を埋め直すか、6銘柄の欠落を許容するか。
+  - **解決（2026-08-05）**: Parquet 上で T4 を再計算する部品を作り、**81秒**で解消した。
+    3.5時間の復元手順は不要だった（`backend/pipeline/parquet_recompute.py` /
+    `backend/scripts/recompute_parquet_ranks.py`。計画書: `doc/in_progress/parquet_recompute_plan.md`）。
+  - **副産物**: 退役・改称銘柄の残骸26,649行を除去し、旧コードが NULL を 1.0 と誤って
+    ランク付けしていた1,348行も修正された。
   - 検知手順と対応は `.claude/skills/pipeline-debugging/SKILL.md` §7 に記載。
 
 - [ ] **universe.db の import replace が「知らない列」を破壊する構造が残っている（2026-08-05 発見）**
