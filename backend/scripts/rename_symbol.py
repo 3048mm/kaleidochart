@@ -28,6 +28,7 @@ Usage:
 import argparse
 import csv
 import os
+import sqlite3
 import sys
 from datetime import date
 
@@ -41,6 +42,68 @@ import tomli
 from data_collection.symbol_classify import derive_theme_type
 from db.database_universe import init_universe_db, get_universe_write_db
 from db.models_universe import SymbolMaster, ThemeMember, TickerHistory
+
+
+# 改称に追随させる `user_data.db` のテーブル。
+# **`position_history` は含めない。** あれは「その時どの銘柄を売買したか」の記録で、
+# 現行ティッカーへ書き換えると取引履歴として不正確になる
+# （`symbol_id` は `api/symbol_heal.py` が ticker_history 経由で現行へ解決する）。
+USER_DATA_RENAME_TABLES = ("watchlist", "portfolio_positions")
+
+
+def _user_db_path() -> str:
+    """`config.toml` から `user_data.db` の場所を解決する。"""
+    with open(os.path.join(_project_root, "config.toml"), "rb") as f:
+        config = tomli.load(f)
+    return config["system"].get(
+        "user_db_path",
+        os.path.join(os.path.dirname(config["system"]["db_path"]), "user_data.db"))
+
+
+def rename_user_data_references(user_db_path: str, old: str, new: str,
+                                exchange: str | None, dry_run: bool) -> dict[str, int | None]:
+    """`user_data.db` のティッカー参照を改称に追随させる。
+
+    ウォッチリストは `ticker` を耐久キーにして「DB を作り直しても追随できる」設計だが、
+    **ticker 自体が変わると宙に浮く**（2026-08-06 に `ATLN`→`CIRC` で実際に発生）。
+    改称を適用したその場で書き換えておけば、次の画面表示から正しく出る。
+
+    `symbol_id` はここでは触らない。改称直後の `stocktool.db` にはまだ新ティッカーの
+    行が無い（T1 同期は次回パイプライン実行）ため、解決は heal に任せる。
+
+    Returns:
+        テーブル名 → 更新件数。テーブルが無ければ ``None``。
+        `user_data.db` 自体が無ければ空辞書（改称を止めない）。
+    """
+    if not os.path.exists(user_db_path):
+        return {}
+
+    con = sqlite3.connect(user_db_path, timeout=30)
+    try:
+        con.execute("PRAGMA journal_mode=WAL")
+        con.execute("PRAGMA busy_timeout=30000")
+        con.execute("PRAGMA synchronous=NORMAL")
+        out: dict[str, int | None] = {}
+        con.execute("BEGIN IMMEDIATE")
+        for table in USER_DATA_RENAME_TABLES:
+            try:
+                n = con.execute(f"SELECT COUNT(*) FROM {table} WHERE ticker = ?",
+                                (old,)).fetchone()[0]
+            except sqlite3.OperationalError:
+                out[table] = None      # 旧スキーマ・テスト環境など
+                continue
+            if not dry_run and n:
+                if exchange:
+                    con.execute(f"UPDATE {table} SET ticker = ?, exchange = ? WHERE ticker = ?",
+                                (new, exchange, old))
+                else:
+                    # 取引所が変わらない改称で exchange を潰さない
+                    con.execute(f"UPDATE {table} SET ticker = ? WHERE ticker = ?", (new, old))
+            out[table] = n
+        con.commit() if not dry_run else con.rollback()
+        return out
+    finally:
+        con.close()
 
 
 def rename_one(udb, old: str, new: str, reason: str, exchange: str | None, dry_run: bool) -> bool:
@@ -100,6 +163,17 @@ def rename_one(udb, old: str, new: str, reason: str, exchange: str | None, dry_r
             reason=reason,
         ))
     udb.flush()
+
+    # ウォッチリスト・保有ポジションを改称に追随させる（取引履歴の ticker は残す）
+    try:
+        touched = rename_user_data_references(_user_db_path(), old, new, exchange, dry_run=False)
+        moved = {t: n for t, n in touched.items() if n}
+        if moved:
+            print(f"  {'':<8}   user_data: " +
+                  " / ".join(f"{t} {n}件" for t, n in moved.items()))
+    except Exception as e:  # noqa: BLE001 — 追随の失敗で改称そのものを巻き戻さない
+        print(f"  {'':<8}   [WARN] user_data.db の追随に失敗しました: {e}")
+        print(f"  {'':<8}          起動時の heal が ticker_history から自動修復します")
     return True
 
 

@@ -515,8 +515,31 @@ S&P500（SPY）の動向や市場全体の統計から算出される、市場�
 | 機構 | 仕様 |
 | :--- | :--- |
 | **修復** | `symbol_id` が現行 symbols と不一致の項目を、ticker+exchange（フォールバック: ticker のみ）で再解決。解決不能は `symbol_id=NULL`（API レスポンスでは `symbol_id: null` として返り、リスト全体は 200 を維持） |
+| **改称の追随** | ticker で解決できなかったとき、**NULL 化する前に `universe.db.ticker_history` を引いて現行ティッカーへ辿る**（多段改称 A→B→C も追跡、循環は `MAX_RENAME_HOPS=10` で打ち切り）。解決できたら `symbol_id` と併せて **`ticker` 文字列も現行へ書き換える**。`ticker_history` の読み込みは**解決不能が出たときだけ**実行され、正常時のリクエストパスに universe.db 接続を持ち込まない |
 | **安全弁** | 解決不能率が **30% (`HEAL_MAX_UNRESOLVED_RATIO`) を超えた場合、一切書き込まず WARNING ログ**を出す。大量解決不能は「接続先 symbols が不完全」（Sandbox 誤接続・T1 同期途中）のシグナルであり、NULL 化も再マッピングも破壊的になるため |
 | **スロットル** | 前回の heal が clean（修復ゼロ・安全弁非発動）だった場合、**60分 (`HEAL_CLEAN_TTL_SECONDS`) 間は再実行をスキップ**。修復発生直後・安全弁発動中は毎回実行される。キーは（種別, stocktool DB, user DB）の組で、接続先を切り替えると独立にカウント |
+
+#### ティッカー変更への追随（push + pull の2層）
+
+ticker を永続キーにする設計は「DB を作り直しても追随できる」ためのものですが、
+**ticker 自体が変わると全段が外れます**。2026-08-06 に `ATLN`（→ `CIRC`）が実際に宙に浮きました。
+そこで2つの経路で追随します。
+
+| 経路 | いつ効くか | 実装 |
+| :--- | :--- | :--- |
+| **push** | 改称を適用したその場。次の画面表示から正しいティッカーで出る | `rename_symbol.rename_user_data_references()` — `watchlist` / `portfolio_positions` を更新 |
+| **pull** | API の heal 実行時。取りこぼし・過去分の保険。多段改称も辿る | 上表「改称の追随」 |
+
+> [!IMPORTANT]
+> **`position_history` の `ticker` は書き換えません。**
+> あれは「その時どの銘柄を売買したか」の記録であり、後から現行ティッカーへ書き換えると
+> 取引履歴として不正確になります。`symbol_id` だけを現行へ解決します
+> （`symbol_heal.TICKER_IMMUTABLE_TYPES`）。
+
+改称の検知自体は SEC EDGAR との週次突合が担います（§8.4）。CIK / classId を
+ウォッチリスト側にも持たせる案は見送りました。`ticker_history` は改称を適用する
+同じコード（`rename_symbol.py` と Universe Manager の両方）が必ず書くため守備範囲が重なり、
+指数・仮想テーマ（CIK なし）の例外処理が増える割に得るものが少ないためです。
 
 > [!WARNING]
 > Sandbox 検証時は、設定漏れによる本番汚染（片方だけ指定し heal が本番 user_data.db に向く事故）を防ぐため、**単一の環境変数 `STOCKTOOL_ENV=sandbox` を使用することを強く推奨します。**

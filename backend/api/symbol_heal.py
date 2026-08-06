@@ -31,6 +31,53 @@ HEAL_CLEAN_TTL_SECONDS = 3600
 # スロットル記録: {(kind, stocktool DB URL, user DB URL): 最終 clean 時刻 (monotonic)}
 _clean_heal_at: dict = {}
 
+# 改称を追っても `ticker` を書き換えないテーブル。
+# `position_history` は「その時どの銘柄を売買したか」の記録であり、
+# 後から現行ティッカーへ書き換えると取引履歴として不正確になる。
+# （`symbol_id` は現行へ解決する。価格の参照はそちらを使うため）
+TICKER_IMMUTABLE_TYPES = frozenset({"PositionHistory"})
+
+# 改称の連鎖を辿る上限。壊れた履歴（循環）で無限ループしないための保険。
+MAX_RENAME_HOPS = 10
+
+
+def resolve_current_ticker(ticker: str, rename_map: dict, max_hops: int = MAX_RENAME_HOPS):
+    """旧ティッカーから現行ティッカーを引く。多段改称（A→B→C）も辿る。
+
+    Args:
+        rename_map: `old_ticker → current_ticker`（`universe.db.ticker_history` 由来）
+
+    Returns:
+        現行ティッカー。改称が無ければ ``None``。
+    """
+    seen = {ticker}
+    cur = ticker
+    for _ in range(max_hops):
+        nxt = rename_map.get(cur)
+        if nxt is None or nxt in seen:
+            break
+        seen.add(nxt)
+        cur = nxt
+    return cur if cur != ticker else None
+
+
+def load_rename_map() -> dict:
+    """`universe.db` の `ticker_history` から `old_ticker → current_ticker` を読む。
+
+    **解決不能が出たときだけ呼ぶこと。** 正常時のリクエストパスに
+    universe.db への接続を持ち込まないため（呼び出しは遅延評価）。
+    """
+    try:
+        from db.database_universe import get_universe_db
+        from db.models_universe import TickerHistory
+
+        with get_universe_db() as udb:
+            rows = udb.query(TickerHistory.old_ticker, TickerHistory.current_ticker).all()
+        return {r.old_ticker: r.current_ticker for r in rows}
+    except Exception as e:  # noqa: BLE001 — 追随は最善努力。失敗しても heal 本体は動かす
+        logger.warning(f"ticker_history を読めませんでした（改称の追随をスキップ）: {e}")
+        return {}
+
 
 def reset_heal_throttle() -> None:
     """スロットル記録をクリアする（テスト用・強制再チェック用）。"""
@@ -46,7 +93,8 @@ class HealResult:
     skipped: Optional[str] = None  # None | "throttled" | "safety_valve"
 
 
-def heal_symbol_references(db: Session, user_db: Session, items: Iterable, kind: str) -> HealResult:
+def heal_symbol_references(db: Session, user_db: Session, items: Iterable, kind: str,
+                           rename_map=None) -> HealResult:
     """items の symbol_id を stocktool DB の symbols と突合して修復する。
 
     Args:
@@ -54,6 +102,9 @@ def heal_symbol_references(db: Session, user_db: Session, items: Iterable, kind:
         user_db: user_data DB セッション（修復時に commit される）
         items: `symbol_id` / `ticker` / `exchange` 属性を持つ ORM オブジェクト列
         kind: スロットルキー用の種別名（"watchlist", "portfolio" 等）
+        rename_map: `old_ticker → current_ticker` の辞書、またはそれを返す callable。
+            省略時は `load_rename_map()`（`universe.db.ticker_history`）。
+            **ticker が解決できなかったときだけ評価される。**
     """
     items = list(items)
     total = len(items)
@@ -75,8 +126,18 @@ def heal_symbol_references(db: Session, user_db: Session, items: Iterable, kind:
         by_ticker_exchange[(r.ticker, r.exchange)] = r.id
         by_ticker.setdefault(r.ticker, r.id)
 
+    # ticker_history は解決不能が出たときだけ読む（正常時のリクエストパスを重くしない）
+    _renames = {"loaded": False, "map": {}}
+
+    def _renames_map() -> dict:
+        if not _renames["loaded"]:
+            src = rename_map if rename_map is not None else load_rename_map
+            _renames["map"] = src() if callable(src) else src
+            _renames["loaded"] = True
+        return _renames["map"]
+
     # 第1パス: 分類のみ（この時点では書き込まない）
-    to_fix = []  # (item, new_symbol_id or None)
+    to_fix = []  # (item, new_symbol_id or None, new_ticker or None)
     unresolved = 0
     for it in items:
         current = by_id.get(it.symbol_id) if it.symbol_id is not None else None
@@ -87,12 +148,21 @@ def heal_symbol_references(db: Session, user_db: Session, items: Iterable, kind:
         if new_id is None:
             new_id = by_ticker.get(it.ticker)
 
+        new_ticker = None
+        if new_id is None:
+            # ticker が変わった可能性。NULL 化する前に改称履歴を辿る
+            renamed = resolve_current_ticker(it.ticker, _renames_map())
+            if renamed is not None:
+                new_id = by_ticker_exchange.get((renamed, it.exchange)) or by_ticker.get(renamed)
+                if new_id is not None and type(it).__name__ not in TICKER_IMMUTABLE_TYPES:
+                    new_ticker = renamed
+
         if new_id is None:
             unresolved += 1
             if it.symbol_id is not None:
-                to_fix.append((it, None))
+                to_fix.append((it, None, None))
         else:
-            to_fix.append((it, new_id))
+            to_fix.append((it, new_id, new_ticker))
 
     # 安全弁: 大量解決不能は接続先 symbols の不完全を疑い、一切書き込まない
     if unresolved / total > HEAL_MAX_UNRESOLVED_RATIO:
@@ -107,8 +177,13 @@ def heal_symbol_references(db: Session, user_db: Session, items: Iterable, kind:
     # 第2パス: 書き込み
     healed = 0
     nulled = 0
-    for it, new_id in to_fix:
+    renamed_n = 0
+    for it, new_id, new_ticker in to_fix:
         it.symbol_id = new_id
+        if new_ticker is not None:
+            logger.info(f"heal({kind}): 改称に追随 {it.ticker} → {new_ticker}")
+            it.ticker = new_ticker
+            renamed_n += 1
         if new_id is None:
             nulled += 1
         else:
@@ -116,8 +191,9 @@ def heal_symbol_references(db: Session, user_db: Session, items: Iterable, kind:
 
     if to_fix:
         user_db.commit()
-        if nulled:
-            logger.info(f"heal({kind}): {healed}件を再マッピング、{nulled}件を解決不能として NULL 化しました。")
+        if nulled or renamed_n:
+            logger.info(f"heal({kind}): {healed}件を再マッピング（うち改称追随 {renamed_n}件）、"
+                        f"{nulled}件を解決不能として NULL 化しました。")
     else:
         # clean（修復ゼロ・安全弁非発動）の場合のみスロットル記録
         _clean_heal_at[throttle_key] = now

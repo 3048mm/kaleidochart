@@ -195,3 +195,112 @@ def test_empty_items_is_noop(dbs):
     result = _heal(db, user_db)
     assert result.total == 0
     assert result.skipped is None
+
+
+# ---------------------------------------------------------------------------
+# 改称への追随（ticker_history 経由）
+# ---------------------------------------------------------------------------
+class TestFollowsTickerRenames:
+    """**ticker が変わると heal の全段が外れて symbol_id が NULL になる。**
+
+    ウォッチリストは ticker を耐久キーにして「DB を作り直しても追随できる」設計だが、
+    ticker 自体が変わると `symbol_id` → `(ticker, exchange)` → `ticker` の
+    どれも当たらない。2026-08-06 に `ATLN`（→ `CIRC`）が実際にこれで宙に浮いた。
+
+        watchlist  ticker='ATLN'  symbol_id=581
+        symbols    ATLN は存在しない / 581 は 'CIRC'（同一企業・SEC CIK 1605888）
+
+    `universe.db.ticker_history` に改称は必ず記録されている（`rename_symbol.py` と
+    Universe Manager の両方が書く）ので、**NULL 化する前にそこを引く**。
+    """
+
+    def test_renamed_ticker_is_resolved_via_history(self, dbs):
+        """`ATLN` → `CIRC` の実測ケース。"""
+        db, user_db = dbs
+        db.add(Symbol(id=581, ticker="CIRC", exchange="NASDAQ",
+                      name="Atlantic International", category="個別", active=1))
+        db.commit()
+        _make_watchlist_item(user_db, "ATLN", symbol_id=581)
+        user_db.commit()
+
+        result = heal_symbol_references(db, user_db, user_db.query(Watchlist).all(),
+                                        kind="watchlist", rename_map={"ATLN": "CIRC"})
+
+        assert result.nulled == 0, "改称を追えず NULL 化している"
+        wl = user_db.query(Watchlist).filter_by(symbol_id=581).one()
+        assert wl.ticker == "CIRC", "表示用の ticker が現行へ更新されていない"
+
+    def test_multi_hop_rename_is_followed(self):
+        """週を跨いだ多段改称（A→B→C）も辿れること。"""
+        from api.symbol_heal import resolve_current_ticker
+
+        assert resolve_current_ticker("A", {"A": "B", "B": "C"}) == "C"
+
+    def test_cyclic_history_does_not_hang(self):
+        """壊れた履歴（循環）で無限ループしない。"""
+        from api.symbol_heal import resolve_current_ticker
+
+        assert resolve_current_ticker("A", {"A": "B", "B": "A"}) in {"A", "B"}
+
+    def test_unknown_ticker_returns_none(self):
+        from api.symbol_heal import resolve_current_ticker
+
+        assert resolve_current_ticker("AAPL", {"ATLN": "CIRC"}) is None
+
+    def test_still_nulls_when_history_has_nothing(self, dbs):
+        """履歴にも無ければ従来どおり NULL 化する（推測で別銘柄に付けない）。"""
+        db, user_db = dbs
+        _make_watchlist_item(user_db, "DEADCO", symbol_id=999)
+        # 解決不能率が閾値(30%)を超えると安全弁で一切書き込まれないため、正常な行を添える
+        _make_watchlist_item(user_db, "AAPL", symbol_id=1)
+        _make_watchlist_item(user_db, "NVDA", symbol_id=2)
+        _make_watchlist_item(user_db, "MSFT", symbol_id=3)
+        user_db.commit()
+
+        result = heal_symbol_references(db, user_db, user_db.query(Watchlist).all(),
+                                        kind="watchlist", rename_map={"ATLN": "CIRC"})
+
+        assert result.nulled == 1
+        assert user_db.query(Watchlist).filter_by(ticker="DEADCO").one().symbol_id is None
+
+    def test_history_is_only_consulted_when_normal_resolution_fails(self, dbs):
+        """正常な行のために universe.db を引かない（リクエストパスを重くしない）。"""
+        db, user_db = dbs
+        _make_watchlist_item(user_db, "AAPL", symbol_id=1)
+        user_db.commit()
+        calls = []
+
+        def _loader():
+            calls.append(1)
+            return {}
+
+        heal_symbol_references(db, user_db, user_db.query(Watchlist).all(),
+                               kind="watchlist", rename_map=_loader)
+
+        assert calls == [], "解決できているのに ticker_history を読んでいる"
+
+    def test_position_history_keeps_its_original_ticker(self, dbs):
+        """**取引記録の ticker は書き換えない。**
+
+        `position_history` は「その時どの銘柄を売買したか」の記録。
+        後から現行ティッカーに書き換えると取引履歴として不正確になる。
+        `symbol_id` だけ現行へ解決する。
+        """
+        from db.models_user import PositionHistory
+
+        db, user_db = dbs
+        db.add(Symbol(id=581, ticker="CIRC", exchange="NASDAQ",
+                      name="Atlantic International", category="個別", active=1))
+        db.commit()
+        ph = PositionHistory(portfolio_id=1, symbol_id=581, ticker="ATLN", exchange="NASDAQ",
+                             entry_date=date(2026, 6, 23), entry_price=1.33, entry_shares=100,
+                             exit_date=date(2026, 7, 10), exit_price=0.60, exit_shares=100,
+                             exit_reason="stop_loss")
+        user_db.add(ph)
+        user_db.commit()
+
+        heal_symbol_references(db, user_db, [ph], kind="portfolio",
+                               rename_map={"ATLN": "CIRC"})
+
+        assert ph.symbol_id == 581, "symbol_id が現行へ解決されていない"
+        assert ph.ticker == "ATLN", "取引記録の ticker を書き換えてしまっている"
