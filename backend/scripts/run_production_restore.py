@@ -126,5 +126,9 @@ if __name__ == "__main__":
     # run_production_restore 内で STOCKTOOL_DB_PATH は解除され --db-path が優先される
     if args.db_path and os.getenv("STOCKTOOL_DB_PATH"):
         logger.info("STOCKTOOL_DB_PATH はプロセス内で解除され、--db-path を restore 対象として使用します。")
-    success = run_production_restore(args.db_path)
+    # 日次更新・週次メンテとの同時実行を防ぐ。**この処理は SQLite を全消しして
+    # Parquet から作り直す**ため、裏でパイプラインが走ると両方が壊れる。
+    from backend.pipeline.pipeline_lock import pipeline_lock
+    with pipeline_lock("run_production_restore"):
+        success = run_production_restore(args.db_path)
     sys.exit(0 if success else 1)

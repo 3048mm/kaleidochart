@@ -149,3 +149,104 @@ for name, key in [("symbols","symbols"), ("theme_constituents","tc"), ("fx_rates
     assert p >= s, f"{name}: Parquet {p} < SQLite {s} — 先にアーカイブすること"
 ```
 
+
+## 9. 全期間再構築（`refresh_All.bat`）の手順書
+
+**2026-08-06 の実行で、想定していなかった問題が5つ出た。** 次回は必ずこの順で行う。
+再構築は「Yahoo から取り直す」ので、**手元でしか持っていないものは全部失う**と考える。
+
+### 実行前
+
+```powershell
+# 1. スケジュールタスクの次回実行を確認する（並走すると世代が壊れる。後述）
+Get-ScheduledTask -TaskName "StockTool_DailyUpdate" | Get-ScheduledTaskInfo | Select NextRunTime
+
+# 2. API サーバ（uvicorn）を止める。読み取りロックで DROP TABLE が無限に待つ
+#    2026-08-06 は "Forcing DROP ALL tables" から5分以上復帰せず、CPU 8秒で停止していた
+
+# 3. 退避（削除ではなく移動）。**これが唯一の生命線**
+.\venv\Scripts\python.exe backend\scripts\archive_parquet_master.py
+
+# 4. user_data.db をバックアップ（後述の id 振り直しに備える）
+```
+
+### 実行
+
+```powershell
+$env:CURL_CA_BUNDLE = "C:\ProgramData\Norton\Antivirus\wscert.pem"   # 傍受環境のみ。§upstream-data-diagnosis 2.1
+$env:STOCKTOOL_DB_PATH = "data/stocktool_restoring.db"
+.\venv\Scripts\python.exe backend\scripts\update_pipeline.py --re-calculate    # 約4時間20分
+```
+
+### 実行後（**全部やる。1つでも飛ばすとデータが欠ける**）
+
+| # | やること | なぜ |
+| :--- | :--- | :--- |
+| 1 | `restore_truncated_symbol_history.py --backup-dir <退避先>` | 上流が返さなかった銘柄の履歴が消える。2026-08-06 は `BDRY` `SXC`（active・約2,100行）が丸ごと、`TMHC` 2086→2、`RSHO` 779→1、`TOI` 1549→1171、`CORZZ` 78→2 |
+| 2 | `restore_fx_from_generation.py --from <退避先>` | **`fx_rates` が直近30日だけになる**（7,717→23行）。§8 と同じ事故の3度目 |
+| 3 | `recompute_parquet_ranks.py --apply` | 1 で履歴が増えると横断的な T4 が変わる。**`--rebuild-from T4` は使わない**（730日窓しか埋まらない） |
+| 4 | `truncate_symbol_history.py` を再適用 | 逆さ合併の切り詰めは再取得で戻る（`JBIO` 318→1280行） |
+| 5 | `run_production_restore.py` | SQLite を Parquet から作り直す |
+| 6 | `remap_user_data_symbol_ids.py --apply` | **`symbols.id` が再採番される**（後述） |
+| 7 | `scan_price_anomalies.py` / `tools/db_health_check.py` | 検収 |
+
+### 落とし穴1: `symbols.id` が再採番される
+
+再構築はサンドボックスの**空 DB** から始まるため、T1 の「既存 id を温存する upsert」が
+働く相手が居ない。退役済み銘柄は新 DB に作られないので、その分だけ後続の id が前へ詰まる。
+
+```
+2026-08-06: 共通3,220ティッカーのうち 2,378件で id が変化
+  CAT 845→844 / CATY 846→845 / CAVA 847→846 ...
+```
+
+`user_data.db`（ウォッチリスト・ポートフォリオ）は `symbol_id` で参照するため
+**別銘柄を指したままになる**。`symbol_id` を持つテーブルは `ticker` も持っているので
+`remap_user_data_symbol_ids.py` で振り直せる。
+
+同じ理由で、**Parquet と SQLite の id が食い違う期間ができる**。この間に
+`truncate_symbol_history.py` を走らせると Parquet 側の id で SQLite を DELETE し、
+**別銘柄の履歴を消す**（実際に961行を誤削除した。現在は ticker 照合で止まる）。
+
+### 落とし穴2: 非 active 銘柄の履歴は消える
+
+再構築後の T1 は active のみを作るため、退役・改称済みの旧ティッカーは
+`symbols` ごと消える（2026-08-06 は18件）。バックテストは `active == 1` で絞るので
+実害は無いが、**旧ティッカーの履歴は二度と戻らない**。§6「行の削除は伝播しない」で
+単調増加していた分が、ここで一括して消える。
+
+### 落とし穴3: スケジュールタスクとの並走で世代が壊れる
+
+**最悪の事故がこれ。** 2026-08-06 に発生:
+
+```
+13:00:14  スケジューラの日次更新が開始（気づいていなかった）
+13:03〜   手動で履歴復元 → fx 復元 → T4 再計算（新 id 体系の世代を作る）
+13:10:02  日次更新が完了し、**旧 id 体系の SQLite をマージした世代**で
+          latest_master.json を奪う
+```
+
+結果、**symbols は旧 id・prices は新 id** の世代が本番ポインタになり、
+`CAT` の終値が 871.08 → 64.13 になるなど全銘柄がずれた。
+
+`latest_master.json` の差し替え自体はアトミックだが、**「読んで・作って・差し替える」の
+一連が排他されていない**ため後勝ちで壊れる。現在は Parquet を書き換える全スクリプトが
+`pipeline/pipeline_lock.py` で `update_pipeline.lock` を取る（取れなければ即中断）。
+
+**検知方法**: 世代ごとに symbols 件数と ticker→id を突き合わせる。
+
+```python
+# 現行世代の ticker→id が退避世代と「完全一致」なら、それは再構築後の世代ではない
+common = m_cur.index.intersection(m_old.index)
+print(int((m_cur[common] == m_old[common]).sum()), "/", len(common))
+```
+
+### 検収: 終値をティッカーで突き合わせる
+
+`symbol_id` は当てにならないので**ティッカーで突合**し、直近終値の比を見る。
+別銘柄に紐づいていれば大量に外れる。
+
+```
+2026-08-06 の合格例: 共通3,220ティッカーのうち 3,194件が比 0.8〜1.25 に収まった
+  外れた26件 = 決算日の値動き（±20〜70%）と、基準が変わる仮想テーマ指数（`_XXX_`）
+```

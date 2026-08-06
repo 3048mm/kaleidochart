@@ -174,6 +174,9 @@ def _make_db_with_data(tmp_path, symbols, tc_rows):
     return db_file, engine
 
 
+# 注: 以下のテストは fx / 全期間同期テーブルだけを検証する最小フィクスチャのため
+#     価格・指標を持たない。空マスタガード（is_publishable_master）は本番経路の
+#     保護が目的なので require_non_empty=False で明示的に外している。
 def test_deletions_propagate_to_parquet_for_full_sync_tables(tmp_path):
     """SQLite で削除した theme_constituents / symbols が Parquet からも消えること。"""
     os.makedirs(tmp_path / "parquet_master", exist_ok=True)
@@ -189,7 +192,7 @@ def test_deletions_propagate_to_parquet_for_full_sync_tables(tmp_path):
 
     # 1回目: 4銘柄 / 2ペアを書き出す
     db = Session()
-    rotate_and_archive_to_parquet(db, db_file, logger)
+    rotate_and_archive_to_parquet(db, db_file, logger, require_non_empty=False)
     db.close()
 
     from pipeline.parquet_cache_manager import get_latest_master_files, get_pointer_file_path, get_parquet_master_dir
@@ -207,7 +210,7 @@ def test_deletions_propagate_to_parquet_for_full_sync_tables(tmp_path):
 
     # 2回目: 削除が Parquet に伝播していること
     db = Session()
-    rotate_and_archive_to_parquet(db, db_file, logger)
+    rotate_and_archive_to_parquet(db, db_file, logger, require_non_empty=False)
     db.close()
 
     files = get_latest_master_files(pointer)
@@ -233,7 +236,7 @@ def test_timeseries_tables_still_merge_history(tmp_path):
     conn.close()
 
     db = Session()
-    rotate_and_archive_to_parquet(db, db_file, logger)
+    rotate_and_archive_to_parquet(db, db_file, logger, require_non_empty=False)
     db.close()
 
     # ホットキャッシュのパージを模して古い行を消す
@@ -244,7 +247,7 @@ def test_timeseries_tables_still_merge_history(tmp_path):
     conn.close()
 
     db = Session()
-    rotate_and_archive_to_parquet(db, db_file, logger)
+    rotate_and_archive_to_parquet(db, db_file, logger, require_non_empty=False)
     db.close()
 
     from pipeline.parquet_cache_manager import get_latest_master_files, get_pointer_file_path, get_parquet_master_dir
@@ -295,7 +298,7 @@ def test_fx_rates_are_archived_to_parquet(tmp_path):
 
     Session = sessionmaker(bind=engine)
     db = Session()
-    rotate_and_archive_to_parquet(db, db_file, logger)
+    rotate_and_archive_to_parquet(db, db_file, logger, require_non_empty=False)
     db.close()
 
     from pipeline.parquet_cache_manager import (
@@ -322,7 +325,7 @@ def test_fx_rates_deletions_propagate(tmp_path):
     Session = sessionmaker(bind=engine)
 
     db = Session()
-    rotate_and_archive_to_parquet(db, db_file, logger)
+    rotate_and_archive_to_parquet(db, db_file, logger, require_non_empty=False)
     db.close()
 
     # ダミー値を消して実データに入れ替える
@@ -333,7 +336,7 @@ def test_fx_rates_deletions_propagate(tmp_path):
     conn.close()
 
     db = Session()
-    rotate_and_archive_to_parquet(db, db_file, logger)
+    rotate_and_archive_to_parquet(db, db_file, logger, require_non_empty=False)
     db.close()
 
     from pipeline.parquet_cache_manager import (
@@ -363,7 +366,7 @@ def test_restore_keeps_fx_when_pointer_has_no_fx_key(tmp_path):
     Session = sessionmaker(bind=engine)
 
     db = Session()
-    rotate_and_archive_to_parquet(db, db_file, logger)
+    rotate_and_archive_to_parquet(db, db_file, logger, require_non_empty=False)
     db.close()
 
     # ポインタから 'fx' を取り除いて旧世代を再現する
@@ -396,7 +399,7 @@ def test_restore_reloads_fx_from_parquet(tmp_path):
     Session = sessionmaker(bind=engine)
 
     db = Session()
-    rotate_and_archive_to_parquet(db, db_file, logger)
+    rotate_and_archive_to_parquet(db, db_file, logger, require_non_empty=False)
     db.close()
 
     # SQLite 側を壊してから復元する
@@ -414,3 +417,141 @@ def test_restore_reloads_fx_from_parquet(tmp_path):
     conn.close()
     assert n == 2, "Parquet から fx_rates が復元されていない"
     engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# 空マスタの書き込み拒否（2026-08-06 の事故を受けて追加）
+# ---------------------------------------------------------------------------
+class TestEmptyMasterGuard:
+    """**価格ゼロの世代を Parquet マスタとして書いてはいけない。**
+
+    2026-08-06 の全期間再構築で、Norton の TLS 傍受により `curl_cffi`（yfinance が
+    cookie/crumb 取得に使う）が証明書検証に失敗し、SPY を含む全銘柄の取得が
+    「possibly delisted; no price data found」で失敗した。
+
+    パイプラインはそれを「データ無し」として **T2〜T5 を 0行のまま通過し、
+    ほぼ空の Parquet 世代でポインタを上書きして "COMPLETED SUCCESSFULLY" を出した**。
+    退避（`archive_parquet_master.py`）が無ければ 11GB・604万行の履歴が失われていた。
+
+        Writing updated masters - Symbols: 3220, Prices: 0, Indicators: 0, Ranks: 0
+
+    再構築時は旧世代が退避済みでマージ相手が居ないため、既存の
+    「全期間同期テーブルが空なら旧世代を維持する」安全弁では防げない。
+    """
+
+    def test_empty_prices_is_rejected(self):
+        from pipeline.parquet_cache_manager import is_publishable_master
+
+        ok, reason = is_publishable_master(prices_rows=0, indicators_rows=0, symbols_rows=3220)
+
+        assert ok is False
+        assert "prices" in reason
+
+    def test_normal_master_is_publishable(self):
+        from pipeline.parquet_cache_manager import is_publishable_master
+
+        ok, reason = is_publishable_master(
+            prices_rows=6_041_821, indicators_rows=6_041_821, symbols_rows=3220)
+
+        assert ok is True and reason == ""
+
+    def test_prices_without_indicators_is_rejected(self):
+        """T2 は通ったが T3 が落ちた世代も公開しない（バックテストが指標を失う）。"""
+        from pipeline.parquet_cache_manager import is_publishable_master
+
+        ok, reason = is_publishable_master(
+            prices_rows=6_041_821, indicators_rows=0, symbols_rows=3220)
+
+        assert ok is False
+        assert "indicators" in reason
+
+    def test_empty_symbols_is_rejected(self):
+        from pipeline.parquet_cache_manager import is_publishable_master
+
+        ok, _ = is_publishable_master(prices_rows=100, indicators_rows=100, symbols_rows=0)
+
+        assert ok is False
+
+
+# ---------------------------------------------------------------------------
+# 全期間同期テーブルの縮小ガード（fx_rates 消失の3度目を防ぐ）
+# ---------------------------------------------------------------------------
+class TestFullSyncShrinkGuard:
+    """**「空なら維持」では足りない。「激減したら維持」が要る。**
+
+    `fx_rates` は SQLite を正として Parquet を**置換**するテーブル。
+    ところが全期間再構築はサンドボックスの空 DB から始まるため、FX 同期は
+    直近30日しか取得せず、その少数行が全履歴を置き換えてしまう。
+
+        2026-07-30 の再構築  7,711行 → 22行
+        2026-08-06 の再構築  7,717行 → 23行   ← 2026-08-01 の修正後も再発
+
+    2026-08-01 に入れた安全弁は「空なら旧世代を維持」だったため、
+    **23行は「空ではない」ので素通りした。**
+
+    一方で置換をやめてマージにすると、ダミー値の削除が Parquet に伝播しない
+    （それが置換にした理由）。**通常の削除は通し、再構築由来の激減だけ弾く。**
+    """
+
+    def _df(self, dates):
+        import pandas as pd
+        return pd.DataFrame({"currency_pair": ["USD/JPY"] * len(dates), "date": dates,
+                             "rate": [150.0] * len(dates)})
+
+    def test_rebuild_shrinkage_falls_back_to_union(self):
+        """再構築で直近30日だけになったら旧世代と和集合にする。"""
+        from pipeline.parquet_cache_manager import resolve_full_sync_table
+
+        old = self._df([f"2020-01-{d:02d}" for d in range(1, 29)] + ["2026-08-04"])
+        new = self._df(["2026-08-04", "2026-08-05"])
+
+        df, action = resolve_full_sync_table(new, old, ["currency_pair", "date"])
+
+        assert action == "union"
+        assert len(df) == 30, "旧世代の履歴が失われている"
+        assert "2026-08-05" in set(df["date"]), "新しい行が入っていない"
+
+    def test_normal_deletion_still_propagates(self):
+        """ダミー行の削除など通常の縮小は置換のまま通す（削除を伝播させる）。"""
+        from pipeline.parquet_cache_manager import resolve_full_sync_table
+
+        old = self._df([f"2026-07-{d:02d}" for d in range(1, 21)])
+        new = self._df([f"2026-07-{d:02d}" for d in range(1, 19)])   # 2行削除
+
+        df, action = resolve_full_sync_table(new, old, ["currency_pair", "date"])
+
+        assert action == "replace"
+        assert len(df) == 18
+
+    def test_growth_is_replace(self):
+        from pipeline.parquet_cache_manager import resolve_full_sync_table
+
+        old = self._df(["2026-07-01"])
+        new = self._df(["2026-07-01", "2026-07-02"])
+
+        _df, action = resolve_full_sync_table(new, old, ["currency_pair", "date"])
+
+        assert action == "replace"
+
+    def test_empty_new_keeps_old(self):
+        """既存の「空なら維持」も引き続き効くこと。"""
+        import pandas as pd
+        from pipeline.parquet_cache_manager import resolve_full_sync_table
+
+        old = self._df(["2026-07-01", "2026-07-02"])
+
+        df, action = resolve_full_sync_table(pd.DataFrame(columns=old.columns), old,
+                                             ["currency_pair", "date"])
+
+        assert action == "keep_old"
+        assert len(df) == 2
+
+    def test_no_old_generation_is_replace(self):
+        """初回（旧世代なし）は素直に置換する。"""
+        from pipeline.parquet_cache_manager import resolve_full_sync_table
+
+        new = self._df(["2026-07-01"])
+
+        _df, action = resolve_full_sync_table(new, None, ["currency_pair", "date"])
+
+        assert action == "replace"

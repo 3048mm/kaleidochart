@@ -58,6 +58,7 @@ if _backend_dir not in sys.path:
 import tomli  # noqa: E402
 from indicators.price_anomaly import is_anomalous_ratio  # noqa: E402
 from pipeline.parquet_recompute import recompute_indicators  # noqa: E402
+from pipeline.pipeline_lock import pipeline_lock  # noqa: E402
 from pipeline.parquet_cache_manager import (  # noqa: E402
     get_latest_master_files,
     get_parquet_master_dir,
@@ -280,9 +281,11 @@ def run(dry_run: bool, backup_dir: str, explicit: list[str] | None):
     print("    ※ 旧世代は prune していません（health check 合格までバックアップを兼ねる）")
 
     print("\n=== 次にやること ===")
-    print("  1. T4/T5 の再計算: python backend/scripts/update_pipeline.py --rebuild-from T4")
-    print("     （横断的な順位なので、履歴が増えた過去日の順位が全銘柄で変わる）")
-    print("  2. SQLite ホットキャッシュの再構築: restore_sqlite_cache_from_parquet")
+    print("  1. T4 の全期間再計算: python backend/scripts/recompute_parquet_ranks.py --apply")
+    print("     （横断的な順位なので、履歴が増えた過去日の順位が全銘柄で変わる。約80秒）")
+    print("     ※ --rebuild-from T4 は使わない。SQLite にある日付＝直近730日しか")
+    print("        埋まらず、Parquet の過去分は欠けたまま残る（2026-08-05 に5時間を浪費）")
+    print("  2. SQLite ホットキャッシュの再構築: backend/scripts/run_production_restore.py")
     print("  3. tools/db_health_check.py で T2/T3 件数一致を確認")
 
 
@@ -295,6 +298,8 @@ if __name__ == "__main__":
     a = p.parse_args()
     if not a.apply and not a.dry_run:
         p.error("--dry-run か --apply のどちらかを指定してください")
-    run(dry_run=not a.apply,
-        backup_dir=a.backup_dir,
-        explicit=[t.strip() for t in a.tickers.split(",")] if a.tickers else None)
+    # 日次更新・週次メンテとの同時実行を防ぐ（2026-08-06 に世代破損）
+    with pipeline_lock("restore_truncated_symbol_history"):
+        run(dry_run=not a.apply,
+            backup_dir=a.backup_dir,
+            explicit=[t.strip() for t in a.tickers.split(",")] if a.tickers else None)

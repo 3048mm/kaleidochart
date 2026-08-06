@@ -82,7 +82,7 @@ _UA = {
 }
 
 
-def probe_supply(ticker: str) -> tuple[str, int, str | None]:
+def probe_supply(ticker: str, range_: str = "1mo") -> tuple[str, int, str | None]:
     """供給側（Yahoo）に本当にデータが無いかを確認する。
 
     週次メンテの判定は自分の DB しか見ていないため、「供給が止まった」のか
@@ -93,13 +93,19 @@ def probe_supply(ticker: str) -> tuple[str, int, str | None]:
     yfinance は HTTP 404 も 429 も同じメッセージに畳むため、chart API を直接叩いて
     HTTP ステータスを見る。
 
+    Args:
+        range_: Yahoo chart API の期間。既定の `1mo` は「今も動いているか」の判定用。
+            改称先に十分な履歴があるかを見るときは `2y` などを渡す
+            （`sync_sec_corporate_actions.py` のガード条件②）。
+
     Returns:
-        (status, 直近1ヶ月の有効行数, 最終日)
+        (status, 指定期間の有効行数, 最終日)
         status は "gone"（404＝存在しない） / "alive"（データあり） /
         "corporate_action"（改称・上場廃止などが起きた疑い） /
         "empty"（応答はあるがデータなし） / "error"（判定不能）
     """
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?range=1mo&interval=1d"
+    url = (f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+           f"?range={range_}&interval=1d")
     try:
         with urllib.request.urlopen(urllib.request.Request(url, headers=_UA), timeout=30) as r:
             payload = json.load(r)

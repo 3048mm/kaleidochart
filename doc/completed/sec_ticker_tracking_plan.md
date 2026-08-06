@@ -248,44 +248,183 @@ execute_import_diff(mode="replace")
 
 ## 5. 実装順序と進捗チェックリスト
 
-- [ ] `SecClient` のテストを先に書く（レート制限・UA 必須・404/429 の扱い）
-- [ ] `SecClient` を実装（`backend/data_collection/sec_client.py`）
-- [ ] `config.local.toml` の仕組みと `.gitignore` 追加、連絡先の解決順序
-- [ ] `universe.db` バックアップ → `cik` / `sec_class_id` / `sec_checked_at` の in-place マイグレーション
-- [ ] 既存3,222銘柄の SEC キー初回解決（対象外は NULL のまま）
-- [ ] 差分検知のテストを書く（改称／廃止／変化なし／キー無し）
-- [ ] `sync_sec_corporate_actions.py` を実装（検知 → 確定 → 適用/レポート）
-- [ ] 自動適用のガード3条件をテストで固定
-- [ ] 週次メンテへの組み込みとレポート節の追加
-- [ ] `doc/backend_specification.md` に SEC 連携の節を追加
-- [ ] `.claude/skills/upstream-data-diagnosis/SKILL.md` §5.1 を「手動手順」から「自動化済み＋手動での確認方法」に更新
-- [ ] **`sheet_importer` の replace モードを upsert + 欠落削除へ変更**（§3.7 問題1）。
+- [x] `SecClient` のテストを先に書く（レート制限・UA 必須・404/429 の扱い）
+- [x] `SecClient` を実装（`backend/data_collection/sec_client.py`）
+- [x] `config.local.toml` の仕組みと `.gitignore` 追加、連絡先の解決順序
+- [x] `universe.db` バックアップ → `cik` / `sec_class_id` / `sec_checked_at` の in-place マイグレーション
+- [x] 既存3,255銘柄の SEC キー初回解決（対象外は NULL のまま）
+- [x] 差分検知のテストを書く（改称／廃止／変化なし／キー無し）
+- [x] `sync_sec_corporate_actions.py` を実装（検知 → 確定 → 適用/レポート）
+- [x] 自動適用のガード3条件をテストで固定
+- [x] 週次メンテへの組み込みとレポート節の追加
+- [x] `doc/backend_specification.md` に SEC 連携の節を追加（§3.1 の列定義 + §8.4）
+- [x] `.claude/skills/upstream-data-diagnosis/SKILL.md` §5.1 を「手動手順」から「自動化済み＋手動での確認方法」に更新
+- [x] **`sheet_importer` の replace モードを upsert + 欠落削除へ変更**（§3.7 問題1）。
       既存テスト `test_sheet_importer_replace.py` に「replace 後も `id` と `cik` が保たれる」を追加
-- [ ] **SEC キーの継続解決を週次同期に常設**（§3.7 問題2）。`sec_checked_at` による再確認も含む
-- [ ] `RSHO` / `CORZZ`（Yahoo 側の問題と判明した2件）の監視枠の扱いを決める
+- [x] **SEC キーの継続解決を週次同期に常設**（§3.7 問題2）。`resolve_missing_keys()` が毎回拾い直す
+- [x] `RSHO` / `CORZZ`（Yahoo 側の問題と判明した2件）の監視枠の扱いを決める
 
 ### 作業中メモ
 
-- 未着手。計画レビュー完了・着手待ち（§4 の確認事項は全項目確定済み）
 - 実装前に `.claude/skills/sandbox-workflow/SKILL.md` を参照すること（universe.db はユーザー資産）。
+- **2026-08-06 マイグレーション適用済み**（`universe.db.bak_20260806_021607` にバックアップ）。
+  `ALTER TABLE ADD COLUMN` のみのため `symbols.id` は不変（3,255件・MAX 3256）。
+
+  | カテゴリ | cik | classId | 未解決 | 解決率 |
+  |---|---:|---:|---:|---:|
+  | 個別 | 2,911 | 1 | 4 | 99.9% |
+  | テーマ | 6 | 95 | 172 | 37.0% |
+  | 市場 / セクタ / レバレッジ | 8 | 48 | 0 | 100% |
+  | 指標 | 5 | 3 | 2 | 80.0% |
+
+  未解決 178件の内訳は **仮想テーマ170 / 指数2 / その他6**。仮想テーマと指数は
+  SEC に登録主体が無く追跡対象外（`is_sec_trackable()` で除外）。
+  その他6件は `AWAY` `DOGEF` `GIGGU` `IPAY` `TBRG` `XWIN`（廃止 ETF・OTC 外国株）。
+
+- **一括マスタだけでは足りないことが判明**（計画時の想定漏れ）。
+  `company_tickers.json` は 10,398件しかなく、**全登録企業を網羅していない**。
+  `AEP`（American Electric Power / CIK 4904）は submissions API に存在するのに
+  一括マスタに無い。マスタだけに頼ると該当42銘柄が「キー無し＝追跡対象外」に静かに落ちる。
+  → `SecClient.lookup_cik_by_ticker()`（`browse-edgar` の atom 出力）を
+  **一括で解決できなかった分だけ**に使うフォールバックとして追加。42件中36件を解決。
+  複数社ヒット時は誤った CIK を割り当てないよう `None` を返す。
+
+- **この時点で既に未検知の改称が見つかっている**（本タスクの妥当性の裏付け）。
+  `BK` → **`BNY`**（Bank of New York Mellon / CIK 1390777）、
+  `ASGN` → 社名 **Everforth Inc**、`BLD` → **QXO Insulation, LLC**（QXO による買収）。
+  いずれも現行 `universe.db` は旧ティッカーのまま。差分検知の実装後に処理する。
 
 ## 6. 検証プラン / 結果
 
-- 単体: `SecClient` のレート制限・UA・リトライ、差分検知の4パターン
-- **回帰**: 今回の15件を再現できるか。`universe.db` のスナップショット（改称・退役適用前）に対して
-  差分検知を走らせ、**改称6件・退役9件・例外2件を正しく分類できる**ことを確認する。
-  これが本タスク最良の検証データ（正解が判明している実データ）
-- 実行: 本番 `universe.db` に対して `--dry-run` で差分ゼロを確認（適用済みのため）
-- **運用シナリオの再検証**: 実装後に §3.7 の3シナリオを再度通し、
-  **replace インポート後も `cik` が保たれること**を実データで確認する（問題1の回帰防止）
+- 単体: `SecClient` 17件 / 差分検知 43件 / 週次組み込み 8件 — いずれも**実測ケースで固定**
+- **実データ検証（2026-08-06）**: 本番 `universe.db`（3,255銘柄）に対して実行。
+  当初の設計では **6件中4件が誤判定**だったものが、§7 の修正後は**全件正解・要判断ゼロ**になった。
+
+  | 銘柄 | 当初の判定 | 修正後 | 正解 |
+  | :--- | :--- | :--- | :--- |
+  | `CCRN` | retire | retire | ✅ Cross Country Healthcare / Aya による買収（Form 15-12G 2026-07-27） |
+  | `KORE` | retire | retire | ✅ KORE Group 非公開化（Form 15-12G 2026-07-31） |
+  | `UUP` | **retire** | master_gap | ✅ 現役 ETF（2008年の Form 25 を誤採用していた） |
+  | `AEP` | **retire** | master_gap | ✅ 現役（NYSE→Nasdaq 移管の 25-NSE を誤採用） |
+  | `GAMB` | **unknown → 併存** | rename → `GRSD` | ✅ Gambling.com → GRANDSTAND Ltd |
+  | `VWDRY` | **unknown** | coexisting | ✅ Vestas の ADR と原株（同一 CIK の別証券） |
+
+  適用結果: `CCRN` / `KORE` 退役、`GAMB`→`GRSD` 改称（`symbols_master.id=1411` 温存・
+  `theme_members` も移行・`ticker_history` に記録）。`universe.db.bak_20260806_023329` に退避済み。
+
+- 「今回の15件」での回帰は**実施しない**。適用済みで巻き戻しは universe.db（ユーザー資産）を
+  触るリスクの方が大きい。代わりに上表の**新たな6件**を実データ検証として採用した
+  （`BK`→`BNY` / `ASGN` / `BLD` は既に `active=0` のため検知対象外＝設計通り）。
+- **運用シナリオの再検証**: `test_sheet_importer_replace.py` に
+  「replace 後も `id` / `cik` / `sec_class_id` が保たれる」を追加（追加時点で red を確認 →
+  `id` が 4 → 19 に振り直されていた）。§3.7 問題1 は解消。
 
 ## 7. 途中発生した課題
 
-（実装中に追記）
+すべて**計画時には想定していなかった**もので、実データを流して初めて表面化した。
+判定条件はテストに実データのまま埋め込んである（`test_sec_corporate_actions.py`）。
+
+### 7.1 一括マスタが全登録企業を網羅していない
+
+`company_tickers.json` は 10,398件しかない。`AEP`（American Electric Power / CIK 4904）は
+submissions API に存在するのにマスタに無く、**42銘柄がキー無し＝追跡対象外**に落ちた。
+
+→ `SecClient.lookup_cik_by_ticker()`（`browse-edgar` の atom 出力）を
+一括で解決できなかった分だけに使うフォールバックとして追加。42件中36件を解決し、
+個別カテゴリの解決率は 98.7% → **99.9%** になった。
+
+### 7.2 Form 25 / 25-NSE は上場廃止とは限らない
+
+**取引所の移管でも提出される。** 素朴に「提出があれば廃止」とすると健在な銘柄を退役させる。
+
+```
+UUP  Form 25    2008-11-21  … 2026年も 10-Q / 10-K を提出中の現役 ETF
+AEP  Form 25-NSE 2023-08-14 … NYSE → Nasdaq の移管。直近 10-Q は 2026-07-30
+```
+
+→ ①提出から400日以内、②それより後に定期報告（10-K/10-Q/20-F/40-F）が無いこと、
+の2条件を課した。どちらか片方では取りこぼす（移管直後なら①を通り、
+四半期報告の間隔があるため②は最大3ヶ月遅れる）。
+
+### 7.3 「マスタに無い＝廃止」も成立しない
+
+7.1 の裏返し。マスタ欠落と本物の廃止を分けるため `is_still_filing()` を追加し、
+定期報告が継続していれば `master_gap`（対応不要）として要判断リストから外す。
+これが無いと `AEP` `UUP` が**毎週レポートに載り続けてレポート自体が読まれなくなる**。
+
+### 7.4 1つの CIK に複数の証券がぶら下がる
+
+```
+BNY / BNY-PK    Bank of New York Mellon（普通株と優先株）   CIK 1390777
+VWDRY / VWSYF   Vestas Wind Systems（ADR と原株）           CIK 1330306
+```
+
+→ マスタ索引を「キー → ティッカーの**集合**」にした（1対1の辞書だと後勝ちで
+`BNY-PK` になり、普通株 `BNY` を「消えた」と誤判定する）。
+両方が取引中のケースは `coexisting` として要判断から分離した。
+
+### 7.5 改称の判定は「行数」ではなく「最終取引日の差」
+
+`GAMB`→`GRSD` を当初「併存」と誤判定した。改称直後は旧ティッカーに残骸が数日残る。
+
+```
+GAMB  最終 2026-07-29（直近1ヶ月6行）  GRSD  最終 2026-08-05  → 7日差 ＝ 改称
+VWDRY 最終 2026-08-05                 VWSYF 最終 2026-08-04  → 差なし ＝ 併存
+```
+
+「今日から何日前か」では測らない（連休・祝日・取得タイミングでぶれる）。
+同じ市場の2銘柄を比べればその影響が消える。
+
+### 7.6 submissions の `tickers` は一括マスタより遅れる
+
+`GAMB` は社名が GRANDSTAND Ltd に変わり（`formerNames` は 2026-06-01 まで
+Gambling.com Group Ltd）、`company_tickers.json` も `GRSD` に更新済みなのに、
+submissions は `tickers=['GAMB']` を返し続けていた。
+
+→ submissions が裏付けない改称も `evidence_strength="master_only"` として残し、
+**ガード3条件に判断を委ねる**。`unknown` に落とすと一括マスタで捕まえた改称を毎回取りこぼす。
+
+### 7.7 SEC の生存確認を退役判定に反映していなかった
+
+`RSHO`（Tema ETF / classId C000239058）は SEC マスタに現ティッカーで載っているのに
+Yahoo の価格供給だけが 2026-07-17 で止まっている。鮮度監査は自分の DB しか見ないので
+これを毎週「上場廃止候補」に挙げ、`retire_stale_symbols.py --from-report` で
+**健在な銘柄を退役させる**恐れがあった。
+
+→ `split_by_sec_verdict()` で SEC が健在と言う銘柄を自動退役 CSV から除外し、
+レポートの `7-c2. HELD FROM AUTO-RETIREMENT` に「供給側を疑え」と明記して残す。
+SEC 同期が失敗・スキップされたときは**何も除外しない**（照合できないことを
+「健在の証拠なし」と混同して候補を握り潰さないため）。
+
+`CORZZ` は価格が最新（2026-08-04）で鮮度監査には掛からず、アノマリー分類器の
+`undecided`（出来高がほぼ無く判定材料が無い）に留まる。専用の監視枠は不要と判断した。
 
 ## 8. スコープ外・残作業
+
+### 運用に入ってから確認すること
+
+- **初回の週次メンテ実行**でレポート「7. SEC corporate actions」節が出ること、
+  `7-c2. HELD FROM AUTO-RETIREMENT` に `RSHO` が載ること。
+- 新規追加銘柄が `resolve_missing_keys()` で拾われ `cik` が付くこと
+  （スプレッドシート import → 次の週次、の順で確認する）。
+- 未解決6件（`AWAY` `DOGEF` `GIGGU` `IPAY` `TBRG` `XWIN`）は SEC に実体が無く
+  永久に NULL のまま。**追跡対象外**なので改称・廃止は手動で気づく必要がある。
+  廃止 ETF・OTC 外国株なので実害は小さいと判断した。
+
 
 - **分割・併合への対応**は本計画の対象外。`doc/completed/split_anomaly_noise_reduction_plan.md` を参照。
 - 過去のティッカー履歴の一括復元はできない（EDGAR は現在のスナップショットのみ）。
   週次スナップショットの保存は監査証跡としては有用だが、処理には使わない。
 - 米国外の銘柄・OTC のカバー率は未検証（現ユニバースはほぼ米国上場のため未着手）。
+
+### 実行結果（2026-08-06 完了）
+
+- `universe.db` に SEC キーを付与（個別 99.9% / ETF 100%）
+- 実データ6件を全件正解で分類。`CCRN` `KORE` 退役・`GAMB`→`GRSD` 改称を自動適用
+- 週次メンテに組み込み（レポート節「7. SEC corporate actions」）
+- `sheet_importer` の replace が `id` / `cik` を破壊する構造を解消（§3.7 問題1）
+- SEC が「上場中」と言う銘柄を自動退役 CSV から除外（`RSHO` 対策）
+
+本計画の全チェックリスト項目を完了。以後の運用は
+`doc/backend_specification.md` §8.4 と
+`.claude/skills/upstream-data-diagnosis/SKILL.md` §5.1 を参照する。

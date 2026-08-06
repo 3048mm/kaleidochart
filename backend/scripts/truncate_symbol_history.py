@@ -28,6 +28,18 @@
   1. 指定日より前の価格・指標・順位を Parquet から除去
   2. 対象銘柄の T3 を再計算
   3. T4 を全期間再計算（横断的なので母集団が変わった日付は全銘柄が影響を受ける）
+  4. **SQLite ホットキャッシュからも同じ行を除去**
+
+> [!IMPORTANT]
+> **4 を省くと翌日のデイリー更新で切り詰めが元に戻る。**
+> `daily_prices` などは Parquet と SQLite の**マージ**（`drop_duplicates(keep='last')`・
+> SQL 側優先）で伝播し、**マージは行を削除しない**。直近730日に合併前の行が残っていれば
+> そのまま Parquet に復活する。2026-08-06 に `JBIO` で実際に発生した
+> （01:43 時点では消えていたが 06:49 のデイリーで段差が戻った）。
+
+> [!WARNING]
+> **全期間再構築（`run/tool/refresh_All.bat`）を実行したら、切り詰めは再適用が必要。**
+> 再構築は Yahoo から取り直すため、上流に残っている段差がそのまま戻ってくる。
 
 Usage:
     $env:PYTHONPATH="backend"
@@ -40,6 +52,7 @@ import argparse
 import json
 import os
 import shutil
+import sqlite3
 import sys
 from datetime import datetime
 
@@ -52,6 +65,7 @@ if _backend_dir not in sys.path:
     sys.path.insert(0, _backend_dir)
 
 import tomli  # noqa: E402
+from pipeline.pipeline_lock import pipeline_lock  # noqa: E402
 from pipeline.parquet_cache_manager import (  # noqa: E402
     get_latest_master_files,
     get_parquet_master_dir,
@@ -62,6 +76,68 @@ from pipeline.parquet_recompute import (  # noqa: E402
     recompute_indicators,
     recompute_ranks,
 )
+
+
+# マージで SQLite → Parquet に戻る階層。**ここを消し忘れると切り詰めが翌日で無効化される。**
+TRUNCATE_TABLES = ("daily_prices", "indicators", "relative_ranks")
+
+
+def purge_sqlite_history(db_path: str, symbol_id: int, keep_from: str,
+                         dry_run: bool, expect_ticker: str | None = None
+                         ) -> dict[str, int | None]:
+    """ホットキャッシュ（SQLite）からも指定日より前の行を消す。
+
+    **Parquet だけ消しても翌日のデイリー更新で戻る。** `daily_prices` などは
+    Parquet と SQLite の**マージ**（`drop_duplicates(keep='last')`・SQL 側優先）で
+    伝播し、**マージは行を削除しない**ため、直近730日に残った合併前の行が
+    そのまま Parquet に復活する（2026-08-06 に `JBIO` で実際に発生）。
+
+    Args:
+        expect_ticker: `symbol_id` がこのティッカーを指していることを確認してから消す。
+            **全期間再構築は `symbols.id` を再採番する**（サンドボックスの空 DB から
+            始まるため T1 の id 温存 upsert が働かない。2026-08-06 は 2,378件が変化）。
+            Parquet で解決した id を照合せず SQLite に流すと**別銘柄を削る**。
+
+    Raises:
+        ValueError: `expect_ticker` と実際のティッカーが食い違う場合（**削除しない**）。
+
+    Returns:
+        テーブル名 → 削除件数。テーブルが存在しなければ ``None``。
+    """
+    con = sqlite3.connect(db_path, timeout=30)
+    try:
+        con.execute("PRAGMA journal_mode=WAL")
+        con.execute("PRAGMA busy_timeout=30000")
+        con.execute("PRAGMA synchronous=NORMAL")
+
+        if expect_ticker:
+            row = con.execute("SELECT ticker FROM symbols WHERE id = ?", (symbol_id,)).fetchone()
+            actual = row[0] if row else None
+            if actual != expect_ticker:
+                raise ValueError(
+                    f"symbol_id={symbol_id} は SQLite では {actual!r} を指しており "
+                    f"{expect_ticker!r} と一致しません。Parquet と SQLite で id 体系が"
+                    f"ずれている可能性があります（全期間再構築の直後など）。"
+                    f" 先に run_production_restore.py で SQLite を作り直してください。"
+                )
+
+        out: dict[str, int | None] = {}
+        con.execute("BEGIN IMMEDIATE")
+        for table in TRUNCATE_TABLES:
+            # スコープの無い DELETE を撃たないよう、必ず symbol_id と date で絞る
+            q = f"FROM {table} WHERE symbol_id = ? AND date < ?"
+            try:
+                n = con.execute(f"SELECT COUNT(*) {q}", (symbol_id, keep_from)).fetchone()[0]
+            except sqlite3.OperationalError:
+                out[table] = None      # サンドボックス等でテーブルが無い場合
+                continue
+            if not dry_run and n:
+                con.execute(f"DELETE {q}", (symbol_id, keep_from))
+            out[table] = n
+        con.commit() if not dry_run else con.rollback()
+        return out
+    finally:
+        con.close()
 
 
 def run(ticker: str, keep_from: str, reason: str, dry_run: bool):
@@ -166,7 +242,13 @@ def run(ticker: str, keep_from: str, reason: str, dry_run: bool):
         sys.exit(1)
     print(f"\n    pointer を data_version_{ts} に更新しました")
     print("    ※ 旧世代は prune していません（検証合格までバックアップを兼ねる）")
-    print("\n    SQLite 側は次回の restore_sqlite_cache_from_parquet で追随します。")
+
+    # --- ホットキャッシュからも消す（これを忘れると翌日のマージで戻る） ---
+    print("\n[5] SQLite ホットキャッシュの掃除...")
+    purged = purge_sqlite_history(config["system"]["db_path"], sid, keep_from,
+                                  dry_run=False, expect_ticker=ticker)
+    for table, n in purged.items():
+        print(f"    {table:<18} {'テーブルなし' if n is None else f'{n:,}行 削除'}")
 
 
 if __name__ == "__main__":
@@ -181,4 +263,6 @@ if __name__ == "__main__":
     a = p.parse_args()
     if not a.apply and not a.dry_run:
         p.error("--dry-run か --apply のどちらかを指定してください")
-    run(a.ticker, a.keep_from, a.reason, dry_run=not a.apply)
+    # 日次更新・週次メンテとの同時実行を防ぐ（2026-08-06 に世代破損）
+    with pipeline_lock("truncate_symbol_history"):
+        run(a.ticker, a.keep_from, a.reason, dry_run=not a.apply)

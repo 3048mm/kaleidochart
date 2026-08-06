@@ -91,6 +91,58 @@ for rnd in range(3):
 `query1` / `query2` の両ホストで確認するとなお確実。応答が 0.1 秒なら
 タイムアウトによる切り詰めでもない。
 
+### 2.1 「上流の問題」に見えて**手元（TLS）**が原因のことがある
+
+> [!IMPORTANT]
+> **全銘柄が一斉に "possibly delisted" になったら、まず手元を疑う。**
+> 個別銘柄の問題は数銘柄で起きる。SPY まで落ちるのは供給側の障害ではまず起きない。
+
+2026-08-06 の全期間再構築が**全滅**した。ログはこう見える:
+
+```
+[SPY] Fetching data (as SPY) from 2010-04-01 to today...
+$SPY: possibly delisted; no price data found  (1d 2010-04-01 -> 2026-08-05)
+```
+
+**決定的な切り分け**（2つの経路で同じ URL を叩く）:
+
+```
+urllib で Yahoo chart API 直叩き  →  HTTP 200・5本・最終 2026-08-05   ← 正常
+yfinance 1.3.0 (yf.download)     →  0行                              ← これだけ落ちる
+```
+
+真因は **Norton の TLS 傍受**。yfinance は cookie/crumb 取得に `curl_cffi` を使うが、
+curl_cffi は独自の CA バンドルを見るため Norton のルート証明書を信頼できない。
+Python 標準の `ssl`（urllib）は Windows 証明書ストアを使うので通る。
+
+```
+curl_cffi.requests.exceptions.CertificateVerifyError:
+  curl: (60) SSL certificate problem: unable to get local issuer certificate
+```
+
+**傍受されているかの確認と対処**:
+
+```bash
+env | grep -i -E "ssl|cert|ca_bundle"
+#  SSLKEYLOGFILE=\\.\nllMonFltProxy\...                      ← 傍受されている合図
+#  NODE_EXTRA_CA_CERTS=C:\ProgramData\Norton\Antivirus\wscert.pem
+
+CURL_CA_BUNDLE="C:\ProgramData\Norton\Antivirus\wscert.pem" python ...   ← これで通る
+```
+
+**エラーメッセージを信じないこと。** yfinance は 404 も 429 も TLS 失敗も
+すべて `possibly delisted; no price data found` に畳む（限界A の最悪の形）。
+
+> [!WARNING]
+> このときパイプラインは**0行のまま T2〜T5 を完走し**、ほぼ空の Parquet 世代で
+> ポインタを上書きして "COMPLETED SUCCESSFULLY" を出した。
+> 現在は2段のガードで止まる:
+>   - `t2_prices.py`: SPY が1行も取れなければ `RuntimeError`
+>   - `parquet_cache_manager.is_publishable_master()`: 価格・指標・銘柄が空の世代を公開しない
+>
+> それでも**再構築の前には必ず `archive_parquet_master.py` で退避する**
+> （このとき退避が無ければ 11GB・604万行が失われていた）。
+
 ---
 
 ## 3. コーポレートアクション（改称・上場廃止）の検出
@@ -281,6 +333,42 @@ python backend/scripts/scan_price_anomalies.py   # Parquet 全期間・SQLite �
 Yahoo は「データが少ない」としか教えてくれない。**SEC EDGAR なら改称・上場廃止を事実で確定できる。**
 2026-08-04 に17銘柄を数分で診断できた、最も費用対効果の高い経路。
 
+> [!IMPORTANT]
+> **2026-08-06 に自動化済み。手で叩く前にまずこれを実行する。**
+>
+> ```powershell
+> $env:PYTHONPATH="backend"
+> .\venv\Scripts\python.exe backend\scripts\sync_sec_corporate_actions.py --dry-run
+> ```
+>
+> 週次メンテ（`weekly_maintenance.py`）に組み込み済みで、レポートの「7. SEC corporate
+> actions」節に出る。手動照会が要るのは**自動判定が `NEEDS REVIEW` に落とした分だけ**。
+> 判定ロジックとしきい値の根拠は `doc/backend_specification.md` §8.4、
+> 純粋ロジックは `backend/data_collection/sec_corporate_actions.py`（テストで固定済み）。
+>
+> **自動判定を疑う前にテストを読むこと。** 下の「素朴な判定が外れる4パターン」は
+> すべて実測の誤検知から導いた条件で、テストに実データのまま埋め込んである。
+
+### 素朴な判定が外れる4パターン（実測）
+
+| 事象 | 素朴な判定 | 実際 |
+| :--- | :--- | :--- |
+| Form 25 / 25-NSE がある | 上場廃止 | **取引所の移管でも提出される。** `AEP` は 2023-08-14 の 25-NSE 後も 10-Q を提出中（NYSE→Nasdaq）。`UUP` は2008年の Form 25 を持つ現役 ETF。→ 400日以内 かつ 後続の定期報告なし を要求する |
+| 一括マスタにキーが無い | 上場廃止 | **`company_tickers.json` は10,398件で全登録企業を網羅していない。** `AEP` は submissions にあるのにマスタに無い。定期報告が続いていれば「マスタ欠落」＝対応不要 |
+| 同じ CIK が別ティッカー | 改称 | **1つの CIK に複数証券がぶら下がる。** `VWDRY`(ADR)/`VWSYF`(原株) は両方取引中＝併存。`BNY`/`BNY-PK` は普通株と優先株 |
+| submissions の `tickers` が旧のまま | 改称ではない | **submissions は遅れる。** `GAMB`→`GRSD` は社名も一括マスタも更新済みなのに `tickers=['GAMB']` のままだった |
+
+### 改称の決め手は「新旧の最終取引日の差」
+
+行数では判定できない。改称直後は旧ティッカーに数日分の残骸が残る。
+
+```
+GAMB  最終 2026-07-29（直近1ヶ月6行）  GRSD  最終 2026-08-05  → 7日差 ＝ 改称
+VWDRY 最終 2026-08-05                 VWSYF 最終 2026-08-04  → 差なし ＝ 併存（別証券）
+```
+
+「今日から何日前か」では測らない（連休・祝日・取得タイミングでぶれる）。
+
 ### 使うエンドポイント
 
 ```
@@ -294,6 +382,11 @@ CIK → 詳細
 ```
 
 **User-Agent に連絡先を入れること**（SEC の規約）: `{"User-Agent": "<用途> <メールアドレス>"}`
+**10 req/sec が上限。** どちらも `backend/data_collection/sec_client.py` が面倒を見るので、
+新規に `urllib` を書かずこれを使う。連絡先は `config.local.toml`（git 管理外）に置く。
+
+ティッカーが一括マスタに無いときは `SecClient.lookup_cik_by_ticker()` が
+`browse-edgar` の atom 出力で1件ずつ引く（複数社ヒット時は誤爆を避けて `None`）。
 
 ### 何が分かるか
 
@@ -311,21 +404,25 @@ CIK 1409970  name=Happen, Inc.  tickers=['HAPN']
              formerNames: "LendingClub CORP" (〜2026-06-18)  → 改称 → LC を HAPN へ付け替え
 ```
 
-### カバー率（実測・本プロジェクトのユニバース）
+### カバー率（2026-08-06 実測・`universe.db` に登録済み）
 
 ```
-個別        2,878/2,892  (99.5%)   ← バックテスト母集団はほぼ全域
+個別        2,912/2,916  (99.9%)   ← 一括マスタ＋個別照会のフォールバック後
 市場/セクタ/レバレッジ        100%
-指標           7/10   (70%)   ← ^VIX 等の指数は CIK を持たない（正常）
+指標           8/10   (80%)   ← ^VIX 等の指数は CIK を持たない（正常）
 テーマ       101/273   (37%)   ← 仮想指数は原理的に対象外
+未解決その他 6件: AWAY DOGEF GIGGU IPAY TBRG XWIN（廃止 ETF・OTC 外国株）
 ```
+
+キーは `universe.db` の `symbols_master.cik` / `sec_class_id` に永続化済み。
+**ETF は `sec_class_id` を使う**（CIK はトラスト単位で粗すぎる。`RSHO` の CIK 1944285 は
+Tema ETF Trust の13ファンドを含む）。新規追加銘柄は週次同期が自動で解決する。
 
 ### できないこと
 
 - **過去のティッカー履歴の一括復元**。`company_tickers.json` は現在のスナップショットで、
   旧ティッカー（`IAC` `VSCO` `FDP`）は収録されていない。
-  → 定期スナップショット＋差分で**今後の変更を検知**する運用にする。
-  過去分は `formerNames`（社名）との突合で辿る。
+  → 週次差分で**今後の変更を検知**する運用（実装済み）。過去分は `formerNames` で辿る。
 - **指数・仮想テーマの追跡**（CIK が存在しない）。
 
 ## 6. 既知の限界カタログ

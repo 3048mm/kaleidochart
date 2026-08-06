@@ -51,6 +51,7 @@ if _backend_dir not in sys.path:
     sys.path.insert(0, _backend_dir)
 
 import tomli  # noqa: E402
+from pipeline.pipeline_lock import pipeline_lock  # noqa: E402
 from pipeline.parquet_cache_manager import (  # noqa: E402
     get_latest_master_files,
     get_parquet_master_dir,
@@ -156,4 +157,6 @@ if __name__ == "__main__":
     a = p.parse_args()
     if not a.apply and not a.dry_run:
         p.error("--dry-run か --apply のどちらかを指定してください")
-    run(dry_run=not a.apply)
+    # 日次更新・週次メンテとの同時実行を防ぐ（2026-08-06 に世代破損）
+    with pipeline_lock("recompute_parquet_ranks"):
+        run(dry_run=not a.apply)

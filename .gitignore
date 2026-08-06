@@ -72,6 +72,8 @@ logs/
 tmp_*.json
 doc/*.bak
 *.bak
+# タイムスタンプ付きバックアップ（universe.db.bak_YYYYMMDD_HHMMSS 等）は *.bak に一致しない
+*.bak_*
 data/*.csv
 
 # Backtest Cache (Parquet)
@@ -83,3 +85,6 @@ data/parquet_master*/
 data/_bk/
 *.db-shm
 *.db-wal
+
+# 秘匿値（SEC への連絡先メールアドレス等）。config.toml は git 管理下のため分離する
+config.local.toml

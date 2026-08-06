@@ -56,7 +56,19 @@ def sync_phase_t2_prices(db, sheet_data: List[Dict], symbol_id_map: Dict, index_
                 
     spy_latest_date = db.query(func.max(DailyPrice.date)).filter(DailyPrice.symbol_id == spy_sym_id).scalar()
     logger.info(f"Target Reference Date (SPY): {spy_latest_date}")
-    if not spy_latest_date: return None
+    if not spy_latest_date:
+        if not skip_fetch:
+            # 取得を試みて SPY が1行も取れないのは上流／ネットワークの障害。
+            # 黙って None を返すと T3〜T5 が 0行のまま完走し、空の Parquet 世代を
+            # 公開してしまう（2026-08-06 に発生。Norton の TLS 傍受で curl_cffi の
+            # 証明書検証が失敗し、全銘柄が "possibly delisted" になった）。
+            raise RuntimeError(
+                "SPY の価格を1行も取得できませんでした。全銘柄の基準日が決まらないため中断します。"
+                " yfinance / ネットワーク / 証明書（curl_cffi の CA）を確認してください。"
+                " 切り分け: Yahoo chart API を urllib で直接叩き HTTP ステータスを見る"
+                "（`.claude/skills/upstream-data-diagnosis/SKILL.md` §2）。"
+            )
+        return None
     
     real_items = [d for d in sheet_data if d['theme_type'] != 'virtual' and d['ticker'] != 'SPY' and d['ticker'] != 'JPY=X']
     latest_rows = db.query(DailyPrice.symbol_id, func.max(DailyPrice.date)).group_by(DailyPrice.symbol_id).all()

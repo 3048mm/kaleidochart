@@ -155,3 +155,61 @@ def test_preview_does_not_list_protected_symbols_as_deleted(udb):
     deleted = {d["ticker"] for d in preview["deleted"]}
 
     assert not ({"GBTC", "MANUAL1", "UNKNOWN1"} & deleted), "保護対象が削除予定に出ている"
+
+
+# ---------------------------------------------------------------------------
+# replace が既存行を破壊しないこと（DELETE+INSERT → upsert への変更の回帰）
+# ---------------------------------------------------------------------------
+def test_replace_preserves_id_and_sec_keys(udb):
+    """**replace はシート由来の行も更新にとどめ、id と SEC キーを保つこと。**
+
+    旧実装は「source=spreadsheet_url を全 DELETE → 全 INSERT」だったため、
+    importer が知らない列（`cik` / `sec_class_id` / `sec_checked_at`）が
+    import のたびに NULL に戻り、`symbols_master.id` も振り直されていた。
+
+    SEC キーが消えると、その銘柄は**改称・上場廃止の追跡対象外**に静かに落ちる。
+    2026年6〜7月に15件のコーポレートアクションを2ヶ月見逃したのと同じ状態に戻る。
+    """
+    _seed(udb)
+    target = udb.query(SymbolMaster).filter(SymbolMaster.ticker == "SH03").first()
+    target.cik = 320193
+    target.sec_class_id = "C000000001"
+    udb.commit()
+    before_id = target.id
+
+    execute_import_diff(udb, [_parsed(f"SH{i:02d}") for i in range(12)], [], mode="replace")
+    udb.commit()
+
+    after = udb.query(SymbolMaster).filter(SymbolMaster.ticker == "SH03").first()
+    assert after is not None, "シート掲載中の銘柄が消えた"
+    assert after.id == before_id, "symbols_master.id が振り直された"
+    assert after.cik == 320193, "cik が破壊された"
+    assert after.sec_class_id == "C000000001", "sec_class_id が破壊された"
+
+
+def test_replace_still_updates_editable_fields(udb):
+    """id を保つために更新まで止めてはいけない（シートの編集が反映されること）。"""
+    _seed(udb)
+    parsed = [_parsed(f"SH{i:02d}") for i in range(12)]
+    parsed[3]["name"] = "Renamed Corp"
+    parsed[3]["category"] = "テーマ"
+
+    execute_import_diff(udb, parsed, [], mode="replace")
+    udb.commit()
+
+    after = udb.query(SymbolMaster).filter(SymbolMaster.ticker == "SH03").first()
+    assert after.name == "Renamed Corp"
+    assert after.category == "テーマ"
+
+
+def test_replace_reactivates_a_symbol_that_came_back_to_the_sheet(udb):
+    """一度シートから外して戻した銘柄が active=1 に復帰すること。"""
+    _seed(udb)
+    s = udb.query(SymbolMaster).filter(SymbolMaster.ticker == "SH05").first()
+    s.active = 0
+    udb.commit()
+
+    execute_import_diff(udb, [_parsed(f"SH{i:02d}") for i in range(12)], [], mode="replace")
+    udb.commit()
+
+    assert udb.query(SymbolMaster).filter(SymbolMaster.ticker == "SH05").first().active == 1

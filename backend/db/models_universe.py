@@ -29,6 +29,18 @@ class SymbolMaster(BaseUniverse):
     sector_etf = Column(String)                    # 親セクタETF（旧 tags）
     active     = Column(SmallInteger, default=1)
     source     = Column(String, default="manual")  # manual / spreadsheet / finviz
+
+    # --- SEC EDGAR の安定キー（コーポレートアクション追随用） -----------------
+    # ティッカーは変わるが、CIK / classId は変わらない。これを軸に
+    # 改称・上場廃止を週次で検知する（`data_collection/sec_client.py`）。
+    #   個別銘柄        … cik
+    #   ETF・ファンド   … sec_class_id（CIK はトラスト単位で粗すぎる。
+    #                     RSHO の CIK は Tema ETF Trust の13ファンドを含む）
+    #   指数・仮想テーマ … SEC に実体が無いので両方 NULL（追跡対象外）
+    cik            = Column(Integer, index=True)
+    sec_class_id   = Column(String, index=True)
+    sec_checked_at = Column(DateTime)              # 最後に SEC と突合した日時
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

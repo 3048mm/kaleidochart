@@ -80,7 +80,11 @@ if __name__ == "__main__":
                    help="data ディレクトリ（既定: リポジトリの data/）")
     a = p.parse_args()
     try:
-        archive(a.data_dir, dry_run=a.dry_run)
+        # 日次更新・週次メンテとの同時実行を防ぐ。**退避中に書き込まれると
+        # 「退避したはずの世代」が欠ける。**（2026-08-06 に世代破損）
+        from pipeline.pipeline_lock import pipeline_lock
+        with pipeline_lock("archive_parquet_master"):
+            archive(a.data_dir, dry_run=a.dry_run)
     except Exception as e:
         print(f"[ERROR] 退避に失敗しました: {e}")
         print("        データ損失を避けるため、再構築は中止してください。")

@@ -320,19 +320,37 @@ def execute_import_diff(
                 f"取得できたデータが極めて少ないため({len(parsed_symbols)}件)、データ誤消去を防止するため置換処理をキャンセルしました。"
                 "スプレッドシートのアクセス権限（「リンクを知っている全員（閲覧）」）をご確認ください。"
             )
-        # 完全置換: スプレッドシート由来の行だけを消す。
-        # 旧実装は無条件に全 DELETE していたため、パイプラインが登録した銘柄や
-        # 手動追加・手動改称の結果が import のたびに消えていた
-        # （痕跡: ticker_history に _DRONE_（旧 ARKX）が残るのに symbols_master に実体が無い）。
-        # T1 のソースがスプレッドシートから universe.db へ移った今、universe.db は
-        # 「ユーザー資産」であり復元できない。保護は必須。
+        # 完全置換 = 「upsert ＋ シートから消えた行の削除」。**全 DELETE ではない。**
+        #
+        # 経緯1: 無条件の全 DELETE はパイプラインが登録した銘柄や手動追加・手動改称の
+        #   結果まで import のたびに消していた（痕跡: ticker_history に _DRONE_（旧 ARKX）が
+        #   残るのに symbols_master に実体が無い）。→ シート由来以外を保護した。
+        #
+        # 経緯2: しかしシート由来の行は依然 DELETE→INSERT だったため、**importer が
+        #   知らない列が毎回破壊されていた**。`cik` / `sec_class_id` / `sec_checked_at` が
+        #   NULL に戻ると、その銘柄は改称・上場廃止の追跡対象外に静かに落ちる
+        #   （2026年6〜7月に15件を2ヶ月見逃したのと同じ状態）。`symbols_master.id` も振り直る。
+        #   → 掲載中の行は下の upsert ループで**更新**し、消えた行だけを削除する。
+        #
+        # T1 のソースが universe.db へ移った今、universe.db は「ユーザー資産」であり
+        # 復元できない（`agent_execution_rules.md` §10.1）。
         protected_symbols = [
             s.ticker for s in db.query(SymbolMaster).all() if not _is_sheet_owned(s)
         ]
+        sheet_tickers = {(s["ticker"] or "").upper() for s in parsed_symbols}
+        removed_symbols = [
+            s.ticker
+            for s in db.query(SymbolMaster).filter(SymbolMaster.source == SHEET_SOURCE).all()
+            if (s.ticker or "").upper() not in sheet_tickers
+        ]
+        if removed_symbols:
+            db.query(SymbolMaster).filter(
+                SymbolMaster.source == SHEET_SOURCE,
+                SymbolMaster.ticker.in_(removed_symbols),
+            ).delete(synchronize_session=False)
+
+        # theme_members は id を外部から参照されない純粋な関連表なので全消し→再構築でよい
         db.query(ThemeMember).filter(ThemeMember.source == SHEET_SOURCE).delete(
-            synchronize_session=False
-        )
-        db.query(SymbolMaster).filter(SymbolMaster.source == SHEET_SOURCE).delete(
             synchronize_session=False
         )
         db.flush()

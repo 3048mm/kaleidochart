@@ -98,11 +98,17 @@ def clean_old_parquet_versions(parquet_dir: str, logger: logging.Logger, keep_co
             # Skip if file is currently open/locked by other processes. It will be removed in subsequent cleanups.
             logger.debug(f"Skipped cleanup of {os.path.basename(ptr_file)} due to: {e}")
 
-def rotate_and_archive_to_parquet(db, db_path: str, logger: logging.Logger) -> dict:
+def rotate_and_archive_to_parquet(db, db_path: str, logger: logging.Logger,
+                                  require_non_empty: bool = True) -> dict:
     """
     Reads all historical data from SQLite and merges/archives them into Parquet Master files.
     This acts as the single source of truth for the entire historical data (past 7+ years).
     Uses MVCC-style version files to prevent Windows PermissionError on parallel backtests.
+
+    Args:
+        require_non_empty: 価格・指標・銘柄が空の世代を公開せず `RuntimeError` にする。
+            **本番経路では必ず既定の True を使うこと**（`is_publishable_master` 参照）。
+            最小フィクスチャで一部テーブルだけを検証するテストのみ False を渡す。
     """
     logger.info("Initializing Hot/Cold Data Archiver...")
     t0 = time.time()
@@ -202,25 +208,49 @@ def rotate_and_archive_to_parquet(db, db_path: str, logger: logging.Logger) -> d
     df_ranks = process_and_merge_table("relative_ranks", ["symbol_id", "date"], df_ranks_sql, old_paths.get('ranks'))
     df_signals = process_and_merge_table("market_signals", ["date"], df_signals_sql, old_paths.get('signals'))
 
-    # 安全弁: 全期間同期テーブルが空なら置換せず旧世代を維持する
-    # （SQLite が何らかの理由で空になったときに銘柄マスタを失わないため）
-    for name, old_key in (("symbols", "symbols"), ("theme_constituents", "tc"), ("fx_rates", "fx")):
+    # 安全弁: 全期間同期テーブルが「空」または「激減」したら置換しない。
+    #   空       → SQLite が壊れた等。旧世代を維持する
+    #   激減     → 再構築でサンドボックスの空 DB から始まった等。旧世代と和集合にする
+    # 「空なら維持」だけでは足りなかった: 2026-08-06 の再構築で fx_rates が
+    # 7,717行 → 23行（直近30日のみ）になり、空ではないので素通りした。
+    # 通常の削除（ダミー行の除去など）は数行〜数%なので replace のまま通る。
+    _full_sync = {
+        "symbols": ("symbols", ["id"]),
+        "theme_constituents": ("tc", ["theme_id", "symbol_id"]),
+        "fx_rates": ("fx", ["currency_pair", "date"]),
+    }
+    for name, (old_key, keys) in _full_sync.items():
         df_new = {"symbols": df_symbols, "theme_constituents": df_tc, "fx_rates": df_fx}[name]
-        if df_new.empty and old_paths.get(old_key) and os.path.exists(old_paths[old_key]):
-            logger.warning(f"  {name} が空のため置換を中止し、旧世代の Parquet を維持します")
-            recovered = pd.read_parquet(old_paths[old_key])
-            if name == "symbols":
-                df_symbols = recovered
-            elif name == "theme_constituents":
-                df_tc = recovered
-            else:
-                df_fx = recovered
+        old_path = old_paths.get(old_key)
+        df_old = pd.read_parquet(old_path) if old_path and os.path.exists(old_path) else None
+        resolved, action = resolve_full_sync_table(df_new, df_old, keys)
+        if action != "replace":
+            logger.warning(f"  {name}: {len(df_new):,}行 は旧世代 {len(df_old):,}行 から"
+                           f"激減しているため置換せず {action} しました"
+                           f" → {len(resolved):,}行")
+        if name == "symbols":
+            df_symbols = resolved
+        elif name == "theme_constituents":
+            df_tc = resolved
+        else:
+            df_fx = resolved
     
     # Save the updated full history masters
     logger_fn = logger.info
     logger_fn(f"  Writing updated masters - Symbols: {len(df_symbols)}, Prices: {len(df_prices)}, "
               f"Indicators: {len(df_indicators)}, Ranks: {len(df_ranks)}, ThemeConstituents: {len(df_tc)}, "
               f"MarketSignals: {len(df_signals)}, FxRates: {len(df_fx)}")
+
+    # **空の世代を公開しない。** 上流の取得が全滅しても T2〜T5 は 0行のまま完走するため、
+    # ここで止めないとポインタが空マスタを指してしまう（2026-08-06 に実際に発生）。
+    publishable, reason = is_publishable_master(
+        prices_rows=len(df_prices), indicators_rows=len(df_indicators),
+        symbols_rows=len(df_symbols))
+    if require_non_empty and not publishable:
+        logger.error(f"Parquet マスタの公開を中止しました: {reason}")
+        logger.error("  上流（yfinance / ネットワーク / 証明書）を確認してください。"
+                     " 既存の latest_master.json は変更していません。")
+        raise RuntimeError(f"空の Parquet マスタは公開できません: {reason}")
 
     df_symbols.to_parquet(files['symbols'], index=False)
     df_prices.to_parquet(files['prices'], index=False)
@@ -248,6 +278,78 @@ def rotate_and_archive_to_parquet(db, db_path: str, logger: logging.Logger) -> d
     
     logger.info(f"Hot/Cold Archiver completed successfully in {time.time()-t0:.2f}s.")
     return files
+
+# 全期間同期テーブルが旧世代のこの割合を下回ったら「置換」ではなく「和集合」に倒す。
+# 通常の削除（ダミー行の除去など）は数行〜数%なので影響しない。
+FULL_SYNC_SHRINK_RATIO = 0.5
+
+
+def resolve_full_sync_table(df_new, df_old, key_columns):
+    """全期間同期テーブル（symbols / theme_constituents / fx_rates）の確定値を決める。
+
+    これらは **SQLite を正として Parquet を置換する**。マージにすると SQLite での削除が
+    Parquet に伝播せず、Parquet を直読みするバックテストが古い構成を見続けるため。
+
+    ところが**全期間再構築はサンドボックスの空 DB から始まる**ので、この前提が崩れる。
+    FX 同期は直近30日しか取りに行かず、その少数行が30年分を置き換えてしまった。
+
+        2026-07-30 の再構築  fx_rates 7,711行 → 22行
+        2026-08-06 の再構築  fx_rates 7,717行 → 23行   ← 「空なら維持」の安全弁を素通り
+
+    そこで**通常の削除は通し、再構築由来の激減だけ弾く**。
+
+    Returns:
+        (確定した DataFrame, 採用した方針)
+        方針は ``replace`` / ``union`` / ``keep_old``。
+    """
+    if df_old is None or len(df_old) == 0:
+        return df_new, "replace"
+    if df_new is None or len(df_new) == 0:
+        return df_old, "keep_old"
+    if len(df_new) >= len(df_old) * FULL_SYNC_SHRINK_RATIO:
+        return df_new, "replace"
+
+    keys = [c for c in key_columns if c in df_new.columns and c in df_old.columns]
+    old = df_old.copy()
+    new = df_new.copy()
+    for col in keys:
+        if col == "date":
+            old[col] = old[col].astype(str)
+            new[col] = new[col].astype(str)
+    merged = pd.concat([old, new], ignore_index=True)
+    if keys:
+        merged = merged.drop_duplicates(subset=keys, keep="last")
+        merged = merged.sort_values(keys).reset_index(drop=True)
+    return merged, "union"
+
+
+def is_publishable_master(prices_rows: int, indicators_rows: int,
+                          symbols_rows: int) -> tuple[bool, str]:
+    """この世代を Parquet マスタとして公開してよいか。
+
+    **上流の取得が全滅してもパイプラインは 0行のまま完走する。**
+    2026-08-06 の全期間再構築では、Norton の TLS 傍受で `curl_cffi`（yfinance が
+    cookie/crumb 取得に使う）が証明書検証に失敗し、SPY を含む全銘柄が
+    「possibly delisted; no price data found」になった。それでも T2〜T5 は
+    エラーを出さずに通過し、ほぼ空の世代でポインタが上書きされた。
+
+        Writing updated masters - Symbols: 3220, Prices: 0, Indicators: 0, Ranks: 0
+
+    再構築時は旧世代を退避してからやるためマージ相手が居ない。
+    「全期間同期テーブルが空なら旧世代を維持する」既存の安全弁では防げないため、
+    **行数そのものを公開条件にする。**
+
+    Returns:
+        (公開可否, 拒否理由). 公開できるときの理由は空文字列。
+    """
+    if symbols_rows <= 0:
+        return False, "symbols が 0 行"
+    if prices_rows <= 0:
+        return False, "prices が 0 行（上流の取得が全滅した可能性）"
+    if indicators_rows <= 0:
+        return False, "indicators が 0 行（T3 が計算できていない）"
+    return True, ""
+
 
 def purge_sqlite_cache_older_than_2_years(db, db_path: str, logger: logging.Logger):
     """

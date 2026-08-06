@@ -455,6 +455,51 @@ def audit_and_fix_weekly(db, dry_run: bool) -> dict:
 
     return report
 
+def run_sec_corporate_action_sync(dry_run: bool, report_dir: str) -> dict:
+    """SEC EDGAR と universe.db を突合し、改称・上場廃止を反映する。
+
+    週次に置く理由（計画書 §3.5）: コーポレートアクションは日次で追う必要がなく、
+    週次メンテは既にロックとレポート出力の仕組みを持つ。SEC へのリクエストは
+    週あたり3ファイル＋差分件数分で、10 req/sec の上限には遠く及ばない。
+
+    **失敗しても週次メンテ全体は落とさない。** SEC はネットワーク依存であり、
+    ここで例外を投げると物理メンテや整合性監査の結果まで失われる。
+    連絡先が未設定（`config.local.toml` / `STOCKTOOL_SEC_CONTACT`）のときも同じで、
+    レポートに理由を残して先に進む。
+    """
+    try:
+        from scripts.sync_sec_corporate_actions import run as sec_run
+        return sec_run(apply=not dry_run, report_dir=report_dir)
+    except Exception as e:  # noqa: BLE001 — 週次メンテ全体を巻き込まない
+        logger.error(f"SEC 同期に失敗しました（週次メンテは続行します）: {e}")
+        return {"error": str(e)}
+
+
+def split_by_sec_verdict(rows, alive_tickers):
+    """退役候補を「SEC 上も消えている」と「SEC 上は健在」に分ける。
+
+    鮮度監査は自分の DB しか見ないため、**供給停止と上場廃止を区別できない**。
+    `RSHO`（Tema ETF）は SEC マスタに現ティッカーで載っているのに Yahoo の価格だけが
+    2026-07-17 で止まっており、毎週「上場廃止候補」に挙がり続ける。
+    SEC が健在と言うものを自動退役の CSV に載せると、**健在な銘柄を退役させる**。
+
+    Args:
+        rows: `(ticker, last_date, rows)` のタプル列。
+        alive_tickers: SEC マスタに現ティッカーで載っている銘柄の集合。
+            **`None`（SEC 同期が失敗・スキップ）のときは何も除外しない** —
+            照合できないことを「健在の証拠なし」と混同して候補を握り潰さないため。
+
+    Returns:
+        (自動退役の対象, SEC 上は健在なので除外した分)
+    """
+    if alive_tickers is None:
+        return list(rows), []
+    alive = set(alive_tickers)
+    keep = [r for r in rows if r[0] not in alive]
+    held = [r for r in rows if r[0] in alive]
+    return keep, held
+
+
 def resolve_report_dir(db_path: str | None) -> str:
     """レポート出力先を「監査対象 DB と同じ階層」に解決する。
 
@@ -468,13 +513,86 @@ def resolve_report_dir(db_path: str | None) -> str:
     return os.path.join(project_root, "data", "maintenance_reports")
 
 
+def _write_sec_section(f, sec: dict | None, dry_run: bool) -> None:
+    """SEC 突合の結果をレポートに書く。
+
+    **適用済みと要判断を分ける。** 前者は事後確認、後者は行動が要る。
+    「対応不要」枠（マスタ欠落・同一 CIK の別証券）を別に持つのは、
+    毎週同じ銘柄が要判断に並んでレポートが読まれなくなるのを防ぐため。
+    """
+    f.write("7. SEC corporate actions (ticker renames / delistings):\n")
+    if sec is None:
+        f.write("  Skipped (--skip-sec)\n")
+        return
+    if sec.get("error"):
+        f.write(f"  !! SEC 同期に失敗: {sec['error']}\n")
+        f.write("     連絡先未設定なら config.local.toml の [sec] contact を確認してください\n")
+        return
+
+    tag = "Flagged" if dry_run else "Applied"
+    f.write(f"  7-a. RETIRED - deregistration confirmed by SEC filing [{tag}]:\n")
+    for c in sec.get("retired", []):
+        f.write(f"    - {c['ticker']:<10} {c['evidence']}\n")
+    if not sec.get("retired"):
+        f.write("    None\n")
+
+    f.write(f"\n  7-b. RENAMED - all 3 guard conditions satisfied [{tag}]:\n")
+    for c in sec.get("renamed", []):
+        f.write(f"    - {c['ticker']:<10} -> {c['new_ticker']:<10}"
+                f" (new {c['new_ticker_rows']} rows, last {c['new_last_date']};"
+                f" old last {c['old_last_date']})\n")
+    if not sec.get("renamed"):
+        f.write("    None\n")
+
+    f.write("\n  7-c. NEEDS REVIEW - guard failed or no SEC evidence (ACTION REQUIRED):\n")
+    review = sec.get("pending", []) + sec.get("unknown", [])
+    for c in review:
+        why = " / ".join(c.get("guard_reasons") or []) or c.get("evidence", "")
+        f.write(f"    - {c['ticker']:<10} -> {c.get('new_ticker') or '(retire?)':<10} {why}\n")
+    if not review:
+        f.write("    None\n")
+    else:
+        f.write("    → sec_pending_actions.csv を確認し、rename_symbol.py /"
+                " retire_stale_symbols.py で処理してください\n")
+
+    if sec.get("held_from_retirement"):
+        f.write("\n  7-c2. HELD FROM AUTO-RETIREMENT - SEC says still listed"
+                " (suspect the supply side, i.e. Yahoo):\n")
+        for ticker, last, rows in sec["held_from_retirement"]:
+            f.write(f"    - {ticker:<10} rows={rows:<6} last={last}\n")
+
+    f.write("\n  7-d. NO ACTION NEEDED (listed to keep 7-c clean):\n")
+    for c in sec.get("master_gap", []):
+        f.write(f"    - {c['ticker']:<10} SEC 一括マスタに未収載だが定期報告は継続中\n")
+    for c in sec.get("coexisting", []):
+        f.write(f"    - {c['ticker']:<10} / {c['new_ticker']} は同一 CIK の別証券（ADR と原株など）\n")
+    if not (sec.get("master_gap") or sec.get("coexisting")):
+        f.write("    None\n")
+
+
 def write_maintenance_report(report: dict, dry_run: bool, db_path: str | None = None):
     """
     Writes weekly audit reports and delisting recommendations next to the audited DB.
     """
     report_dir = resolve_report_dir(db_path)
     os.makedirs(report_dir, exist_ok=True)
-    
+
+    # SEC が「現ティッカーで上場中」と言う銘柄は自動退役の対象から外す。
+    # 供給停止（Yahoo 側の問題）を上場廃止と取り違えて健在な銘柄を消さないため。
+    # テキストレポートと CSV の両方で使うので、書き出しの前に一度だけ計算する。
+    sec = report.get("sec_sync")
+    alive = (sec or {}).get("alive_tickers") if sec and not sec.get("error") else None
+    delisted, held_delisted = split_by_sec_verdict(report.get("delisted_symbols", []), alive)
+    no_history, held_no_history = split_by_sec_verdict(report.get("no_history_symbols", []), alive)
+    held = held_delisted + held_no_history
+    if sec is not None:
+        sec["held_from_retirement"] = held
+    if held:
+        logger.warning(
+            f"  SEC 上は上場中のため自動退役から除外: {len(held)} 件 "
+            f"({', '.join(t for t, _, _ in held[:10])}) — 供給側(Yahoo)の問題を疑ってください")
+
+
     # 1. Audit Text Report
     report_file = os.path.join(report_dir, "weekly_maintenance_report.txt")
     with open(report_file, "w", encoding="utf-8") as f:
@@ -560,6 +678,9 @@ def write_maintenance_report(report: dict, dry_run: bool, db_path: str | None = 
             f.write("  !! sync_fx_rates の営業日フィルタを通らない流入経路を調査してください\n")
         else:
             f.write("  None\n")
+        f.write("\n")
+
+        _write_sec_section(f, report.get("sec_sync"), dry_run)
 
     logger.info(f"Audit report saved to: {report_file}")
     
@@ -568,8 +689,8 @@ def write_maintenance_report(report: dict, dry_run: bool, db_path: str | None = 
     #    universe.db の symbols_master.active=0 になる（計画書 W8）。
     #    判定根拠（分類・保有行数・最終日）を含めることで、退役してよいか人間が検証できるようにする。
     csv_file = os.path.join(report_dir, "delisting_recommendations.csv")
-    rows_out = [("delisted", t, last, n) for t, last, n in report.get("delisted_symbols", [])]
-    rows_out += [("no_history", t, last, n) for t, last, n in report.get("no_history_symbols", [])]
+    rows_out = [("delisted", t, last, n) for t, last, n in delisted]
+    rows_out += [("no_history", t, last, n) for t, last, n in no_history]
 
     if rows_out:
         with open(csv_file, "w", encoding="utf-8", newline="\n") as f:
@@ -602,6 +723,8 @@ def main():
     parser.add_argument("--lock-file", type=str, default=None,
                         help="排他ロックのパス（既定は update_pipeline.py と共有）。"
                              "テストや検証実行を本番の実行状況から独立させたいときに指定する。")
+    parser.add_argument("--skip-sec", action="store_true",
+                        help="SEC EDGAR との突合をスキップする（オフライン実行・テスト用）。")
     args = parser.parse_args()
     
     if not args.dry_run and not args.fix:
@@ -646,7 +769,28 @@ def main():
             logger.info("Starting Logical Integrity Audits...")
             with get_write_db() as db:
                 report = audit_and_fix_weekly(db, dry_run=args.dry_run)
-                
+
+            # SEC 突合は universe.db に対する操作で、stocktool.db の監査とは独立。
+            # 反映は翌日のデイリー（T1 同期）で stocktool.db に伝わる（1日のラグは許容）。
+            if args.skip_sec:
+                logger.info("SEC 突合はスキップされました (--skip-sec)")
+                report["sec_sync"] = None
+            else:
+                logger.info("Starting SEC corporate action sync...")
+                sec = run_sec_corporate_action_sync(
+                    dry_run=args.dry_run, report_dir=resolve_report_dir(db_path))
+                report["sec_sync"] = sec
+                if sec.get("error"):
+                    logger.warning(f"  SEC sync skipped due to error: {sec['error']}")
+                else:
+                    logger.info(
+                        f"  SEC sync: retired={len(sec['retired'])}"
+                        f" renamed={len(sec['renamed'])}"
+                        f" needs_review={len(sec['pending']) + len(sec['unknown'])}"
+                        f" (no_action: master_gap={len(sec['master_gap'])}"
+                        f" coexisting={len(sec['coexisting'])})")
+
+
             # Log summary
             logger.info(f"Audit Summary:")
             logger.info(f"  Retirement candidates: {len(report['stale_symbols'])}"

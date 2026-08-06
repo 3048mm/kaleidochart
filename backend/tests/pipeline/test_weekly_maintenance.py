@@ -64,7 +64,7 @@ class TestWeeklyMaintenancePhysical:
         
         result = subprocess.run(
             [PYTHON_EXEC, SCRIPT_PATH, "--dry-run", "--db-path", temp_db,
-             "--lock-file", temp_lock],
+             "--lock-file", temp_lock, "--skip-sec"],
             env=env,
             capture_output=True,
             text=True,
@@ -84,7 +84,7 @@ class TestWeeklyMaintenancePhysical:
         
         result = subprocess.run(
             [PYTHON_EXEC, SCRIPT_PATH, "--fix", "--db-path", temp_db,
-             "--lock-file", temp_lock],
+             "--lock-file", temp_lock, "--skip-sec"],
             env=env,
             capture_output=True,
             text=True,
@@ -112,7 +112,7 @@ class TestWeeklyMaintenancePhysical:
         try:
             result = subprocess.run(
                 [PYTHON_EXEC, SCRIPT_PATH, "--dry-run", "--db-path", temp_db,
-             "--lock-file", temp_lock],
+             "--lock-file", temp_lock, "--skip-sec"],
                 env=env,
                 capture_output=True,
                 text=True,
@@ -342,7 +342,12 @@ from datetime import date as _date
 # import するため、scripts/ が sys.path の先頭に入って以降のモジュール解決を汚染し、
 # 無関係なテスト（backtest 側）が順序依存で落ちる。PYTHONPATH=backend 前提の
 # `scripts.` プレフィックス形式で読む（このファイル既存の import と同じ作法）。
-from scripts.weekly_maintenance import classify_symbol_freshness, resolve_report_dir  # noqa: E402
+from scripts.weekly_maintenance import (  # noqa: E402
+    _write_sec_section,
+    classify_symbol_freshness,
+    resolve_report_dir,
+    run_sec_corporate_action_sync,
+)
 
 SPY_LATEST = _date(2026, 7, 27)
 
@@ -421,7 +426,7 @@ class TestReportDirIsolation:
         env["PYTHONUTF8"] = "1"
         result = subprocess.run(
             [PYTHON_EXEC, SCRIPT_PATH, "--dry-run", "--db-path", temp_db,
-             "--lock-file", temp_lock],
+             "--lock-file", temp_lock, "--skip-sec"],
             env=env, capture_output=True, text=True,
             encoding="utf-8", errors="replace",
         )
@@ -433,3 +438,111 @@ class TestReportDirIsolation:
         # 一時 DB 側に出力されていること
         own_dir = os.path.join(os.path.dirname(temp_db), "maintenance_reports")
         assert os.path.isfile(os.path.join(own_dir, "weekly_maintenance_report.txt"))
+
+
+# ---------------------------------------------------------------------------
+# SEC コーポレートアクション同期の組み込み
+# ---------------------------------------------------------------------------
+class TestSecSyncIntegration:
+    """SEC 突合を週次メンテに載せたときの契約。
+
+    背景: 2026年6〜7月に15件のコーポレートアクションを2ヶ月見逃した。
+    週次で自動検知するようにしたが、**SEC はネットワーク依存**なので、
+    そこが落ちたときに物理メンテや整合性監査の結果まで失われてはならない。
+    """
+
+    def _section(self, sec, dry_run=True):
+        import io
+        buf = io.StringIO()
+        _write_sec_section(buf, sec, dry_run)
+        return buf.getvalue()
+
+    def test_sec_failure_does_not_abort_weekly_maintenance(self, monkeypatch):
+        """SEC が落ちても例外を投げない。エラーを戻り値で返す。"""
+        import scripts.sync_sec_corporate_actions as mod
+        monkeypatch.setattr(mod, "run", lambda **kw: (_ for _ in ()).throw(RuntimeError("boom")))
+
+        got = run_sec_corporate_action_sync(dry_run=True, report_dir="x")
+
+        assert "boom" in got["error"]
+
+    def test_missing_contact_is_reported_not_raised(self, monkeypatch):
+        """連絡先未設定（config.local.toml 無し）でも週次メンテ全体は続行する。"""
+        import scripts.sync_sec_corporate_actions as mod
+
+        def _raise(**kw):
+            raise ValueError("SEC への連絡先が未設定です")
+        monkeypatch.setattr(mod, "run", _raise)
+
+        got = run_sec_corporate_action_sync(dry_run=True, report_dir="x")
+
+        assert "連絡先" in got["error"]
+
+    def test_report_separates_applied_from_needs_review(self):
+        """適用済みと要判断を分ける。前者は事後確認、後者は行動が要る。"""
+        text = self._section({
+            "retired": [{"ticker": "CCRN", "evidence": "Form 15-12G (2026-07-27)"}],
+            "renamed": [{"ticker": "GAMB", "new_ticker": "GRSD", "new_ticker_rows": 502,
+                         "new_last_date": "2026-08-05", "old_last_date": "2026-07-29"}],
+            "pending": [{"ticker": "XYZ", "new_ticker": "ABC",
+                         "guard_reasons": ["② 新ティッカーの履歴が不足（0行 < 20行）"]}],
+            "unknown": [], "master_gap": [], "coexisting": [],
+        })
+
+        assert "CCRN" in text and "GAMB" in text
+        assert "ACTION REQUIRED" in text
+        assert text.index("CCRN") < text.index("ACTION REQUIRED") < text.index("XYZ")
+
+    def test_no_action_bucket_keeps_the_review_list_clean(self):
+        """`master_gap` / `coexisting` を要判断に混ぜない。
+
+        `AEP`（一括マスタ未収載の現役銘柄）や `VWDRY`/`VWSYF`（同一 CIK の ADR と原株）は
+        毎週必ず検出される。要判断に並べるとレポートが読まれなくなる。
+        """
+        text = self._section({
+            "retired": [], "renamed": [], "pending": [], "unknown": [],
+            "master_gap": [{"ticker": "AEP"}],
+            "coexisting": [{"ticker": "VWDRY", "new_ticker": "VWSYF"}],
+        })
+
+        review = text.split("7-c.")[1].split("7-d.")[0]
+        assert "None" in review
+        assert "AEP" in text and "VWDRY" in text
+
+    def test_report_records_the_failure_reason(self):
+        text = self._section({"error": "HTTP Error 503"})
+
+        assert "503" in text
+        assert "config.local.toml" in text
+
+    def test_skipped_sync_is_visible_in_the_report(self):
+        """スキップを黙って空欄にしない（検知したのか未実行なのか判別できるように）。"""
+        assert "Skipped" in self._section(None)
+
+
+class TestSecCrossCheckOnRetirementCandidates:
+    """SEC が「上場している」と言う銘柄を自動退役リストに載せないこと。
+
+    `RSHO`（Tema ETF, classId C000239058）は SEC マスタに現ティッカーで載っているのに、
+    Yahoo からの価格供給だけが 2026-07-17 で止まっている。SEC を見ない鮮度監査は
+    これを毎週「上場廃止候補」に挙げ続け、`retire_stale_symbols.py --from-report` で
+    **健在な銘柄を退役させる**恐れがある。これは供給側（Yahoo）の問題であって廃止ではない。
+    """
+
+    def test_sec_alive_symbols_are_excluded_from_the_csv(self):
+        from scripts.weekly_maintenance import split_by_sec_verdict
+
+        rows = [("RSHO", "2026-07-17", 470), ("DEADCO", "2026-05-01", 900)]
+        keep, alive = split_by_sec_verdict(rows, {"RSHO", "AAPL"})
+
+        assert [r[0] for r in keep] == ["DEADCO"]
+        assert [r[0] for r in alive] == ["RSHO"]
+
+    def test_without_sec_data_nothing_is_filtered(self):
+        """SEC 同期が失敗・スキップされたときに候補を握り潰さない。"""
+        from scripts.weekly_maintenance import split_by_sec_verdict
+
+        rows = [("RSHO", "2026-07-17", 470)]
+        keep, alive = split_by_sec_verdict(rows, None)
+
+        assert keep == rows and alive == []
