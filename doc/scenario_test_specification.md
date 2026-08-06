@@ -470,7 +470,7 @@ python backend/backtest/run_scenario_batch.py
 | `scenario_scorer.py` | `backend/tests/backtest/test_scenario_scorer.py` |
 | `scenario_portfolio.py` | `backend/tests/backtest/test_scenario_portfolio.py` |
 | `scenario_market_score.py` | `backend/tests/backtest/test_scenario_market_score.py` |
-| `scenario_report.py` | `backend/tests/backtest/test_scenario_report.py` |
+| `scenario_reporter.py` | `backend/tests/backtest/test_scenario_reporter.py` |
 | `indicators/screener_filters.py` | `backend/tests/indicators/test_screener_filters.py` |
 
 ### 9.2 重点テスト項目

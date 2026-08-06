@@ -33,12 +33,36 @@
 ### 1.1 価格・トレンド関連
 | 変数名 | DB 参照元 (Table.Column) | 計算論理・説明 |
 | :--- | :--- | :--- |
-| `min_change_1d_pct` | `indicators.change_1d_pct` | **1�### 1.3 時価総額・相対強度 (RS) 関連
+| `min_change_1d_pct` | `indicators.change_1d_pct` | **1日騰落率（下限）**: 前日終値に対する当日終値の上昇率(%)。 |
+| `max_change_1d_pct` | 同上 | **1日騰落率（上限）**。急騰しすぎた銘柄を除外する場合などに使用。 |
+| `min_change_intraday_pct` | `daily_prices.open/close` | **当日中騰落率（下限）**: 当日始値に対する終値の上昇率(%)。旧 `1d_gain_pct`。 |
+| `min_dist_21ema_pct` | `indicators.ema_21`<br>`daily_prices.close` | **EMA21乖離率（下限）**: `(close - ema_21) / ema_21 * 100`。 |
+| `max_dist_21ema_pct` | 同上 | **EMA21乖離率（上限）**。 |
+| `close_gt_〇〇` / `is_close_gt_〇〇` | `indicators.〇〇`<br>`daily_prices.close` | **動的・移動平均線の上抜け**: `close > 〇〇` の場合に真。利用可能な移動平均の全主要バリエーションに対して動的に動作（例: `close_gt_ema21`, `is_close_gt_ema63`, `is_close_gt_sma50`, `close_gt_sma200` 等）。**`is_` 付きも同じ扱い**（`backtest_screener.py`）。 |
+| `is_trend_template` | `indicators.is_trend_template` | **トレンドテンプレート適合**: ミネルヴィニのトレンドテンプレート（SMA200の上昇、SMA50/150/200の位置等）を全合格しているか（1 or 0）。 |
+| `min_change_1w_pct` / `min_change_1m_pct` | `indicators.change_1w_pct`<br>`indicators.change_1m_pct` | **1週間 / 1ヶ月騰落率（下限）**。 |
+| `min_dist_52w_high_pct` | `indicators.dist_52w_high_pct` | **52週高値からの距離（下限）**: 高値に近いほど 0 に近い負値。`-10` なら「高値から10%以内」。 |
+| `min_dist_63d_high_pct` | `indicators.dist_63d_high_pct` | **63日高値からの距離（下限）**。中期のブレイクアウト近接度。 |
+| `max_td9` | `indicators.td9` | **TD9 カウント（上限）**: TD シーケンシャルのカウント。過熱（反転リスク）の除外に使う。 |
+
+### 1.2 ボラティリティ・出来高関連
+| 変数名 | DB 参照元 (Table.Column) | 計算論理・説明 |
+| :--- | :--- | :--- |
+| `min_vol_surge_21` | `indicators.vol_surge_21` | **出来高急増**: 当日の出来高が過去21日間の平均出来高の何倍か。 |
+| `min_adr_pct_21` | `indicators.adr_pct_21` | **平均日次レンジ％**: 過去21日間の `(High-Low)/Close` の平均値。銘柄固有のボラティリティを示す。 |
+| `max_adr_pct_21` | 同上 | **平均日次レンジ％（上限）**。 |
+| `min_sma50_atr_mult` | `indicators.sma50_atr_mult` | **SMA50距離(ATR調整済み)**: `(Close - SMA50) / ATR14`。SMA50から平均的な値動きの何倍離れているか。 |
+| `max_sma50_atr_mult` | 同上 | **SMA50距離（上限）**。離れすぎ（過熱）を防ぐために使用。 |
+| `max_vol_surge_21` | `indicators.vol_surge_21` | **出来高急増（上限）**。急増しすぎ（吹き上がり）の除外に使う。 |
+| `min_vol_accum_days_5` | `indicators.vol_accum_days_5` | **直近5日の出来高増加日数（下限）**: 静かな買い集め（Accumulation）の検出に使う。 |
+| `min_avg_dollar_volume_21` | `indicators.avg_dollar_volume_21` | **21日平均売買代金（下限）**: 米ドル。**全戦略共通の流動性ハード制約**として `[general]` に置く（`backtest_runner.py`）。実売買できない薄商い銘柄を母集団から外す。 |
+
+### 1.3 時価総額・相対強度 (RS) 関連
 | 変数名 | DB 参照元 (Table.Column) | 計算論理・説明 |
 | :--- | :--- | :--- |
 | `min_market_cap` | `indicators.market_cap` | **時価総額（下限）**: 米ドル単位（例: 1e9 = 1B）。※`category='テーマ'` の銘柄は判定から除外される。 |
 | `min_rs_trend_s21` | `indicators.rs_trend_s21` | **RS Condition**: `rs_value_e5 / SMA21(rs_value)`。RS自体が自身の移動平均を上回っているか（相対的な加速状態）。 |
-| `is_rs_trend_s21_gt_s63` | `indicators.rs_trend_s21`/`s63` | **個別トレンド加速 (21 vs 63)**: 個別銘柄の21日トレンド生値が63日トレンド生値を上回っているか。 |
+| `is_rs_trend_s21_lt_s63` | `indicators.rs_trend_s21`/`s63` | **中期トレンド優位 (21 vs 63)**: 21日トレンド生値が63日トレンド生値を**下回っている**か。※`s14 < s21` と同じく、RS Trend は**小さい方が強い**（`screener_filters.filter_rs_trend_s21_lt_s63`）。 |
 | `is_rs_trend_s14_lt_s21` | `indicators.rs_trend_s14`/`s21` | **個別トレンド加速 (14 vs 21)**: 個別銘柄の14日トレンド生値が21日トレンド生値を下回っているか。※期間別比較の場合、他のRSと異なり **`s14 < s21`** の場合に上昇傾向であることに注意。 |
 | `min_rs_ratio_rank_e21`| `relative_ranks.percent_rank` | **RS 21日ランク**: カテゴリ内でのRS強さのパーセンタイル順位 (0.0~1.0)。`indicator_name='rs_ratio_e21'` を参照。 |
 | `is_rs_ratio_rank_e21_gt_e63` | `relative_ranks.percent_rank` | **RS短期加速**: 21日ランクが63日ランクを上回っているか（短期的な相対強度が向上しているか）。 |
@@ -48,24 +72,10 @@
 | `is_theme_rs_ratio_e14_gt_e21` | `indicators.rs_ratio_e14/e21`<br>`theme_constituents` | **テーマ主導 (14 vs 21)**: 所属するテーマ自体のRS14 > RS21であるか。 |
 | `min_theme_rs_ratio_rank_e14` / `min_theme_rs_ratio_rank_e21` | `relative_ranks.percent_rank`<br>`theme_constituents` | **テーマRSランク下限**: 所属するテーマのRS比率ランク (0.0~1.0) が指定値以上か。 |
 | `min_theme_rs_trend_s21` / `min_theme_rs_trend_rank_s21` | `indicators.rs_trend_s21`<br>`relative_ranks.percent_rank`<br>`theme_constituents` | **テーマトレンド下限**: 所属するテーマのトレンド生値 / トレンドランクが指定値以上か。 |
-| `is_theme_rs_trend_rank_s14_gt_s21` | `relative_ranks.percent_rank`<br>`theme_constituents` | **テーマトレンド加速**: 所属するテーマの14日トレンドランクが21日トレンドランクを上回っているか。 |ow)/Close` の平均値。銘柄固有のボラティリティを示す。 |
-| `max_adr_pct_21` | 同上 | **平均日次レンジ％（上限）**。 |
-| `min_sma50_atr_mult` | `indicators.sma50_atr_mult` | **SMA50距離(ATR調整済み)**: `(Close - SMA50) / ATR14`。SMA50から平均的な値動きの何倍離れているか。 |
-| `max_sma50_atr_mult` | 同上 | **SMA50距離（上限）**。離れすぎ（過熱）を防ぐために使用。 |
-
-### 1.3 時価総額・相対強度 (RS) 関連
-| 変数名 | DB 参照元 (Table.Column) | 計算論理・説明 |
-| :--- | :--- | :--- |
-| `min_market_cap` | `indicators.market_cap` | **時価総額（下限）**: 米ドル単位（例: 1e9 = 1B）。※`category='テーマ'` の銘柄は判定から除外される。 |
-| `min_rs_trend_s21` | `indicators.rs_trend_s21` | **RS Condition**: `rs_value_e5 / SMA21(rs_value)`。RS自体が自身の移動平均を上回っているか（相対的な加速状態）。 |
-| `is_rs_trend_s21_gt_s63` | `indicators.rs_trend_s21`/`s63` | **個別トレンド加速**: 個別銘柄の21日トレンド生値が63日トレンド生値を上回っているか。 |
-| `min_rs_ratio_rank_e21`| `relative_ranks.percent_rank` | **RS 21日ランク**: カテゴリ内でのRS強さのパーセンタイル順位 (0.0~1.0)。`indicator_name='rs_ratio_e21'` を参照。 |
-| `is_rs_ratio_rank_e21_gt_e63` | `relative_ranks.percent_rank` | **RS短期加速**: 21日ランクが63日ランクを上回っているか（短期的な相対強度が向上しているか）。 |
-| `is_theme_rs_ratio_e21_gt_e63` | `indicators.rs_ratio_e21/e63`<br>`theme_constituents` | **テーマ主導 (21 vs 63)**: 所属するテーマ自体のRS21 > RS63であるか。個別銘柄の場合は、その銘柄を構成員に持つテーマのいずれかが合格していれば真。 |
-| `is_theme_rs_ratio_e14_gt_e21` | `indicators.rs_ratio_e14/e21`<br>`theme_constituents` | **テーマ主導 (14 vs 21)**: 所属するテーマ自体のRS14 > RS21であるか。 |
-| `min_theme_rs_ratio_rank_e14` / `min_theme_rs_ratio_rank_e21` | `relative_ranks.percent_rank`<br>`theme_constituents` | **テーマRSランク下限**: 所属するテーマのRS比率ランク (0.0~1.0) が指定値以上か。 |
-| `min_theme_rs_trend_s21` / `min_theme_rs_trend_rank_s21` | `indicators.rs_trend_s21`<br>`relative_ranks.percent_rank`<br>`theme_constituents` | **テーマトレンド下限**: 所属するテーマのトレンド生値 / トレンドランクが指定値以上か。 |
-| `is_theme_rs_trend_rank_s14_gt_s21` | `relative_ranks.percent_rank`<br>`theme_constituents` | **テーマトレンド加速**: 所属するテーマの14日トレンドランクが21日トレンドランクを上回っているか。 |
+| `is_theme_rs_trend_rank_s14_gt_s21` / `is_theme_rs_trend_rank_s21_gt_s63` | `relative_ranks.percent_rank`<br>`theme_constituents` | **テーマトレンド加速**: 所属するテーマの短期トレンドランクが長期トレンドランクを上回っているか。 |
+| `min_rs_ratio_rank_e14` / `min_rs_trend_rank_s21` | `relative_ranks.percent_rank` | **RS ランク下限（別期間）**: それぞれ `rs_ratio_e14` / `rs_trend_s21` のパーセンタイル順位。 |
+| `is_rs_ratio_rank_e14_gt_e21` | `relative_ranks.percent_rank` | **RS短期加速 (14 vs 21)**: 14日ランクが21日ランクを上回っているか。 |
+| `is_theme_rs_ratio_rank_e14_gt_e21` / `is_theme_rs_ratio_rank_e21_gt_e63` | `relative_ranks.percent_rank`<br>`theme_constituents` | **テーマRSランク加速**: 生値比較（`is_theme_rs_ratio_e*`）のランク版。 |
 
 ### 1.4 RRG (Relative Rotation Graph) 関連
 | 変数名 | DB 参照元 (Table.Column) | 計算論理・説明 |
@@ -105,8 +115,31 @@
 
 ## 3. 一般設定 / 最適化設定
 
+### 3.1 `[general]`
+
 | 変数名 | 説明 |
 | :--- | :--- |
-| `general.failsafe_max_days` | **強制決済期限**: エグジット条件を満たさないまま N 営業日経過した場合に強制決済。 |
-| `optimization_periods` | Optuna で評価対象とする特定の相場期間（ブル/ベア等）の定義。 |
-| `optimization_pruning` | 一定のヒット率やトレード頻度を満たさないパラメータを早期に切り捨てるための基準値。 |
+| `failsafe_max_days` | **強制決済期限**: エグジット条件を満たさないまま N 営業日経過した場合に強制決済。 |
+| `min_avg_dollar_volume_21` | **全戦略共通の流動性ハード制約**（§1.2 参照）。実売買できない薄商い銘柄を母集団から外す。 |
+| `entry_mode` | **約定価格の取り方**: `"close"`（シグナル当日終値。24時間取引でのオーバーナイト発注運用と整合）。 |
+| `consider_tax` | 損益計算に税を織り込むか。**型1（スクリーン条件最適化）は既定でコストなし**（§6.1 の設計意図）。 |
+| `start_date` / `end_date` | バックテストの対象期間。 |
+
+### 3.2 戦略のメタ情報（`[[strategy]]`）
+
+| 変数名 | 説明 |
+| :--- | :--- |
+| `name` | 戦略コード（例: `B1_theme_leader`）。シナリオテストのディスパッチにも使う。 |
+| `label` / `description` | 画面表示名と説明。ロジックには影響しない。 |
+| `detect_floor` | 検出件数の下限。これを下回る日を「枠が埋まらなかった」として扱う。 |
+
+### 3.3 最適化（Optuna）
+
+| 変数名 | 説明 |
+| :--- | :--- |
+| `optimization_periods` / `periods` / `windows` | 評価対象とする相場期間（ブル/ベア等）とローリング窓の定義。 |
+| `optimization_pruning` | 一定のヒット率やトレード頻度を満たさないパラメータを早期に切り捨てる基準。 |
+| `min_hit_rate_pct` | **勝率の下限**。これを下回る試行を枝刈りする。 |
+| `min_avg_hits_per_day` / `max_avg_hits_per_day` | **1日あたり検出件数の下限・上限**。少なすぎ（枠が遊ぶ）と多すぎ（選別になっていない）の両方を弾く。 |
+| `max_allowed_dd` | **許容最大ドローダウン**。超過した試行を枝刈りする。 |
+| `lcb_gate_penalty` | **信頼下限（LCB）ゲートのペナルティ係数**。試行回数が少なく不確実な好成績を減点する。目的関数の変遷は `issue_list.md` を参照。 |

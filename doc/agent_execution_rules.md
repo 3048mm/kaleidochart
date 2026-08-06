@@ -130,7 +130,15 @@ Windows のデフォルトエンコーディング (Shift-JIS / CP932) と、Pyt
 > [!NOTE]
 > `universe.db`（銘柄定義の編集マスター）がユーザー資産に入るのは、手動編集と
 > `ticker_history` を再生成できないため。T1 同期の下流（`stocktool.db` の `symbols` /
-> `theme_constituents` と Parquet）は「再生成可能」に分類される。詳細: `architecture.md` §11.1.1
+> `theme_constituents` と Parquet）は「再生成可能」に分類される。
+> 詳細: `universe_db_specification.md` / 位置づけの要約: `architecture.md` §11.1.1
+
+> [!WARNING]
+> **「再生成可能」は「いつでも作り直してよい」という意味ではない。**
+> 全期間再構築は Yahoo から取り直すため、手元にしか無いもの（上流が返さなくなった銘柄の履歴・
+> `fx_rates`・手作業の切り詰め）を失い、`symbols.id` も再採番される。
+> 実行前に必ず `db_recovery_procedure.md` §4 と
+> `.claude/skills/parquet-data-quality/SKILL.md` §9 を読むこと。
 
 ### 10.2 変更の4種別（エージェントは完了報告に必須記載）
 

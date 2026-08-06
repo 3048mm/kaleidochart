@@ -138,12 +138,23 @@ graph TD
 #### テストコードの配置規約
 テストコードは **`backend/tests/`** ディレクトリ配下に、実装モジュールのディレクトリ構造と `1:1` になるようにパッケージ単位で一元集約します。テストファイル名は元のモジュール名に `test_` プレフィックスを付与した形とします。
 
-| テスト対象モジュール | テストファイル名・配置場所 | 備考 |
-| :--- | :--- | :--- |
-| `backend/api/routers.py` | `backend/tests/api/test_routers.py` | API エンドポイント群の検証 |
-| `backend/backtest/backtest_screener.py` | `backend/tests/backtest/test_backtest_screener.py` | エンジンの主要・独自機能 |
-| `backend/pipeline/phases/t3_indicators.py` | `backend/tests/pipeline/phases/test_t3_indicators.py` | パイプライン連携部のテスト |
-| `backend/indicators/moving_averages.py` | `backend/tests/indicators/test_moving_averages.py` | 各種指標計算の単体テスト |
+**規約**: `backend/<dir>/<name>.py` のテストは `backend/tests/<dir>/test_<name>.py` に置く
+（2026-08-07 時点で25組が 1:1 対応）。実在する例:
+
+| テスト対象モジュール | テストファイル |
+| :--- | :--- |
+| `backend/api/symbol_heal.py` | `backend/tests/api/test_symbol_heal.py` |
+| `backend/api/dashboard_router.py` | `backend/tests/api/test_dashboard_router.py` |
+| `backend/indicators/screener_filters.py` | `backend/tests/indicators/test_screener_filters.py` |
+| `backend/data_collection/sec_client.py` | `backend/tests/data_collection/test_sec_client.py` |
+| `backend/backtest/scenario_scorer.py` | `backend/tests/backtest/test_scenario_scorer.py` |
+
+> [!WARNING]
+> **`backend/tests/` に置いてよいのはテストだけ。** 使い捨ての確認スクリプトは `tmp/` へ。
+> pytest は収集時に全モジュールを import するため、モジュール直下で外部 I/O を行う
+> スクリプトを置くと**テスト全体がハングします**。実際 `backend/tests/api/test_api.py`
+> （import 時に稼働中の API へ HTTP リクエストを投げるだけの断片）が
+> 全テストを45分以上ブロックしていました（2026-08-06 に除去し 105秒へ短縮）。
 
 #### テスト実行ルール
 - **フレームワーク**: `pytest` を使用する。
@@ -240,10 +251,16 @@ graph TD
 | 観点 | 内容 |
 | :--- | :--- |
 | **テーブル** | `symbols_master` / `theme_members` / `ticker_history` |
-| **役割** | 銘柄の定義（分類・名称・テーマ構成）を人間が編集する唯一の場所 |
-| **編集手段** | Universe 画面（`/universe`）、スプレッドシート import/export、`backend/scripts/` の各スクリプト |
-| **下流** | T1 同期で `stocktool.db` の `symbols` / `theme_constituents` を生成 → Parquet へ退避 |
+| **役割** | 銘柄の定義（分類・名称・テーマ構成・改称履歴）を人間が編集する唯一の場所 |
+| **編集手段** | Universe 画面（`/universe`）、スプレッドシート import/export、`backend/scripts/` の各スクリプト、**SEC EDGAR との週次突合** |
+| **安定キー** | `symbols_master.cik` / `sec_class_id` — ティッカーは変わるが CIK と classId は変わらない。改称・上場廃止の検知に使う |
+| **下流** | T1 同期で `stocktool.db` の `symbols` / `theme_constituents` を生成 → Parquet へ退避。改称は `user_data.db` にも伝播 |
 | **本番反映** | **swap・クリア・再構築は禁止。** バックアップ取得 → in-place マイグレーションのみ（手動編集と `ticker_history` は再生成できないため） |
+
+> [!NOTE]
+> **詳細仕様は `doc/universe_db_specification.md`**（テーブル定義・T1 同期の id 温存・
+> SEC 連携・改称の伝播・スプレッドシート import の replace 挙動）。
+> 本節は位置づけの要約のみを扱います。
 
 ```mermaid
 graph LR

@@ -56,11 +56,27 @@
 ## 4. データ欠損・不整合発見時の復旧手順方針
 
 ### 4.1 復旧フロー
-1. **影響範囲の特定**: `db_health_check.py` 等を用いて、どの期間・どの項目・どの銘柄に欠損があるか特定する。
-2. **データの巻き戻し (Rollback)**: 不整合が疑われる期間の T3 (指標) / T4 (ランク) / T5 (シグナル) を削除する。
-    - ※ T2 (価格) は API から再取得可能なため、必要に応じて削除。
-3. **基準データ (SPY) の再構築**: まず SPY のインジケーターを全期間再計算し、NULL がないことを確認する。
-4. **全銘柄の再構築**: `--re-calculate` フラグを使用し、最新ロジックで全件再生成を行う。
+
+**軽い手段から順に試すこと。** 下へ行くほど所要時間とリスクが跳ね上がる。
+
+1. **影響範囲の特定**: `db_health_check.py` 等で、どの期間・どの項目・どの銘柄に欠損があるか特定する。
+   欠損が上流（yfinance）起因かどうかは `.claude/skills/upstream-data-diagnosis/SKILL.md` で切り分ける。
+2. **T3/T4/T5 の部分再計算**: 不整合が疑われる期間の T3 / T4 / T5 を削除し `--rebuild-from` で作り直す。
+   T2（価格）は再取得可能なため、必要に応じて削除。
+3. **Parquet の T4 全期間再計算**: 横断的な順位がずれている場合は
+   `backend/scripts/recompute_parquet_ranks.py --apply`（約80秒）。
+   **`--rebuild-from T4` は使わない** — SQLite にある日付＝直近730日しか埋まらず、
+   Parquet の過去分は欠けたまま残る（2026-08-05 にこれで5時間を浪費）。
+4. **SQLite キャッシュの作り直し**: `backend/scripts/run_production_restore.py`（約15分）。
+   Parquet が健全なら、ここまでで大半は解決する。
+
+> [!CAUTION]
+> **`--re-calculate`（全期間再構築）は最後の手段。** Yahoo から取り直すため約5時間かかり、
+> **手元にしか無いデータを失う**（上流が返さなくなった銘柄の履歴・`fx_rates`・
+> 手作業の切り詰め）。`symbols.id` も再採番され `user_data.db` の再マップが必要になる。
+> 実行前に必ず `db_recovery_procedure.md` §4 と
+> `.claude/skills/parquet-data-quality/SKILL.md` §9 の手順書を読み、
+> **`archive_parquet_master.py` で退避してから**実行すること。
 
 ### 4.2 復旧時の検証項目 (データ品質基準)
 - [ ] **行数一致**: `T2 行数 == T3 行数` であること（全銘柄対象）。
@@ -95,6 +111,17 @@
 
 ### 5.5 べき等性
 - [ ] 同一銘柄に対する重複 POST で IntegrityError が発生しないか（既存ロジックで吸収されるか）。
+
+### 5.6 ティッカー変更への追随
+- [ ] **改称の即時反映 (push)**: `rename_symbol.py` の実行後、`watchlist` / `portfolio_positions` の
+      `ticker` が新ティッカーへ更新されているか。
+- [ ] **取引記録の保全**: `position_history` の `ticker` は**書き換わらない**こと
+      （`symbol_id` だけが現行へ解決される）。
+- [ ] **自己修復 (pull)**: 旧ティッカーのまま残った項目が、heal 実行時に
+      `universe.db.ticker_history` 経由で解決され、`symbol_id` が NULL にならないこと。
+- [ ] **多段改称**: A→B→C と改称された場合も最終ティッカーまで辿れること。
+- [ ] **DB 再構築後**: `remap_user_data_symbol_ids.py --apply` 実行後、
+      `symbol_id` と `ticker` の不一致が 0 件であること。
 
 ---
 

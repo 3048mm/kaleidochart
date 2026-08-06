@@ -4,13 +4,19 @@
 本プロジェクトのバックエンドは、株式およびインジケータデータの**「定期的な収集・算出バッチ（Pipeline）」**と、フロントエンド向けにデータを提供する**「APIサーバー」**の2つから構成されます。
 データ分析に必要な指標計算を予めバッチで済ませてデータベースに蓄積することで、フロントエンドでの高速表示を実現しています。
 
+> [!NOTE]
+> **関連仕様書**
+> `universe_db_specification.md`（銘柄定義マスター）/ `db_recovery_procedure.md`（DB 復旧・再構築）/
+> `architecture.md`（ホット/コールド二層）/ `backtest_specification.md`
+
 ## 2. ディレクトリ構成
 全てのバックエンド資産は `backend/` フォルダ配下に整理されています。
 *   **`backend/api/`**: FastAPI ベースのWeb APIサーバー
-*   **`backend/db/`**: SQLAlchemy によるデータベースモデルと接続プール管理
-*   **`backend/data_collection/`**: Google Spreadsheet 同期および `yfinance` 等を用いたデータ取得
-*   **`backend/indicators/`**: 移動平均、ATR、RSI等のテクニカルおよび独自スコア計算ロジック
-*   **`backend/scripts/`**: バッチ処理スクリプト (`update_pipeline.py`, `daily_sync_job.py` 等)
+*   **`backend/db/`**: SQLAlchemy によるデータベースモデルと接続プール管理（`stocktool.db` / `user_data.db` / `universe.db` の3系統）
+*   **`backend/data_collection/`**: 外部データ取得。`yfinance`（`fetcher.py`）/ 銘柄定義の同期（`universe_sync.py`・`sheet_importer.py`）/ **SEC EDGAR**（`sec_client.py`・`sec_corporate_actions.py`）
+*   **`backend/indicators/`**: 移動平均、ATR、RSI等のテクニカルおよび独自スコア計算ロジック（価格アノマリー分類 `price_anomaly.py` を含む）
+*   **`backend/pipeline/`**: T1〜T5 のオーケストレータと各フェーズ、Parquet 世代管理（`parquet_cache_manager.py`）、排他ロック（`pipeline_lock.py`）
+*   **`backend/scripts/`**: バッチ処理スクリプト (`update_pipeline.py`, `daily_sync_job.py` 等) と運用ツール
 
 ## 3. データベース設計 (SQLite/Parquet ハイブリッドアーキテクチャ)
 
@@ -101,24 +107,13 @@ category in ('市場', '指標')                          → 'etf'
 ##### `universe.db` 側の SEC 安定キー（`symbols_master`）
 
 ティッカーは変わりますが、**CIK と classId は変わりません**。改称・上場廃止を機械的に
-追跡するため、編集マスタである `universe.db` の `symbols_master` に3列を持たせています
+追跡するため、編集マスタである `universe.db` の `symbols_master` に
+`cik` / `sec_class_id` / `sec_checked_at` の3列を持たせています
 （`stocktool.db` の `symbols` には同期しません。運用判断用のメタデータのため）。
 
-| カラム名 | 型 | 説明 |
-| :--- | :--- | :--- |
-| `cik` | INTEGER | SEC の登録主体ID。個別銘柄の突合キー。 |
-| `sec_class_id` | STRING | ETF・ファンドのクラスID。**ETF はこちらを優先**。 |
-| `sec_checked_at` | DATETIME | 最後に SEC と突合した日時。 |
-
-**ETF に `cik` を使わない理由**: CIK はトラスト単位で粗すぎます。`RSHO` の
-CIK 1944285 は Tema ETF Trust の13ファンドを含むため、ファンド単位で追跡できません。
-
-仮想テーマ（`_..._`）と指数（`^...`）は SEC に登録主体が存在しないため両方 NULL とし、
-追跡対象外にします（`sec_corporate_actions.is_sec_trackable()`）。
-
-初回解決は `backend/scripts/migrate_universe_sec_keys.py`（バックアップ → in-place
-`ALTER TABLE`。冪等）。以後の新規銘柄は週次同期が自動で解決します（§8.4）。
-2026-08-06 時点の解決率は個別 99.9% / ETF 100%。
+> [!NOTE]
+> **列定義・キーの選び方・解決率・初回付与の手順は `doc/universe_db_specification.md` §4。**
+> 検知ロジックと自動適用のガードは本書 §8.4。
 
 ### 3.2 構成銘柄連携 (`theme_constituents`)
 
@@ -886,7 +881,8 @@ periods = [
 ### 8.3 論理監査と自己修復 (Self-Healing)
 1.  **上場廃止・データ供給停止の自動検知**:
     - 主体指標である `SPY` の最新価格日付より5営業日以上データが古い `active=1` 銘柄を「上場廃止候補」として自動検知します。
-    - 検出結果は管理者向けに `data/maintenance_reports/sheets_delisting_recommendations.csv` として出力され、Googleスプレッドシート（T1）のメンテ効率化を促します。
+    - 検出結果は `data/maintenance_reports/delisting_recommendations.csv` に出力し、`backend/scripts/retire_stale_symbols.py --from-report` で `universe.db` に反映します（T1 のソースはスプレッドシートから `universe.db` へ移行済み）。
+    - **SEC が「現ティッカーで上場中」と言う銘柄は自動退役の対象から外します**（`split_by_sec_verdict()`）。供給停止（Yahoo 側の問題）を上場廃止と取り違えて健在な銘柄を消さないためで、レポートの `7-c2. HELD FROM AUTO-RETIREMENT` に残します。`RSHO` は SEC 上健在なのに価格供給だけが止まり、毎週退役候補に挙がり続けていました。
 2.  **空テーマの検出**: 構成銘柄数 `0` 件となった active なテーマ/指標を検知してレポートします。
 3.  **不正なテーマ構成銘柄の自動削除**:
     - `active = 0` (無効化済み) や存在しない symbol_id をターゲットに持つ `ThemeConstituent` の不正リンクをスキャンし、`--fix` モード実行時に自動でデリートパージします。
