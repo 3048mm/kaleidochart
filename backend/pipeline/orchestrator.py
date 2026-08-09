@@ -515,16 +515,121 @@ def clear_pipeline_data_for_date(db, target_date: date):
     db.query(DailyPrice).filter(DailyPrice.date == target_date).delete(synchronize_session=False)
     db.commit()
 
+# チェックポイントが読み取りに阻まれたときに諦めるまでの時間。
+# 回収は best-effort であり、パイプラインを止めてまで待つ価値はない。
+# **write_engine の timeout=3600 をそのまま使うと最大1時間停止する。**
+CHECKPOINT_BUSY_TIMEOUT_MS = 3000
+
+
+def should_abort_without_spy_date(spy_latest_date, has_explicit_rebuild: bool,
+                                  skip_fetch: bool) -> tuple[bool, str]:
+    """SPY の事前チェックで相場日が分からなかったとき、中断すべきかを判定する。
+
+    **「今日の相場日が分からない」まま走ると、取得ゼロでも成功と報告する。**
+    2026-08-07 に実際に起きた: `.bat` の日本語コメントで cmd のパース位置がずれ
+    `CURL_CA_BUNDLE` が設定されず、Norton の TLS 傍受で yfinance が全滅したが、
+    パイプラインは `COMPLETED SUCCESSFULLY` を出した。
+
+    既存のガードでは捕まらない:
+      - `is_publishable_master` … 既存 Parquet とマージされるので prices は空にならない
+      - T2 の SPY ガード         … SPY に過去の行があるので `spy_latest_date` は真
+
+    上流の最新日が取れない＝**新しいデータがあるか判断できない**のだから、
+    黙って通過させず落とす。スケジュール実行の失敗は見えるが、成功した no-op は見えない。
+
+    Returns:
+        (中断すべきか, 理由)
+    """
+    if has_explicit_rebuild or skip_fetch:
+        # 明示的な再構築・`--skip-fetch` は上流の日付を必要としない経路
+        return False, ""
+    if spy_latest_date:
+        return False, ""
+    return True, (
+        "SPY の最新取引日を yfinance から取得できませんでした。"
+        " 新しいデータがあるか判断できないため中断します（取得ゼロのまま"
+        "「成功」と報告しないため）。"
+        " 上流障害でなければ証明書を疑ってください:"
+        " TLS 傍受環境では CURL_CA_BUNDLE の設定が必要です"
+        "（`.claude/skills/upstream-data-diagnosis/SKILL.md` §2.1）。"
+    )
+
+
+def describe_checkpoint_result(result):
+    """`PRAGMA wal_checkpoint` の戻り値 `(busy, log, checkpointed)` を解釈する。
+
+    **`busy=0` でも回収ゼロなら成功ではない。** `PASSIVE` は読み取りに阻まれても
+    `busy=0` を返すため、数値を見ないと肥大化を見逃す（2026-08-07 実測）。
+
+        PASSIVE   busy=0 log=506  checkpointed=0    ← 成功に見えるが回収ゼロ
+        TRUNCATE  busy=1 log=1518 checkpointed=0
+
+    Returns:
+        (回収できたか, ログ用の説明)
+    """
+    if not result:
+        return False, "WAL checkpoint: 結果を取得できませんでした"
+    busy, log_frames, checkpointed = (list(result) + [0, 0, 0])[:3]
+
+    # SQLite はチェックポイントを開始すらできないと log/checkpointed に -1 を返す。
+    # そのまま引き算すると「未回収 0 フレーム」になり回収できたように読めてしまう。
+    if log_frames < 0 or checkpointed < 0:
+        return False, (f"WAL checkpoint を開始できませんでした（busy={busy}）。"
+                       f" 他の処理がロックを保持しています。"
+                       f" 読み取りトランザクションを開いたままの処理を疑ってください")
+
+    if log_frames == 0 and checkpointed == 0 and not busy:
+        return True, "WAL checkpoint: 回収済み（WAL は空）"
+    if busy or log_frames > checkpointed:
+        return False, (f"WAL checkpoint が完了しませんでした: 未回収 {log_frames - checkpointed} フレーム"
+                       f"（busy={busy} log={log_frames} checkpointed={checkpointed}）。"
+                       f" 読み取りトランザクションを開いたままの処理を疑ってください")
+    return True, f"WAL checkpoint: {checkpointed} フレームを回収"
+
+
 def safe_wal_checkpoint(db, logger: logging.Logger):
+    """WAL をチェックポイントする（TRUNCATE）。パイプラインは落とさない。
+
+    > [!IMPORTANT]
+    > **セッション経由で PRAGMA を実行してはいけない。**
+    > `write_engine` は `begin` イベントで `BEGIN IMMEDIATE` を張るため、
+    > `db.execute(text("PRAGMA wal_checkpoint(...)"))` は暗黙のトランザクションに入り、
+    > SQLite が拒否する（`database table is locked`）。**他に誰も居なくても必ず失敗する。**
+    > 2026-08-07 に判明するまで、このフェーズのチェックポイントは一度も成功しておらず、
+    > `stocktool.db` 6.3GB / `-wal` 3.6GB の肥大を招いていた。
+    > 必ず commit 後の**独立した生コネクション**で実行すること。
+
+    > [!WARNING]
+    > **短い busy_timeout を必ず設定する。** `write_engine` は長時間バッチ用に
+    > `timeout=3600` で作られており、その接続をそのまま使うと読み取りに阻まれたとき
+    > **チェックポイントが最大1時間パイプラインを止める**。
+    > 回収は best-effort なので、待たずに諦めて次のフェーズへ進む。
+
+    Returns:
+        `(busy, log, checkpointed)`。実行できなければ ``None``。
     """
-    Safely commits the transaction and runs SQLite WAL checkpoint (TRUNCATE).
-    Does not crash the pipeline if checkpoint fails due to concurrent read locks.
-    """
+    raw = None
     try:
-        db.commit()
-        db.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
+        db.commit()                      # 書き込みロックを解放してから
+        raw = db.get_bind().raw_connection()
+        cur = raw.cursor()
+        cur.execute(f"PRAGMA busy_timeout={CHECKPOINT_BUSY_TIMEOUT_MS}")
+        cur.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        row = cur.fetchone()
+        cur.close()
+        result = tuple(row) if row else None
+        ok, msg = describe_checkpoint_result(result)
+        (logger.info if ok else logger.warning)(msg)
+        return result
     except Exception as e:
-        logger.warning(f"WAL checkpoint (TRUNCATE) skipped/failed (likely active read locks): {e}")
+        logger.warning(f"WAL checkpoint (TRUNCATE) skipped/failed: {e}")
+        return None
+    finally:
+        if raw is not None:
+            try:
+                raw.close()
+            except Exception:  # noqa: BLE001 — 解放失敗でパイプラインを落とさない
+                pass
 
 def verify_pipeline_integrity(db, categories: Optional[List[str]] = None):
     """
@@ -579,6 +684,12 @@ def run_pipeline(config, db_path, logger: logging.Logger, rebuild_from: Optional
     Main Orchestrator for Step 3 Pipeline.
     """
     logger.info(f"Starting Step 3 Pipeline Orchestrator - rebuild_from={rebuild_from}, categories={categories}, re-calculate={recalculate_all}")
+
+    # 下の SPY 事前チェックは yfinance を直接叩くため、ここでも CA を確保しておく
+    # （`fetcher` の import より先に走る経路があるため。冪等）
+    from data_collection.tls_trust import ensure_ca_bundle
+    ensure_ca_bundle()
+
     init_db(db_path)
     db_path = get_active_db_path()
     
@@ -598,6 +709,13 @@ def run_pipeline(config, db_path, logger: logging.Logger, rebuild_from: Optional
                 logger.info(f"Latest SPY date check result: {spy_latest_date}")
         except Exception as e:
             logger.warning(f"Could not perform autonomous pre-check of SPY date: {e}")
+
+        # 相場日が分からないまま進むと、1行も取れなくても「成功」と報告してしまう
+        abort, reason = should_abort_without_spy_date(
+            spy_latest_date, has_explicit_rebuild, skip_fetch)
+        if abort:
+            logger.error(reason)
+            raise RuntimeError(reason)
 
         if spy_latest_date:
             with get_write_db() as db:

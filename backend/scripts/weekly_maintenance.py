@@ -76,6 +76,67 @@ def release_lock():
         except:
             pass
 
+# `-wal` がこれを超えたら「チェックポイントが効いていない」とみなす。
+# SQLite の自動チェックポイントは 1000ページ（約4MB）ごとに走るため、
+# 正常なら数MBで頭打ちになる。実測の異常値は 3.6GB だった。
+WAL_WARN_BYTES = 100 * 1024 ** 2
+
+# DB 本体がこれより小さいと「DB に対する比率」が意味を持たない
+# （`user_data.db` は 0.09MB なので WAL 0.1MB でも 153% になる）
+WAL_RATIO_MIN_DB_BYTES = 10 * 1024 ** 2
+
+
+def classify_wal_size(wal_bytes: int, db_bytes: int) -> tuple[str, str]:
+    """`-wal` のサイズが正常かを判定する。
+
+    **チェックポイントが壊れても気づけるようにするための監視。**
+    2026-07-28 に `-wal` 3.6GB が見つかるまで、パイプラインは毎フェーズ警告を
+    出していたのに誰も気づかなかった（ログの WARNING は流れて消える）。
+
+    Returns:
+        (``"ok"`` / ``"warn"``, レポート用の説明)
+    """
+    mb = wal_bytes / 1024 ** 2
+    # 極小 DB（user_data.db は 0.09MB）で「DB の 153%」のような無意味な比率を出さない
+    ratio = (f"（DB の {wal_bytes / db_bytes * 100:.0f}%）"
+             if db_bytes >= WAL_RATIO_MIN_DB_BYTES else "")
+    if wal_bytes > WAL_WARN_BYTES:
+        return "warn", (f"-wal が {mb:,.0f} MB {ratio}。**チェックポイントが効いていません。**"
+                        f" 読み取りトランザクションを開いたままの処理"
+                        f"（重いバックテスト等）と日次パイプラインの同時実行を疑ってください")
+    return "ok", f"-wal {mb:,.1f} MB {ratio}"
+
+
+def checkpoint_wal(db_path: str, label: str) -> tuple[int, int]:
+    """VACUUM の前に WAL を回収する。
+
+    独立した生コネクションで実行する（セッション経由だと `BEGIN IMMEDIATE` に
+    巻き込まれて必ず失敗する。`pipeline/orchestrator.safe_wal_checkpoint` 参照）。
+
+    Returns:
+        (実行前の -wal バイト数, 実行後の -wal バイト数)
+    """
+    def wal_size():
+        p = db_path + "-wal"
+        return os.path.getsize(p) if os.path.exists(p) else 0
+
+    before = wal_size()
+    if before == 0:
+        return 0, 0
+    try:
+        conn = sqlite3.connect(db_path, timeout=60)
+        try:
+            conn.execute("PRAGMA busy_timeout=60000")
+            row = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        finally:
+            conn.close()
+        logger.info(f"[{label}] WAL checkpoint: {tuple(row) if row else None} "
+                    f"({before / 1024 ** 2:,.1f} MB → {wal_size() / 1024 ** 2:,.1f} MB)")
+    except Exception as e:  # noqa: BLE001 — 回収失敗で週次メンテを落とさない
+        logger.warning(f"[{label}] WAL checkpoint に失敗しました: {e}")
+    return before, wal_size()
+
+
 def run_physical_maintenance(db_path: str, label: str, dry_run: bool):
     """
     Executes database integrity checks, vacuuming, and reindexing.
@@ -83,8 +144,11 @@ def run_physical_maintenance(db_path: str, label: str, dry_run: bool):
     if not os.path.exists(db_path):
         logger.warning(f"[{label}] Database file not found for physical maintenance: {db_path}. Skipping.")
         return
-        
+
     initial_size = os.path.getsize(db_path)
+    wal_before = os.path.getsize(db_path + "-wal") if os.path.exists(db_path + "-wal") else 0
+    level, wal_msg = classify_wal_size(wal_before, initial_size)
+    (logger.warning if level == "warn" else logger.info)(f"[{label}] {wal_msg}")
     logger.info(f"[{label}] Database size before maintenance: {initial_size / 1024 / 1024:.2f} MB")
     
     # 1. Integrity Check
@@ -103,7 +167,15 @@ def run_physical_maintenance(db_path: str, label: str, dry_run: bool):
         if dry_run:
             logger.info(f"[{label}] Dry-run mode: skipping REINDEX and VACUUM.")
             return
-            
+    finally:
+        conn.close()
+
+    # 1.5 WAL の回収（VACUUM の前に。生コネクションで実行する必要がある）
+    checkpoint_wal(db_path, label)
+
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("PRAGMA busy_timeout = 60000")
         # 2. Reindex
         logger.info(f"[{label}] Rebuilding indexes (REINDEX)...")
         t_reindex = time.time()
@@ -682,6 +754,19 @@ def write_maintenance_report(report: dict, dry_run: bool, db_path: str | None = 
 
         _write_sec_section(f, report.get("sec_sync"), dry_run)
 
+        f.write("\n8. Physical size (SQLite hot cache):\n")
+        for label, path in (("System DB", db_path), ("User DB", report.get("user_db_path"))):
+            if not path or not os.path.exists(path):
+                continue
+            size = os.path.getsize(path)
+            wal = os.path.getsize(path + "-wal") if os.path.exists(path + "-wal") else 0
+            level, msg = classify_wal_size(wal, size)
+            flag = "  <<< CHECK" if level == "warn" else ""
+            f.write(f"  - {label:<10} {size / 1024 ** 2:>9,.0f} MB   {msg}{flag}\n")
+        f.write(f"  ※ 想定は System DB 1.7GB 前後（直近730日）。"
+                f"-wal が {WAL_WARN_BYTES // 1024 ** 2}MB を超えたら"
+                f"チェックポイントが効いていません\n")
+
     logger.info(f"Audit report saved to: {report_file}")
     
     # 2. Delisting recommendations CSV
@@ -814,6 +899,16 @@ def main():
             if not args.dry_run:
                 logger.info(f"  Fixed indicators count: {report['fixed_indicators_count']}")
                 
+            report["user_db_path"] = user_db_path
+
+            # 物理メンテ（checkpoint → REINDEX → VACUUM）は監査より前に走るため、
+            # 監査・SEC 同期の書き込みが WAL に積まれたまま残る。最後に回収する。
+            # 2026-08-07 実測: VACUUM 直後は 1,575MB だったのに、監査後は -wal 1,584MB。
+            if not args.dry_run:
+                for label, path in (("System DB", db_path), ("User DB", user_db_path)):
+                    if path and os.path.exists(path):
+                        checkpoint_wal(path, label)
+
             # Write text/csv audit reports next to the audited DB
             # （本番以外の DB を監査したときに本番のレポートを壊さないため）
             write_maintenance_report(report, dry_run=args.dry_run, db_path=db_path)

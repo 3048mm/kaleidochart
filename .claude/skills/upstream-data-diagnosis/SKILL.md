@@ -120,14 +120,35 @@ curl_cffi.requests.exceptions.CertificateVerifyError:
   curl: (60) SSL certificate problem: unable to get local issuer certificate
 ```
 
-**傍受されているかの確認と対処**:
+**対処は実装済み**（`backend/data_collection/tls_trust.py`）。yfinance を使う経路の
+入口で `ensure_ca_bundle()` が呼ばれ、**certifi + Windows 証明書ストア**を統合した
+バンドルを生成して `CURL_CA_BUNDLE` に設定する。手当ては不要。
 
-```bash
-env | grep -i -E "ssl|cert|ca_bundle"
-#  SSLKEYLOGFILE=\\.\nllMonFltProxy\...                      ← 傍受されている合図
-#  NODE_EXTRA_CA_CERTS=C:\ProgramData\Norton\Antivirus\wscert.pem
+> [!CAUTION]
+> **傍受用の証明書1枚だけを `CURL_CA_BUNDLE` に指定してはいけない。**
+> この変数は既定のバンドルを**置き換える**ため、傍受されていない接続が
+> 今度は検証できなくなる。2026-08-08 に実際に踏んだ:
+>
+> ```
+> 対話セッション    Norton が傍受   → Norton の証明書で通る
+> タスクセッション  傍受されない    → Norton の証明書では通らない（CertificateVerifyError）
+> ```
+>
+> **同じマシンでもセッションによって傍受の有無が変わる。**
+> 見分け方: 傍受されているセッションには `SSLKEYLOGFILE` と `NODE_EXTRA_CA_CERTS`
+> が設定されている（Norton なら `nllMonFltProxy` を含むパス）。
+> タスクスケジューラ側には**どちらも無かった**。
 
-CURL_CA_BUNDLE="C:\ProgramData\Norton\Antivirus\wscert.pem" python ...   ← これで通る
+**`.bat` に `set CURL_CA_BUNDLE=...` を書くのは避ける。**
+その起動経路でしか効かないうえ、`chcp 65001` 環境で日本語コメントを入れると
+cmd のパース位置がずれて**その行が実行されない**（2026-08-07 に日次が取得ゼロで走った）。
+**`.bat` にマルチバイト文字を書かないこと。**
+
+**環境ごとに別の CA を使いたい場合**は `config.local.toml`（git 管理外）で指定する:
+
+```toml
+[tls]
+ca_bundle = "C:/path/to/corporate-ca.pem"
 ```
 
 **エラーメッセージを信じないこと。** yfinance は 404 も 429 も TLS 失敗も

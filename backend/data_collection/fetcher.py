@@ -1,8 +1,17 @@
 import logging
 import time
 import pandas as pd
-import yfinance as yf
-from datetime import datetime, timedelta
+
+# yfinance の import より前に。TLS 傍受環境（Norton 等）では curl_cffi が
+# 傍受用のルート証明書を信頼できず、**全銘柄が `possibly delisted` になる**。
+# `.bat` の env var では起動経路によって効かなかったため Python 側で設定する
+# （経緯: data_collection/tls_trust.py の docstring）。
+from data_collection.tls_trust import ensure_ca_bundle
+
+ensure_ca_bundle()
+
+import yfinance as yf  # noqa: E402
+from datetime import datetime, timedelta  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

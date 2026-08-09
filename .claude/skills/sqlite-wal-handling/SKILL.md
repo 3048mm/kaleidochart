@@ -164,19 +164,63 @@ Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
 `ParentProcessId` が既に存在しないプロセスが孤児。これを落とすまで
 「サーバーは止めたのにファイルが消せない」が続く。
 
-### WAL チェックポイントが恒常的に失敗する件との関係
+### WAL チェックポイントが恒常的に失敗する件（2026-08-07 真因訂正）
 
-`PRAGMA wal_checkpoint(TRUNCATE)` は**排他ロックを要求する**ため、読み取り接続が
-1つでも残っていると失敗する。2026-08-03 の実測:
+> [!CAUTION]
+> **セッション経由で `PRAGMA wal_checkpoint` を実行してはいけない。**
+> `write_engine` は `begin` イベントで `BEGIN IMMEDIATE` を張るため、
+> `db.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))` は暗黙のトランザクションに入り、
+> SQLite が拒否する（`database table is locked`）。**他に誰も居なくても必ず失敗する。**
+
+2026-08-03 には「読み取り接続に阻まれている」と診断していたが、**それは主因ではなかった**。
+同じ処理を2経路で実行して切り分けた（2026-08-07）:
 
 ```
-パイプライン実行中（API サーバー稼働）  → database table is locked で失敗し続けた
-API サーバーと孤児プロセスを完全停止後  → (0, 0, 0) で成功、WAL 3,528MB → 0MB
+A. write セッションで PRAGMA   → 失敗 database table is locked
+B. 独立した生コネクションで     → 成功 (0, 0, 0) / WAL 11.6MB → 0
 ```
 
-**診断が実証された**: 原因は排他ロックを取れないことであり、
-**重い読み取り処理（シナリオテスト・バックテスト・API サーバー）を走らせたまま
-日次パイプラインを回すと WAL は回収されない。** 設計上ワーニング止まりなので誰も気づかない。
+`uvicorn` を動かしたままでも B は成功する。**サーバーの有無ではなく実行経路の問題だった。**
+
+正しい実装（`pipeline/orchestrator.safe_wal_checkpoint`）:
+
+```python
+db.commit()                                   # 書き込みロックを解放してから
+raw = db.get_bind().raw_connection()          # 独立した生コネクション
+cur = raw.cursor()
+cur.execute("PRAGMA busy_timeout=3000")       # ← 必須。下記参照
+cur.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+busy, log_frames, checkpointed = cur.fetchone()
+```
+
+> [!WARNING]
+> **短い `busy_timeout` を必ず設定する。** `write_engine` は長時間バッチ用に
+> `timeout=3600` で作られており、その接続をそのまま使うと読み取りに阻まれたとき
+> **チェックポイントが最大1時間パイプラインを止める**（テストで実際にハングした）。
+> 回収は best-effort。待たずに諦めて次へ進む。
+
+### 読み取りに阻まれた場合：モードを変えても解決しない
+
+読み取りトランザクションが開いていると、**どのモードでも1フレームも回収できない**（実測）:
+
+```
+PASSIVE   busy=0 log=506  checkpointed=0   ← 成功に見えるが回収ゼロ
+FULL      busy=1 log=1012 checkpointed=0
+TRUNCATE  busy=1 log=1518 checkpointed=0
+```
+
+**`PASSIVE` に逃げてはいけない。** `busy=0` を返すので問題が見えなくなるだけ。
+TRUNCATE のまま `(busy, log, checkpointed)` を**数値でログに残す**。
+
+判定の注意点:
+- **`busy=0` でも `log > checkpointed` なら回収できていない**（成功扱いしない）
+- **SQLite は開始すらできないと `log=-1 checkpointed=-1` を返す**。
+  引き算すると「未回収 0 フレーム」になり回収できたように読めるので、明示的に区別する
+
+### 肥大化の検知
+
+ログの WARNING は流れて消える。実際 `-wal` 3.6GB になるまで誰も気づかなかった。
+**週次レポートに数値で残す**（`weekly_maintenance.classify_wal_size`、100MB 超で警告）。
 
 ---
 ---
