@@ -145,19 +145,6 @@ class ChartResponse(BaseModel):
     metadata: ChartSymbolMeta
     themes: List[ChartSymbolMeta] = []
     data: List[ChartDataPoint]
-
-class RankingItem(BaseModel):
-    symbol_id: int
-    ticker: str
-    name: str
-    group_name: str
-    indicator_name: str
-    percent_rank: float
-    date: str
-    
-    class Config:
-        from_attributes = True
-
 class DashboardPanelItem(BaseModel):
     id: int
     ticker: str
@@ -276,11 +263,6 @@ class EtfFeatureItem(BaseModel):
     rank_rs_ratio_14: Optional[float] = None
     rank_rs_ratio_21: Optional[float] = None
     rank_rs_ratio_63: Optional[float] = None
-
-class RankingResponse(BaseModel):
-    indicator_name: str
-    items: List[RankingItem]
-
 class MarketTrendScoreHistoryItem(BaseModel):
     date: str
     score: float

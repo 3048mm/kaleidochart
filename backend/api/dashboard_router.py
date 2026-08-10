@@ -1,4 +1,4 @@
-"""Dashboard API router: /ranking, /available_dates, /dashboard, /theme, /group_data (audit D-1 で分割)."""
+"""Dashboard API router: /available_dates, /dashboard, /theme, /group_data (audit D-1 で分割)."""
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, BackgroundTasks
 from sqlalchemy.orm import Session, aliased
 from sqlalchemy import desc, func, or_, and_, select
@@ -16,65 +16,6 @@ from api.panel_builders import (
     _get_sparkline_data, _build_panel_item, _build_leading_item, _build_etf_feature,
     build_panel_preload, preload_sparklines, preload_constituent_details,
 )
-
-@router.get("/ranking", response_model=List[schemas.RankingResponse])
-def get_rankings(db: Session = Depends(get_api_db), limit: int = 20, asc: bool = False):
-    """
-    T4: Get the latest rankings across groups.
-    By default gets the highest percent rank (descending). Set asc=True to get lowest.
-    """
-    # 1. We only want the latest date available in T4
-    latest_date_row = db.query(RelativeRank.date).order_by(desc(RelativeRank.date)).first()
-    if not latest_date_row:
-        return []
-        
-    latest_date = latest_date_row.date
-    
-    # We return grouped by indicator
-    rank_indicators = [
-        'rs_value_rank',
-        'rs_ratio_rank_e14', 'rs_ratio_rank_e21', 'rs_ratio_rank_e63',
-        'rs_momentum_rank_e14', 'rs_momentum_rank_e21', 'rs_momentum_rank_e63',
-        'rs_trend_rank_s14', 'rs_trend_rank_s21', 'rs_trend_rank_s63',
-        'rs_roc_ema_rank_e14', 'rs_roc_ema_rank_e21', 'rs_roc_ema_rank_e63',
-    ]
-    
-    resp = []
-    for ind_name in rank_indicators:
-        col_attr = getattr(RelativeRank, ind_name, None)
-        if col_attr is None:
-            continue
-            
-        order_col = col_attr.asc() if asc else col_attr.desc()
-        
-        # Join with Symbol to get ticker names
-        results = db.query(RelativeRank, Symbol).join(
-            Symbol, RelativeRank.symbol_id == Symbol.id
-        ).filter(
-            RelativeRank.date == latest_date,
-            col_attr.isnot(None)
-        ).order_by(order_col).limit(limit).all()
-        
-        items = []
-        for rank_row, sym_row in results:
-            items.append(schemas.RankingItem(
-                symbol_id=sym_row.id,
-                ticker=sym_row.ticker,
-                name=sym_row.name,
-                group_name=rank_row.group_name,
-                indicator_name=ind_name,
-                percent_rank=getattr(rank_row, ind_name),
-                date=str(rank_row.date)
-            ))
-        
-        if items:
-            resp.append(schemas.RankingResponse(
-                indicator_name=ind_name,
-                items=items
-            ))
-            
-    return resp
-
 
 
 @router.get("/available_dates", response_model=schemas.AvailableDatesResponse)

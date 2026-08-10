@@ -114,17 +114,6 @@ export interface ChartResponse {
     themes: ChartSymbolMeta[];
     data: ChartDataPoint[];
 }
-
-export interface RankingItem {
-    symbol_id: number
-    ticker: string
-    name: string
-    group_name: string
-    indicator_name: string
-    percent_rank: number
-    date: string
-}
-
 export interface DashboardPanelItem {
     id: number;
     ticker: string;

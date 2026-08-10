@@ -682,52 +682,6 @@ body {
   flex: 1;
   min-height: 0;
 }
-
-/* === Ranking Panel === */
-.ranking-panel {
-  padding: 10px 16px;
-  border-top: 1px solid var(--border);
-  background: var(--bg-glass);
-  display: flex;
-  gap: 24px;
-  overflow-x: auto;
-}
-
-.ranking-group {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 130px;
-}
-
-.ranking-group-title {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-  margin-bottom: 2px;
-}
-
-.ranking-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-}
-
-.ranking-ticker {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.ranking-pct {
-  font-size: 11px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
 /* === Loading / Empty States === */
 .state-center {
   display: flex;
