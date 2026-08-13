@@ -2,6 +2,11 @@ import pytest
 import pandas as pd
 import numpy as np
 from backend.backtest.backtest_screener import apply_filters_to_df
+# apply_filters_to_df（backend.backtest.backtest_screener）は 'indicators.screener_registry'
+# を bare import している（PYTHONPATH=backend 前提）ため、pytest.raises で型を一致させるには
+# 同じ経路（bare）で import する必要がある（backend.indicators.screener_registry 経由だと
+# 別モジュールインスタンスになり例外クラスが一致しない）。
+from indicators.screener_registry import MissingFilterColumnError, UnknownFilterKeyError
 
 def test_apply_filters_new_naming_rs_ratio_rank():
     # Test 'is_rs_ratio_rank_e21_gt_e63'
@@ -419,3 +424,152 @@ def test_apply_filters_theme_leadership_filter_still_works_after_theme_exclusion
     # リーディングテーマ(THEME_A)の構成銘柄STK1のみが残り、テーマ自体は出力に含まれない
     assert len(filtered) == 1
     assert filtered.iloc[0]['ticker'] == 'STK1'
+
+
+# ============================================================
+# レジストリ導出（doc/in_progress/screener_filter_unification_plan.md §3.1.4）のテスト
+# ============================================================
+
+def test_apply_filters_raises_missing_filter_column_error():
+    """特殊フィルタが requires で宣言する当日カラムが merged に無ければ例外になること
+    （サイレント素通しではなく MissingFilterColumnError で停止する。Phase 1 の核心）。
+    """
+    merged = pd.DataFrame([
+        # symbol_id, ticker, name, category, active（rs_macd_hist_21 列を欠く）
+        [1, 'STK1', 'Stock 1', '個別', 1],
+    ], columns=['symbol_id', 'ticker', 'name', 'category', 'active'])
+
+    strategy = {
+        'name': 'test_strat',
+        'is_rs_macd_hist_rising_21': True,
+    }
+
+    with pytest.raises(MissingFilterColumnError) as exc_info:
+        apply_filters_to_df(
+            merged=merged,
+            target_date='2026-06-26',
+            df_ind=pd.DataFrame(columns=['date', 'symbol_id']),
+            df_ranks=pd.DataFrame(columns=['date', 'symbol_id', 'indicator_name', 'percent_rank']),
+            df_symbols=pd.DataFrame(),
+            df_theme_constituents=pd.DataFrame(),
+            strategy=strategy,
+        )
+    assert 'rs_macd_hist_21' in str(exc_info.value)
+
+
+def test_apply_filters_x_y_suffix_collision_raises_instead_of_silent_pass():
+    """avg_dollar_volume_21 が indicators 側と prices 側の両方にあり、呼び出し元の merge で
+    '_x'/'_y' サフィックスが付いた状態（2026-07-28 の実障害の再現）で
+    min_avg_dollar_volume_21 を指定すると、サイレント素通し（全銘柄通過）ではなく
+    例外になること。素の列名が merged に存在しないため、レジストリ解決自体が
+    UnknownFilterKeyError になる（fail-loud という結果は MissingFilterColumnError と同じ）。
+    """
+    merged = pd.DataFrame([
+        # symbol_id, ticker, name, category, active, avg_dollar_volume_21_x/_y（素の列名が無い）
+        [1, 'STK1', 'Stock 1', '個別', 1, 1_000_000.0, 2_000_000.0],
+        [2, 'STK2', 'Stock 2', '個別', 1, 100.0, 200.0],
+    ], columns=['symbol_id', 'ticker', 'name', 'category', 'active',
+                'avg_dollar_volume_21_x', 'avg_dollar_volume_21_y'])
+
+    strategy = {
+        'name': 'test_strat',
+        'min_avg_dollar_volume_21': 500_000.0,
+    }
+
+    with pytest.raises(UnknownFilterKeyError):
+        apply_filters_to_df(
+            merged=merged,
+            target_date='2026-06-26',
+            df_ind=pd.DataFrame(columns=['date', 'symbol_id']),
+            df_ranks=pd.DataFrame(columns=['date', 'symbol_id', 'indicator_name', 'percent_rank']),
+            df_symbols=pd.DataFrame(),
+            df_theme_constituents=pd.DataFrame(),
+            strategy=strategy,
+        )
+
+
+def test_apply_filters_merges_only_required_rank_columns():
+    """必要なランクだけが merge されること（14/21/63 の6列を無条件に引かない）。
+
+    旧実装は needs_rs14/21/63 のいずれかが真になると、ratio と trend の2列を必ず
+    セットで引いていた。min_rs_ratio_rank_e21 だけを指定した場合、rs21_rank 以外の
+    ランク列（rs14_rank / rs63_rank / rs_condition_*_rank）は merged に現れないこと。
+    """
+    merged = pd.DataFrame([
+        [1, 'STK1', 'Stock 1', '個別', 1],
+        [2, 'STK2', 'Stock 2', '個別', 1],
+    ], columns=['symbol_id', 'ticker', 'name', 'category', 'active'])
+
+    strategy = {
+        'name': 'test_strat',
+        'min_rs_ratio_rank_e21': 0.5,
+    }
+
+    # 6ランク全種類ぶんのデータを用意しておく（旧実装ならこれを全部引いてしまう）
+    df_ranks = pd.DataFrame([
+        ['2026-06-26', 1, 'rs_ratio_rank_e14', 0.9],
+        ['2026-06-26', 1, 'rs_ratio_rank_e21', 0.8],
+        ['2026-06-26', 1, 'rs_ratio_rank_e63', 0.7],
+        ['2026-06-26', 1, 'rs_trend_rank_s14', 0.6],
+        ['2026-06-26', 1, 'rs_trend_rank_s21', 0.5],
+        ['2026-06-26', 1, 'rs_trend_rank_s63', 0.4],
+        ['2026-06-26', 2, 'rs_ratio_rank_e14', 0.1],
+        ['2026-06-26', 2, 'rs_ratio_rank_e21', 0.1],
+        ['2026-06-26', 2, 'rs_ratio_rank_e63', 0.1],
+        ['2026-06-26', 2, 'rs_trend_rank_s14', 0.1],
+        ['2026-06-26', 2, 'rs_trend_rank_s21', 0.1],
+        ['2026-06-26', 2, 'rs_trend_rank_s63', 0.1],
+    ], columns=['date', 'symbol_id', 'indicator_name', 'percent_rank'])
+
+    filtered = apply_filters_to_df(
+        merged=merged,
+        target_date='2026-06-26',
+        df_ind=pd.DataFrame(columns=['date', 'symbol_id']),
+        df_ranks=df_ranks,
+        df_symbols=pd.DataFrame(),
+        df_theme_constituents=pd.DataFrame(),
+        strategy=strategy,
+    )
+
+    assert 'rs21_rank' in filtered.columns
+    for unused_col in ('rs14_rank', 'rs63_rank', 'rs_condition_14_rank',
+                       'rs_condition_21_rank', 'rs_condition_63_rank'):
+        assert unused_col not in filtered.columns, (
+            f"必要でないランク列 {unused_col} が merge されている（過剰マージ）"
+        )
+    assert len(filtered) == 1
+    assert filtered.iloc[0]['ticker'] == 'STK1'
+
+
+def test_apply_filters_vcp_breakout_deny_by_default_without_prev_date():
+    """is_vcp_breakout は前日列が無くても例外にならず、deny-by-default（全 False）のままであること。
+
+    filter_vcp_breakout は前日カラムが無い場合に全 False を返す設計
+    （indicators/screener_filters.py の docstring 参照）。prev_date=None
+    （バックテスト初日等）でも MissingFilterColumnError にはならず、単に0件になる。
+    """
+    merged = pd.DataFrame([
+        # symbol_id, ticker, name, category, active,
+        # dist_63d_high_pct, dist_52w_high_pct, change_1d_pct, vol_surge_21, is_trend_template, vcr
+        [1, 'STK1', 'Stock 1', '個別', 1, -1.0, -1.0, 5.0, 2.0, 1, 0.5],
+    ], columns=['symbol_id', 'ticker', 'name', 'category', 'active',
+                'dist_63d_high_pct', 'dist_52w_high_pct', 'change_1d_pct',
+                'vol_surge_21', 'is_trend_template', 'vcr'])
+
+    strategy = {
+        'name': 'test_strat',
+        'is_vcp_breakout': True,
+    }
+
+    filtered = apply_filters_to_df(
+        merged=merged,
+        target_date='2026-06-26',
+        df_ind=pd.DataFrame(columns=['date', 'symbol_id']),
+        df_ranks=pd.DataFrame(columns=['date', 'symbol_id', 'indicator_name', 'percent_rank']),
+        df_symbols=pd.DataFrame(),
+        df_theme_constituents=pd.DataFrame(),
+        strategy=strategy,
+        prev_date=None,
+    )
+
+    assert len(filtered) == 0

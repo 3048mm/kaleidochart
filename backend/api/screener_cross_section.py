@@ -31,34 +31,30 @@ from indicators.screener_filters import (
     filter_vcp_breakout,
     SPECIAL_FILTER_KEYS,
 )
+from indicators import screener_registry
 
 logger = logging.getLogger(__name__)
 
-# クロスセクションに必要な Indicator カラム
-_IND_COLS = [
-    "rs_ratio_e14", "rs_ratio_e21", "rs_ratio_e63",
-    "rs_momentum_e21",
-    "rs_trend_s14", "rs_trend_s21", "rs_trend_s63",
-    "rs_macd_hist_21",
-    # VCP ブレイクアウト用（当日）
-    "vcr", "dist_63d_high_pct", "dist_52w_high_pct", "vol_surge_21", "is_trend_template",
-    "change_1d_pct",
+# クロスセクションに必要な Indicator カラム。
+# レジストリの kind='special' 全 spec の requires/prev_requires の和集合から導出する
+# （doc/in_progress/screener_filter_unification_plan.md §3.1.4 (e)）。実在の Indicator 列だけに
+# 絞る（requires にはランク列も混ざるため。ランクは _RANK_COL_MAP 経由で別途取り込む）。
+_INDICATOR_COLUMN_NAMES = {c.name for c in Indicator.__table__.columns}
+
+_SPECIAL_SPECS = [
+    spec for spec in screener_registry.EXPLICIT_SPECS.values() if spec.kind == 'special'
 ]
+_IND_COLS = sorted({
+    col for spec in _SPECIAL_SPECS for col in spec.requires
+    if col in _INDICATOR_COLUMN_NAMES
+})
 # 前日から prev_ プレフィックスで取り込むカラム
-_PREV_COLS = [
-    "rs_ratio_e21", "rs_momentum_e21", "rs_macd_hist_21",
-    # VCP ブレイクアウト用（前日）
-    "vcr", "dist_63d_high_pct", "dist_52w_high_pct", "vol_surge_21",
-]
-# wide 形式 relative_ranks → 共通カラム名へのマッピング
-_RANK_COL_MAP = {
-    "rs_ratio_rank_e14": "rs14_rank",
-    "rs_ratio_rank_e21": "rs21_rank",
-    "rs_ratio_rank_e63": "rs63_rank",
-    "rs_trend_rank_s14": "rs_condition_14_rank",
-    "rs_trend_rank_s21": "rs_condition_21_rank",
-    "rs_trend_rank_s63": "rs_condition_63_rank",
-}
+_PREV_COLS = sorted({
+    col for spec in _SPECIAL_SPECS for col in spec.prev_requires
+    if col in _INDICATOR_COLUMN_NAMES
+})
+# wide 形式 relative_ranks → 共通カラム名へのマッピング（レジストリを参照する）
+_RANK_COL_MAP = dict(screener_registry.RANK_FRAME_ALIASES)
 
 
 def build_cross_section(db, latest_date, previous_date=None) -> Tuple[pd.DataFrame, pd.DataFrame]:

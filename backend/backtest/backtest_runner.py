@@ -30,6 +30,7 @@ from backend.backtest.backtest_screener import scan_signals_for_date, SignalReco
 from backend.backtest.backtest_simulator import simulate_trade, ExitRules, TradeResult
 from backend.backtest.backtest_report import calculate_metrics, print_comparison_table, save_results_json
 from backend.backtest.strategy_normalizer import normalize_strategy_keys
+from backend.backtest.common_constraints import load_min_avg_dollar_volume_21, inject_liquidity_floor
 
 
 def load_config(config_path: str) -> dict:
@@ -460,10 +461,14 @@ def run_backtest(config: dict, strategy_filter: str = None, refresh_cache: bool 
     df_symbols, df_prices, df_indicators, df_ranks, df_theme_constituents, trading_dates = \
         preload_data(database.engine, start_date, end_date, refresh_cache=refresh_cache)
 
-    # Validate configuration parameters
-    warnings = validate_strategies_config(strategies, df_indicators, df_prices, df_ranks, df_theme_constituents)
-    if warnings:
-        print_validation_warnings(warnings)
+    # Validate configuration parameters（未知キーはエラー。CLI 経路は §1.3 の先行事例に倣い停止する）
+    validation_errors = validate_strategies_config(strategies, df_indicators, df_prices, df_ranks, df_theme_constituents)
+    if validation_errors:
+        print_validation_warnings(validation_errors)
+        raise ValueError(
+            "Unknown filter keys found in strategies config:\n"
+            + "\n".join(f"  - {e}" for e in validation_errors)
+        )
 
     # Calculate VXV/VIX Ratio (using ^VIX3M and ^VIX)
     vxv_vix_series = {}
@@ -498,11 +503,16 @@ def run_backtest(config: dict, strategy_filter: str = None, refresh_cache: bool 
     consider_tax = config.get('general', {}).get('consider_tax', 0.0)
     entry_mode = config.get('general', {}).get('entry_mode', 'close')
     # 流動性ハード制約（最適化対象外・全戦略共通。戦略側の明示指定があればそちらを優先）
-    min_dollar_vol = config.get('general', {}).get('min_avg_dollar_volume_21')
+    liquidity_floor = load_min_avg_dollar_volume_21(config)
+    from backend.indicators import screener_registry
     for strat in strategies:
         strat_name = strat.get('name', 'Strategy')
-        if min_dollar_vol is not None and 'min_avg_dollar_volume_21' not in strat:
-            strat = {**strat, 'min_avg_dollar_volume_21': float(min_dollar_vol)}
+        strat = inject_liquidity_floor(strat, liquidity_floor)
+        # applied_filters: 実際に適用されるフィルタキー一覧を実行開始時に1行だけログ出力する
+        # （流動性床がサイレントに無効化されていた事故＝計画書 §7 P1-8 は、これがあれば
+        # 結果を見た瞬間に発覚していた。日次ループの中では出さない）
+        applied_filters = sorted(k for k in strat if not screener_registry.is_non_filter_key(k))
+        print(f"  [{strat_name}] applied filters: {applied_filters}")
         metrics, trades = run_single_strategy(
             strat, df_indicators, df_prices, df_ranks, df_symbols, df_theme_constituents,
             trading_dates, exit_rules, show_progress=True, consider_tax=consider_tax,
@@ -517,10 +527,6 @@ def run_backtest(config: dict, strategy_filter: str = None, refresh_cache: bool 
     # Save results
     results_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
     save_results_json(all_results, all_trades, results_dir, start_date, end_date)
-
-    # Print warnings again at the very end
-    if warnings:
-        print_validation_warnings(warnings)
 
 
 def print_validation_warnings(warnings: list):
@@ -538,139 +544,45 @@ def print_validation_warnings(warnings: list):
 
 
 def validate_strategies_config(strategies: list, df_ind: pd.DataFrame, df_prices: pd.DataFrame, df_ranks: pd.DataFrame = None, df_theme_constituents: pd.DataFrame = None) -> list:
-    """Validate parameters in strategies configuration against schema and preloaded data."""
-    import re
+    """戦略設定の各フィルタキーがレジストリで解決できるかを検証する（純関数）。
+
+    返すのは「警告」ではなく「エラー」として扱う（呼び出し側で空でなければ ValueError に変換して
+    停止する。doc/in_progress/screener_filter_unification_plan.md §3.1.3 の U-1 決定）。
+    df_ranks はバックテスト側で long 形式に melt 済みのためランク名が列名に現れず使えない
+    （§3.1.2）。RelativeRank モデルの実カラムからランク列集合を組み立てる。
+    """
     from backend.db.models import RelativeRank
     from backend.backtest.strategy_normalizer import normalize_strategy_keys
+    from backend.indicators import screener_registry
 
     strategies = [normalize_strategy_keys(s) for s in strategies]
 
-    try:
-        from backend.indicators.screener_filters import SPECIAL_FILTER_KEYS
-        from backend.api.screener_router import _INDICATOR_COLUMNS, _VIRTUAL_COLUMNS
-    except ImportError:
-        SPECIAL_FILTER_KEYS = set()
-        _INDICATOR_COLUMNS = {}
-        _VIRTUAL_COLUMNS = {}
-
-    warnings = []
-
-    # 特殊フィルタに付随する数値パラメータ（is_vcp_breakout の閾値群など）
-    FILTER_ATTACHED_PARAM_KEYS = {
-        'breakout_high_window', 'vcr_contraction_max', 'base_high_tol',
-        'near_high_tol', 'breakout_change', 'breakout_vol_mult',
-        'pivot_tol', 'base_vol_dry_max',
+    known_columns = set(df_ind.columns) | set(df_prices.columns) | set(screener_registry.VIRTUAL_COLUMNS)
+    rank_columns = {
+        col for col in RelativeRank.__table__.columns.keys()
+        if col not in ('id', 'symbol_id', 'date', 'group_name')
     }
 
-    # Metadata, execution, and validation controller params
-    METADATA_KEYS = {
-        'id', 'name', 'subtitle', 'subname', 'description', 'group', 'filters', 'use_hysteresis',
-        'max_hits_per_day', 'sort_column', 'sort_ascending', 'expression', '_use_hysteresis',
-        'min_avg_hits_per_day', 'min_hit_rate_pct', 'max_allowed_dd',
-        # Scenario runner internal parameters
-        'use_vxv_vix_hysteresis', 'vxv_vix_hysteresis_type',
-        # Optimization configuration
-        'optimization'
-    }
-
-    # Allowed rank indicators from RelativeRank
-    rank_column_names = {
-        'rs_value_rank',
-        'rs_ratio_rank_e5', 'rs_ratio_rank_e14', 'rs_ratio_rank_e21', 'rs_ratio_rank_e63', 'rs_ratio_rank_e200',
-        'rs_momentum_rank_e5', 'rs_momentum_rank_e14', 'rs_momentum_rank_e21', 'rs_momentum_rank_e63', 'rs_momentum_rank_e200',
-        'rs_trend_rank_s5', 'rs_trend_rank_s14', 'rs_trend_rank_s21', 'rs_trend_rank_s63', 'rs_trend_rank_s200',
-        'rs_roc_ema_rank_e5', 'rs_roc_ema_rank_e14', 'rs_roc_ema_rank_e21', 'rs_roc_ema_rank_e63', 'rs_roc_ema_rank_e200',
-        'rs_macd_hist_rank_21',
-    }
-
-    # Aliases in backtest_screener.py
-    alias_map = {
-        'change_intraday_pct', 'rs21_rank', 'rs63_rank',
-        'trend_template_ok', 'rs_condition_14_rank', 'rs_condition_21_rank', 'rs_condition_63_rank'
-    }
+    errors = []
 
     for strat in strategies:
         strat_name = strat.get('name', 'Unknown')
-        for key, value in strat.items():
-            if key in METADATA_KEYS:
-                continue
 
-            # 1. Custom boolean / RRG filters
-            if key in SPECIAL_FILTER_KEYS:
-                continue
-            if key == 'rrg_intensity_threshold':
-                continue
-            # 特殊フィルタに付随する数値パラメータ（min_/max_/is_ 接頭辞を持たない）
-            if key in FILTER_ATTACHED_PARAM_KEYS:
-                continue
+        # 制御キー（METADATA_KEYS）と特殊フィルタの随伴パラメータ（ATTACHED_PARAM_KEYS。
+        # is_vcp_breakout の pivot_tol 等）は、フィルタキーとして解決を試みない
+        filter_keys = {k for k in strat if not screener_registry.is_non_filter_key(k)}
+        # [strategy.optimization] サブ dict のキーも検証対象に含める
+        opt = strat.get('optimization')
+        if isinstance(opt, dict):
+            filter_keys |= {k for k in opt if not screener_registry.is_non_filter_key(k)}
 
-            # Normalize theme-based keys for standard validation checks (e.g. min_theme_rs_trend_s21 -> min_rs_trend_s21)
-            eval_key = key
-            if key.startswith('min_theme_'):
-                eval_key = 'min_' + key[10:]
-            elif key.startswith('max_theme_'):
-                eval_key = 'max_' + key[10:]
-            elif key.startswith('is_theme_'):
-                eval_key = 'is_' + key[9:]
+        for key in filter_keys:
+            try:
+                screener_registry.resolve_filter_spec(key, known_columns, rank_columns)
+            except screener_registry.UnknownFilterKeyError:
+                errors.append(f"Strategy '{strat_name}': Unknown parameter '{key}'.")
 
-            # 2. Moving average cross-above (is_close_gt_* / close_gt_*)
-            if eval_key.startswith('close_gt_') or eval_key.startswith('is_close_gt_'):
-                ind_name = eval_key[9:] if eval_key.startswith('close_gt_') else eval_key[12:]
-                if ind_name in ('sma5', 'sma21', 'sma50', 'sma63', 'sma150', 'sma200', 'ema5', 'ema21', 'ema50', 'ema63', 'ema150', 'ema200'):
-                    for num in ('200', '150', '63', '50', '21', '5'):
-                        if ind_name.endswith(num) and not ind_name.endswith('_' + num):
-                            ind_name = ind_name.replace(num, '_' + num)
-                            break
-                if ind_name in _INDICATOR_COLUMNS or ind_name in df_ind.columns:
-                    continue
-                else:
-                    warnings.append(f"Strategy '{strat_name}': Invalid moving average parameter '{key}'.")
-                    continue
-
-            # 3. Specific rank parameter bounds (min/max_<col>_rank)
-            rank_match = re.match(r'^(min|max)_(.+)_rank$', eval_key)
-            if rank_match:
-                direction, indicator = rank_match.group(1), rank_match.group(2)
-                if hasattr(RelativeRank, indicator) or indicator in rank_column_names:
-                    continue
-                else:
-                    warnings.append(f"Strategy '{strat_name}': Unknown rank parameter '{key}'.")
-                    continue
-
-            # 4. Standard prefixes (min_, max_, bool_, is_, has_)
-            col_name = eval_key
-            op = None
-            if eval_key.startswith('min_'):
-                col_name = eval_key[4:]; op = '>='
-            elif eval_key.startswith('max_'):
-                col_name = eval_key[4:]; op = '<='
-            elif isinstance(value, bool) or eval_key.startswith('bool_') or eval_key.startswith('is_') or eval_key.startswith('has_'):
-                op = '=='
-                if eval_key.startswith('bool_'): col_name = eval_key[5:]
-                elif eval_key.startswith('is_'): col_name = eval_key[3:]
-                elif eval_key.startswith('has_'): col_name = eval_key[4:]
-
-            if not op:
-                warnings.append(f"Strategy '{strat_name}': Parameter '{key}' has no valid prefix (min_/max_/is_/bool_).")
-                continue
-
-            # Resolve check
-            is_valid_col = (
-                col_name in _INDICATOR_COLUMNS or 
-                col_name in df_ind.columns or 
-                col_name in _VIRTUAL_COLUMNS or 
-                col_name in alias_map or 
-                hasattr(RelativeRank, col_name) or
-                col_name in rank_column_names or
-                col_name in df_prices.columns or
-                eval_key in _INDICATOR_COLUMNS or
-                eval_key in df_ind.columns
-            )
-
-            if not is_valid_col:
-                warnings.append(f"Strategy '{strat_name}': Unknown parameter '{key}'.")
-
-    return warnings
+    return errors
 
 
 def main():

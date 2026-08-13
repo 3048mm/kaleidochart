@@ -197,32 +197,204 @@ import が壊れると検証が静かに劣化する）。
 
 ### Phase 1: フィルタ仕様レジストリ ＋ fail-loud 化
 
-**何を**: `indicators/screener_filters.py` に全フィルタキーの宣言的定義を追加する。
+**何を**: フィルタキーの宣言的レジストリを新設し、キーの解釈を1箇所に集約する。
+
+#### 3.1.1 実使用キーの棚卸し（2026-08-10 実測）
+
+`data/screener_presets*.toml` と `backend/backtest/backtest_config.toml`
+（`[[strategy]]` + `[strategy.optimization]` + `[optimization.*]`）に登場するキーは **45種**。
+これに実行時注入の `min_avg_dollar_volume_21` を加えた **46種**が Phase 1 の対象範囲。
+
+| kind | 件数 | 実例（括弧内は総出現回数） |
+| :--- | ---: | :--- |
+| `numeric`（Indicator / DailyPrice / 派生列の min_/max_） | 25 | `min_market_cap`(44) `max_sma50_atr_mult`(38) `min_adr_pct_21`(35) `min_vol_surge_21`(31) `min_dist_21ema_pct` `min_change_intraday_pct` |
+| `special`（既存の純関数15種のうち実使用10種） | 10 | `rrg_leading_in` `rrg_improving_in` `rrg_lagging_in` `is_rs_macd_hist_rising_21` `is_rs_ratio_rank_e21_gt_e63` `is_rs_trend_s14_lt_s21` `is_theme_rs_ratio_e21_gt_e63` `is_theme_rs_ratio_rank_e14_gt_e21` `is_theme_rs_ratio_rank_e21_gt_e63` `is_theme_rs_trend_rank_s14_gt_s21` |
+| `rank`（RelativeRank 列の min_/max_） | 3 | `min_rs_ratio_rank_e14` `min_rs_ratio_rank_e21` `min_rs_trend_rank_s21` |
+| `bool_column`（実在の SMALLINT 列の is_） | 2 | `is_trend_template`(11) `is_rs_blue_dot` |
+| `close_gt` | 2 | `is_close_gt_ema63`(19) `is_close_gt_sma50` |
+| `theme_rank` | 1 | `min_theme_rs_ratio_rank_e21` |
+| `theme_numeric` | 1 | `min_theme_rs_trend_s21` |
+| `expression` | 1 | プリセット3件で使用 |
+| 実行時注入 | 1 | `min_avg_dollar_volume_21`（TOML には書かれない） |
+
+> [!IMPORTANT]
+> **プリセットファイルは4つあるが、git 管理下にあるのは `screener_presets.toml` だけ。**
+> `screener_presets_A_only.toml` / `_B_only` / `_E_only` は本体チェックアウトにのみ存在する
+> 未追跡の実験用ファイル（個別戦略のシナリオテスト用）で、**ワークツリーには存在しない**。
+> この3ファイルにしか無いキーが2件ある: `max_dist_52w_high_pct` と `is_theme_rs_ratio_e21_gt_e63`。
+> - 前者はルールベース解決（`max_` + 実在の Indicator 列）で**自動的にカバーされる**。
+>   明示登録は不要で、これがルールベース設計の利点そのもの。
+> - 実データ整合テストは `data/screener_presets*.toml` を **glob して「在るものを全部」対象にする**
+>   （本体では4ファイル、ワークツリーでは1ファイル）。手書きの実験用プリセットで使ったキーも
+>   レジストリで解決できなければ、そこが F1 の抜け穴になるため。
+
+> [!NOTE]
+> `SPECIAL_FILTER_KEYS` は **15種**（当初 14 と記載していたが実測は 15）。うち実使用ゼロは
+> **5種**（`is_vcp_breakout` / `is_theme_rs_ratio_e14_gt_e21` / `is_rs_trend_s21_lt_s63` /
+> `is_theme_rs_trend_rank_s21_gt_s63` / `is_rs_ratio_rank_e14_gt_e21`）。**削除せずレジストリに載せる**
+> （issue_list P1「区分B」で採用候補として追跡中のため）。
+> なお `is_theme_rs_ratio_e21_gt_e63` は未追跡の `_B_only` で使われているため「実使用」に分類した。
+
+#### 3.1.2 モジュール配置と依存方向（設計判断）
+
+**`backend/indicators/` の純粋性を壊さないため、レジストリは DB モデルを import しない。**
+
+`indicators/` は `architecture.md` §3 で「純粋な計算アルゴリズム用モジュール群」と定義されている。
+一方でレジストリは「どのカラムが実在するか」を知る必要がある。この2つを両立させるため、
+**レジストリは「カラム名の文字列」だけを扱い、実在判定は呼び出し側が渡す `known_columns` に委ねる**。
 
 ```python
+# backend/indicators/screener_registry.py（新規・pandas も SQLAlchemy も import しない）
+
+class UnknownFilterKeyError(ValueError): ...      # 未知のキー
+class MissingFilterColumnError(ValueError): ...   # 必要カラムが供給されていない
+
 @dataclass(frozen=True)
 class FilterSpec:
-    kind: str                      # "numeric" | "theme_numeric" | "rank" | "theme_rank"
-                                   # | "close_gt" | "special"
-    requires: tuple[str, ...]      # 当日に必要なカラム（正準名）
-    prev_requires: tuple[str, ...] = ()   # 前日に prev_ 付きで必要なカラム
-    fn: Callable | None = None     # kind="special" のときの評価関数
-    params: tuple[str, ...] = ()   # 随伴する数値パラメータキー
-    op: str | None = None          # ">=" | "<=" | "=="
+    key: str
+    kind: str          # numeric|rank|theme_numeric|theme_rank|bool_column|close_gt|special
+    column: str | None        # 比較対象の正準カラム名（special は None）
+    op: str | None            # ">=" | "<=" | "=="
+    requires: tuple[str, ...] = ()        # 当日に必要な正準カラム名
+    prev_requires: tuple[str, ...] = ()   # 前日に prev_ 付きで必要なカラム名
+    params: tuple[str, ...] = ()          # 随伴する数値パラメータキー（VCP の閾値群など）
 
-FILTER_SPECS: dict[str, FilterSpec] = { ... }
+EXPLICIT_SPECS: dict[str, FilterSpec]   # special / close_gt など明示登録が要るもの
+METADATA_KEYS: frozenset[str]           # フィルタではない制御キー（後述）
+
+def resolve_filter_spec(key: str, known_columns: AbstractSet[str],
+                        rank_columns: AbstractSet[str]) -> FilterSpec:
+    """キー1つを FilterSpec に解決する。解決できなければ UnknownFilterKeyError。
+
+    解決順序（先に一致したものを採用）:
+      1. EXPLICIT_SPECS（special / close_gt）
+      2. min_theme_ / max_theme_ + rank_columns  -> theme_rank
+      3. min_theme_ / max_theme_ + known_columns -> theme_numeric
+      4. min_ / max_ + rank_columns              -> rank
+      5. min_ / max_ + known_columns             -> numeric
+      6. is_ / bool_ / has_ + known_columns      -> bool_column
+      -> いずれにも当たらなければ raise
+    """
+
+@dataclass(frozen=True)
+class RequiredColumns:
+    today: frozenset[str]   # 基準日に必要なカラム（正準名）
+    prev: frozenset[str]    # 前日に必要なカラム（prev_ を付けない素の名前）
+    ranks: frozenset[str]   # RelativeRank から必要なカラム
+
+def resolve_required_columns(strategy: Mapping, known_columns, rank_columns) -> RequiredColumns:
+    """戦略dict全体から必要カラム集合を導出する（METADATA_KEYS は無視）。
+    データ供給側（クロスセクション構築・日次マージ）はこの結果だけを見ればよい。"""
 ```
 
-- 数値系は `min_/max_` × カラム名の機械展開で生成（Indicator モデルのカラム走査＋仮想カラム定義）
-- 特殊系は既存の `SPECIAL_FILTER_KEYS` を `FILTER_SPECS` へ移行（後方互換のため `SPECIAL_FILTER_KEYS`
-  は `FILTER_SPECS` からの導出プロパティとして残す）
+> [!NOTE]
+> `RequiredColumns` は **frozen dataclass で属性アクセス**（`req.today` / `req.prev` / `req.ranks`）。
+> `prev` は `prev_` 接頭辞を**付けない素のカラム名**で持ち、接頭辞の付与は供給側（マージ処理）の責務。
+> 供給側ごとに接頭辞の規約が違う（API は `prev_` 固定、バックテストは `rename` で付与）ため、
+> レジストリは論理名だけを持つ。
+
+- **`known_columns` の供給元**: API 側は `Indicator.__table__.columns` + `DailyPrice.market_cap` +
+  仮想カラム定義、バックテスト側は `merged.columns`（実際に手元にある列）。
+  **「宣言されている」だけでなく「実際に供給されている」ことを検査できるのが要点**（P0-2 / F4 対策）。
+- **`rank_columns`**: `RelativeRank.__table__.columns`（API）／ ranks DataFrame の列（バックテスト）。
+- 既存の `SPECIAL_FILTER_KEYS`（`screener_filters.py`）は `EXPLICIT_SPECS` からの**導出値として残す**
+  （外部参照が3ファイルあるため後方互換を保つ）。
+- **特殊フィルタの関数本体は `screener_filters.py` のまま**。レジストリは関数参照を持たず
+  `kind="special"` とキーだけを持ち、ディスパッチは既存の `evaluate_special_filters` /
+  `apply_filters_to_df` が引き続き担当する（**Phase 1 では dispatch の構造を動かさない**。
+  変更範囲を「キーの解釈」と「カラム供給」に限定して回帰リスクを抑える）。
+
+#### 3.1.3 fail-loud の契約
+
+| 検査 | 例外 | 発火箇所 |
+| :--- | :--- | :--- |
+| キーがどの kind にも解決できない | `UnknownFilterKeyError` | `resolve_filter_spec` |
+| 解決できたが `requires` のカラムが実際には供給されていない | `MissingFilterColumnError` | フィルタ適用の直前 |
+
+- 両方 `ValueError` のサブクラス。§1.3 の先行事例（`report_strategy_scan_coverage` /
+  `resolve_portfolio_params`）が `ValueError` で停止する契約に揃える。
+- **CLI 経路**（backtest / optimization / scenario）は例外をそのまま伝播させて停止する。
+- **API 経路**は U-1 の決定に従い、プリセット単位で捕捉して当該プリセットのみ「エラー」を返し、
+  他のプリセットは正常表示する（`_build_preset_query` の呼び出し元で try/except）。
+
+> [!WARNING]
+> **`max_hits_per_day` / `sort_column` / `min_avg_hits_per_day` / `max_allowed_dd` 等のメタキーを
+> フィルタキーと誤認して例外にしないこと。** 現在この除外集合は `validate_strategies_config` の
+> `METADATA_KEYS`（`backtest_runner.py`）と `apply_filters_to_df` の skip リスト
+> （`backtest_screener.py` L370）と `_build_preset_query` の個別 `elif`（`screener_router.py` L634-637）に
+> **3箇所へ分散している**。レジストリ側の `METADATA_KEYS` に集約し、3者ともそれを参照する。
+
+#### 3.1.4 データ供給側の設計（2026-08-10 確定）
+
+ここが Phase 1 で最もリスクが高い。**merged フレームの中身が実際に変わる**ため。
+
+##### (a) 正準名 ↔ フレーム内名の対応をレジストリへ集約
+
+レジストリは**正準名**（`rs_ratio_rank_e21`）で話すが、フレーム内の実列名は
+**フレーム内名**（`rs21_rank`）という第3の命名になっている。この対応表は現在2箇所にあり、
+**6件とも完全一致している**ことを実測で確認した:
+
+| 場所 | 内容 |
+| :--- | :--- |
+| `screener_cross_section._RANK_COL_MAP`（L54-61） | 6件 |
+| `backtest_screener.apply_filters_to_df` の `alias_map`（L354-367） | 同じ6件 ＋ 4件の付随エントリ |
+
+→ レジストリに `RANK_FRAME_ALIASES: dict[str, str]`（正準名 → フレーム内名、未登録は恒等）を新設し、
+両者がこれを参照する。
+
+`alias_map` の残り4件は**レジストリ化で不要になる**:
+- `change_intraday_pct` / `dist_21ema_pct` … 恒等写像（元から無意味）
+- `rs_blue_dot` → `is_rs_blue_dot` / `rs_red_dot` → `is_rs_red_dot` …
+  `is_` 接頭辞を機械的に剥がしていたことの後始末。レジストリの `kind='bool_column'` は
+  **キーをそのまま列名として扱う**ため、この種のズレが原理的に起きない
+  （2026-07-22 の `is_rs_blue_dot` サイレント素通しバグの構造的解消）
+
+##### (b) `MissingFilterColumnError` をここで発火させる
+
+Phase 1 の核心。`apply_filters_to_df` は merged 構築後・フィルタ適用前に
+**必要カラムが実際に揃っているかを検査**し、欠けていれば `MissingFilterColumnError` で停止する。
+
+これで過去の実障害が構造的に捕捉できるようになる:
+
+| 過去の障害 | 検知される理由 |
+| :--- | :--- |
+| `avg_dollar_volume_21` の `_x/_y` サフィックス衝突 | 素の列名が merged に無い → 例外 |
+| `is_rs_blue_dot` の alias 不一致 | (a) により発生しない。仮に起きても列不在で例外 |
+| `min_rs_ratio_rank_e14/e63` の `needs_rs*` 未登録 | 必要ランクがレジストリ由来になるため発生しない |
+| P0-2 の6ランク列 | `min_rs_value_rank` 等を書くと列不在で例外（現在は黙って無視） |
+
+##### (c) long/wide の往復（P0-1）は Phase 1 では**直さない**
+
+`preload_data` の melt（wide→long）と日次の再 wide 化は無駄だが、これを解消するには
+`preload_data` / `backtest_screener` / `scenario_runner` とテストフィクスチャを同時に変える必要があり、
+**Phase 1 の「差分ゼロ」目標に対して blast radius が大きすぎる**。
+Phase 3 の `ScreenerFrame` 契約でまとめて解消する。Phase 1 は長形式のまま、
+「どのランクを引くか」の決定だけをレジストリ駆動に置き換える。
+
+##### (d) `known_columns` / `rank_columns` の供給元
+
+| 経路 | `known_columns` | `rank_columns` |
+| :--- | :--- | :--- |
+| `apply_filters_to_df`（②③） | `df_ind.columns ∪ df_price.columns ∪ VIRTUAL_COLUMNS` | `RelativeRank` モデルの実カラム（**`df_ranks` は long 形式で列名にランク名が出ないため使えない**） |
+| `build_cross_section`（①） | `Indicator` モデルの実カラム ∪ `market_cap` ∪ `VIRTUAL_COLUMNS` | `RelativeRank` モデルの実カラム |
+
+##### (e) `build_cross_section` は「全特殊フィルタの必要カラムの和集合」を取る
+
+API のクロスセクションは**リクエストごとに1回**構築され、全プリセットで共有される。
+戦略ごとの必要カラムは使えないため、`_IND_COLS` / `_PREV_COLS` は
+**レジストリの `kind='special'` 全 spec の `requires` / `prev_requires` の和集合**から導出する
+（1日分 × 約3,100行なので数列多くても実質無コスト）。
+これで新しい特殊フィルタを足したときにクロスセクションが自動追従し、
+手書きリストの更新漏れ（F4）が起きなくなる。
 
 **なぜ**: F1（サイレント素通し）と F4（データ供給の差）を構造的に消すため。
 「必要カラム」がフィルタ自身の宣言になれば、`needs_rs14/21/63` の or 連鎖・`_IND_COLS`・
 `prev_merge_cols`・`price_cols` といった手書きリストの同期漏れが原理的に発生しない。
 
 **対象**:
-- 新規: `backend/indicators/screener_filters.py`（`FilterSpec` / `FILTER_SPECS` / `resolve_required_columns()`）
+- 新規: `backend/indicators/screener_registry.py`（`FilterSpec` / `EXPLICIT_SPECS` / `METADATA_KEYS` /
+  `resolve_filter_spec()` / `resolve_required_columns()` / 例外2種）
+- 改修: `backend/indicators/screener_filters.py`（`SPECIAL_FILTER_KEYS` をレジストリ導出値へ。関数本体は不変）
 - 改修: `backend/api/screener_router.py`（`_build_preset_query` の `is_known` 判定 L639-676 をレジストリ参照へ）
 - 改修: `backend/api/screener_cross_section.py`（`_IND_COLS` / `_PREV_COLS`（L38-52）をレジストリから導出）
 - 改修: `backend/backtest/backtest_screener.py`（`needs_rs*` or 連鎖 L182-224・deny-by-default L299-321・`prev_merge_cols` L341 をレジストリ導出へ置換）
@@ -272,6 +444,66 @@ Parquet／DataFrame（`backtest` 経路）の両方に投入して、通過 `sym
 
 **影響範囲**: テストのみ。プロダクションコードは変更しない。
 
+#### 3.2.1 詳細設計（2026-08-11 確定）
+
+##### (a) データは「1つの真実」から両形式へ書き出す
+
+パリティテストの最大の落とし穴は、**フィクスチャ自体が2つに分かれて食い違う**こと
+（それでは検証しているつもりで何も検証していない）。したがって:
+
+```
+_PARITY_DATASET（プレーンな dict/list。これが唯一の真実）
+  ├── seed_sqlite(session)   → symbols / daily_prices / indicators / relative_ranks / theme_constituents
+  └── to_dataframes()        → df_symbols / df_prices / df_ind / df_ranks(long) / df_tc
+```
+
+**ランクは SQLite が wide・バックテストが long** という既知の差（P0-1）があるため、
+`to_dataframes()` 側で long へ変換する。**この変換もデータセット定義から機械的に行い、手書きしない。**
+
+##### (b) 母集団は小さく保つ（Top-N 打ち切りを避けるため）
+
+- API 経路は `_build_preset_query` を使う（`/screener` の bool クエリ引数は9種しか無く
+  特殊フィルタ15種を網羅できないため）。`_build_preset_query` は
+  `get_screener_dashboard` 内のクロージャなので、`_load_presets` を差し替えて
+  合成プリセット1件を注入する形で呼ぶ（既存 `test_special_removal.py` と同じ手法）。
+- `get_screener_dashboard` は **top-8 で打ち切る**ため、**銘柄数は8以下**にする
+  （テーマ2 + 個別6 程度）。打ち切りが起きていないことをテスト内で明示的に assert する。
+- 流動性床が邪魔をしないよう、全銘柄に十分大きい `avg_dollar_volume_21` を持たせる
+  （床そのもののパリティは別テストで検証する）。
+
+##### (c) 各キーの「境界値」を1箇所で宣言する
+
+```python
+PARITY_CASES: dict[str, Any] = {
+    "min_vol_surge_21": 1.5,      # 通過する銘柄と落ちる銘柄が both 出る値
+    "is_trend_template": True,
+    ...
+}
+```
+
+- **`FILTER_SPECS` にあって `PARITY_CASES` に無いキーはテストが失敗する**（実装漏れ＝レッド）。
+- 各ケースは「**全通過でも全落ちでもない**」ことを assert する。
+  全通過/全落ちだと、両側が壊れていても一致してしまい検証にならない。
+
+##### (d) 共通ルールは別立てで検証する
+
+テーマ混入バグは「フィルタキー単位」ではなく「**出力ルール単位**」の不一致だったため、
+キーごとのパリティでは捕まらない。以下を独立したテストにする:
+
+| 検証 | 内容 |
+| :--- | :--- |
+| テーマ除外 | 両経路の出力に `category=='テーマ'` が1件も無いこと。かつ**テーマ行を必要とするフィルタ**（`is_theme_*`）が正しく動くこと（＝中間データとしては保持されていること） |
+| 流動性床 | 床未満の銘柄が両経路の出力に出ないこと |
+
+##### (e) 意図した差異の扱い
+
+```python
+EXPECTED_DIVERGENCE: dict[str, str] = {}   # キー -> 理由
+```
+
+D-2 で S-1（`min_market_cap` のテーマ免除）/ S-2 は**両側で統一済み**のため、
+初期値は**空**を想定する。空でなくなった場合は理由を必ず書き、§7 に記録する。
+
 ### Phase 3: スクリーナーの完全 DataFrame 化（単一エンジン）
 
 **何を**: 正準クロスセクション契約を定義し、ローダを2つ用意して、その上に単一のフィルタエンジンを載せる。
@@ -319,6 +551,7 @@ ScreenerFrame（1営業日分・wide・正準列名・派生列込み）
 | **U-1** | スクリーナー API の fail-loud レベル | **(b) 該当プリセットのみ「エラー」として返し、他は正常表示**（画面は生きる）。CLI 側（バックテスト／最適化／シナリオテスト）は §1.3 の先行事例に倣い `ValueError` で停止 | §3 Phase 1「fail-loud の適用レベル」表 |
 | **U-2** | 既存 TOML に fail-loud で落ちるキーが見つかった場合 | **(a) その場で正しいキーへ修正**。ただし修正でスクリーン結果が変わるため、差分を報告してから確定する | §5 Phase 1 の差分実測タスク |
 | **U-3** | スクリーン結果が変わった場合の再最適化 | 差分の実測を先に出し、**再実行の要否はユーザー判断**。2026-08-01 に全12戦略の再実行・再最適化を済ませたばかりのため、**Phase 1 は「差分ゼロ」を目標**に進め、差分が出たら1件ずつ理由を説明する | §6.2 の期待値 |
+| **U-3a** | **P1-7（`is_trend_template` 無効）の是正で D/E1/E2/F に差分が出た件（2026-08-10 追加判断）** | **このまま Phase 1 を進め、再最適化はユーザーのタイミングで実施する**。Phase 1 の残作業（流動性床・テーマ除外の集約、`applied_filters`）は抽出結果を変えない性質のものであり、また Phase 2 のパリティテストを入れてから再最適化した方が同種の隠れバグを二度踏まずに済むため | §8 の残作業へ |
 | **U-4** | Phase 3 の性能受入基準 | **ベースライン × 1.5 倍以内**。超えたら Phase 3 は差し戻し | §6.3 の受入基準 |
 | **U-5** | sandbox 検証の要否 | **種別 A（データ変更なし）**として扱う。スキーマ変更なし・DB は読み取りのみ。API スモークのみ `STOCKTOOL_ENV=sandbox` で実施 | §6.5 |
 | **U-6** | Phase の区切りでのコミット／レビュー | 各 Phase 完了時にオーケストレーターが diff 確認＋全テスト実行し、ユーザーへ報告してから次へ進む | §5 の Phase 区切り |
@@ -347,19 +580,110 @@ ScreenerFrame（1営業日分・wide・正準列名・派生列込み）
 
 - [ ] **[TDD-red]** `FILTER_SPECS` の単体テスト（全キーの `requires` が実カラムに解決できること、
       キーの重複が無いこと、`SPECIAL_FILTER_KEYS` との整合）
-- [ ] `FilterSpec` / `FILTER_SPECS` / `resolve_required_columns()` の実装
+- [x] `FilterSpec` / `EXPLICIT_SPECS` / `resolve_filter_spec()` / `resolve_required_columns()` の実装
+      → `backend/indicators/screener_registry.py`（新規）。`screener_filters.SPECIAL_FILTER_KEYS` は
+      `EXPLICIT_SPECS` の kind="special" からの導出値に置換（関数本体は不変）。
+      `backend/tests/indicators/test_screener_registry.py` 全30件（25ケース、うち6件は
+      parametrize 展開）GREEN。呼び出し側（screener_router.py 等）の置換は次工程。
 - [ ] **[TDD-red]** fail-loud のテスト（未知キー・必要カラム欠落で `ValueError`。
       現状の「黙って通す」挙動でレッドになることを確認）
-- [ ] `backtest_screener.py` の `needs_rs*` or 連鎖・deny-by-default 分岐・`prev_merge_cols` を
+- [x] `backtest_screener.py` の `needs_rs*` or 連鎖・deny-by-default 分岐・`prev_merge_cols` を
       レジストリ導出へ置換
-- [ ] `screener_cross_section.py` の `_IND_COLS` / `_PREV_COLS` をレジストリ導出へ置換
-- [ ] `scenario_runner.py` のランク事前マージをレジストリ導出へ置換（`has_all_premerged` 分岐の解消）
-- [ ] `backtest_runner.py::validate_strategies_config` をレジストリ参照へ置換し、
+      → `screener_registry.RANK_FRAME_ALIASES` / `to_frame_column()` を新設（正準名→フレーム内名。
+      `screener_cross_section._RANK_COL_MAP` と `backtest_screener.alias_map` の重複6件を統合）。
+      `apply_filters_to_df` は `resolve_required_columns()` の結果（`required.today/prev/ranks`）
+      だけを見て merge するよう全面置換。`needs_rs14/21/63` の or 連鎖・deny-by-default の重複 or
+      連鎖・`prev_merge_cols` 決め打ちリストを削除。`alias_map` を完全削除
+      （`grep alias_map backend/backtest/backtest_screener.py` 0件）し、min_/max_/is_ の汎用ループを
+      `FilterSpec.column`＋`to_frame_column()` 経由に置換（副作用として `is_trend_template` の
+      alias 剥がしミスによる恒久的サイレント無効化バグが解消 — 差分実測は未実施の別チェックリスト
+      項目で報告予定）。**`MissingFilterColumnError` の fail-loud 検査を新設**
+      （merge 完了後・マスク適用前）。実装中に判明した2件の例外スコープ調整（設計判断ではなく
+      実装バグの修正）:
+      1. `is_theme_rs_ratio_e21_gt_e63`/`_e14_gt_e21`（生値のテーマ比較）は `merged` ではなく
+         当日の `df_ind` スライスを直接参照する既存 dispatch のため、その `requires` は
+         `merged` 存在チェックから除外
+      2. `prev_date is None`（バックテスト初日等、前日データが原理的に存在しない）のときは
+         RRG/RS-MACD 系の `prev_requires` チェックをスキップ（既存の graceful no-op 設計を保持）。
+         `is_vcp_breakout` の `prev_requires` は `prev_date` の有無に関わらず常に除外（既存の
+         deny-by-default 設計）
+      テスト4件追加（`test_backtest_screener_refactoring.py`）: `MissingFilterColumnError`（欠落列名を
+      メッセージに含む）／`_x`/`_y` サフィックス衝突が `UnknownFilterKeyError` で停止（サイレント
+      素通ししない）／必要なランクだけ merge される（14/21/63 の6列を無条件に引かない）回帰／
+      `is_vcp_breakout` は前日列が無くても deny-by-default のまま例外にならない。全 GREEN。
+- [x] `screener_cross_section.py` の `_IND_COLS` / `_PREV_COLS` をレジストリ導出へ置換
+      → `kind='special'` 全 spec の `requires`/`prev_requires` の和集合から `Indicator` 実カラムのみ
+      抽出する形に変更。導出結果が旧ハードコードと完全一致することを確認済み（`is_vcp_breakout` の
+      `requires` に `vcr` を追加登録して包含関係を成立させた。§7 に記録）。`_RANK_COL_MAP` は
+      `screener_registry.RANK_FRAME_ALIASES` を直接参照する形に置換（重複定義を削除）。
+- [x] `scenario_runner.py` のランク事前マージをレジストリ導出へ置換（`has_all_premerged` 分岐の解消）
+      → `run_scenario_test` 冒頭で `SCENARIO_TARGET_PREFIX` に一致する全戦略の
+      `resolve_required_columns().ranks` の和集合を1回だけ計算し、日次ループ内の
+      14/21/63 決め打ちループを `required_rank_columns` ベースの merge に置換。
+      `to_frame_column()` で `apply_filters_to_df` 側と同じ名前に揃えた（2026-07-18 の
+      `has_all_premerged` 誤判定の再発防止）。
+- [x] `backtest_runner.py::validate_strategies_config` をレジストリ参照へ置換し、
       `api.screener_router` への逆依存と `except ImportError` の握り潰しを削除
-- [ ] `screener_router.py::_build_preset_query` の `is_known` 判定をレジストリ参照へ置換
-- [ ] 流動性床（`min_avg_dollar_volume_21`）の注入を単一の純関数へ集約（4モジュール5箇所 → 1箇所）
-- [ ] テーマ行の最終出力除外を単一定義へ集約（2モジュール3箇所 → 1箇所）
-- [ ] `applied_filters` の記録・出力（API レスポンス／バックテスト結果 JSON／ログ）
+      → `resolve_filter_spec()` へ全面置換。手書き分類（`rank_column_names`/`alias_map`/接頭辞の
+      場合分け）を削除。戻り値は引き続き `list[str]`（純関数）だが、呼び出し側（`run_backtest`）で
+      非空なら `ValueError` を送出して停止するよう変更（U-1 の CLI 側決定）。
+      `strategy.optimization` サブ dict のキーも検証対象に含めた。
+      テスト3件追加（`test_backtest_runner_entry.py`）: タイポキーでエラー、METADATA_KEYS は
+      エラーにならない、現行 `backtest_config.toml` 全戦略でエラー0件。GREEN。
+- [x] `screener_router.py::_build_preset_query` の `is_known` 判定をレジストリ参照へ置換
+      → 手書きの `is_known` 判定ブロックを `resolve_filter_spec()` 呼び出しに置換（`known_columns`
+      = `_INDICATOR_COLUMNS.keys()` ∪ `_VIRTUAL_COLUMNS.keys()`、`rank_columns` = `RelativeRank`
+      の実カラムから制御列を除いたもの）。`_use_hysteresis`/`rrg_intensity_threshold` の個別 `elif`
+      は `screener_registry.METADATA_KEYS` 参照に統一。`special_flags` の分岐・`_apply_filter()` の
+      呼び出し自体は変更なし。fail-loud: `UnknownFilterKeyError` はプリセット単位で捕捉し、
+      `ScreenerDashboardCategory` に `error: Optional[str] = None` を追加（後方互換）、
+      失敗プリセットは `items=[]` + `error` 付きで返し他のプリセットは正常表示を継続するよう変更
+      （旧実装は `except Exception` でカテゴリごと黙って落としていた＝サイレント失敗だった）。
+      テスト2件追加（`test_screener_api.py`）: 未知キーを含むプリセットが `items=[]`+`error` 付きで
+      返り他は正常表示、現行 `data/screener_presets.toml` 全プリセットで `error` が None。
+      GREEN（テスト用の共有 DB フィクスチャに、特殊フィルタが要求する rs_trend_s14/s21・
+      rs_macd_hist_21・テーマ側のランク列を追加補完 — 本番は T3/T4 が一括で埋めるため
+      未発生だが、最小フィクスチャでは None 混在による `TypeError` を誘発していた）。
+      `grep backend.api.screener_router backend/backtest/backtest_runner.py` は0件（逆依存解消済み）。
+      全体テスト 829 passed / 1 failed（環境要因の1件のみ、期待通り）。
+
+      **（データ供給側3モジュール完了後の全体テスト）835 passed / 1 failed**（環境要因の1件のみ、
+      期待通り。既存テスト2件（`test_scenario_runner_integration` / `TestRrgLeadingIn`・
+      `TestRrgLaggingIn` の `test_no_prev_date_skips_rrg_filter`）はレジストリ導出化に伴う
+      新規フィクスチャ不足で一時的にレッドになったため修正済み — 詳細は §7 参照）。
+- [x] 流動性床（`min_avg_dollar_volume_21`）の注入を単一の純関数へ集約（4モジュール5箇所 → 1箇所）
+      → 新規 `backend/backtest/common_constraints.py`（`load_min_avg_dollar_volume_21()` /
+      `inject_liquidity_floor()` / `inject_liquidity_floor_all()`）。5箇所すべてを委譲に置換:
+      `screener_router._load_min_avg_dollar_volume_21`・`backtest_runner.run_backtest`・
+      `optimization_runner.py`（`run_holdout_validation`／`objective` の2箇所）・
+      `scenario_runner.inject_liquidity_floor`（関数名は維持し中身のみ委譲。既存テストとの
+      後方互換を確認済み）。テスト11件（`test_common_constraints.py`）追加、GREEN。
+      **🔴 P1-8 も同時に修正**: `screener_router._build_preset_query`（`/screener/dashboard`）に
+      `Indicator.avg_dollar_volume_21 >= floor` を追加（`get_screener()` と同じ無条件フィルタ、
+      適用位置はテーマ除外と同じくフィルタ後・出力直前）。**意図的な挙動変更**（dashboard の
+      表示銘柄が減る）。回帰テスト2件追加（`test_screener_dashboard_excludes_illiquid_symbols`
+      ほか）。既存テスト `test_special_removal.py` の5件が、フィクスチャに
+      `avg_dollar_volume_21` 未設定（NULL）のため新しい床フィルタで無条件除外されてレッドに
+      なったため、フィクスチャへ明示値を追加して修正（設計判断ではなくテストフィクスチャの
+      補完。§7 に類例あり）。
+- [x] テーマ行の最終出力除外を単一定義へ集約（2モジュール3箇所 → 1箇所）
+      → `indicators/screener_registry.py` に `OUTPUT_EXCLUDED_CATEGORIES: frozenset = {'テーマ'}`
+      を新設。3箇所とも参照に置換: `backtest_screener.py`（`filtered['category'].isin(...)`）・
+      `screener_router.py` の `_build_preset_query`／`get_screener()`（`Symbol.category.notin_(tuple(...))`）。
+      適用位置（フィルタ後・出力直前）は変更していない。テスト1件追加
+      （`TestOutputExcludedCategories`）、GREEN。
+- [x] `applied_filters` の記録・出力（API レスポンス／バックテスト結果 JSON／ログ）
+      → `schemas.ScreenerDashboardCategory` に `applied_filters: Optional[List[str]] = None` を
+      追加（既存フィールドは無変更）。`_build_preset_query` が `_apply_filter` を通したキー ＋
+      特殊フィルタキー ＋ 常時適用の制約（`min_avg_dollar_volume_21` / `exclude_theme_category`）
+      をソート済みリストで返す。テスト1件追加
+      （`test_screener_dashboard_applied_filters_include_liquidity_floor`）。
+      `/screener` はレスポンスが `List[ScreenerResultItem]` でエンベロープが無いため
+      **今回はレスポンスに追加しない**（U-1/計画書の制約どおり）。代わりに `logger.info` で
+      適用キー一覧を出力。`backtest_runner.run_backtest()` は戦略ごとに実行開始時、
+      `screener_registry.is_non_filter_key()` でメタキー・随伴パラメータを除いたキー集合を
+      1行ログ出力（日次ループの外）。`scenario_runner.py` は本チェックリスト項目のログ出力
+      対象に含めていない（計画書 §3.1.4 の記述は `run_backtest()` のみを明示）。
 - [ ] **差分実測**: Phase 0 のスナップショットと突合し、抽出銘柄が変化したプリセット・戦略を全件列挙
 - [ ] 全テスト実行 → **ユーザーへ差分報告し、U-2/U-3 の判断を仰ぐ**
 - [ ] 仕様書更新（`backend_specification.md` §5 にレジストリと fail-loud を明記）
@@ -394,14 +718,41 @@ ScreenerFrame（1営業日分・wide・正準列名・派生列込み）
 
 ### 作業中メモ
 
-**現在地（2026-08-10）**: Phase 0 完了。次は **Phase 1 の TDD-red**（`FILTER_SPECS` の単体テストと
-fail-loud テストを先に書き、現状の「黙って通す」挙動でレッドになることを確認する）から着手する。
+**現在地（2026-08-10）**: Phase 1 の **レジストリ本体（`screener_registry.py`）まで完了・検収済み**。
+次は**呼び出し側6モジュールの置き換え**（`backtest_screener.py` の `needs_rs*` or 連鎖 →
+`screener_cross_section.py` の定数リスト → `scenario_runner.py` のランク事前マージ →
+`backtest_runner.py` のバリデータと逆依存削除 → `screener_router.py` の `is_known` 判定）。
 
-- ベースラインの再取得コマンド: `$env:PYTHONPATH="backend"; .\venv\Scripts\python.exe tmp/phase0_snapshot.py`
-  （読み取り専用。Phase 1 完了後に再実行して `tmp/phase0_baseline_20260813_121011.json` と突合する）
-- Phase 1 はワークツリーを切って作業する（本体チェックアウトではコミット禁止）
-- 注意点は §7 の P0-1〜P0-6 にまとめてある。とくに **P0-5（`Query` 既定値の罠）** は
+- 作業ブランチ: `worktree-screener-filter-registry`（`.claude/worktrees/screener-filter-registry`）
+- **差分実測の手順**（ワークツリーのコードを本番データに向けて動かす。読み取り専用）:
+  ```powershell
+  # 1. ワークツリー内で、本体の DB を絶対パスで指定して取得
+  #    （Parquet マスターの場所は DB パスの階層から自動解決される）
+  cd .claude\worktrees\screener-filter-registry
+  $env:PYTHONPATH="backend"
+  & "d:\My Documents\Programing\stocktool\venv\Scripts\python.exe" tmp/phase0_snapshot.py `
+      "d:\My Documents\Programing\stocktool\data\stocktool.db"
+
+  # 2. 本体チェックアウトでベースラインと突合（差分ゼロなら exit 0）
+  cd d:\My Documents\Programing\stocktool
+  .\venv\Scripts\python.exe tmp/phase0_compare.py `
+      tmp/phase0_baseline_20260813_121011.json `
+      .claude/worktrees/screener-filter-registry/tmp/phase0_baseline_<新しい方>.json
+  ```
+  `tmp/phase0_compare.py` は**変異データを注入して検出できることを確認済み**
+  （銘柄の消失・架空銘柄の追加・テーマ混入・共通ルール NG の4種）。
+  「何を渡しても差分ゼロ」と言う道具では意味が無いため、信頼する前に必ずこの確認をすること。
+- 注意点は §7 の P0-1〜P0-8 にまとめてある。とくに **P0-5（`Query` 既定値の罠）** は
   Phase 2 のパリティテスト設計時に必ず参照すること
+
+> [!IMPORTANT]
+> **ワークツリーでの pytest は必ず1件失敗する（環境要因・無視してよい）。**
+> `backend/tests/backtest/test_scenario_comparison.py::test_run_comparison_generates_outputs` が
+> `FileNotFoundError: Parquet master cache files not found` で落ちる。`data/` は git 管理外のため
+> ワークツリーの `data/parquet_master/` が空であることが原因で、本体チェックアウトでは通る
+> （Phase 0 の実測: 本体 795 passed / 0 failed）。
+> **ワークツリーでの期待値は「824 passed, 1 failed」**（795 + 新規30 = 825 のうち1件が環境要因）。
+> この1件以外が落ちたら、それは本当の回帰。
 
 ---
 
@@ -476,6 +827,88 @@ $env:STOCKTOOL_ENV="sandbox"
 | **P0-4** | `/screener` は常に**ちょうど200件**を返す（`results[:200]` のスライス上限に飽和） | スナップショットは**201位以下の変化を検出できない**という限界がある。Phase 1 の差分実測ではこの点を明示し、必要なら順位を落とした比較（母集団全体のハッシュ等）を追加する |
 | **P0-5** | `get_screener()` は素の関数として呼ぶと FastAPI の `Query(False)` 既定値が `Query` オブジェクトのまま渡り、**全特殊フィルタが truthy と評価されて有効化**される（`TypeError: '>=' not supported between 'float' and 'Query'` で発覚） | Phase 2 のパリティテストで API 経路を関数直呼びする際の**落とし穴**。テストでは全パラメータを明示的に渡すこと。`tmp/phase0_snapshot.py` に注記済み |
 | **P0-6** | 2026-08-11 時点で、API プリセット `rrg_improving_in` は2件・バックテスト戦略 `C2_rrg_improving_in` は0件 | 両者は別ファイル（`screener_presets.toml` / `backtest_config.toml`）で閾値が異なる可能性が高く、**現時点では不一致と断定できない**。Phase 2 で同一パラメータを与えたときに一致するかを検証する対象として記録しておく |
+
+### Phase 1（2026-08-10）で判明したこと
+
+| ID | 事象 | 影響 / 対応 |
+| :--- | :--- | :--- |
+| **P0-7** | **`METADATA_KEYS` の3箇所の和集合を取ったところ、`max_avg_hits_per_day` が `backtest_runner.py::validate_strategies_config` の `METADATA_KEYS` に非対称に欠落していた**（`min_avg_hits_per_day` はあるのに対になる `max_` が無い） | `backtest_config.toml` で実際に使われている制御キーなので、バリデータが「未知パラメータ」警告を出していたはず。レジストリ側の `METADATA_KEYS` で補完済み。**3箇所を統合しなければ気づけなかった類の非対称**で、集約の効果がさっそく1件出た |
+| **P0-8** | **`is_close_gt_*` の短縮名正規化が、既存3箇所のうち `screener_router._apply_filter`（L313-324）だけ無条件で、他2箇所は「既知の12短縮名のときだけ」というガード付きだった** | `_apply_filter` は `is_close_gt_ema_63` のような**正準形も受け付けていた**。短縮名だけをレジストリに登録すると、呼び出し側を切り替えた時点でこのキーが `UnknownFilterKeyError` になる（＝Phase 1 の「差分ゼロ」目標を崩す潜在的な後退）。現行 TOML に正準形の使用は無いが、**短縮名と正準名の両方を登録して塞いだ**（`_build_close_gt_specs`。close_gt の登録数 24→48） |
+
+### 🔴 Phase 1「データ供給側」の差分実測（2026-08-10）で判明した重大事項
+
+差分実測で **25件の差分**が出た（U-3 の「差分ゼロ」目標に反する）。原因を2つに切り分け、
+1つは修正、もう1つは**既存バグの是正**と判明した。
+
+#### P1-6: `sort_column` の必要カラム漏れ（設計の穴・修正済み）
+
+| 項目 | 内容 |
+| :--- | :--- |
+| **事象** | `max_hits_per_day` に達する戦略（C1 / C2 / G2 / G3）で、上位10件の顔ぶれが総入れ替えになった |
+| **原因** | `sort_column` は `METADATA_KEYS` に含まれるため `resolve_required_columns` が拾わず、**並べ替えキー（`rs21_rank`）が merge されなくなった**。列が無いと既存実装は `sort_values` をスキップして `head(max_hits)` にフォールバックするため、**順序がデータ順のまま Top-N が切られた**。旧 `needs_rs*` の or 連鎖は `sort_col in (...)` を明示的にトリガーに含めていた |
+| **なぜ一部の戦略だけか** | フィルタで `rs_ratio_rank_e21` を要求する戦略（A/B系/G1/D/F）は副作用で merge されていたため無傷。要求しない戦略だけが露出した。さらに**検出件数が `max_hits_per_day` に達していない日は並べ替えが結果に影響しない**ため、日付によっても出方が違った |
+| **対応** | `resolve_required_columns()` に `extra_columns` 引数を追加（「フィルタ以外の理由で必要な列」）。`apply_filters_to_df` と `scenario_runner` が解決済みの `sort_column` を渡す。**修正後、C1/C2/G2/G3 の差分は完全に消滅**（25件 → 18件） |
+| **教訓** | 「必要カラム」は**フィルタキーだけから導出できない**。並べ替え・表示・スコアリングなど、フィルタ以外の理由で必要な列がある。§3.1.4 の設計はこれを見落としていた |
+
+#### P1-7: 🔴 `is_trend_template` がバックテストで**完全に無効**だった（既存バグ・是正）
+
+**残る18件の差分は全て、この1つの既存バグの是正によるもの。**
+
+| 項目 | 内容 |
+| :--- | :--- |
+| **事象** | `is_trend_template = true` を持つ4戦略（**D / E1 / E2 / F**）で検出銘柄が変化・減少 |
+| **原因** | 旧 `apply_filters_to_df` の汎用ループが `is_` 接頭辞を機械的に剥がして `trend_template` という列名を導出していたが、**DB の実列名は `is_trend_template`**。`alias_map` に変換エントリが無く、存在しない列を参照して**何もフィルタされていなかった**（サイレント素通し） |
+| **既知バグとの関係** | **2026-07-22 に修正された `is_rs_blue_dot` の alias 不一致と完全に同型**。あのとき `rs_blue_dot` / `rs_red_dot` の2件は `alias_map` に追加されたが、**`trend_template` は見落とされたまま残っていた** |
+| **実証** | 変更前のコード（本体チェックアウト）で E1 を `is_trend_template` 有り／無しで実行し、**結果が完全に同一（6件・同じ銘柄）**であることを確認。変更後は4件になり、除外された `TECH` / `UTZ` は実際に `is_trend_template=0` であることを DB で確認 |
+| **影響規模** | 基準日 2026-08-11 で個別銘柄 2,876 件のうち `is_trend_template=1` は **711 件（24.7%）**。フィルタが無効だった間、**D/E1/E2/F の母集団は意図の約4倍**に膨らんでいた |
+| **API 側は正常だった** | `_apply_filter` は `_INDICATOR_COLUMNS['is_trend_template']` を直接引くため**正しく適用されていた**。つまり**画面とバックテストで別の銘柄集合を見ていた**（F2/F3 の典型。Phase 2 のパリティテストがあれば即座に検出できた） |
+| **帰結** | **D / E1 / E2 / F の過去の最適化 study・シナリオテスト結果は、トレンドテンプレートが効いていない状態での評価**。再最適化の要否はユーザー判断（U-3） |
+
+#### P1-8: 🔴 流動性床が `/screener/dashboard` に適用されていない（既存バグ・F2 の3件目）
+
+| 項目 | 内容 |
+| :--- | :--- |
+| **事象** | 「全戦略共通のハード制約」である `min_avg_dollar_volume_21`（$2M/日）が、`get_screener()`（`/screener`）には適用されているが、**`get_screener_dashboard()`（`/screener/dashboard`）には適用されていない** |
+| **実測（2026-08-11）** | dashboard の表示銘柄 82件のうち **10件（12%）が床を下回る**。最悪は `ANPA` の **$108,939/日**（床の18分の1）。他に `ULBI` $245k / `HQI` $254k / `OIO` $279k / `EVGN` $374k など |
+| **なぜ見逃されたか** | 2026-07-27 の対策時に「生スクリーナー API」として `get_screener()` にだけ追加され、**同じルーターにあるもう1つのエンドポイントが漏れた**。issue_list の対策記録も `get_screener()` にしか言及していない |
+| **深刻度** | dashboard は**日常的に見る画面**であり、`/screener` より露出が大きい。E1/E2 の `BETR`（実測 $2,758/日）でバックテストの7割が汚染されていた事例と同じ性質の銘柄が、画面に出続けていた |
+| **対応** | Phase 1 の「流動性床の注入を1箇所に集約」で**両エンドポイントに適用されるようにする**。これは意図的な挙動変更であり、**dashboard の表示銘柄が減る**（差分ゼロにはならない）。ユーザーへ報告する |
+
+### Phase 2（2026-08-11）— パリティテストが初回実行で本番バグを検出した
+
+#### P2-1: 🔴 `close_gt` の短縮名正規化が正準形の入力を壊していた（既存バグ・修正済み）
+
+**Phase 2 のパリティテストが、導入初日に自力で見つけた最初のバグ。**
+
+| 項目 | 内容 |
+| :--- | :--- |
+| **事象** | `screener_router._apply_filter` の短縮名正規化が、**既に正準形の入力 `ema_150` / `sma_150` を `ema_1_50` / `sma_1_50` という実在しない列名に壊していた**。`_resolve_column()` が None を返し、**フィルタがサイレントに素通し**される（F1） |
+| **原因** | `for num in ('200','150','63','50','21','5')` のループで、`'150'` の判定は「既に `_150` なので書き換え不要」として通過するが、**ループが継続して `'50'` の判定に到達**する。`'ema_150'.endswith('50')` は True（150 の末尾が 50）かつ `endswith('_50')` は False なので条件成立し、`replace('50','_50')` が発火する。**影響を受けるのは `_150` だけ**（リスト中で他メンバーを接尾に含む唯一の数値のため） |
+| **私（オーケストレーター）の判断ミス** | P0-8 で正準形キー（`is_close_gt_ema_63` 等）を `EXPLICIT_SPECS` に登録した際、「`_apply_filter` は無条件に正規化するので正準形も受け付ける」と判断した。**`ema_63` では検証したが `ema_150` を検証しなかった**。結果、レジストリは「有効なキー」と宣言する一方 API は黙って無視する、という F1 を新たに作りかけていた |
+| **なぜ既存テストで見つからなかったか** | 現行の TOML はどれも短縮形（`ema63`）しか使っておらず、正準形は未使用。**実データ由来のテストでは永久に踏まない**。パリティテストが「レジストリに載っている全キー」を機械的に列挙したからこそ露見した |
+| **対応** | 正規化を `screener_registry.normalize_close_gt_target()`（ガード付き）に**一本化**し、`screener_router` と `backtest_screener` の複製を削除。3箇所 → 1箇所。ガードが必須である理由を関数の docstring に明記した |
+| **本番影響** | **無し**（差分実測でゼロを確認）。正準形が TOML で使われた瞬間に顕在化する潜在バグだった |
+
+> **この1件が Phase 2 の価値を最もよく示している。**
+> レジストリ（Phase 1）は「キーが宣言されているか」しか見ない。fail-loud も「解決できるか」しか見ない。
+> **「両経路が同じ答えを出すか」は、実際に両方を走らせて突き合わせないと分からない。**
+> しかも実データ由来のテストでは踏まないケースだったため、
+> **レジストリ駆動で全キーを機械的に列挙する**という設計（§3.2.1 (c)）が効いた。
+
+### Phase 1「検証系2箇所」（2026-08-10）で判明したこと
+
+| ID | 事象 | 影響 / 対応 |
+| :--- | :--- | :--- |
+| **P1-1** | **随伴パラメータの取りこぼしによるハードな後退（検収で発見・修正済み）**。旧 `validate_strategies_config` のローカル定数 `FILTER_ATTACHED_PARAM_KEYS`（`is_vcp_breakout` の閾値8種）がレジストリ化の際に消え、代替が無かった | `pivot_tol` 等が「未知のキー」と判定され、**fail-loud により `is_vcp_breakout` を使う戦略でバックテスト全体が `ValueError` で停止する**。検収で実際に8件の誤検知として再現。現在どの戦略も `is_vcp_breakout` を使っていないため既存テストはすり抜けた（issue_list で「温存」と明記されているフィルタなので、いずれ必ず踏む）。**対応**: レジストリに `ATTACHED_PARAM_KEYS`（全 `spec.params` の和集合）と述語 `is_non_filter_key()` を追加し、全呼び出し側がこれ1つを参照する形にした。回帰テスト2件を追加（VCP 8種 / `rrg_intensity_threshold`）。**教訓: 「除外集合」は「フィルタ集合」と同じくらい重要で、集約時に落ちやすい** |
+| **P1-2** | **`_build_preset_query` の `except Exception` が、失敗したプリセットを黙ってレスポンスから落としていた**（＝それ自体がサイレント失敗）。fail-loud 化の過程で、テストフィクスチャの列が全て `None` のとき特殊フィルタが `TypeError: float > None` を出し、それが握り潰されていたことが判明 | **本番データでは現在発生していない**ことを確認（基準日 2026-08-11 のクロスセクション 3,148行で object dtype 列はゼロ。NULL は最大2件で pandas が float64 に推論するため）。ただし**列が丸ごと NULL になると object dtype になり TypeError を起こす**。これは「T3 に新しい指標カラムを追加したがパイプライン未実行」の状態で実際に起きうる（`avg_dollar_volume_21` 追加時が該当）。**対応**: カテゴリを残したまま `items=[]` ＋ `error` を返すよう変更し、少なくとも**見えるようになった**。dtype 脆弱性そのものは未対処で、Phase 3 の `assert_frame_contract()` で数値 dtype を強制するのが本筋 |
+
+### Phase 1「データ供給側3モジュール」（2026-08-13）で判明したこと
+
+| ID | 事象 | 影響 / 対応 |
+| :--- | :--- | :--- |
+| **P1-3** | `screener_cross_section._IND_COLS` の導出値と旧ハードコードを突合したところ、`is_vcp_breakout` の当日 `requires` に `vcr` が無かった（`prev_requires` にのみ登録されていた）ため、導出結果が旧ハードコード（`vcr` を当日分も取得していた）を1列だけ包含できなかった | `filter_vcp_breakout` 自体は `prev_vcr` しか参照しないため機能的には無害だったが、§3.1.4 (e) の「不足があれば宣言漏れとしてレジストリ側を直す」方針に従い `requires` に `vcr` を追加登録。導出後の `_IND_COLS`/`_PREV_COLS` が旧ハードコードと完全一致することを確認した |
+| **P1-4** | `apply_filters_to_df` に `MissingFilterColumnError` の fail-loud 検査を追加したところ、既存テスト3件が新規レッドになった。(a) `is_theme_rs_ratio_e21_gt_e63`/`_e14_gt_e21`（生値のテーマ比較）は `merged` ではなく当日の `df_ind` スライスを直接参照する既存 dispatch であり、`merged` に無くて当然の列を検査対象にしていた。(b) `prev_date=None`（バックテスト初日相当）のとき、RRG系フィルタの `prev_requires` を無条件に検査しており、既存の「前日データが無ければ no-op で通過」という graceful degradation の仕様と衝突していた | (a) は当該2キーの `requires` を `merged` 存在チェックから除外。(b) は `prev_date is not None` のときだけ `required.prev` を検査する形に変更（`is_vcp_breakout` の deny-by-default 除外は `prev_date` の有無に関わらず維持）。いずれも「設計判断」ではなく実装側の検査スコープの誤りとして即時修正し、回帰テスト4件を追加した |
+| **P1-5** | `scenario_runner.py` の必要ランク列の和集合計算・`apply_filters_to_df` の新規レジストリ呼び出しを、既存の `test_scenario_runner_integration`（デフォルトの本番 `data/screener_presets.toml` を使う統合テスト）が使う最小フィクスチャに対して実行すると、`min_vol_surge_21` 等の実使用キーが要求する列（`vol_surge_21`/`adr_pct_21`/`vol_surge_rel_spy_21`）がフィクスチャに無く `UnknownFilterKeyError` になった | 本番の T3 は全列を埋めるため実害は無い。フィクスチャを実際にスキャンされる2戦略（`active_rise_ids` かつ `group='Check'` の `rrg_improving_in`/`check_1d_gain`）が要求する列を補う形で修正（P1-2 と同型のテストフィクスチャ不足） |
 
 ---
 

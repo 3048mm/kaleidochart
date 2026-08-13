@@ -31,6 +31,7 @@ try:
         filter_theme_rs_trend_rank_s21_gt_s63,
         filter_vcp_breakout,
     )
+    from indicators import screener_registry
 except ModuleNotFoundError:
     from backend.indicators.screener_filters import (
         filter_rs_rank_21_gt_63,
@@ -49,6 +50,7 @@ except ModuleNotFoundError:
         filter_theme_rs_trend_rank_s21_gt_s63,
         filter_vcp_breakout,
     )
+    from backend.indicators import screener_registry
 
 
 @dataclass
@@ -163,7 +165,7 @@ def apply_filters_to_df(
 
     merged = merged.reset_index(drop=True)
 
-    # Derived columns
+    # Derived columns（必要カラム解決より前に生成すること。既知カラム判定に使われるため）
     if 'open' in merged.columns and 'close' in merged.columns:
         merged['change_intraday_pct'] = np.where(
             merged['open'] > 0,
@@ -177,62 +179,31 @@ def apply_filters_to_df(
             0.0
         )
 
-    # --- RS Rank merge ---
+    # --- レジストリで必要カラムを解決する（doc/in_progress/screener_filter_unification_plan.md §3.1.4） ---
+    from backend.db.models import RelativeRank
+    known_columns = set(merged.columns) | set(screener_registry.VIRTUAL_COLUMNS)
+    # RelativeRank の実カラム。df_ranks は long 形式でランク名が列に出ないため使えない。
+    rank_columns = {
+        c for c in RelativeRank.__table__.columns.keys()
+        if c not in ('id', 'symbol_id', 'date', 'group_name')
+    }
+    # 並べ替えキー（Top-N 抽出用）。sort_column は METADATA_KEYS なのでフィルタキーとしては
+    # 解決されないが、**列としては供給されていないと Top-N の結果が変わる**ため
+    # extra_columns で明示的に要求する（計画書 §7 P1-6）。
     sort_col = strategy.get('sort_column', 'rs_ratio_rank_e21')
-    needs_rs14 = (
-        strategy.get('is_rs_ratio_rank_e14_gt_e21')
-        or strategy.get('is_theme_rs_ratio_rank_e14_gt_e21')
-        or 'min_rs_ratio_rank_e14' in strategy
-        or 'min_theme_rs_ratio_rank_e14' in strategy
-        or sort_col in ('rs14_rank', 'rs_ratio_rank_e14')
-        or 'min_rs_trend_rank_s14' in strategy
-        or 'min_theme_rs_trend_rank_s14' in strategy
-        or strategy.get('is_rs_trend_rank_s14_gt_s21')
-        or strategy.get('is_theme_rs_trend_rank_s14_gt_s21')
-        or strategy.get('is_rs_trend_s14_lt_s21')
-    )
-    needs_rs21 = (
-        'min_rs_ratio_rank_e21' in strategy
-        or 'min_theme_rs_ratio_rank_e21' in strategy
-        or 'min_rs_macd_hist_rank_21' in strategy
-        or strategy.get('is_rs_macd_hist_rising_21')
-        or strategy.get('is_rs_ratio_rank_e21_gt_e63')
-        or strategy.get('is_theme_rs_ratio_rank_e21_gt_e63')
-        or strategy.get('is_rs_ratio_rank_e14_gt_e21')
-        or strategy.get('is_theme_rs_ratio_rank_e14_gt_e21')
-        or sort_col in ('rs21_rank', 'rs_ratio_rank_e21')
-        or 'min_rs_trend_rank_s21' in strategy
-        or 'min_theme_rs_trend_rank_s21' in strategy
-        or strategy.get('is_rs_trend_rank_s14_gt_s21')
-        or strategy.get('is_theme_rs_trend_rank_s14_gt_s21')
-        or strategy.get('is_rs_trend_rank_s21_gt_s63')
-        or strategy.get('is_theme_rs_trend_rank_s21_gt_s63')
-        or strategy.get('is_rs_trend_s21_lt_s63')
-        or strategy.get('is_rs_trend_s14_lt_s21')
-    )
-    needs_rs63 = (
-        strategy.get('is_rs_ratio_rank_e21_gt_e63')
-        or strategy.get('is_theme_rs_ratio_rank_e21_gt_e63')
-        or 'min_rs_ratio_rank_e63' in strategy
-        or 'min_theme_rs_ratio_rank_e63' in strategy
-        or sort_col in ('rs63_rank', 'rs_ratio_rank_e63')
-        or 'min_rs_trend_rank_s63' in strategy
-        or 'min_theme_rs_trend_rank_s63' in strategy
-        or strategy.get('is_rs_trend_rank_s21_gt_s63')
-        or strategy.get('is_theme_rs_trend_rank_s21_gt_s63')
-        or strategy.get('is_rs_trend_s21_lt_s63')
+    required = screener_registry.resolve_required_columns(
+        strategy, known_columns, rank_columns, extra_columns=(sort_col,)
     )
 
-    if needs_rs14 or needs_rs21 or needs_rs63:
-        # Check if ranks are already pre-merged in 'merged' to avoid redundant merges
-        has_all_premerged = True
-        if needs_rs14 and ('rs14_rank' not in merged.columns or 'rs_condition_14_rank' not in merged.columns):
-            has_all_premerged = False
-        if needs_rs21 and ('rs21_rank' not in merged.columns or 'rs_condition_21_rank' not in merged.columns):
-            has_all_premerged = False
-        if needs_rs63 and ('rs63_rank' not in merged.columns or 'rs_condition_63_rank' not in merged.columns):
-            has_all_premerged = False
-
+    # --- RS Rank merge（必要なランクだけを引く） ---
+    # 引く対象 = ハード要求 + ソフト要求（並べ替えキー）。
+    # deny-by-default と欠落検査には **ハード要求のみ** を使う（§7 P1-6）。
+    ranks_to_merge = required.ranks | required.optional
+    if ranks_to_merge:
+        # 呼び出し側（scenario_runner 等）が既に事前マージ済みなら再取得しない
+        has_all_premerged = all(
+            screener_registry.to_frame_column(c) in merged.columns for c in ranks_to_merge
+        )
         if has_all_premerged:
             ranks_day = None
         else:
@@ -254,81 +225,29 @@ def apply_filters_to_df(
             else:
                 ranks_day = None
 
-        if ranks_day is not None:
-            if needs_rs14:
-                r14 = ranks_day[ranks_day['indicator_name'] == 'rs_ratio_rank_e14'][['symbol_id', 'percent_rank']].rename(
-                    columns={'percent_rank': 'rs14_rank'}
-                )
-                merged = merged.merge(r14, on='symbol_id', how='left').reset_index(drop=True)
-                
-                c14 = ranks_day[ranks_day['indicator_name'] == 'rs_trend_rank_s14'][['symbol_id', 'percent_rank']].rename(
-                    columns={'percent_rank': 'rs_condition_14_rank'}
-                )
-                merged = merged.merge(c14, on='symbol_id', how='left').reset_index(drop=True)
+            if ranks_day is None:
+                # ランクデータが本当に手に入らなかった場合のみ deny-by-default とする
+                # （has_all_premerged=True のときの ranks_day=None は「取得済みなのでスキップ」
+                # という別の意味なので、ここには来ない）
+                #
+                # ただし **ハード要求が無い**（＝欲しかったのは並べ替えキーだけ）場合は
+                # deny してはいけない。ソート列が無ければ既存実装どおり head() に
+                # フォールバックするだけで、フィルタの意味は変わらないため。
+                # ここを区別しないと、ランクを使わない戦略（RRG 系等）が
+                # ランクデータの無い環境で常に0件になる（§7 P1-6）。
+                if required.ranks:
+                    return pd.DataFrame(columns=merged.columns)
+                ranks_day = None
 
-            if needs_rs21:
-                r21 = ranks_day[ranks_day['indicator_name'] == 'rs_ratio_rank_e21'][['symbol_id', 'percent_rank']].rename(
-                    columns={'percent_rank': 'rs21_rank'}
+            for canonical in (ranks_to_merge if ranks_day is not None else ()):
+                frame_col = screener_registry.to_frame_column(canonical)
+                r_df = ranks_day[ranks_day['indicator_name'] == canonical][['symbol_id', 'percent_rank']].rename(
+                    columns={'percent_rank': frame_col}
                 )
-                merged = merged.merge(r21, on='symbol_id', how='left').reset_index(drop=True)
-                
-                c21 = ranks_day[ranks_day['indicator_name'] == 'rs_trend_rank_s21'][['symbol_id', 'percent_rank']].rename(
-                    columns={'percent_rank': 'rs_condition_21_rank'}
-                )
-                merged = merged.merge(c21, on='symbol_id', how='left').reset_index(drop=True)
-
-            if needs_rs63:
-                r63 = ranks_day[ranks_day['indicator_name'] == 'rs_ratio_rank_e63'][['symbol_id', 'percent_rank']].rename(
-                    columns={'percent_rank': 'rs63_rank'}
-                )
-                merged = merged.merge(r63, on='symbol_id', how='left').reset_index(drop=True)
-                
-                c63 = ranks_day[ranks_day['indicator_name'] == 'rs_trend_rank_s63'][['symbol_id', 'percent_rank']].rename(
-                    columns={'percent_rank': 'rs_condition_63_rank'}
-                )
-                merged = merged.merge(c63, on='symbol_id', how='left').reset_index(drop=True)
-        elif not has_all_premerged:
-            # ranks_day is None かつ「既に事前マージ済みで取得不要」ではない場合のみ、
-            # ランクデータが本当に手に入らなかったとみなして deny-by-default。
-            # has_all_premerged=True の場合の ranks_day=None は「取得済みなのでスキップ」
-            # という意味であり、ここに来てはならない（2026-07-18 発見・修正: 呼び出し側
-            # （scenario_runner.py 等）がランクを事前マージしていると has_all_premerged=True
-            # になり ranks_day=None がセットされるが、旧コードはこれを「データ無し」と誤認して
-            # 常に空 DataFrame を返していた。B2/B4/B6 等のテーマ・RSランク系フィルタを使う
-            # 戦略が個別銘柄シナリオテストで常に0件になるサイレント障害の原因だった）。
-            if (
-                'min_rs_ratio_rank_e21' in strategy
-                or 'min_rs_ratio_rank_e14' in strategy
-                or 'min_rs_ratio_rank_e63' in strategy
-                or 'min_theme_rs_ratio_rank_e14' in strategy
-                or 'min_theme_rs_ratio_rank_e21' in strategy
-                or 'min_theme_rs_ratio_rank_e63' in strategy
-                or strategy.get('is_rs_ratio_rank_e21_gt_e63')
-                or strategy.get('is_rs_ratio_rank_e14_gt_e21')
-                or 'min_rs_trend_rank_s14' in strategy
-                or 'min_rs_trend_rank_s21' in strategy
-                or 'min_rs_trend_rank_s63' in strategy
-                or 'min_theme_rs_trend_rank_s14' in strategy
-                or 'min_theme_rs_trend_rank_s21' in strategy
-                or 'min_theme_rs_trend_rank_s63' in strategy
-                or strategy.get('is_rs_trend_rank_s14_gt_s21')
-                or strategy.get('is_rs_trend_rank_s21_gt_s63')
-                or strategy.get('is_rs_trend_s21_lt_s63')
-                or strategy.get('is_rs_trend_s14_lt_s21')
-                or strategy.get('is_theme_rs_trend_rank_s14_gt_s21')
-                or strategy.get('is_theme_rs_trend_rank_s21_gt_s63')
-                or 'min_rs_macd_hist_rank_21' in strategy
-            ):
-                return pd.DataFrame(columns=merged.columns)
+                merged = merged.merge(r_df, on='symbol_id', how='left').reset_index(drop=True)
 
     # --- RRG / RS-MACD / VCP breakout の前日マージ ---
-    if (
-        strategy.get('rrg_leading_in')
-        or strategy.get('rrg_lagging_in')
-        or strategy.get('rrg_improving_in')
-        or strategy.get('is_rs_macd_hist_rising_21')
-        or strategy.get('is_vcp_breakout')
-    ) and prev_date is not None:
+    if required.prev and prev_date is not None:
         if ind_day_cache is not None:
             ind_prev_all = ind_day_cache.get(prev_date)
         else:
@@ -337,73 +256,77 @@ def apply_filters_to_df(
         if ind_prev_all is not None:
             cols_to_use = ['symbol_id']
             rename_dict = {}
-            # VCP ブレイクアウト用に vcr / N日高値距離 / 出来高倍率も前日から取り込む
-            prev_merge_cols = ['rs_ratio_e21', 'rs_momentum_e21', 'rs_macd_hist_21',
-                               'vcr', 'dist_63d_high_pct', 'dist_52w_high_pct',
-                               'vol_surge_21']
-            for c in prev_merge_cols:
+            for c in required.prev:
                 if c in ind_prev_all.columns:
                     cols_to_use.append(c)
                     rename_dict[c] = f'prev_{c}'
             ind_prev = ind_prev_all[cols_to_use].rename(columns=rename_dict)
             merged = merged.merge(ind_prev, on='symbol_id', how='left').reset_index(drop=True)
 
+    # --- fail-loud: 必要カラムが実際に揃っているかを検査する（Phase 1 の核心） ---
+    # is_theme_rs_ratio_e21_gt_e63 / is_theme_rs_ratio_e14_gt_e21（生値のテーマ比較）は、
+    # merged ではなく当日の df_ind 全体スライス（下記ディスパッチの ind_day_for_theme）を
+    # 直接参照する設計（dispatch 構造は Phase 1 では変更しない）。そのため merged 上の
+    # 存在チェックからは除外する（これらの列は merged ではなく ind_day_for_theme 側で
+    # 検証されるべきものであり、この検査で落とすのは誤検知になる）。
+    _theme_raw_value_exempt = set()
+    for _theme_key in ('is_theme_rs_ratio_e21_gt_e63', 'is_theme_rs_ratio_e14_gt_e21'):
+        if _theme_key in strategy:
+            _theme_raw_value_exempt |= set(screener_registry.EXPLICIT_SPECS[_theme_key].requires)
+
+    missing_columns = []
+    for canonical in (required.today | required.ranks) - _theme_raw_value_exempt:
+        frame_col = screener_registry.to_frame_column(canonical)
+        if frame_col not in merged.columns:
+            missing_columns.append(frame_col)
+
+    # 前日列は prev_date が実際に与えられているときのみ検査する。prev_date=None
+    # （バックテスト初日等、前日データが原理的に存在しない）は RRG/RS-MACD 系フィルタが
+    # 前日比較なしで no-op にフォールバックする既存の意図的な設計であり、fail-loud の対象外。
+    # is_vcp_breakout は前日列が無い場合に「全 False」を返す deny-by-default 設計
+    # （screener_filters.filter_vcp_breakout の docstring 参照）なので、prev_date の有無に
+    # 関わらずその prev_requires は常に検査対象から除外する（検査で落とすと意図が壊れる）。
+    if prev_date is not None:
+        _vcp_prev_exempt = set(screener_registry.EXPLICIT_SPECS['is_vcp_breakout'].prev_requires)
+        for canonical in required.prev:
+            if canonical in _vcp_prev_exempt:
+                continue
+            frame_col = f'prev_{screener_registry.to_frame_column(canonical)}'
+            if frame_col not in merged.columns:
+                missing_columns.append(frame_col)
+
+    if missing_columns:
+        raise screener_registry.MissingFilterColumnError(
+            f"apply_filters_to_df: 必要なカラムが供給されていません: {sorted(set(missing_columns))}"
+        )
+
     # --- Build the mask ---
     mask = pd.Series(True, index=merged.index)
 
-    alias_map = {
-        'rs_ratio_rank_e14': 'rs14_rank',
-        'rs_ratio_rank_e21': 'rs21_rank',
-        'rs_ratio_rank_e63': 'rs63_rank',
-        'rs_trend_rank_s14': 'rs_condition_14_rank',
-        'rs_trend_rank_s21': 'rs_condition_21_rank',
-        'rs_trend_rank_s63': 'rs_condition_63_rank',
-        'change_intraday_pct': 'change_intraday_pct',
-        'dist_21ema_pct': 'dist_21ema_pct',
-        # 2026-07-22 追加: is_ プレフィックス除去で 'rs_blue_dot'/'rs_red_dot' になるが、
-        # 実列名は is_ 付きのまま（is_rs_blue_dot/is_rs_red_dot）。無いとサイレント素通し。
-        'rs_blue_dot': 'is_rs_blue_dot',
-        'rs_red_dot': 'is_rs_red_dot',
-    }
-
+    # 数値 / ランク / bool_column フィルタの適用（レジストリ駆動。kind ごとに専用ブロックへ委譲する
+    # ものは kind で判別してここでは skip する: close_gt / theme_numeric / theme_rank / special）
     for key, value in strategy.items():
-        if key in ('name', 'description', 'max_hits_per_day', 'sort_column', 'sort_ascending', 'expression', '_use_hysteresis'):
+        if screener_registry.is_non_filter_key(key):
             continue
-            
-        col = key
-        op = None
-
-        if key.startswith('min_'):
-            col = key[4:]; op = '>='
-        elif key.startswith('max_'):
-            col = key[4:]; op = '<='
-        elif isinstance(value, bool) or key.startswith('bool_') or key.startswith('is_') or key.startswith('has_'):
-            op = '=='
-            if key.startswith('bool_'): col = key[5:]
-            elif key.startswith('is_'): col = key[3:]
-            elif key.startswith('has_'): col = key[4:]
-
-        if op:
-            col = alias_map.get(col, col)
-            if col == 'market_cap' and 'market_cap' in merged.columns and op == '>=':
-                mask &= (merged['market_cap'] >= value) | (merged['category'] == 'テーマ')
-            elif col in merged.columns:
-                if op == '>=':   mask &= merged[col] >= value
-                elif op == '<=': mask &= merged[col] <= value
-                elif op == '==': mask &= merged[col] == value
+        spec = screener_registry.resolve_filter_spec(key, known_columns, rank_columns)
+        if spec.kind not in ('numeric', 'rank', 'bool_column'):
+            continue
+        col = screener_registry.to_frame_column(spec.column)
+        if col == 'market_cap' and 'market_cap' in merged.columns and spec.op == '>=':
+            mask &= (merged['market_cap'] >= value) | (merged['category'] == 'テーマ')
+        elif col in merged.columns:
+            if spec.op == '>=':   mask &= merged[col] >= value
+            elif spec.op == '<=': mask &= merged[col] <= value
+            elif spec.op == '==': mask &= merged[col] == value
 
     # 2. Dynamic Close-Above Filters (e.g. close_gt_sma50, close_gt_ema21, close_gt_ema50, or is_close_gt_*)
     for key, value in strategy.items():
         if (key.startswith('close_gt_') or key.startswith('is_close_gt_')) and value is True:
             ind_name = key[9:] if key.startswith('close_gt_') else key[12:]
             
-            # Normalize column names if they lack underscores (e.g., ema21 -> ema_21, sma50 -> sma_50)
-            if ind_name in ('sma5', 'sma21', 'sma50', 'sma63', 'sma150', 'sma200', 'ema5', 'ema21', 'ema50', 'ema63', 'ema150', 'ema200'):
-                for num in ('200', '150', '63', '50', '21', '5'):
-                    if ind_name.endswith(num) and not ind_name.endswith('_' + num):
-                        ind_name = ind_name.replace(num, '_' + num)
-                        break
-            
+            # 短縮名（ema21 -> ema_21）の正規化はレジストリに一本化した（§7 P2-1）
+            ind_name = screener_registry.normalize_close_gt_target(ind_name)
+
             if 'close' in merged.columns and ind_name in merged.columns:
                 mask &= merged['close'] > merged[ind_name]
 
@@ -572,16 +495,16 @@ def apply_filters_to_df(
 
     filtered = merged[mask].copy() if not expression else merged
 
-    # テーマ・仮想指数は実売買不可能なため、買いシグナルの最終出力からは常に除外する
-    # （リーディングテーマ判定・構成銘柄への波及には category=='テーマ' 行が必要なため、
-    # 上記フィルタ処理では保持しているが、実際の候補にはしない。2026-07-29 修正）
+    # 最終出力から常に除外するカテゴリの定義は screener_registry.OUTPUT_EXCLUDED_CATEGORIES
+    # に一本化している（screener_router.py と共通。§5 Phase 1）。適用位置（フィルタ後・
+    # 出力直前）は変えないこと（前に出すとリーディングテーマ判定が壊れる）。
     if 'category' in filtered.columns:
-        filtered = filtered[filtered['category'] != 'テーマ']
+        filtered = filtered[~filtered['category'].isin(screener_registry.OUTPUT_EXCLUDED_CATEGORIES)]
 
     # Top-N
     max_hits = strategy.get('max_hits_per_day')
     if max_hits and max_hits > 0 and len(filtered) > max_hits:
-        sort_col = alias_map.get(sort_col, sort_col)
+        sort_col = screener_registry.to_frame_column(sort_col)
         sort_asc = strategy.get('sort_ascending', False)
         if sort_col in filtered.columns:
             filtered = filtered.sort_values(by=sort_col, ascending=sort_asc).head(max_hits)

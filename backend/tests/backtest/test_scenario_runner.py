@@ -67,7 +67,14 @@ def mock_scenario_data():
         'ema_21': [95.0]*30,
         'sma_50': [90.0]*30,
         'atr_14': [2.0]*30,
-        'sma50_atr_mult': [5.0]*30
+        'sma50_atr_mult': [5.0]*30,
+        # data/screener_presets.toml の active_rise_ids ('rrg_improving_in' / 'check_1d_gain'、
+        # いずれも group='Check') が要求する列。レジストリ導出（screener_registry 経由）に
+        # なったことで、この最小フィクスチャにも本番相当の列が無いと
+        # UnknownFilterKeyError で落ちるようになった（本番は T3 が一括で埋めるため未発生）。
+        'vol_surge_21': [2.0]*30,
+        'adr_pct_21': [5.0]*30,
+        'vol_surge_rel_spy_21': [1.5]*30,
     })
     
     return prices, symbols, indicators

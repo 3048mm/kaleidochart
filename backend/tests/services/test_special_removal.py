@@ -83,6 +83,9 @@ def reset_db():
             db.add(DailyPrice(symbol_id=sid, date=d, open=100, high=105, low=95, close=102, volume=1000))
 
     # === Indicators ===
+    # 2026-08-13: P1-8 是正で全戦略共通の流動性ハード制約(min_avg_dollar_volume_21)が
+    # /screener/dashboard にも常時適用されるようになったため、各銘柄の当日Indicatorに
+    # avg_dollar_volume_21 を明示している（未設定=NULLだと床フィルタで無条件に除外される）。
     # Stock 1 (RRG_PASS): Improving → Leading transition (should pass rrg_leading_in)
     #   Today: ratio>0, momentum>0, momentum accelerating, high intensity
     #   Prev:  ratio<0, momentum>0 (was in Improving quadrant)
@@ -91,7 +94,8 @@ def reset_db():
                      change_1d_pct=5.0, vol_surge_21=3.0, sma50_atr_mult=2.0))
     db.add(Indicator(symbol_id=1, date=d_today,
                      rs_ratio_e21=0.5, rs_momentum_e21=0.8,
-                     change_1d_pct=5.0, vol_surge_21=3.0, sma50_atr_mult=2.0))
+                     change_1d_pct=5.0, vol_surge_21=3.0, sma50_atr_mult=2.0,
+                     avg_dollar_volume_21=5e6))
 
     # Stock 2 (RRG_FAIL): Stays in Lagging (should fail rrg_leading_in)
     #   Today: ratio<0, momentum<0
@@ -100,17 +104,20 @@ def reset_db():
                      change_1d_pct=5.0, vol_surge_21=3.0, sma50_atr_mult=2.0))
     db.add(Indicator(symbol_id=2, date=d_today,
                      rs_ratio_e21=-0.3, rs_momentum_e21=-0.2,
-                     change_1d_pct=5.0, vol_surge_21=3.0, sma50_atr_mult=2.0))
+                     change_1d_pct=5.0, vol_surge_21=3.0, sma50_atr_mult=2.0,
+                     avg_dollar_volume_21=5e6))
 
     # Stock 3 (THEME_PASS): In strong theme
     db.add(Indicator(symbol_id=3, date=d_today,
                      change_1d_pct=8.0, vol_surge_21=3.0, sma50_atr_mult=2.0,
-                     rs_ratio_e21=0.5, rs_ratio_e63=0.1))
+                     rs_ratio_e21=0.5, rs_ratio_e63=0.1,
+                     avg_dollar_volume_21=5e6))
 
     # Stock 4 (THEME_FAIL): In weak theme only
     db.add(Indicator(symbol_id=4, date=d_today,
                      change_1d_pct=8.0, vol_surge_21=3.0, sma50_atr_mult=2.0,
-                     rs_ratio_e21=0.1, rs_ratio_e63=0.5))
+                     rs_ratio_e21=0.1, rs_ratio_e63=0.5,
+                     avg_dollar_volume_21=5e6))
 
     # Theme indicators
     # Strong theme: rs_ratio_e21 > rs_ratio_e63 (momentum rising)
