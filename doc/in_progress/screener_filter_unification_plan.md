@@ -456,7 +456,11 @@ ScreenerFrame（1営業日分・wide・正準列名・派生列込み）
 
 - [ ] **[TDD-red]** `FILTER_SPECS` の単体テスト（全キーの `requires` が実カラムに解決できること、
       キーの重複が無いこと、`SPECIAL_FILTER_KEYS` との整合）
-- [ ] `FilterSpec` / `FILTER_SPECS` / `resolve_required_columns()` の実装
+- [x] `FilterSpec` / `EXPLICIT_SPECS` / `resolve_filter_spec()` / `resolve_required_columns()` の実装
+      → `backend/indicators/screener_registry.py`（新規）。`screener_filters.SPECIAL_FILTER_KEYS` は
+      `EXPLICIT_SPECS` の kind="special" からの導出値に置換（関数本体は不変）。
+      `backend/tests/indicators/test_screener_registry.py` 全30件（25ケース、うち6件は
+      parametrize 展開）GREEN。呼び出し側（screener_router.py 等）の置換は次工程。
 - [ ] **[TDD-red]** fail-loud のテスト（未知キー・必要カラム欠落で `ValueError`。
       現状の「黙って通す」挙動でレッドになることを確認）
 - [ ] `backtest_screener.py` の `needs_rs*` or 連鎖・deny-by-default 分岐・`prev_merge_cols` を
@@ -503,14 +507,26 @@ ScreenerFrame（1営業日分・wide・正準列名・派生列込み）
 
 ### 作業中メモ
 
-**現在地（2026-08-10）**: Phase 0 完了。次は **Phase 1 の TDD-red**（`FILTER_SPECS` の単体テストと
-fail-loud テストを先に書き、現状の「黙って通す」挙動でレッドになることを確認する）から着手する。
+**現在地（2026-08-10）**: Phase 1 の **レジストリ本体（`screener_registry.py`）まで完了・検収済み**。
+次は**呼び出し側6モジュールの置き換え**（`backtest_screener.py` の `needs_rs*` or 連鎖 →
+`screener_cross_section.py` の定数リスト → `scenario_runner.py` のランク事前マージ →
+`backtest_runner.py` のバリデータと逆依存削除 → `screener_router.py` の `is_known` 判定）。
 
-- ベースラインの再取得コマンド: `$env:PYTHONPATH="backend"; .\venv\Scripts\python.exe tmp/phase0_snapshot.py`
+- 作業ブランチ: `worktree-screener-filter-registry`（`.claude/worktrees/screener-filter-registry`）
+- ベースラインの再取得コマンド（**本体チェックアウトで実行**。ワークツリーには Parquet 実データが無い）:
+  `$env:PYTHONPATH="backend"; .\venv\Scripts\python.exe tmp/phase0_snapshot.py`
   （読み取り専用。Phase 1 完了後に再実行して `tmp/phase0_baseline_20260813_121011.json` と突合する）
-- Phase 1 はワークツリーを切って作業する（本体チェックアウトではコミット禁止）
-- 注意点は §7 の P0-1〜P0-6 にまとめてある。とくに **P0-5（`Query` 既定値の罠）** は
+- 注意点は §7 の P0-1〜P0-8 にまとめてある。とくに **P0-5（`Query` 既定値の罠）** は
   Phase 2 のパリティテスト設計時に必ず参照すること
+
+> [!IMPORTANT]
+> **ワークツリーでの pytest は必ず1件失敗する（環境要因・無視してよい）。**
+> `backend/tests/backtest/test_scenario_comparison.py::test_run_comparison_generates_outputs` が
+> `FileNotFoundError: Parquet master cache files not found` で落ちる。`data/` は git 管理外のため
+> ワークツリーの `data/parquet_master/` が空であることが原因で、本体チェックアウトでは通る
+> （Phase 0 の実測: 本体 795 passed / 0 failed）。
+> **ワークツリーでの期待値は「824 passed, 1 failed」**（795 + 新規30 = 825 のうち1件が環境要因）。
+> この1件以外が落ちたら、それは本当の回帰。
 
 ---
 
@@ -585,6 +601,13 @@ $env:STOCKTOOL_ENV="sandbox"
 | **P0-4** | `/screener` は常に**ちょうど200件**を返す（`results[:200]` のスライス上限に飽和） | スナップショットは**201位以下の変化を検出できない**という限界がある。Phase 1 の差分実測ではこの点を明示し、必要なら順位を落とした比較（母集団全体のハッシュ等）を追加する |
 | **P0-5** | `get_screener()` は素の関数として呼ぶと FastAPI の `Query(False)` 既定値が `Query` オブジェクトのまま渡り、**全特殊フィルタが truthy と評価されて有効化**される（`TypeError: '>=' not supported between 'float' and 'Query'` で発覚） | Phase 2 のパリティテストで API 経路を関数直呼びする際の**落とし穴**。テストでは全パラメータを明示的に渡すこと。`tmp/phase0_snapshot.py` に注記済み |
 | **P0-6** | 2026-08-11 時点で、API プリセット `rrg_improving_in` は2件・バックテスト戦略 `C2_rrg_improving_in` は0件 | 両者は別ファイル（`screener_presets.toml` / `backtest_config.toml`）で閾値が異なる可能性が高く、**現時点では不一致と断定できない**。Phase 2 で同一パラメータを与えたときに一致するかを検証する対象として記録しておく |
+
+### Phase 1（2026-08-10）で判明したこと
+
+| ID | 事象 | 影響 / 対応 |
+| :--- | :--- | :--- |
+| **P0-7** | **`METADATA_KEYS` の3箇所の和集合を取ったところ、`max_avg_hits_per_day` が `backtest_runner.py::validate_strategies_config` の `METADATA_KEYS` に非対称に欠落していた**（`min_avg_hits_per_day` はあるのに対になる `max_` が無い） | `backtest_config.toml` で実際に使われている制御キーなので、バリデータが「未知パラメータ」警告を出していたはず。レジストリ側の `METADATA_KEYS` で補完済み。**3箇所を統合しなければ気づけなかった類の非対称**で、集約の効果がさっそく1件出た |
+| **P0-8** | **`is_close_gt_*` の短縮名正規化が、既存3箇所のうち `screener_router._apply_filter`（L313-324）だけ無条件で、他2箇所は「既知の12短縮名のときだけ」というガード付きだった** | `_apply_filter` は `is_close_gt_ema_63` のような**正準形も受け付けていた**。短縮名だけをレジストリに登録すると、呼び出し側を切り替えた時点でこのキーが `UnknownFilterKeyError` になる（＝Phase 1 の「差分ゼロ」目標を崩す潜在的な後退）。現行 TOML に正準形の使用は無いが、**短縮名と正準名の両方を登録して塞いだ**（`_build_close_gt_specs`。close_gt の登録数 24→48） |
 
 ---
 

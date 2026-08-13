@@ -10,6 +10,11 @@ import pandas as pd
 import numpy as np
 from typing import Optional
 
+try:
+    from indicators.screener_registry import EXPLICIT_SPECS
+except ModuleNotFoundError:
+    from backend.indicators.screener_registry import EXPLICIT_SPECS
+
 
 def filter_rs_rank_21_gt_63(merged: pd.DataFrame) -> pd.Series:
     """
@@ -452,23 +457,10 @@ def filter_vcp_breakout(
 # (backtest_config.toml) で使用可能な「特殊ブールフィルタ」のキー一覧。
 # API (screener_router) とバックテスト (backtest_runner の検証) の両方が
 # この単一のレジストリを参照する。
+# 唯一の定義場所は screener_registry.EXPLICIT_SPECS（kind="special"）であり、
+# ここではその導出値として後方互換のために残す（外部参照が3ファイルあるため）。
 SPECIAL_FILTER_KEYS = {
-    # RRG 象限転換
-    "rrg_leading_in", "rrg_lagging_in", "rrg_improving_in",
-    # テーマ RS Ratio 生値比較
-    "is_theme_rs_ratio_e14_gt_e21", "is_theme_rs_ratio_e21_gt_e63",
-    # テーマ RS Ratio %rank 比較
-    "is_theme_rs_ratio_rank_e14_gt_e21", "is_theme_rs_ratio_rank_e21_gt_e63",
-    # 個別 RS Ratio %rank 比較
-    "is_rs_ratio_rank_e14_gt_e21", "is_rs_ratio_rank_e21_gt_e63",
-    # RS Trend 生値比較
-    "is_rs_trend_s21_lt_s63", "is_rs_trend_s14_lt_s21",
-    # テーマ RS Trend %rank 比較
-    "is_theme_rs_trend_rank_s14_gt_s21", "is_theme_rs_trend_rank_s21_gt_s63",
-    # RS-MACD 加速
-    "is_rs_macd_hist_rising_21",
-    # VCP ブレイクアウト（収縮からのピボット上抜けイベント）
-    "is_vcp_breakout",
+    key for key, spec in EXPLICIT_SPECS.items() if spec.kind == "special"
 }
 
 
