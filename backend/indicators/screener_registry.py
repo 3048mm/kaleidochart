@@ -88,8 +88,17 @@ _CLOSE_GT_SHORT_NAMES = (
 )
 
 
-def _normalize_close_gt_target(ind_name: str) -> str:
-    """close_gt 系フィルタの短縮名（sma50/ema63 等）を正準カラム名（sma_50/ema_63）へ正規化する。"""
+def normalize_close_gt_target(ind_name: str) -> str:
+    """close_gt 系フィルタの短縮名（sma50/ema63 等）を正準カラム名（sma_50/ema_63）へ正規化する。
+
+    **`_CLOSE_GT_SHORT_NAMES` に含まれるときだけ書き換える**というガードが必須。
+    ガード無しで実行すると既に正準形の入力を壊す:
+      'ema_150' は `'150'` の判定を通過（既に `_150` なので）した後、
+      `'50'` の判定で `'ema_150'.endswith('50')` が True になり、
+      `replace('50','_50')` が **`ema_1_50`**（実在しない列名）を作る。
+    これは 2026-08-11 にパリティテストが実際に検出した本番バグ（計画書 §7 P2-1）。
+    以前は `screener_router._apply_filter` にガード無しの複製があった。
+    """
     if ind_name in _CLOSE_GT_SHORT_NAMES:
         for num in ('200', '150', '63', '50', '21', '5'):
             if ind_name.endswith(num) and not ind_name.endswith('_' + num):
@@ -110,7 +119,7 @@ def _build_close_gt_specs() -> dict:
     """
     specs = {}
     for short_name in _CLOSE_GT_SHORT_NAMES:
-        canonical = _normalize_close_gt_target(short_name)
+        canonical = normalize_close_gt_target(short_name)
         for target in {short_name, canonical}:
             for prefix in ('close_gt_', 'is_close_gt_'):
                 key = f'{prefix}{target}'

@@ -324,13 +324,9 @@ def apply_filters_to_df(
         if (key.startswith('close_gt_') or key.startswith('is_close_gt_')) and value is True:
             ind_name = key[9:] if key.startswith('close_gt_') else key[12:]
             
-            # Normalize column names if they lack underscores (e.g., ema21 -> ema_21, sma50 -> sma_50)
-            if ind_name in ('sma5', 'sma21', 'sma50', 'sma63', 'sma150', 'sma200', 'ema5', 'ema21', 'ema50', 'ema63', 'ema150', 'ema200'):
-                for num in ('200', '150', '63', '50', '21', '5'):
-                    if ind_name.endswith(num) and not ind_name.endswith('_' + num):
-                        ind_name = ind_name.replace(num, '_' + num)
-                        break
-            
+            # 短縮名（ema21 -> ema_21）の正規化はレジストリに一本化した（§7 P2-1）
+            ind_name = screener_registry.normalize_close_gt_target(ind_name)
+
             if 'close' in merged.columns and ind_name in merged.columns:
                 mask &= merged['close'] > merged[ind_name]
 

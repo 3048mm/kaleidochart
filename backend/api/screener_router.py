@@ -316,11 +316,12 @@ def _apply_filter(query, key: str, value, db: Session, latest_date):
         # Close-above filters: is_close_gt_ema63=true → DailyPrice.close > Indicator.ema_63
         if key.startswith('is_close_gt_') or key.startswith('close_gt_'):
             ind_name = key[12:] if key.startswith('is_close_gt_') else key[9:]
-            # Normalize shorthand names (e.g. ema63 → ema_63, sma50 → sma_50)
-            for num in ('200', '150', '63', '50', '21', '5'):
-                if ind_name.endswith(num) and not ind_name.endswith('_' + num):
-                    ind_name = ind_name.replace(num, '_' + num)
-                    break
+            # 短縮名（ema63 → ema_63）の正規化はレジストリに一本化した。
+            # ここに複製されていた実装は**ガードが無く**、既に正準形の入力を壊していた
+            # （'ema_150' → 'ema_1_50' という実在しない列名になり、_resolve_column が
+            #  None を返してフィルタがサイレントに素通しされる。2026-08-11 に
+            #  パリティテストが検出。計画書 §7 P2-1）
+            ind_name = screener_registry.normalize_close_gt_target(ind_name)
             ind_col = _resolve_column(ind_name)
             if ind_col is not None:
                 query = query.filter(DailyPrice.close > ind_col)
