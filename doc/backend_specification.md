@@ -489,6 +489,72 @@ S&P500（SPY）の動向や市場全体の統計から算出される、市場�
 *   **`GET /api/group_data/{ticker}`**: セクタまたはテーマの「グループ詳細画面」用データ。
     - **レスポンス構造**: `GroupDataResponse` 型。ETF 自体の詳細情報（`feature`）と、構成要素（テーマまたは銘柄）のリック（`constituents`）を含みます。
 
+### 5.0 スクリーンフィルタ仕様レジストリ (`indicators/screener_registry.py`)
+
+スクリーン条件は **① フロントのスクリーナー（SQLite/SQLAlchemy）／② 最適化バックテスト（Parquet/pandas）／
+③ 個別銘柄シナリオテスト（②と同一エンジン）** の3経路で評価される。
+D-2（2026-07-04）で特殊ブールフィルタの実体は `indicators/screener_filters.py` に一本化されたが、
+**キーの解釈と必要カラムの宣言が依然として4箇所ずつに分散**しており、
+「片側だけ実装／黙って素通し」という障害が繰り返し発生していた。
+
+2026-08-10、**フィルタキーの唯一の定義場所**として `indicators/screener_registry.py` を新設した。
+
+#### 責務と設計制約
+
+| 項目 | 内容 |
+| :--- | :--- |
+| **役割** | フィルタキー文字列（`"min_vol_surge_21"` 等）を `FilterSpec` に解決する唯一の場所 |
+| **純粋性** | `indicators/` の定義（純粋な計算モジュール群）を守るため、**pandas も SQLAlchemy も import しない**。「どのカラムが実在するか」は呼び出し側が渡す `known_columns` / `rank_columns`（文字列集合）に委ねる |
+| **利点** | 「宣言されている」だけでなく **「実際に供給されている」ことを検査できる**。バックテスト側は `merged.columns` を渡すため、マージ衝突や列欠落がその場で露見する |
+
+#### 主な公開要素
+
+| 要素 | 内容 |
+| :--- | :--- |
+| `FilterSpec` | `kind`（`numeric` / `rank` / `theme_numeric` / `theme_rank` / `bool_column` / `close_gt` / `special`）・`column` / `op` / `requires` / `prev_requires` / `params` |
+| `RequiredColumns` | `today` / `prev` / `ranks`（**ハード要求**。欠けたら失敗）＋ `optional`（**ソフト要求**。あれば引くが無くても失敗させない。典型は `sort_column`） |
+| `resolve_filter_spec()` | キー1つを解決。解決順序は EXPLICIT → theme_rank → theme_numeric → rank → numeric → bool_column |
+| `resolve_required_columns()` | 戦略 dict 全体から必要カラム集合を導出。データ供給側はこの結果だけを見ればよい |
+| `METADATA_KEYS` / `ATTACHED_PARAM_KEYS` / `is_non_filter_key()` | フィルタではない制御キー（`sort_column` 等）と特殊フィルタの随伴パラメータ（`pivot_tol` 等）。**除外集合もフィルタ集合と同じく1箇所に集約する** |
+| `RANK_FRAME_ALIASES` / `to_frame_column()` | 正準名（`rs_ratio_rank_e21`）↔ フレーム内名（`rs21_rank`）の対応 |
+| `OUTPUT_EXCLUDED_CATEGORIES` | 最終出力から常に除外するカテゴリ（`テーマ`）。**フィルタ処理中は保持し出力直前でだけ落とす**（リーディングテーマ判定と構成銘柄への波及に必要なため） |
+| `VIRTUAL_COLUMNS` | 仮想（計算）カラム名。SQL 式は `screener_router`、pandas の導出は `apply_filters_to_df` にあり、レジストリは名前だけを持つ |
+
+#### fail-loud の契約
+
+| 検査 | 例外 | 経路ごとの扱い |
+| :--- | :--- | :--- |
+| キーがどの kind にも解決できない | `UnknownFilterKeyError` | **CLI**（バックテスト／最適化／シナリオ）は `ValueError` で停止。**API** は該当プリセットのみ `items=[]` ＋ `error` を返し、他は正常表示 |
+| 必要カラムが実際には供給されていない | `MissingFilterColumnError` | 同上 |
+
+いずれも `ValueError` のサブクラス（`report_strategy_scan_coverage` 等、既存の fail-loud 実装と契約を揃えるため）。
+
+> [!IMPORTANT]
+> **新しいフィルタを追加するときは、レジストリへの登録が必須。** 登録しないキーは
+> 「未知のキー」として実行時に停止する。これは意図した設計で、**黙って無視されるより
+> 止まる方が安全**という判断に基づく（過去、`is_trend_template` が実列名との不一致で
+> バックテストにおいて完全に no-op のまま長期間放置された事故がある）。
+
+#### 全経路共通のルール
+
+| ルール | 実装 | 適用先 |
+| :--- | :--- | :--- |
+| 流動性ハード制約 `min_avg_dollar_volume_21` | `backtest/common_constraints.py`（値の解決と注入を一本化） | `backtest_runner` / `optimization_runner` / `scenario_runner` / `/screener` / `/screener/dashboard` |
+| テーマ行の最終出力除外 | `screener_registry.OUTPUT_EXCLUDED_CATEGORIES` | `apply_filters_to_df` / `/screener` / `/screener/dashboard` |
+
+#### `applied_filters`（実際に適用されたフィルタの記録）
+
+`GET /api/screener/dashboard` のレスポンスは、カテゴリごとに `applied_filters`（適用キーのソート済みリスト）を返す。
+常時適用の制約（`min_avg_dollar_volume_21` / `exclude_theme_category`）も含む。
+バックテストは戦略ごとに実行開始時へ1行ログを出す。
+
+> 「設定したのに効いていない」という失敗は、結果を見ても分からないのが最大の問題だった
+> （流動性床は2度にわたり無効化されていた）。適用キーを結果に残すことで、
+> 数値を読む前に気づけるようにしている。
+>
+> **制約**: `GET /api/screener` はレスポンスが `List[ScreenerResultItem]` で包み構造を持たず、
+> エンベロープ化がフロントエンドの破壊的変更になるため、こちらは `logger.info` への出力のみ。
+
 ### 5.1 表示ロジックの共通化 (Indicator Building Helpers)
 ダッシュボード、ウォッチリスト、およびグループ詳細画面間での指標表示の整合性を保つため、バックエンド側で以下の共通ヘルパー関数を定義しています。
 - **`_build_etf_feature`**: ETF の主要騰落率、SMA 乖離率、およびミニチャート用時系列データを構築。

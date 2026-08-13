@@ -13,6 +13,39 @@
 
 ## P1 — 高（正確性・データ保全。P0 の次）
 
+- [x] 🔴 **`is_trend_template` がバックテストエンジンで完全に無効だった（2026-08-10 発見・同日修正）**
+  - **事象**: `apply_filters_to_df` の汎用ループが `is_` 接頭辞を機械的に剥がして `trend_template` という
+    列名を導出していたが、**DB の実列名は `is_trend_template`**。`alias_map` に変換エントリが無く、
+    存在しない列を参照して**何もフィルタしていなかった**（サイレント素通し）。
+  - **2026-07-22 に修正した `is_rs_blue_dot` の alias 不一致と完全に同型。** あのとき
+    `rs_blue_dot` / `rs_red_dot` の2件は `alias_map` に追加されたが、**`trend_template` は見落とされた**。
+  - **実証**: 修正前のコードで E1 を `is_trend_template` 有り／無しで実行し、**結果が完全に同一
+    （6件・同じ銘柄）**であることを確認。修正後は4件になり、除外された `TECH` / `UTZ` は
+    実際に `is_trend_template=0` であることを DB で確認。
+  - **影響**: 対象は **D_ema21_pullback / E1_vcp_breakout_mid / E2_vcp_breakout_52w / F_elite_momentum97**。
+    基準日 2026-08-11 で個別銘柄 2,876 件のうち `is_trend_template=1` は **711 件（24.7%）**。
+    フィルタが無効だった間、これら4戦略の母集団は**意図の約4倍**に膨らんでいた。
+    **生スクリーナー API 側は正常に適用されていた**（`_INDICATOR_COLUMNS` を直接引くため）ため、
+    画面とバックテストで別の銘柄集合を見ていた。
+  - **残作業（ユーザー判断）**: D/E1/E2/F の過去の最適化 study・シナリオテスト結果は
+    トレンドテンプレートが効いていない状態での評価。**再最適化はユーザーのタイミングで実施**する方針
+    （2026-08-10 合意）。Phase 2 のパリティテスト導入後に行うと同種の隠れバグを二度踏まずに済む。
+  - 詳細: `doc/in_progress/screener_filter_unification_plan.md` §7 P1-7
+
+- [x] 🔴 **流動性床が `/screener/dashboard` に適用されていなかった（2026-08-10 発見・同日修正）**
+  - **事象**: 「全戦略共通のハード制約」である `min_avg_dollar_volume_21`（$2M/日）が、
+    `get_screener()`（`/screener`）には適用されているが、**同じルーター内の
+    `get_screener_dashboard()` には適用されていなかった**。
+  - **原因**: 2026-07-27 の対策時に「生スクリーナー API」として `get_screener()` にだけ追加され、
+    もう1つのエンドポイントが漏れた（上記 P0 の対策記録も `get_screener()` にしか言及していない）。
+  - **実測（2026-08-11）**: dashboard の表示銘柄 82件のうち **10件（12%）が床を下回っていた**。
+    最悪は `ANPA` の **$108,939/日**（床の18分の1）。他に `ULBI` $245k / `HQI` $254k / `OIO` $279k など。
+    dashboard は日常的に見る画面であり `/screener` より露出が大きい。
+  - **対応**: 値の解決と注入を `backend/backtest/common_constraints.py` に集約し（旧: 4モジュール5箇所）、
+    両エンドポイントに適用。**dashboard の表示銘柄は減る**（修正後の実測で消えた67銘柄すべてが
+    床未満であることを個別照合済み、説明できない消失はゼロ）。
+  - 詳細: `doc/in_progress/screener_filter_unification_plan.md` §7 P1-8
+
 - [x] **【データソースの制約】yfinance / Yahoo Finance は株式分割・併合に完全対応できない（2026-07-30 確認 / 2026-08-03 skill へ集約）**
 
   ※ 解決すべき課題ではなく**恒久的な制約の記録**。knowledge は skill 側に移したためクローズする。
