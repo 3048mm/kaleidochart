@@ -218,6 +218,43 @@ _SPECIAL_SPECS = {
 EXPLICIT_SPECS: dict = {**_SPECIAL_SPECS, **_build_close_gt_specs()}
 
 
+# ============================================================
+# VIRTUAL_COLUMNS — 仮想（計算）カラム名
+# ============================================================
+# SQL 式は screener_router._VIRTUAL_COLUMNS、pandas の導出は apply_filters_to_df にあり、
+# このレジストリは「名前」だけを持つ（式は持たない）。値は screener_router._VIRTUAL_COLUMNS
+# のキーと完全一致させること。
+VIRTUAL_COLUMNS: frozenset = frozenset({
+    'change_oc_pct', 'change_intraday_pct',
+    'dist_ema21_pct', 'dist_21ema_pct', 'dist_sma50_pct',
+})
+
+
+# ============================================================
+# ATTACHED_PARAM_KEYS — 特殊フィルタに随伴する数値パラメータ
+# ============================================================
+# `is_vcp_breakout` の閾値8種や `rrg_intensity_threshold` のように、それ自体はフィルタでは
+# なく「特殊フィルタが有効なときに参照される値」であるキーの全体集合。
+# 旧 `backtest_runner.validate_strategies_config` のローカル定数
+# `FILTER_ATTACHED_PARAM_KEYS` に相当する（レジストリへ集約）。
+#
+# これを除外し忘れると、`is_vcp_breakout` を使う戦略で `pivot_tol` 等が
+# 「未知のキー」と判定され、fail-loud によりバックテスト全体が停止する
+# （2026-08-10 の検収で実際に8件の誤検知として再現。計画書 §7 P1-1）。
+ATTACHED_PARAM_KEYS: frozenset = frozenset(
+    p for spec in EXPLICIT_SPECS.values() for p in spec.params
+)
+
+
+def is_non_filter_key(key: str) -> bool:
+    """フィルタキーとして解決を試みるべきでないキー（制御キー・随伴パラメータ）か。
+
+    全ての呼び出し側はキーを走査する前にこの述語で除外すること。
+    除外集合が呼び出し側ごとに分かれると、また3箇所に分散する（それが本計画の出発点）。
+    """
+    return key in METADATA_KEYS or key in ATTACHED_PARAM_KEYS
+
+
 def resolve_filter_spec(key: str, known_columns: AbstractSet, rank_columns: AbstractSet) -> FilterSpec:
     """キー1つを FilterSpec に解決する。解決できなければ UnknownFilterKeyError。
 

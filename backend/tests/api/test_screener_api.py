@@ -64,28 +64,41 @@ def reset_db():
     from datetime import date
     d = date(2026, 5, 20)
     
+    # 特殊フィルタ（pandas 側, screener_cross_section.build_cross_section が merge する列）が
+    # 全銘柄同一列で None を混在させると "float > None" の TypeError になる
+    # （本番では T3/T4 が一括で全列を埋めるため起きないが、この最小フィクスチャでは
+    # 明示的に埋めておかないと再現してしまう。2026-08-13、screener_dashboard の
+    # 全プリセット error=None 回帰テストの追加で判明）。
+    _SPECIAL_FILTER_DEFAULTS = dict(rs_trend_s14=1.0, rs_trend_s21=1.0, rs_macd_hist_21=0.1)
+
     # 1. Stocks data
     # AAPL (Rise candidate: +1.5%)
     dp1 = DailyPrice(symbol_id=1, date=d, open=180, high=185, low=178, close=183, volume=1000)
-    ind1 = Indicator(symbol_id=1, date=d, change_1d_pct=1.5, sma50_atr_mult=4.0, avg_dollar_volume_21=5e6)
+    ind1 = Indicator(symbol_id=1, date=d, change_1d_pct=1.5, sma50_atr_mult=4.0, avg_dollar_volume_21=5e6,
+                      **_SPECIAL_FILTER_DEFAULTS)
 
     # MSFT (Fall candidate: -3.0%)
     dp4 = DailyPrice(symbol_id=4, date=d, open=400, high=402, low=385, close=388, volume=1200)
-    ind4 = Indicator(symbol_id=4, date=d, change_1d_pct=-3.0, sma50_atr_mult=4.0, vol_surge_21=2.0, avg_dollar_volume_21=5e6)
-    
+    ind4 = Indicator(symbol_id=4, date=d, change_1d_pct=-3.0, sma50_atr_mult=4.0, vol_surge_21=2.0, avg_dollar_volume_21=5e6,
+                      **_SPECIAL_FILTER_DEFAULTS)
+
     db.add_all([dp1, ind1, dp4, ind4])
 
     # 2. Themes data & RelativeRank (T4)
     # THEME1 (Strong theme: rs_ratio_rank_e21 = 0.9)
     dp2 = DailyPrice(symbol_id=2, date=d, open=100, high=105, low=98, close=102, volume=500)
-    ind2 = Indicator(symbol_id=2, date=d, change_1d_pct=2.0, sma50_atr_mult=1.0)
-    rr1 = RelativeRank(symbol_id=2, date=d, group_name="theme", rs_ratio_rank_e21=0.9)
-    
+    ind2 = Indicator(symbol_id=2, date=d, change_1d_pct=2.0, sma50_atr_mult=1.0, **_SPECIAL_FILTER_DEFAULTS)
+    rr1 = RelativeRank(symbol_id=2, date=d, group_name="theme", rs_ratio_rank_e21=0.9,
+                        rs_ratio_rank_e14=0.5, rs_ratio_rank_e63=0.5,
+                        rs_trend_rank_s14=0.5, rs_trend_rank_s21=0.5, rs_trend_rank_s63=0.5)
+
     # THEME2 (Weak theme: rs_ratio_rank_e21 = 0.3)
     dp3 = DailyPrice(symbol_id=3, date=d, open=100, high=102, low=95, close=97, volume=300)
-    ind3 = Indicator(symbol_id=3, date=d, change_1d_pct=-1.5, sma50_atr_mult=1.0)
-    rr2 = RelativeRank(symbol_id=3, date=d, group_name="theme", rs_ratio_rank_e21=0.3)
-    
+    ind3 = Indicator(symbol_id=3, date=d, change_1d_pct=-1.5, sma50_atr_mult=1.0, **_SPECIAL_FILTER_DEFAULTS)
+    rr2 = RelativeRank(symbol_id=3, date=d, group_name="theme", rs_ratio_rank_e21=0.3,
+                        rs_ratio_rank_e14=0.5, rs_ratio_rank_e63=0.5,
+                        rs_trend_rank_s14=0.5, rs_trend_rank_s21=0.5, rs_trend_rank_s63=0.5)
+
     db.add_all([dp2, ind2, rr1, dp3, ind3, rr2])
 
     # 3. Mappings (ThemeConstituent)
@@ -249,6 +262,49 @@ def test_screener_api_excludes_theme_rows_from_results(client):
     assert "AAPL" in tickers
     assert "THEME1" not in tickers
     assert "THEME2" not in tickers
+
+
+def test_screener_dashboard_unknown_filter_key_isolated_as_error(client, monkeypatch):
+    """2026-08-13: 未知キーを含むプリセットは items=[] かつ error 付きで返り、
+    他のプリセットは正常表示を続けること（U-1 (b)。
+    doc/in_progress/screener_filter_unification_plan.md §3 Phase 1）。
+    """
+    import api.screener_router as router_module
+
+    fake_presets = {
+        "rise": [
+            {"id": "broken_preset", "name": "Broken", "group": "Check",
+             "filters": {"min_totally_unknown_key_xyz": 1.0}},
+            {"id": "ok_preset", "name": "OK", "group": "Check",
+             "filters": {"min_change_1d_pct": 0.0}},
+        ],
+        "fall": [],
+    }
+    monkeypatch.setattr(router_module, "_load_presets", lambda: fake_presets)
+
+    resp = client.get("/api/screener/dashboard")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    broken = next(c for c in data["rise"] if c["id"] == "broken_preset")
+    ok = next(c for c in data["rise"] if c["id"] == "ok_preset")
+
+    assert broken["items"] == []
+    assert broken["error"] is not None
+    assert "min_totally_unknown_key_xyz" in broken["error"]
+
+    assert ok["error"] is None
+
+
+def test_screener_dashboard_current_presets_have_no_errors(client):
+    """現行の data/screener_presets.toml の全プリセットで error が None であること
+    （fail-loud 化によって既存プリセットの解釈が変わっていないことの固定）。
+    """
+    resp = client.get("/api/screener/dashboard")
+    assert resp.status_code == 200
+    data = resp.json()
+    for cat in data.get("rise", []) + data.get("fall", []):
+        assert cat.get("error") is None, f"preset '{cat['id']}' unexpectedly errored: {cat.get('error')}"
 
 
 def test_screener_dashboard_excludes_theme_rows_from_items(client):

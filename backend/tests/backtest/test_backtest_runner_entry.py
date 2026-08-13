@@ -275,3 +275,121 @@ def test_fast_prune_uses_episode_count_not_raw_signal_count():
 
     assert metrics.get("fast_pruned") is True
     assert metrics["avg_per_day"] == pytest.approx(0.1)  # 1エピソード / 10日
+
+
+# =============================================================
+# validate_strategies_config — screener_registry.resolve_filter_spec() への置換
+# （doc/in_progress/screener_filter_unification_plan.md §5 Phase 1「検証系2箇所」）
+# =============================================================
+
+def _real_df_ind_and_prices():
+    """Indicator / DailyPrice の実カラム名だけを持つ空 DataFrame を作る。
+
+    validate_strategies_config の known_columns はこの2つの DataFrame の
+    columns から組み立てられる。値は使わずカラム名の存在だけを検査する。
+    """
+    from backend.db.models import Indicator, DailyPrice
+    ind_cols = [c for c in Indicator.__table__.columns.keys() if c not in ('id', 'symbol_id', 'date')]
+    price_cols = [c for c in DailyPrice.__table__.columns.keys() if c not in ('id', 'symbol_id', 'date')]
+    return pd.DataFrame(columns=ind_cols), pd.DataFrame(columns=price_cols)
+
+
+def test_validate_strategies_config_rejects_typo_key():
+    """タイポしたキー（min_vol_surge_2）は未知キーとしてエラーになること。"""
+    from backend.backtest.backtest_runner import validate_strategies_config
+
+    df_ind, df_prices = _real_df_ind_and_prices()
+    strategies = [{"name": "typo_strategy", "min_vol_surge_2": 2.0}]
+
+    errors = validate_strategies_config(strategies, df_ind, df_prices)
+
+    assert len(errors) == 1
+    assert "min_vol_surge_2" in errors[0]
+
+
+def test_validate_strategies_config_allows_vcp_attached_params():
+    """特殊フィルタの随伴パラメータ（is_vcp_breakout の閾値8種）がエラーにならないこと。
+
+    回帰テスト（計画書 §7 P1-1）: 旧実装のローカル定数 FILTER_ATTACHED_PARAM_KEYS を
+    レジストリへ移す際に取りこぼすと、これらが「未知のキー」と判定され、fail-loud により
+    **is_vcp_breakout を使う戦略でバックテスト全体が停止する**。
+    2026-08-10 の検収で実際に8件の誤検知として再現したため固定する。
+    """
+    from backend.backtest.backtest_runner import validate_strategies_config
+
+    df_ind, df_prices = _real_df_ind_and_prices()
+    strategies = [{
+        "name": "vcp_strategy",
+        "is_vcp_breakout": True,
+        "breakout_high_window": 63,
+        "vcr_contraction_max": 0.8,
+        "base_high_tol": 15.0,
+        "near_high_tol": 4.0,
+        "breakout_change": 4.0,
+        "breakout_vol_mult": 1.5,
+        "pivot_tol": 2.0,
+        "base_vol_dry_max": 0.8,
+    }]
+
+    errors = validate_strategies_config(strategies, df_ind, df_prices)
+
+    assert errors == [], f"随伴パラメータが誤検知された: {errors}"
+
+
+def test_validate_strategies_config_allows_rrg_intensity_threshold():
+    """rrg_intensity_threshold（RRG 3種の随伴パラメータ）がエラーにならないこと。"""
+    from backend.backtest.backtest_runner import validate_strategies_config
+
+    df_ind, df_prices = _real_df_ind_and_prices()
+    strategies = [{
+        "name": "rrg_strategy",
+        "rrg_leading_in": True,
+        "rrg_intensity_threshold": 1.5,
+    }]
+
+    errors = validate_strategies_config(strategies, df_ind, df_prices)
+
+    assert errors == [], f"随伴パラメータが誤検知された: {errors}"
+
+
+def test_validate_strategies_config_allows_metadata_keys():
+    """METADATA_KEYS（max_allowed_dd / min_avg_hits_per_day / max_avg_hits_per_day 等の
+    制御キー）はフィルタキーではないため、エラーにならないこと。"""
+    from backend.backtest.backtest_runner import validate_strategies_config
+
+    df_ind, df_prices = _real_df_ind_and_prices()
+    strategies = [{
+        "name": "metadata_only",
+        "max_hits_per_day": 10,
+        "sort_column": "rs_ratio_rank_e21",
+        "sort_ascending": False,
+        "min_avg_hits_per_day": 0.1,
+        "max_avg_hits_per_day": 5.0,
+        "max_allowed_dd": 35.0,
+        "min_hit_rate_pct": 1.0,
+    }]
+
+    errors = validate_strategies_config(strategies, df_ind, df_prices)
+
+    assert errors == []
+
+
+def test_validate_strategies_config_current_backtest_config_has_zero_errors():
+    """現行 backtest_config.toml の全戦略でエラーが0件であること。
+
+    ここが0件でないと U-3 の「差分ゼロ」目標が崩れるため、レジストリへの
+    置換によって既存戦略の解釈が変わっていないことをここで固定する。
+    """
+    import pathlib
+    from backend.backtest.backtest_runner import load_config, validate_strategies_config
+
+    config_path = pathlib.Path(__file__).resolve().parents[3] / "backend" / "backtest" / "backtest_config.toml"
+    config = load_config(str(config_path))
+    strategies = config.get('strategy', [])
+    assert strategies, "backtest_config.toml に戦略が1件も読み込めていない"
+
+    df_ind, df_prices = _real_df_ind_and_prices()
+
+    errors = validate_strategies_config(strategies, df_ind, df_prices)
+
+    assert errors == [], f"backtest_config.toml に未解決のフィルタキーがある: {errors}"

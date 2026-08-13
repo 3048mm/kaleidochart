@@ -467,9 +467,30 @@ ScreenerFrame（1営業日分・wide・正準列名・派生列込み）
       レジストリ導出へ置換
 - [ ] `screener_cross_section.py` の `_IND_COLS` / `_PREV_COLS` をレジストリ導出へ置換
 - [ ] `scenario_runner.py` のランク事前マージをレジストリ導出へ置換（`has_all_premerged` 分岐の解消）
-- [ ] `backtest_runner.py::validate_strategies_config` をレジストリ参照へ置換し、
+- [x] `backtest_runner.py::validate_strategies_config` をレジストリ参照へ置換し、
       `api.screener_router` への逆依存と `except ImportError` の握り潰しを削除
-- [ ] `screener_router.py::_build_preset_query` の `is_known` 判定をレジストリ参照へ置換
+      → `resolve_filter_spec()` へ全面置換。手書き分類（`rank_column_names`/`alias_map`/接頭辞の
+      場合分け）を削除。戻り値は引き続き `list[str]`（純関数）だが、呼び出し側（`run_backtest`）で
+      非空なら `ValueError` を送出して停止するよう変更（U-1 の CLI 側決定）。
+      `strategy.optimization` サブ dict のキーも検証対象に含めた。
+      テスト3件追加（`test_backtest_runner_entry.py`）: タイポキーでエラー、METADATA_KEYS は
+      エラーにならない、現行 `backtest_config.toml` 全戦略でエラー0件。GREEN。
+- [x] `screener_router.py::_build_preset_query` の `is_known` 判定をレジストリ参照へ置換
+      → 手書きの `is_known` 判定ブロックを `resolve_filter_spec()` 呼び出しに置換（`known_columns`
+      = `_INDICATOR_COLUMNS.keys()` ∪ `_VIRTUAL_COLUMNS.keys()`、`rank_columns` = `RelativeRank`
+      の実カラムから制御列を除いたもの）。`_use_hysteresis`/`rrg_intensity_threshold` の個別 `elif`
+      は `screener_registry.METADATA_KEYS` 参照に統一。`special_flags` の分岐・`_apply_filter()` の
+      呼び出し自体は変更なし。fail-loud: `UnknownFilterKeyError` はプリセット単位で捕捉し、
+      `ScreenerDashboardCategory` に `error: Optional[str] = None` を追加（後方互換）、
+      失敗プリセットは `items=[]` + `error` 付きで返し他のプリセットは正常表示を継続するよう変更
+      （旧実装は `except Exception` でカテゴリごと黙って落としていた＝サイレント失敗だった）。
+      テスト2件追加（`test_screener_api.py`）: 未知キーを含むプリセットが `items=[]`+`error` 付きで
+      返り他は正常表示、現行 `data/screener_presets.toml` 全プリセットで `error` が None。
+      GREEN（テスト用の共有 DB フィクスチャに、特殊フィルタが要求する rs_trend_s14/s21・
+      rs_macd_hist_21・テーマ側のランク列を追加補完 — 本番は T3/T4 が一括で埋めるため
+      未発生だが、最小フィクスチャでは None 混在による `TypeError` を誘発していた）。
+      `grep backend.api.screener_router backend/backtest/backtest_runner.py` は0件（逆依存解消済み）。
+      全体テスト 829 passed / 1 failed（環境要因の1件のみ、期待通り）。
 - [ ] 流動性床（`min_avg_dollar_volume_21`）の注入を単一の純関数へ集約（4モジュール5箇所 → 1箇所）
 - [ ] テーマ行の最終出力除外を単一定義へ集約（2モジュール3箇所 → 1箇所）
 - [ ] `applied_filters` の記録・出力（API レスポンス／バックテスト結果 JSON／ログ）
@@ -513,9 +534,24 @@ ScreenerFrame（1営業日分・wide・正準列名・派生列込み）
 `backtest_runner.py` のバリデータと逆依存削除 → `screener_router.py` の `is_known` 判定）。
 
 - 作業ブランチ: `worktree-screener-filter-registry`（`.claude/worktrees/screener-filter-registry`）
-- ベースラインの再取得コマンド（**本体チェックアウトで実行**。ワークツリーには Parquet 実データが無い）:
-  `$env:PYTHONPATH="backend"; .\venv\Scripts\python.exe tmp/phase0_snapshot.py`
-  （読み取り専用。Phase 1 完了後に再実行して `tmp/phase0_baseline_20260813_121011.json` と突合する）
+- **差分実測の手順**（ワークツリーのコードを本番データに向けて動かす。読み取り専用）:
+  ```powershell
+  # 1. ワークツリー内で、本体の DB を絶対パスで指定して取得
+  #    （Parquet マスターの場所は DB パスの階層から自動解決される）
+  cd .claude\worktrees\screener-filter-registry
+  $env:PYTHONPATH="backend"
+  & "d:\My Documents\Programing\stocktool\venv\Scripts\python.exe" tmp/phase0_snapshot.py `
+      "d:\My Documents\Programing\stocktool\data\stocktool.db"
+
+  # 2. 本体チェックアウトでベースラインと突合（差分ゼロなら exit 0）
+  cd d:\My Documents\Programing\stocktool
+  .\venv\Scripts\python.exe tmp/phase0_compare.py `
+      tmp/phase0_baseline_20260813_121011.json `
+      .claude/worktrees/screener-filter-registry/tmp/phase0_baseline_<新しい方>.json
+  ```
+  `tmp/phase0_compare.py` は**変異データを注入して検出できることを確認済み**
+  （銘柄の消失・架空銘柄の追加・テーマ混入・共通ルール NG の4種）。
+  「何を渡しても差分ゼロ」と言う道具では意味が無いため、信頼する前に必ずこの確認をすること。
 - 注意点は §7 の P0-1〜P0-8 にまとめてある。とくに **P0-5（`Query` 既定値の罠）** は
   Phase 2 のパリティテスト設計時に必ず参照すること
 
@@ -608,6 +644,13 @@ $env:STOCKTOOL_ENV="sandbox"
 | :--- | :--- | :--- |
 | **P0-7** | **`METADATA_KEYS` の3箇所の和集合を取ったところ、`max_avg_hits_per_day` が `backtest_runner.py::validate_strategies_config` の `METADATA_KEYS` に非対称に欠落していた**（`min_avg_hits_per_day` はあるのに対になる `max_` が無い） | `backtest_config.toml` で実際に使われている制御キーなので、バリデータが「未知パラメータ」警告を出していたはず。レジストリ側の `METADATA_KEYS` で補完済み。**3箇所を統合しなければ気づけなかった類の非対称**で、集約の効果がさっそく1件出た |
 | **P0-8** | **`is_close_gt_*` の短縮名正規化が、既存3箇所のうち `screener_router._apply_filter`（L313-324）だけ無条件で、他2箇所は「既知の12短縮名のときだけ」というガード付きだった** | `_apply_filter` は `is_close_gt_ema_63` のような**正準形も受け付けていた**。短縮名だけをレジストリに登録すると、呼び出し側を切り替えた時点でこのキーが `UnknownFilterKeyError` になる（＝Phase 1 の「差分ゼロ」目標を崩す潜在的な後退）。現行 TOML に正準形の使用は無いが、**短縮名と正準名の両方を登録して塞いだ**（`_build_close_gt_specs`。close_gt の登録数 24→48） |
+
+### Phase 1「検証系2箇所」（2026-08-10）で判明したこと
+
+| ID | 事象 | 影響 / 対応 |
+| :--- | :--- | :--- |
+| **P1-1** | **随伴パラメータの取りこぼしによるハードな後退（検収で発見・修正済み）**。旧 `validate_strategies_config` のローカル定数 `FILTER_ATTACHED_PARAM_KEYS`（`is_vcp_breakout` の閾値8種）がレジストリ化の際に消え、代替が無かった | `pivot_tol` 等が「未知のキー」と判定され、**fail-loud により `is_vcp_breakout` を使う戦略でバックテスト全体が `ValueError` で停止する**。検収で実際に8件の誤検知として再現。現在どの戦略も `is_vcp_breakout` を使っていないため既存テストはすり抜けた（issue_list で「温存」と明記されているフィルタなので、いずれ必ず踏む）。**対応**: レジストリに `ATTACHED_PARAM_KEYS`（全 `spec.params` の和集合）と述語 `is_non_filter_key()` を追加し、全呼び出し側がこれ1つを参照する形にした。回帰テスト2件を追加（VCP 8種 / `rrg_intensity_threshold`）。**教訓: 「除外集合」は「フィルタ集合」と同じくらい重要で、集約時に落ちやすい** |
+| **P1-2** | **`_build_preset_query` の `except Exception` が、失敗したプリセットを黙ってレスポンスから落としていた**（＝それ自体がサイレント失敗）。fail-loud 化の過程で、テストフィクスチャの列が全て `None` のとき特殊フィルタが `TypeError: float > None` を出し、それが握り潰されていたことが判明 | **本番データでは現在発生していない**ことを確認（基準日 2026-08-11 のクロスセクション 3,148行で object dtype 列はゼロ。NULL は最大2件で pandas が float64 に推論するため）。ただし**列が丸ごと NULL になると object dtype になり TypeError を起こす**。これは「T3 に新しい指標カラムを追加したがパイプライン未実行」の状態で実際に起きうる（`avg_dollar_volume_21` 追加時が該当）。**対応**: カテゴリを残したまま `items=[]` ＋ `error` を返すよう変更し、少なくとも**見えるようになった**。dtype 脆弱性そのものは未対処で、Phase 3 の `assert_frame_contract()` で数値 dtype を強制するのが本筋 |
 
 ---
 

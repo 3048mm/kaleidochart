@@ -214,6 +214,7 @@ class ScreenerDashboardCategory(BaseModel):
     subtitle: Optional[str] = None
     group: str
     items: List[ScreenerDashboardItem]
+    error: Optional[str] = None  # プリセット構築失敗時のエラー内容（U-1 (b)。他カテゴリは正常表示を継続）
 
 class ScreenerDashboardResponse(BaseModel):
     rise: List[ScreenerDashboardCategory]

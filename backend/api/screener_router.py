@@ -16,6 +16,7 @@ from api import schemas
 from api.deps import get_api_db
 from api.screener_cross_section import build_cross_section, evaluate_special_filters
 from indicators.screener_filters import SPECIAL_FILTER_KEYS
+from indicators import screener_registry
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -100,6 +101,15 @@ _RANK_COLUMN_ALIASES = {
     "rs_roc_ema_63": "rs_roc_ema_rank_e63",
     "rs_value": "rs_value_rank",
 }
+
+# --- レジストリ fail-loud 判定用: 既知カラム集合 / ランクカラム集合 ---
+# _build_preset_query の is_known 判定を screener_registry.resolve_filter_spec() へ
+# 委譲するために使う（doc/in_progress/screener_filter_unification_plan.md §3.1.2）。
+_KNOWN_FILTER_COLUMNS = frozenset(_INDICATOR_COLUMNS.keys()) | frozenset(_VIRTUAL_COLUMNS.keys())
+_RANK_FILTER_COLUMNS = frozenset(
+    col for col in RelativeRank.__table__.columns.keys()
+    if col not in ("id", "symbol_id", "date", "group_name")
+)
 
 # --- Column category mapping for frontend ---
 _COLUMN_CATEGORIES = {
@@ -631,51 +641,18 @@ def get_screener_dashboard(
             if key in SPECIAL_FILTER_KEYS:
                 if value is True:
                     special_flags[key] = True
-            elif key == "_use_hysteresis":
                 continue
-            elif key == "rrg_intensity_threshold":
+            if screener_registry.is_non_filter_key(key):
+                # 制御キー（_use_hysteresis / expression 等）と特殊フィルタの随伴パラメータ
+                # （is_vcp_breakout の pivot_tol 等）は、フィルタキーとして解決を試みない
                 continue
-            else:
-                # Check if filter key is known
-                is_known = False
-                if key == "expression":
-                    is_known = True
-                elif re.match(r'^(min|max)_theme_(.+)$', key):
-                    direction, col_name = re.match(r'^(min|max)_theme_(.+)$', key).groups()
-                    if hasattr(RelativeRank, col_name):
-                        is_known = True
-                    elif col_name.endswith('_rank'):
-                        old_indicator = col_name[:-5]
-                        if old_indicator in _RANK_COLUMN_ALIASES:
-                            is_known = True
-                    elif _resolve_column(col_name) is not None:
-                        is_known = True
-                elif re.match(r'^(min|max)_(.+)$', key):
-                    direction, col_name = re.match(r'^(min|max)_(.+)$', key).groups()
-                    if hasattr(RelativeRank, col_name):
-                        is_known = True
-                    elif col_name.endswith('_rank'):
-                        old_indicator = col_name[:-5]
-                        if old_indicator in _RANK_COLUMN_ALIASES:
-                            is_known = True
-                    elif _resolve_column(col_name) is not None:
-                        is_known = True
-                elif key.startswith('close_gt_') or key.startswith('is_close_gt_'):
-                    ind_name = key[9:] if key.startswith('close_gt_') else key[12:]
-                    if ind_name in ('sma5', 'sma21', 'sma50', 'sma63', 'sma150', 'sma200', 'ema5', 'ema21', 'ema50', 'ema63', 'ema150', 'ema200'):
-                        for num in ('200', '150', '63', '50', '21', '5'):
-                            if ind_name.endswith(num) and not ind_name.endswith('_' + num):
-                                ind_name = ind_name.replace(num, '_' + num)
-                                break
-                    if _resolve_column(ind_name) is not None:
-                        is_known = True
-                elif _resolve_column(key) is not None:
-                    is_known = True
-                
-                if not is_known:
-                    logger.warning(f"Screener Preset '{preset_def.get('id')}': Unknown filter key '{key}' ignored.")
-                
-                q = _apply_filter(q, key, value, db, latest_date_result)
+
+            # fail-loud: レジストリで解決できないキーは UnknownFilterKeyError を送出し、
+            # このプリセット全体をエラー扱いにする（呼び出し元の try/except が捕捉し、
+            # 他のプリセットは正常表示を続ける。U-1 (b)）
+            screener_registry.resolve_filter_spec(key, _KNOWN_FILTER_COLUMNS, _RANK_FILTER_COLUMNS)
+
+            q = _apply_filter(q, key, value, db, latest_date_result)
 
         # Special boolean filters: evaluated on the shared cross-section
         passing_ids = None
@@ -712,7 +689,15 @@ def get_screener_dashboard(
                 group=p.get("group", "Check"), items=fetch_top_8(q, passing_ids, is_rise=True)
             ))
         except Exception as e:
+            # U-1 (b): 当該プリセットだけをエラーとして返し、他のプリセットは正常表示を続ける
+            # （旧実装はここでカテゴリ自体を黙って落としており、それ自体がサイレント失敗だった）
             logger.error(f"Screener preset '{p.get('id')}' failed: {e}")
+            rise_categories.append(schemas.ScreenerDashboardCategory(
+                id=p.get("id", ""), name=p.get("name", ""), subname=p.get("subname"),
+                subtitle=p.get("subtitle"),
+                group=p.get("group", "Check"), items=[],
+                error=f"{type(e).__name__}: {e}"
+            ))
 
     for p in presets.get("fall", []):
         try:
@@ -724,6 +709,12 @@ def get_screener_dashboard(
             ))
         except Exception as e:
             logger.error(f"Screener preset '{p.get('id')}' failed: {e}")
+            fall_categories.append(schemas.ScreenerDashboardCategory(
+                id=p.get("id", ""), name=p.get("name", ""), subname=p.get("subname"),
+                subtitle=p.get("subtitle"),
+                group=p.get("group", "Warning"), items=[],
+                error=f"{type(e).__name__}: {e}"
+            ))
 
     return schemas.ScreenerDashboardResponse(rise=rise_categories, fall=fall_categories)
 
