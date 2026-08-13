@@ -201,27 +201,39 @@ import が壊れると検証が静かに劣化する）。
 
 #### 3.1.1 実使用キーの棚卸し（2026-08-10 実測）
 
-`data/screener_presets*.toml`（4ファイル）と `backend/backtest/backtest_config.toml`
-（`[[strategy]]` + `[strategy.optimization]` + `[optimization.*]`）に登場するキーは **43種**。
-これに実行時注入の `min_avg_dollar_volume_21` を加えた **44種**が Phase 1 の対象範囲。
+`data/screener_presets*.toml` と `backend/backtest/backtest_config.toml`
+（`[[strategy]]` + `[strategy.optimization]` + `[optimization.*]`）に登場するキーは **45種**。
+これに実行時注入の `min_avg_dollar_volume_21` を加えた **46種**が Phase 1 の対象範囲。
 
 | kind | 件数 | 実例（括弧内は総出現回数） |
 | :--- | ---: | :--- |
-| `numeric`（Indicator / DailyPrice / 派生列の min_/max_） | 22 | `min_market_cap`(41) `max_sma50_atr_mult`(36) `min_adr_pct_21`(33) `min_vol_surge_21`(29) `min_dist_21ema_pct` `min_change_intraday_pct` |
-| `special`（既存の純関数14種のうち実使用9種） | 9 | `rrg_leading_in` `rrg_improving_in` `rrg_lagging_in` `is_rs_macd_hist_rising_21` `is_rs_ratio_rank_e21_gt_e63` `is_rs_trend_s14_lt_s21` `is_theme_rs_ratio_rank_e14_gt_e21` `is_theme_rs_ratio_rank_e21_gt_e63` `is_theme_rs_trend_rank_s14_gt_s21` |
+| `numeric`（Indicator / DailyPrice / 派生列の min_/max_） | 25 | `min_market_cap`(44) `max_sma50_atr_mult`(38) `min_adr_pct_21`(35) `min_vol_surge_21`(31) `min_dist_21ema_pct` `min_change_intraday_pct` |
+| `special`（既存の純関数15種のうち実使用10種） | 10 | `rrg_leading_in` `rrg_improving_in` `rrg_lagging_in` `is_rs_macd_hist_rising_21` `is_rs_ratio_rank_e21_gt_e63` `is_rs_trend_s14_lt_s21` `is_theme_rs_ratio_e21_gt_e63` `is_theme_rs_ratio_rank_e14_gt_e21` `is_theme_rs_ratio_rank_e21_gt_e63` `is_theme_rs_trend_rank_s14_gt_s21` |
 | `rank`（RelativeRank 列の min_/max_） | 3 | `min_rs_ratio_rank_e14` `min_rs_ratio_rank_e21` `min_rs_trend_rank_s21` |
-| `bool_column`（実在の SMALLINT 列の is_） | 2 | `is_trend_template`(10) `is_rs_blue_dot` |
-| `close_gt` | 2 | `is_close_gt_ema63`(18) `is_close_gt_sma50` |
+| `bool_column`（実在の SMALLINT 列の is_） | 2 | `is_trend_template`(11) `is_rs_blue_dot` |
+| `close_gt` | 2 | `is_close_gt_ema63`(19) `is_close_gt_sma50` |
 | `theme_rank` | 1 | `min_theme_rs_ratio_rank_e21` |
 | `theme_numeric` | 1 | `min_theme_rs_trend_s21` |
 | `expression` | 1 | プリセット3件で使用 |
 | 実行時注入 | 1 | `min_avg_dollar_volume_21`（TOML には書かれない） |
 
+> [!IMPORTANT]
+> **プリセットファイルは4つあるが、git 管理下にあるのは `screener_presets.toml` だけ。**
+> `screener_presets_A_only.toml` / `_B_only` / `_E_only` は本体チェックアウトにのみ存在する
+> 未追跡の実験用ファイル（個別戦略のシナリオテスト用）で、**ワークツリーには存在しない**。
+> この3ファイルにしか無いキーが2件ある: `max_dist_52w_high_pct` と `is_theme_rs_ratio_e21_gt_e63`。
+> - 前者はルールベース解決（`max_` + 実在の Indicator 列）で**自動的にカバーされる**。
+>   明示登録は不要で、これがルールベース設計の利点そのもの。
+> - 実データ整合テストは `data/screener_presets*.toml` を **glob して「在るものを全部」対象にする**
+>   （本体では4ファイル、ワークツリーでは1ファイル）。手書きの実験用プリセットで使ったキーも
+>   レジストリで解決できなければ、そこが F1 の抜け穴になるため。
+
 > [!NOTE]
-> `SPECIAL_FILTER_KEYS` に登録済みだが実使用ゼロの特殊フィルタが5種ある
-> （`is_vcp_breakout` / `is_theme_rs_ratio_e14_gt_e21` / `is_theme_rs_ratio_e21_gt_e63` /
-> `is_rs_trend_s21_lt_s63` / `is_theme_rs_trend_rank_s21_gt_s63`）。**削除せずレジストリに載せる**
+> `SPECIAL_FILTER_KEYS` は **15種**（当初 14 と記載していたが実測は 15）。うち実使用ゼロは
+> **5種**（`is_vcp_breakout` / `is_theme_rs_ratio_e14_gt_e21` / `is_rs_trend_s21_lt_s63` /
+> `is_theme_rs_trend_rank_s21_gt_s63` / `is_rs_ratio_rank_e14_gt_e21`）。**削除せずレジストリに載せる**
 > （issue_list P1「区分B」で採用候補として追跡中のため）。
+> なお `is_theme_rs_ratio_e21_gt_e63` は未追跡の `_B_only` で使われているため「実使用」に分類した。
 
 #### 3.1.2 モジュール配置と依存方向（設計判断）
 
@@ -264,10 +276,22 @@ def resolve_filter_spec(key: str, known_columns: AbstractSet[str],
       -> いずれにも当たらなければ raise
     """
 
+@dataclass(frozen=True)
+class RequiredColumns:
+    today: frozenset[str]   # 基準日に必要なカラム（正準名）
+    prev: frozenset[str]    # 前日に必要なカラム（prev_ を付けない素の名前）
+    ranks: frozenset[str]   # RelativeRank から必要なカラム
+
 def resolve_required_columns(strategy: Mapping, known_columns, rank_columns) -> RequiredColumns:
-    """戦略dict全体から (today, prev, ranks) の必要カラム集合を導出する。
+    """戦略dict全体から必要カラム集合を導出する（METADATA_KEYS は無視）。
     データ供給側（クロスセクション構築・日次マージ）はこの結果だけを見ればよい。"""
 ```
+
+> [!NOTE]
+> `RequiredColumns` は **frozen dataclass で属性アクセス**（`req.today` / `req.prev` / `req.ranks`）。
+> `prev` は `prev_` 接頭辞を**付けない素のカラム名**で持ち、接頭辞の付与は供給側（マージ処理）の責務。
+> 供給側ごとに接頭辞の規約が違う（API は `prev_` 固定、バックテストは `rename` で付与）ため、
+> レジストリは論理名だけを持つ。
 
 - **`known_columns` の供給元**: API 側は `Indicator.__table__.columns` + `DailyPrice.market_cap` +
   仮想カラム定義、バックテスト側は `merged.columns`（実際に手元にある列）。
