@@ -197,32 +197,117 @@ import が壊れると検証が静かに劣化する）。
 
 ### Phase 1: フィルタ仕様レジストリ ＋ fail-loud 化
 
-**何を**: `indicators/screener_filters.py` に全フィルタキーの宣言的定義を追加する。
+**何を**: フィルタキーの宣言的レジストリを新設し、キーの解釈を1箇所に集約する。
+
+#### 3.1.1 実使用キーの棚卸し（2026-08-10 実測）
+
+`data/screener_presets*.toml`（4ファイル）と `backend/backtest/backtest_config.toml`
+（`[[strategy]]` + `[strategy.optimization]` + `[optimization.*]`）に登場するキーは **43種**。
+これに実行時注入の `min_avg_dollar_volume_21` を加えた **44種**が Phase 1 の対象範囲。
+
+| kind | 件数 | 実例（括弧内は総出現回数） |
+| :--- | ---: | :--- |
+| `numeric`（Indicator / DailyPrice / 派生列の min_/max_） | 22 | `min_market_cap`(41) `max_sma50_atr_mult`(36) `min_adr_pct_21`(33) `min_vol_surge_21`(29) `min_dist_21ema_pct` `min_change_intraday_pct` |
+| `special`（既存の純関数14種のうち実使用9種） | 9 | `rrg_leading_in` `rrg_improving_in` `rrg_lagging_in` `is_rs_macd_hist_rising_21` `is_rs_ratio_rank_e21_gt_e63` `is_rs_trend_s14_lt_s21` `is_theme_rs_ratio_rank_e14_gt_e21` `is_theme_rs_ratio_rank_e21_gt_e63` `is_theme_rs_trend_rank_s14_gt_s21` |
+| `rank`（RelativeRank 列の min_/max_） | 3 | `min_rs_ratio_rank_e14` `min_rs_ratio_rank_e21` `min_rs_trend_rank_s21` |
+| `bool_column`（実在の SMALLINT 列の is_） | 2 | `is_trend_template`(10) `is_rs_blue_dot` |
+| `close_gt` | 2 | `is_close_gt_ema63`(18) `is_close_gt_sma50` |
+| `theme_rank` | 1 | `min_theme_rs_ratio_rank_e21` |
+| `theme_numeric` | 1 | `min_theme_rs_trend_s21` |
+| `expression` | 1 | プリセット3件で使用 |
+| 実行時注入 | 1 | `min_avg_dollar_volume_21`（TOML には書かれない） |
+
+> [!NOTE]
+> `SPECIAL_FILTER_KEYS` に登録済みだが実使用ゼロの特殊フィルタが5種ある
+> （`is_vcp_breakout` / `is_theme_rs_ratio_e14_gt_e21` / `is_theme_rs_ratio_e21_gt_e63` /
+> `is_rs_trend_s21_lt_s63` / `is_theme_rs_trend_rank_s21_gt_s63`）。**削除せずレジストリに載せる**
+> （issue_list P1「区分B」で採用候補として追跡中のため）。
+
+#### 3.1.2 モジュール配置と依存方向（設計判断）
+
+**`backend/indicators/` の純粋性を壊さないため、レジストリは DB モデルを import しない。**
+
+`indicators/` は `architecture.md` §3 で「純粋な計算アルゴリズム用モジュール群」と定義されている。
+一方でレジストリは「どのカラムが実在するか」を知る必要がある。この2つを両立させるため、
+**レジストリは「カラム名の文字列」だけを扱い、実在判定は呼び出し側が渡す `known_columns` に委ねる**。
 
 ```python
+# backend/indicators/screener_registry.py（新規・pandas も SQLAlchemy も import しない）
+
+class UnknownFilterKeyError(ValueError): ...      # 未知のキー
+class MissingFilterColumnError(ValueError): ...   # 必要カラムが供給されていない
+
 @dataclass(frozen=True)
 class FilterSpec:
-    kind: str                      # "numeric" | "theme_numeric" | "rank" | "theme_rank"
-                                   # | "close_gt" | "special"
-    requires: tuple[str, ...]      # 当日に必要なカラム（正準名）
-    prev_requires: tuple[str, ...] = ()   # 前日に prev_ 付きで必要なカラム
-    fn: Callable | None = None     # kind="special" のときの評価関数
-    params: tuple[str, ...] = ()   # 随伴する数値パラメータキー
-    op: str | None = None          # ">=" | "<=" | "=="
+    key: str
+    kind: str          # numeric|rank|theme_numeric|theme_rank|bool_column|close_gt|special
+    column: str | None        # 比較対象の正準カラム名（special は None）
+    op: str | None            # ">=" | "<=" | "=="
+    requires: tuple[str, ...] = ()        # 当日に必要な正準カラム名
+    prev_requires: tuple[str, ...] = ()   # 前日に prev_ 付きで必要なカラム名
+    params: tuple[str, ...] = ()          # 随伴する数値パラメータキー（VCP の閾値群など）
 
-FILTER_SPECS: dict[str, FilterSpec] = { ... }
+EXPLICIT_SPECS: dict[str, FilterSpec]   # special / close_gt など明示登録が要るもの
+METADATA_KEYS: frozenset[str]           # フィルタではない制御キー（後述）
+
+def resolve_filter_spec(key: str, known_columns: AbstractSet[str],
+                        rank_columns: AbstractSet[str]) -> FilterSpec:
+    """キー1つを FilterSpec に解決する。解決できなければ UnknownFilterKeyError。
+
+    解決順序（先に一致したものを採用）:
+      1. EXPLICIT_SPECS（special / close_gt）
+      2. min_theme_ / max_theme_ + rank_columns  -> theme_rank
+      3. min_theme_ / max_theme_ + known_columns -> theme_numeric
+      4. min_ / max_ + rank_columns              -> rank
+      5. min_ / max_ + known_columns             -> numeric
+      6. is_ / bool_ / has_ + known_columns      -> bool_column
+      -> いずれにも当たらなければ raise
+    """
+
+def resolve_required_columns(strategy: Mapping, known_columns, rank_columns) -> RequiredColumns:
+    """戦略dict全体から (today, prev, ranks) の必要カラム集合を導出する。
+    データ供給側（クロスセクション構築・日次マージ）はこの結果だけを見ればよい。"""
 ```
 
-- 数値系は `min_/max_` × カラム名の機械展開で生成（Indicator モデルのカラム走査＋仮想カラム定義）
-- 特殊系は既存の `SPECIAL_FILTER_KEYS` を `FILTER_SPECS` へ移行（後方互換のため `SPECIAL_FILTER_KEYS`
-  は `FILTER_SPECS` からの導出プロパティとして残す）
+- **`known_columns` の供給元**: API 側は `Indicator.__table__.columns` + `DailyPrice.market_cap` +
+  仮想カラム定義、バックテスト側は `merged.columns`（実際に手元にある列）。
+  **「宣言されている」だけでなく「実際に供給されている」ことを検査できるのが要点**（P0-2 / F4 対策）。
+- **`rank_columns`**: `RelativeRank.__table__.columns`（API）／ ranks DataFrame の列（バックテスト）。
+- 既存の `SPECIAL_FILTER_KEYS`（`screener_filters.py`）は `EXPLICIT_SPECS` からの**導出値として残す**
+  （外部参照が3ファイルあるため後方互換を保つ）。
+- **特殊フィルタの関数本体は `screener_filters.py` のまま**。レジストリは関数参照を持たず
+  `kind="special"` とキーだけを持ち、ディスパッチは既存の `evaluate_special_filters` /
+  `apply_filters_to_df` が引き続き担当する（**Phase 1 では dispatch の構造を動かさない**。
+  変更範囲を「キーの解釈」と「カラム供給」に限定して回帰リスクを抑える）。
+
+#### 3.1.3 fail-loud の契約
+
+| 検査 | 例外 | 発火箇所 |
+| :--- | :--- | :--- |
+| キーがどの kind にも解決できない | `UnknownFilterKeyError` | `resolve_filter_spec` |
+| 解決できたが `requires` のカラムが実際には供給されていない | `MissingFilterColumnError` | フィルタ適用の直前 |
+
+- 両方 `ValueError` のサブクラス。§1.3 の先行事例（`report_strategy_scan_coverage` /
+  `resolve_portfolio_params`）が `ValueError` で停止する契約に揃える。
+- **CLI 経路**（backtest / optimization / scenario）は例外をそのまま伝播させて停止する。
+- **API 経路**は U-1 の決定に従い、プリセット単位で捕捉して当該プリセットのみ「エラー」を返し、
+  他のプリセットは正常表示する（`_build_preset_query` の呼び出し元で try/except）。
+
+> [!WARNING]
+> **`max_hits_per_day` / `sort_column` / `min_avg_hits_per_day` / `max_allowed_dd` 等のメタキーを
+> フィルタキーと誤認して例外にしないこと。** 現在この除外集合は `validate_strategies_config` の
+> `METADATA_KEYS`（`backtest_runner.py`）と `apply_filters_to_df` の skip リスト
+> （`backtest_screener.py` L370）と `_build_preset_query` の個別 `elif`（`screener_router.py` L634-637）に
+> **3箇所へ分散している**。レジストリ側の `METADATA_KEYS` に集約し、3者ともそれを参照する。
 
 **なぜ**: F1（サイレント素通し）と F4（データ供給の差）を構造的に消すため。
 「必要カラム」がフィルタ自身の宣言になれば、`needs_rs14/21/63` の or 連鎖・`_IND_COLS`・
 `prev_merge_cols`・`price_cols` といった手書きリストの同期漏れが原理的に発生しない。
 
 **対象**:
-- 新規: `backend/indicators/screener_filters.py`（`FilterSpec` / `FILTER_SPECS` / `resolve_required_columns()`）
+- 新規: `backend/indicators/screener_registry.py`（`FilterSpec` / `EXPLICIT_SPECS` / `METADATA_KEYS` /
+  `resolve_filter_spec()` / `resolve_required_columns()` / 例外2種）
+- 改修: `backend/indicators/screener_filters.py`（`SPECIAL_FILTER_KEYS` をレジストリ導出値へ。関数本体は不変）
 - 改修: `backend/api/screener_router.py`（`_build_preset_query` の `is_known` 判定 L639-676 をレジストリ参照へ）
 - 改修: `backend/api/screener_cross_section.py`（`_IND_COLS` / `_PREV_COLS`（L38-52）をレジストリから導出）
 - 改修: `backend/backtest/backtest_screener.py`（`needs_rs*` or 連鎖 L182-224・deny-by-default L299-321・`prev_merge_cols` L341 をレジストリ導出へ置換）
