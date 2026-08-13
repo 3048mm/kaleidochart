@@ -355,6 +355,31 @@ def run_scenario_test(
     # スキャン対象外になる戦略を明示する（黙って除外させない）
     report_strategy_scan_coverage(strategies)
 
+    # base_merged は全戦略で共有されるため、個々の戦略ではなくスキャン対象の全戦略の
+    # 和集合を要求ランクとして扱う（doc/in_progress/screener_filter_unification_plan.md §3.1.4）。
+    # to_frame_column() でのリネームを apply_filters_to_df 側と一致させないと
+    # has_all_premerged が誤判定してシナリオテストが常時0件になる（2026-07-18 の実障害と同型）。
+    from backend.indicators import screener_registry
+    from backend.db.models import RelativeRank
+    _known_columns_for_ranks = set(indicators_df.columns) | set(prices_df.columns) | screener_registry.VIRTUAL_COLUMNS
+    _rank_columns_for_ranks = {
+        c for c in RelativeRank.__table__.columns.keys()
+        if c not in ('id', 'symbol_id', 'date', 'group_name')
+    }
+    required_rank_columns: set = set()
+    for _strat_name, _strat_rules in strategies.items():
+        if not _strat_name.startswith(SCENARIO_TARGET_PREFIX):
+            continue
+        # 並べ替えキーも事前マージ対象に含める（apply_filters_to_df 側と揃える。
+        # 揃っていないと has_all_premerged が False になって日次で再マージが走るだけで
+        # 結果は変わらないが、事前マージの意味が無くなる。計画書 §7 P1-6）
+        _sort_col = _strat_rules.get('sort_column', 'rs_ratio_rank_e21')
+        _req = screener_registry.resolve_required_columns(
+            _strat_rules, _known_columns_for_ranks, _rank_columns_for_ranks,
+            extra_columns=(_sort_col,)
+        )
+        required_rank_columns |= (_req.ranks | _req.optional)
+
     market_scorer = MarketTrendScorer(prices_df, symbols_df, daily_metrics=daily_metrics, weights=market_weights, use_vxv_vix=use_vxv_vix, scaling_ratio=scaling_ratio)
     scenario_scorer = ScenarioScorer(target_group_prefix=SCENARIO_TARGET_PREFIX)
     
@@ -506,6 +531,7 @@ def run_scenario_test(
             )
             
             # Optimization: Pre-merge daily ranks once here to prevent S x D merges inside the filter loop
+            # （必要なランクだけをレジストリ経由で引く。§3.1.4 (a)(e)）
             import bisect
             idx = bisect.bisect_right(ranks_dates_sorted, c_date)
             if idx > 0:
@@ -515,20 +541,12 @@ def run_scenario_test(
                 ranks_day = None
 
             if ranks_day is not None:
-                for num in ('14', '21', '63'):
-                    # Merge ratio ranks
-                    r_col = f'rs_ratio_rank_e{num}'
-                    r_df = ranks_day[ranks_day['indicator_name'] == r_col][['symbol_id', 'percent_rank']].rename(
-                        columns={'percent_rank': f'rs{num}_rank'}
+                for canonical in required_rank_columns:
+                    frame_col = screener_registry.to_frame_column(canonical)
+                    r_df = ranks_day[ranks_day['indicator_name'] == canonical][['symbol_id', 'percent_rank']].rename(
+                        columns={'percent_rank': frame_col}
                     )
                     base_merged = base_merged.merge(r_df, on='symbol_id', how='left').reset_index(drop=True)
-                    
-                    # Merge trend condition ranks
-                    c_col = f'rs_trend_rank_s{num}'
-                    c_df = ranks_day[ranks_day['indicator_name'] == c_col][['symbol_id', 'percent_rank']].rename(
-                        columns={'percent_rank': f'rs_condition_{num}_rank'}
-                    )
-                    base_merged = base_merged.merge(c_df, on='symbol_id', how='left').reset_index(drop=True)
             
             for strat_name, strat_rules in strategies.items():
                 # 除外は run_scenario_test 冒頭の report_strategy_scan_coverage() で

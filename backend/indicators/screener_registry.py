@@ -13,7 +13,7 @@ screener_registry.py — スクリーンフィルタキーの宣言的レジス�
   関数参照を持たず、キーと必要カラムの宣言だけを持つ（Phase 1 では dispatch 構造を動かさない）。
 """
 from dataclasses import dataclass
-from typing import AbstractSet, Mapping
+from typing import AbstractSet, Iterable, Mapping
 
 
 class UnknownFilterKeyError(ValueError):
@@ -39,11 +39,21 @@ class FilterSpec:
 
 @dataclass(frozen=True)
 class RequiredColumns:
-    """戦略dict全体から集約した、必要カラムの集合。"""
+    """戦略dict全体から集約した、必要カラムの集合。
 
-    today: frozenset  # 基準日に必要なカラム（正準名）
-    prev: frozenset    # 前日に必要なカラム（'prev_' を付けない素の名前）
-    ranks: frozenset   # RelativeRank から必要なカラム
+    `today` / `prev` / `ranks` は**ハード要求**（欠けていればフィルタが正しく評価できないので
+    `MissingFilterColumnError` で停止する）。`optional` は**ソフト要求**で、
+    「あれば引くが、無くても失敗させない」列（典型は並べ替えキー `sort_column`）。
+
+    両者を混ぜてはいけない。ソート列をハード要求として扱うと、ランクデータが無い環境で
+    deny-by-default が誤発火し、**フィルタと無関係にシグナルが0件になる**
+    （2026-08-10 に RRG のテスト15件が落ちる形で顕在化。計画書 §7 P1-6）。
+    """
+
+    today: frozenset      # 基準日に必要なカラム（正準名）
+    prev: frozenset       # 前日に必要なカラム（'prev_' を付けない素の名前）
+    ranks: frozenset      # RelativeRank から必要なカラム
+    optional: frozenset = frozenset()   # あれば引く（欠けても失敗させない）
 
 
 # ============================================================
@@ -201,8 +211,17 @@ _SPECIAL_SPECS = {
     # --- VCP ブレイクアウト（filter_vcp_breakout） ---
     # requires/prev_requires は high_window=63（既定）の経路に加え、pivot_tol /
     # base_vol_dry_max 指定時に追加で必要になる列も含めた和集合（実装 L412-424 参照）。
+    # 'vcr'（当日）は filter_vcp_breakout 自体は prev_vcr しか参照しないが、
+    # screener_cross_section の旧ハードコード _IND_COLS が当日分も取得していたため、
+    # 導出後の _IND_COLS が旧実装を包含するようにここへ明示登録している
+    # （§3.1.4 (e) の「不足があれば宣言漏れとしてレジストリ側を直す」方針）。
     'is_vcp_breakout': FilterSpec(
         key='is_vcp_breakout', kind='special', column=None, op=None,
+        # 当日側で filter_vcp_breakout が実際に読むのはこの5列だけ。
+        # 旧 screener_cross_section._IND_COLS は当日の 'vcr' も含んでいたが、
+        # 実装は prev_vcr しか参照しない（当日 vcr は誰も読まない）ため宣言しない。
+        # requires は「実際に読む列」の宣言であり、旧リストへの追従ではない
+        # （false declaration を入れるとレジストリが真実でなくなる。2026-08-10 検収で是正）。
         requires=('dist_63d_high_pct', 'dist_52w_high_pct', 'change_1d_pct',
                   'vol_surge_21', 'is_trend_template'),
         prev_requires=('vcr', 'dist_52w_high_pct', 'dist_63d_high_pct', 'vol_surge_21'),
@@ -255,6 +274,27 @@ def is_non_filter_key(key: str) -> bool:
     return key in METADATA_KEYS or key in ATTACHED_PARAM_KEYS
 
 
+# ============================================================
+# RANK_FRAME_ALIASES — 正準名（RelativeRank の実カラム名）→ フレーム内で使われている列名
+# ============================================================
+# 未登録の正準名は恒等（そのままの名前でフレームに入る）。現在 screener_cross_section の
+# _RANK_COL_MAP と backtest_screener の alias_map に同じ6件が重複しているため、
+# 両者をここへ寄せる（doc/in_progress/screener_filter_unification_plan.md §3.1.4 (a)）。
+RANK_FRAME_ALIASES: dict = {
+    'rs_ratio_rank_e14': 'rs14_rank',
+    'rs_ratio_rank_e21': 'rs21_rank',
+    'rs_ratio_rank_e63': 'rs63_rank',
+    'rs_trend_rank_s14': 'rs_condition_14_rank',
+    'rs_trend_rank_s21': 'rs_condition_21_rank',
+    'rs_trend_rank_s63': 'rs_condition_63_rank',
+}
+
+
+def to_frame_column(canonical: str) -> str:
+    """正準カラム名をフレーム内の実列名へ変換する（未登録は恒等）。"""
+    return RANK_FRAME_ALIASES.get(canonical, canonical)
+
+
 def resolve_filter_spec(key: str, known_columns: AbstractSet, rank_columns: AbstractSet) -> FilterSpec:
     """キー1つを FilterSpec に解決する。解決できなければ UnknownFilterKeyError。
 
@@ -304,14 +344,32 @@ def resolve_filter_spec(key: str, known_columns: AbstractSet, rank_columns: Abst
 
 
 def resolve_required_columns(strategy: Mapping, known_columns: AbstractSet,
-                              rank_columns: AbstractSet) -> RequiredColumns:
+                              rank_columns: AbstractSet,
+                              extra_columns: Iterable = ()) -> RequiredColumns:
     """戦略dict全体から必要カラム集合を導出する（METADATA_KEYS は無視）。
 
     データ供給側（クロスセクション構築・日次マージ）はこの結果だけを見ればよい。
+
+    Args:
+        extra_columns: **フィルタ以外の理由で必要な列**（正準名）。
+            典型は `sort_column`（Top-N 抽出の並べ替えキー）。`sort_column` は
+            METADATA_KEYS に含まれるためフィルタキーとしては解決されないが、
+            **列としては供給されていないと Top-N の結果が変わる**。
+            旧 `needs_rs*` の or 連鎖は `sort_col in (...)` を明示的に含んでいたので、
+            ここを落とすと「フィルタでランクを使わない戦略」だけ並べ替えが壊れる
+            （2026-08-10 の差分実測で C1/C2/G2/G3 の上位10件が入れ替わる形で顕在化。
+            計画書 §7 P1-6）。呼び出し側は既定値を適用したうえで渡すこと。
     """
     today: set = set()
     prev: set = set()
     ranks: set = set()
+    optional: set = set()
+
+    for col in extra_columns:
+        # ソフト要求として積む。ハード側（ranks/today）に入れてはいけない
+        # （deny-by-default と MissingFilterColumnError が誤発火する）
+        if col and (col in rank_columns or col in known_columns):
+            optional.add(col)
 
     for key in strategy:
         if key in METADATA_KEYS:
@@ -335,4 +393,7 @@ def resolve_required_columns(strategy: Mapping, known_columns: AbstractSet,
             else:
                 prev.add(col)
 
-    return RequiredColumns(today=frozenset(today), prev=frozenset(prev), ranks=frozenset(ranks))
+    # optional からハード要求と重複するものを除く（重複しても害はないが意味を明確にする）
+    optional -= (ranks | today)
+    return RequiredColumns(today=frozenset(today), prev=frozenset(prev),
+                           ranks=frozenset(ranks), optional=frozenset(optional))
