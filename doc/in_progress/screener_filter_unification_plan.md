@@ -324,6 +324,69 @@ def resolve_required_columns(strategy: Mapping, known_columns, rank_columns) -> 
 > （`backtest_screener.py` L370）と `_build_preset_query` の個別 `elif`（`screener_router.py` L634-637）に
 > **3箇所へ分散している**。レジストリ側の `METADATA_KEYS` に集約し、3者ともそれを参照する。
 
+#### 3.1.4 データ供給側の設計（2026-08-10 確定）
+
+ここが Phase 1 で最もリスクが高い。**merged フレームの中身が実際に変わる**ため。
+
+##### (a) 正準名 ↔ フレーム内名の対応をレジストリへ集約
+
+レジストリは**正準名**（`rs_ratio_rank_e21`）で話すが、フレーム内の実列名は
+**フレーム内名**（`rs21_rank`）という第3の命名になっている。この対応表は現在2箇所にあり、
+**6件とも完全一致している**ことを実測で確認した:
+
+| 場所 | 内容 |
+| :--- | :--- |
+| `screener_cross_section._RANK_COL_MAP`（L54-61） | 6件 |
+| `backtest_screener.apply_filters_to_df` の `alias_map`（L354-367） | 同じ6件 ＋ 4件の付随エントリ |
+
+→ レジストリに `RANK_FRAME_ALIASES: dict[str, str]`（正準名 → フレーム内名、未登録は恒等）を新設し、
+両者がこれを参照する。
+
+`alias_map` の残り4件は**レジストリ化で不要になる**:
+- `change_intraday_pct` / `dist_21ema_pct` … 恒等写像（元から無意味）
+- `rs_blue_dot` → `is_rs_blue_dot` / `rs_red_dot` → `is_rs_red_dot` …
+  `is_` 接頭辞を機械的に剥がしていたことの後始末。レジストリの `kind='bool_column'` は
+  **キーをそのまま列名として扱う**ため、この種のズレが原理的に起きない
+  （2026-07-22 の `is_rs_blue_dot` サイレント素通しバグの構造的解消）
+
+##### (b) `MissingFilterColumnError` をここで発火させる
+
+Phase 1 の核心。`apply_filters_to_df` は merged 構築後・フィルタ適用前に
+**必要カラムが実際に揃っているかを検査**し、欠けていれば `MissingFilterColumnError` で停止する。
+
+これで過去の実障害が構造的に捕捉できるようになる:
+
+| 過去の障害 | 検知される理由 |
+| :--- | :--- |
+| `avg_dollar_volume_21` の `_x/_y` サフィックス衝突 | 素の列名が merged に無い → 例外 |
+| `is_rs_blue_dot` の alias 不一致 | (a) により発生しない。仮に起きても列不在で例外 |
+| `min_rs_ratio_rank_e14/e63` の `needs_rs*` 未登録 | 必要ランクがレジストリ由来になるため発生しない |
+| P0-2 の6ランク列 | `min_rs_value_rank` 等を書くと列不在で例外（現在は黙って無視） |
+
+##### (c) long/wide の往復（P0-1）は Phase 1 では**直さない**
+
+`preload_data` の melt（wide→long）と日次の再 wide 化は無駄だが、これを解消するには
+`preload_data` / `backtest_screener` / `scenario_runner` とテストフィクスチャを同時に変える必要があり、
+**Phase 1 の「差分ゼロ」目標に対して blast radius が大きすぎる**。
+Phase 3 の `ScreenerFrame` 契約でまとめて解消する。Phase 1 は長形式のまま、
+「どのランクを引くか」の決定だけをレジストリ駆動に置き換える。
+
+##### (d) `known_columns` / `rank_columns` の供給元
+
+| 経路 | `known_columns` | `rank_columns` |
+| :--- | :--- | :--- |
+| `apply_filters_to_df`（②③） | `df_ind.columns ∪ df_price.columns ∪ VIRTUAL_COLUMNS` | `RelativeRank` モデルの実カラム（**`df_ranks` は long 形式で列名にランク名が出ないため使えない**） |
+| `build_cross_section`（①） | `Indicator` モデルの実カラム ∪ `market_cap` ∪ `VIRTUAL_COLUMNS` | `RelativeRank` モデルの実カラム |
+
+##### (e) `build_cross_section` は「全特殊フィルタの必要カラムの和集合」を取る
+
+API のクロスセクションは**リクエストごとに1回**構築され、全プリセットで共有される。
+戦略ごとの必要カラムは使えないため、`_IND_COLS` / `_PREV_COLS` は
+**レジストリの `kind='special'` 全 spec の `requires` / `prev_requires` の和集合**から導出する
+（1日分 × 約3,100行なので数列多くても実質無コスト）。
+これで新しい特殊フィルタを足したときにクロスセクションが自動追従し、
+手書きリストの更新漏れ（F4）が起きなくなる。
+
 **なぜ**: F1（サイレント素通し）と F4（データ供給の差）を構造的に消すため。
 「必要カラム」がフィルタ自身の宣言になれば、`needs_rs14/21/63` の or 連鎖・`_IND_COLS`・
 `prev_merge_cols`・`price_cols` といった手書きリストの同期漏れが原理的に発生しない。
