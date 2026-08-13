@@ -17,6 +17,7 @@ from backend.backtest.scenario_portfolio import ScenarioPortfolio, PortfolioConf
 from backend.backtest.scenario_reporter import ScenarioReporter
 from backend.db.database import SessionLocal, init_db
 from backend.backtest.backtest_screener import scan_signals_for_date, apply_filters_to_df
+from backend.backtest import common_constraints
 
 # --- Progress Tracking ---
 PROGRESS_FILENAME = "scenario_progress.json"
@@ -79,13 +80,13 @@ def inject_liquidity_floor(strategies: Dict[str, Dict[str, Any]], min_avg_dollar
     （本モジュール）にはこの注入が無く、21日平均売買代金が閾値を大きく下回る
     （実質取引不可能な）銘柄のシグナルが素通りしていた。optimization_runner.py /
     backtest_runner.py と同じ解決順序（戦略側の明示指定があれば尊重）で扱う。
+
+    2026-08-13: 実体は `common_constraints.inject_liquidity_floor_all` へ委譲
+    （doc/in_progress/screener_filter_unification_plan.md §5 Phase 1、4モジュール5箇所
+    への分散実装を1箇所へ集約）。関数名・シグネチャは既存呼び出し側・テストとの
+    後方互換のため維持する。
     """
-    if min_avg_dollar_volume_21 is None:
-        return strategies
-    for filters in strategies.values():
-        if 'min_avg_dollar_volume_21' not in filters:
-            filters['min_avg_dollar_volume_21'] = float(min_avg_dollar_volume_21)
-    return strategies
+    return common_constraints.inject_liquidity_floor_all(strategies, min_avg_dollar_volume_21)
 
 
 # 個別銘柄シナリオテストがスキャンする戦略名の接頭辞。

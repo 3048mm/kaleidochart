@@ -61,18 +61,11 @@ _INDICATOR_COLUMN_TYPES["market_cap"] = "float"
 # --- 全戦略共通の流動性ハード制約 (min_avg_dollar_volume_21) ---
 # 最適化バックテスト・個別銘柄シナリオテストと同じ基準値を backtest_config.toml の
 # [general] から読む（値のソースを1箇所に保つ）。UIには出さず常時適用する
-# （2026-07-27、doc/issue_list.md P0 参照）。
-_BACKTEST_CONFIG_PATH = os.path.join(_PROJECT_ROOT, "backend", "backtest", "backtest_config.toml")
-
+# （2026-07-27、doc/issue_list.md P0 参照）。値の解決は common_constraints.py に一本化
+# （§5 Phase 1。旧実装はこのファイルで TOML を直接読んでいた）。
 def _load_min_avg_dollar_volume_21() -> Optional[float]:
-    try:
-        with open(_BACKTEST_CONFIG_PATH, "rb") as f:
-            bt_config = tomli.load(f)
-        val = bt_config.get("general", {}).get("min_avg_dollar_volume_21")
-        return float(val) if val is not None else None
-    except Exception as e:
-        logger.error(f"Failed to load min_avg_dollar_volume_21 from backtest_config.toml: {e}")
-        return None
+    from backend.backtest.common_constraints import load_min_avg_dollar_volume_21
+    return load_min_avg_dollar_volume_21()
 
 _MIN_AVG_DOLLAR_VOLUME_21 = _load_min_avg_dollar_volume_21()
 
@@ -624,6 +617,7 @@ def get_screener_dashboard(
     def _build_preset_query(preset_def: dict):
         """Build a query from a single preset definition (TOML dict)."""
         q = q_base()
+        applied_filters = set()
 
         # Apply expression-based filters (OR conditions etc.)
         expression = preset_def.get("expression")
@@ -631,6 +625,7 @@ def get_screener_dashboard(
             expr_filter = _parse_expression_to_filter(expression)
             if expr_filter is not None:
                 q = q.filter(expr_filter)
+                applied_filters.add("expression")
             else:
                 logger.warning(f"Preset '{preset_def.get('id')}': expression parse failed, skipping expression.")
 
@@ -641,6 +636,7 @@ def get_screener_dashboard(
             if key in SPECIAL_FILTER_KEYS:
                 if value is True:
                     special_flags[key] = True
+                    applied_filters.add(key)
                 continue
             if screener_registry.is_non_filter_key(key):
                 # 制御キー（_use_hysteresis / expression 等）と特殊フィルタの随伴パラメータ
@@ -653,6 +649,7 @@ def get_screener_dashboard(
             screener_registry.resolve_filter_spec(key, _KNOWN_FILTER_COLUMNS, _RANK_FILTER_COLUMNS)
 
             q = _apply_filter(q, key, value, db, latest_date_result)
+            applied_filters.add(key)
 
         # Special boolean filters: evaluated on the shared cross-section
         passing_ids = None
@@ -664,15 +661,24 @@ def get_screener_dashboard(
                 merged_cs, df_tc_cs, special_flags, float(thr),
                 params=preset_def.get("filters", {}))
 
+        # ---- 全戦略共通の流動性ハード制約（最適化対象外・常時適用。UIには出さない） ----
+        # P1-8 是正: 従来 /screener にのみ適用され /screener/dashboard には未適用だった
+        # （doc/in_progress/screener_filter_unification_plan.md §7 P1-8。2026-08-13 修正）。
+        if _MIN_AVG_DOLLAR_VOLUME_21 is not None:
+            q = q.filter(Indicator.avg_dollar_volume_21 >= _MIN_AVG_DOLLAR_VOLUME_21)
+            applied_filters.add("min_avg_dollar_volume_21")
+
         # テーマ・仮想指数は実売買不可能なため、結果からは常に除外する
         # （リーディングテーマ判定・構成銘柄への波及には category=='テーマ' 行が必要なため、
         # 上記フィルタ処理では保持しているが、実際の表示候補にはしない。backtest側の
-        # apply_filters_to_df と同じ扱い。2026-08-05 修正）
-        q = q.filter(Symbol.category != 'テーマ')
+        # apply_filters_to_df と同じ扱い。除外カテゴリの定義は screener_registry に一本化
+        # ＝ §5 Phase 1）
+        q = q.filter(Symbol.category.notin_(tuple(screener_registry.OUTPUT_EXCLUDED_CATEGORIES)))
+        applied_filters.add("exclude_theme_category")
 
         # Default sort: by 1Day% (Prev Close base) descending
         q = q.order_by(desc(Indicator.change_1d_pct))
-        return q, passing_ids
+        return q, passing_ids, sorted(applied_filters)
 
     # Load presets from TOML
     presets = _load_presets()
@@ -682,11 +688,12 @@ def get_screener_dashboard(
 
     for p in presets.get("rise", []):
         try:
-            q, passing_ids = _build_preset_query(p)
+            q, passing_ids, applied_filters = _build_preset_query(p)
             rise_categories.append(schemas.ScreenerDashboardCategory(
                 id=p["id"], name=p["name"], subname=p.get("subname"),
                 subtitle=p.get("subtitle"),
-                group=p.get("group", "Check"), items=fetch_top_8(q, passing_ids, is_rise=True)
+                group=p.get("group", "Check"), items=fetch_top_8(q, passing_ids, is_rise=True),
+                applied_filters=applied_filters
             ))
         except Exception as e:
             # U-1 (b): 当該プリセットだけをエラーとして返し、他のプリセットは正常表示を続ける
@@ -701,11 +708,12 @@ def get_screener_dashboard(
 
     for p in presets.get("fall", []):
         try:
-            q, passing_ids = _build_preset_query(p)
+            q, passing_ids, applied_filters = _build_preset_query(p)
             fall_categories.append(schemas.ScreenerDashboardCategory(
                 id=p["id"], name=p["name"], subname=p.get("subname"),
                 subtitle=p.get("subtitle"),
-                group=p.get("group", "Warning"), items=fetch_top_8(q, passing_ids, is_rise=False)
+                group=p.get("group", "Warning"), items=fetch_top_8(q, passing_ids, is_rise=False),
+                applied_filters=applied_filters
             ))
         except Exception as e:
             logger.error(f"Screener preset '{p.get('id')}' failed: {e}")
@@ -750,6 +758,10 @@ def get_screener(
     # Get previous date for transition check
     previous_date_result = db.query(func.max(Indicator.date)).filter(Indicator.date < latest_date_result).scalar()
 
+    # 実際に適用されたフィルタキー一覧（ログ出力用。§5 Phase 1。/screener はエンベロープ化
+    # しない方針のため、レスポンスには含めず logger.info のみで記録する）
+    _applied_filters = set()
+
     # Base query for active symbols
     query = db.query(Symbol, Indicator, DailyPrice).join(
         Indicator, Symbol.id == Indicator.symbol_id
@@ -763,6 +775,7 @@ def get_screener(
     # ---- 全戦略共通の流動性ハード制約（最適化対象外・常時適用。UIには出さない） ----
     if _MIN_AVG_DOLLAR_VOLUME_21 is not None and "avg_dollar_volume_21" in _INDICATOR_COLUMNS:
         query = query.filter(_INDICATOR_COLUMNS["avg_dollar_volume_21"] >= _MIN_AVG_DOLLAR_VOLUME_21)
+        _applied_filters.add("min_avg_dollar_volume_21")
 
     # ---- Dynamic filters from query params ----
     # Collect all query params except reserved ones
@@ -780,12 +793,14 @@ def get_screener(
         if not value:
             continue
         query = _apply_filter(query, key, value, db, latest_date_result)
+        _applied_filters.add(key)
 
     # ---- Expression filter ----
     if expression:
         expr_filter = _parse_expression_to_filter(expression)
         if expr_filter is not None:
             query = query.filter(expr_filter)
+            _applied_filters.add("expression")
 
     # ---- Special boolean filters (shared cross-section, same code path as backtest) ----
     _special_flags = {}
@@ -798,6 +813,7 @@ def get_screener(
     if rrg_leading_in: _special_flags["rrg_leading_in"] = True
     if rrg_lagging_in: _special_flags["rrg_lagging_in"] = True
     if rrg_improving_in: _special_flags["rrg_improving_in"] = True
+    _applied_filters |= set(_special_flags)
 
     _passing_ids = None
     if _special_flags:
@@ -807,21 +823,29 @@ def get_screener(
     if require_positive_eps:
         target_eval_date = target_date if target_date else dt_date.today().strftime('%Y-%m-%d')
         latest_earnings_subq = db.query(
-            Earning.symbol_id, 
+            Earning.symbol_id,
             func.max(Earning.period_date).label('max_date')
         ).filter(Earning.period_date <= target_eval_date).group_by(Earning.symbol_id).subquery()
         eps_filter_subq = db.query(Earning.symbol_id).join(
             latest_earnings_subq,
-            (Earning.symbol_id == latest_earnings_subq.c.symbol_id) & 
+            (Earning.symbol_id == latest_earnings_subq.c.symbol_id) &
             (Earning.period_date == latest_earnings_subq.c.max_date)
         ).filter(Earning.eps_basic > 0).subquery()
         query = query.filter(Symbol.id.in_(eps_filter_subq))
+        _applied_filters.add("require_positive_eps")
 
     # テーマ・仮想指数は実売買不可能なため、結果からは常に除外する
     # （リーディングテーマ判定・構成銘柄への波及には category=='テーマ' 行が必要なため、
     # 上記フィルタ処理では保持しているが、実際の表示候補にはしない。backtest側の
-    # apply_filters_to_df と同じ扱い。2026-08-05 修正）
-    query = query.filter(Symbol.category != 'テーマ')
+    # apply_filters_to_df と同じ扱い。除外カテゴリの定義は screener_registry に一本化
+    # ＝ §5 Phase 1）
+    query = query.filter(Symbol.category.notin_(tuple(screener_registry.OUTPUT_EXCLUDED_CATEGORIES)))
+    _applied_filters.add("exclude_theme_category")
+
+    # applied_filters: /screener はレスポンスをリストで返す既存契約（エンベロープ化しない）
+    # ため、実際に適用されたフィルタキー一覧はログにのみ記録する（U-1 決定に基づく制約。
+    # doc/in_progress/screener_filter_unification_plan.md §5 Phase 1）
+    logger.info(f"GET /screener applied_filters: {sorted(_applied_filters)}")
 
     results = query.all()
 

@@ -499,11 +499,11 @@ def apply_filters_to_df(
 
     filtered = merged[mask].copy() if not expression else merged
 
-    # テーマ・仮想指数は実売買不可能なため、買いシグナルの最終出力からは常に除外する
-    # （リーディングテーマ判定・構成銘柄への波及には category=='テーマ' 行が必要なため、
-    # 上記フィルタ処理では保持しているが、実際の候補にはしない。2026-07-29 修正）
+    # 最終出力から常に除外するカテゴリの定義は screener_registry.OUTPUT_EXCLUDED_CATEGORIES
+    # に一本化している（screener_router.py と共通。§5 Phase 1）。適用位置（フィルタ後・
+    # 出力直前）は変えないこと（前に出すとリーディングテーマ判定が壊れる）。
     if 'category' in filtered.columns:
-        filtered = filtered[filtered['category'] != 'テーマ']
+        filtered = filtered[~filtered['category'].isin(screener_registry.OUTPUT_EXCLUDED_CATEGORIES)]
 
     # Top-N
     max_hits = strategy.get('max_hits_per_day')

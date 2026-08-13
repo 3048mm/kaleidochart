@@ -491,6 +491,7 @@ ScreenerFrame（1営業日分・wide・正準列名・派生列込み）
 | **U-1** | スクリーナー API の fail-loud レベル | **(b) 該当プリセットのみ「エラー」として返し、他は正常表示**（画面は生きる）。CLI 側（バックテスト／最適化／シナリオテスト）は §1.3 の先行事例に倣い `ValueError` で停止 | §3 Phase 1「fail-loud の適用レベル」表 |
 | **U-2** | 既存 TOML に fail-loud で落ちるキーが見つかった場合 | **(a) その場で正しいキーへ修正**。ただし修正でスクリーン結果が変わるため、差分を報告してから確定する | §5 Phase 1 の差分実測タスク |
 | **U-3** | スクリーン結果が変わった場合の再最適化 | 差分の実測を先に出し、**再実行の要否はユーザー判断**。2026-08-01 に全12戦略の再実行・再最適化を済ませたばかりのため、**Phase 1 は「差分ゼロ」を目標**に進め、差分が出たら1件ずつ理由を説明する | §6.2 の期待値 |
+| **U-3a** | **P1-7（`is_trend_template` 無効）の是正で D/E1/E2/F に差分が出た件（2026-08-10 追加判断）** | **このまま Phase 1 を進め、再最適化はユーザーのタイミングで実施する**。Phase 1 の残作業（流動性床・テーマ除外の集約、`applied_filters`）は抽出結果を変えない性質のものであり、また Phase 2 のパリティテストを入れてから再最適化した方が同種の隠れバグを二度踏まずに済むため | §8 の残作業へ |
 | **U-4** | Phase 3 の性能受入基準 | **ベースライン × 1.5 倍以内**。超えたら Phase 3 は差し戻し | §6.3 の受入基準 |
 | **U-5** | sandbox 検証の要否 | **種別 A（データ変更なし）**として扱う。スキーマ変更なし・DB は読み取りのみ。API スモークのみ `STOCKTOOL_ENV=sandbox` で実施 | §6.5 |
 | **U-6** | Phase の区切りでのコミット／レビュー | 各 Phase 完了時にオーケストレーターが diff 確認＋全テスト実行し、ユーザーへ報告してから次へ進む | §5 の Phase 区切り |
@@ -590,9 +591,39 @@ ScreenerFrame（1営業日分・wide・正準列名・派生列込み）
       期待通り。既存テスト2件（`test_scenario_runner_integration` / `TestRrgLeadingIn`・
       `TestRrgLaggingIn` の `test_no_prev_date_skips_rrg_filter`）はレジストリ導出化に伴う
       新規フィクスチャ不足で一時的にレッドになったため修正済み — 詳細は §7 参照）。
-- [ ] 流動性床（`min_avg_dollar_volume_21`）の注入を単一の純関数へ集約（4モジュール5箇所 → 1箇所）
-- [ ] テーマ行の最終出力除外を単一定義へ集約（2モジュール3箇所 → 1箇所）
-- [ ] `applied_filters` の記録・出力（API レスポンス／バックテスト結果 JSON／ログ）
+- [x] 流動性床（`min_avg_dollar_volume_21`）の注入を単一の純関数へ集約（4モジュール5箇所 → 1箇所）
+      → 新規 `backend/backtest/common_constraints.py`（`load_min_avg_dollar_volume_21()` /
+      `inject_liquidity_floor()` / `inject_liquidity_floor_all()`）。5箇所すべてを委譲に置換:
+      `screener_router._load_min_avg_dollar_volume_21`・`backtest_runner.run_backtest`・
+      `optimization_runner.py`（`run_holdout_validation`／`objective` の2箇所）・
+      `scenario_runner.inject_liquidity_floor`（関数名は維持し中身のみ委譲。既存テストとの
+      後方互換を確認済み）。テスト11件（`test_common_constraints.py`）追加、GREEN。
+      **🔴 P1-8 も同時に修正**: `screener_router._build_preset_query`（`/screener/dashboard`）に
+      `Indicator.avg_dollar_volume_21 >= floor` を追加（`get_screener()` と同じ無条件フィルタ、
+      適用位置はテーマ除外と同じくフィルタ後・出力直前）。**意図的な挙動変更**（dashboard の
+      表示銘柄が減る）。回帰テスト2件追加（`test_screener_dashboard_excludes_illiquid_symbols`
+      ほか）。既存テスト `test_special_removal.py` の5件が、フィクスチャに
+      `avg_dollar_volume_21` 未設定（NULL）のため新しい床フィルタで無条件除外されてレッドに
+      なったため、フィクスチャへ明示値を追加して修正（設計判断ではなくテストフィクスチャの
+      補完。§7 に類例あり）。
+- [x] テーマ行の最終出力除外を単一定義へ集約（2モジュール3箇所 → 1箇所）
+      → `indicators/screener_registry.py` に `OUTPUT_EXCLUDED_CATEGORIES: frozenset = {'テーマ'}`
+      を新設。3箇所とも参照に置換: `backtest_screener.py`（`filtered['category'].isin(...)`）・
+      `screener_router.py` の `_build_preset_query`／`get_screener()`（`Symbol.category.notin_(tuple(...))`）。
+      適用位置（フィルタ後・出力直前）は変更していない。テスト1件追加
+      （`TestOutputExcludedCategories`）、GREEN。
+- [x] `applied_filters` の記録・出力（API レスポンス／バックテスト結果 JSON／ログ）
+      → `schemas.ScreenerDashboardCategory` に `applied_filters: Optional[List[str]] = None` を
+      追加（既存フィールドは無変更）。`_build_preset_query` が `_apply_filter` を通したキー ＋
+      特殊フィルタキー ＋ 常時適用の制約（`min_avg_dollar_volume_21` / `exclude_theme_category`）
+      をソート済みリストで返す。テスト1件追加
+      （`test_screener_dashboard_applied_filters_include_liquidity_floor`）。
+      `/screener` はレスポンスが `List[ScreenerResultItem]` でエンベロープが無いため
+      **今回はレスポンスに追加しない**（U-1/計画書の制約どおり）。代わりに `logger.info` で
+      適用キー一覧を出力。`backtest_runner.run_backtest()` は戦略ごとに実行開始時、
+      `screener_registry.is_non_filter_key()` でメタキー・随伴パラメータを除いたキー集合を
+      1行ログ出力（日次ループの外）。`scenario_runner.py` は本チェックリスト項目のログ出力
+      対象に含めていない（計画書 §3.1.4 の記述は `run_backtest()` のみを明示）。
 - [ ] **差分実測**: Phase 0 のスナップショットと突合し、抽出銘柄が変化したプリセット・戦略を全件列挙
 - [ ] 全テスト実行 → **ユーザーへ差分報告し、U-2/U-3 の判断を仰ぐ**
 - [ ] 仕様書更新（`backend_specification.md` §5 にレジストリと fail-loud を明記）
@@ -772,6 +803,16 @@ $env:STOCKTOOL_ENV="sandbox"
 | **影響規模** | 基準日 2026-08-11 で個別銘柄 2,876 件のうち `is_trend_template=1` は **711 件（24.7%）**。フィルタが無効だった間、**D/E1/E2/F の母集団は意図の約4倍**に膨らんでいた |
 | **API 側は正常だった** | `_apply_filter` は `_INDICATOR_COLUMNS['is_trend_template']` を直接引くため**正しく適用されていた**。つまり**画面とバックテストで別の銘柄集合を見ていた**（F2/F3 の典型。Phase 2 のパリティテストがあれば即座に検出できた） |
 | **帰結** | **D / E1 / E2 / F の過去の最適化 study・シナリオテスト結果は、トレンドテンプレートが効いていない状態での評価**。再最適化の要否はユーザー判断（U-3） |
+
+#### P1-8: 🔴 流動性床が `/screener/dashboard` に適用されていない（既存バグ・F2 の3件目）
+
+| 項目 | 内容 |
+| :--- | :--- |
+| **事象** | 「全戦略共通のハード制約」である `min_avg_dollar_volume_21`（$2M/日）が、`get_screener()`（`/screener`）には適用されているが、**`get_screener_dashboard()`（`/screener/dashboard`）には適用されていない** |
+| **実測（2026-08-11）** | dashboard の表示銘柄 82件のうち **10件（12%）が床を下回る**。最悪は `ANPA` の **$108,939/日**（床の18分の1）。他に `ULBI` $245k / `HQI` $254k / `OIO` $279k / `EVGN` $374k など |
+| **なぜ見逃されたか** | 2026-07-27 の対策時に「生スクリーナー API」として `get_screener()` にだけ追加され、**同じルーターにあるもう1つのエンドポイントが漏れた**。issue_list の対策記録も `get_screener()` にしか言及していない |
+| **深刻度** | dashboard は**日常的に見る画面**であり、`/screener` より露出が大きい。E1/E2 の `BETR`（実測 $2,758/日）でバックテストの7割が汚染されていた事例と同じ性質の銘柄が、画面に出続けていた |
+| **対応** | Phase 1 の「流動性床の注入を1箇所に集約」で**両エンドポイントに適用されるようにする**。これは意図的な挙動変更であり、**dashboard の表示銘柄が減る**（差分ゼロにはならない）。ユーザーへ報告する |
 
 ### Phase 1「検証系2箇所」（2026-08-10）で判明したこと
 

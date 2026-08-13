@@ -24,6 +24,7 @@ from indicators.screener_registry import (
     MissingFilterColumnError,
     METADATA_KEYS,
     EXPLICIT_SPECS,
+    OUTPUT_EXCLUDED_CATEGORIES,
 )
 
 
@@ -440,3 +441,15 @@ class TestP0_2_DroppedRankColumnsRegression:
             "rs_roc_ema_rank_e63", "rs_roc_ema_rank_e200",
         ):
             assert rank_col in ranks
+
+
+class TestOutputExcludedCategories:
+    """OUTPUT_EXCLUDED_CATEGORIES: 最終出力から常に除外するカテゴリの単一定義（§5 Phase 1）。
+
+    テーマ（実在ETF・仮想合成指数）は実売買不可能なため買い候補に出さない。この定義が
+    screener_router.py / backtest_screener.py の3箇所で個別にコピペされていたことが
+    2026-07-29〜08-05 のテーマ混入バグ（片側だけ修正）の一因だった。
+    """
+
+    def test_contains_theme(self):
+        assert 'テーマ' in OUTPUT_EXCLUDED_CATEGORIES

@@ -215,6 +215,7 @@ class ScreenerDashboardCategory(BaseModel):
     group: str
     items: List[ScreenerDashboardItem]
     error: Optional[str] = None  # プリセット構築失敗時のエラー内容（U-1 (b)。他カテゴリは正常表示を継続）
+    applied_filters: Optional[List[str]] = None  # 実際に適用されたフィルタキー一覧（ソート済み。§5 Phase 1）
 
 class ScreenerDashboardResponse(BaseModel):
     rise: List[ScreenerDashboardCategory]

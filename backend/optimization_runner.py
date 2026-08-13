@@ -21,6 +21,7 @@ if backtest_dir not in sys.path:
 
 from backtest.backtest_runner import preload_data, run_single_strategy
 from backtest.backtest_simulator import ExitRules
+from backtest.common_constraints import load_min_avg_dollar_volume_21, inject_liquidity_floor
 from db.database import init_db
 from db import database
 
@@ -343,7 +344,7 @@ def run_holdout_validation(study, strat_base: dict, actual_name: str, config, co
 
     entry_mode = config.get('general', {}).get('entry_mode', 'close')
     consider_tax = float(config.get('general', {}).get('consider_tax', 0.0))
-    min_dollar_vol = config.get('general', {}).get('min_avg_dollar_volume_21')
+    liquidity_floor = load_min_avg_dollar_volume_21(config)
 
     print("=" * 70)
     print(f"  Holdout Validation: best {len(top_trials)} trials / "
@@ -360,8 +361,7 @@ def run_holdout_validation(study, strat_base: dict, actual_name: str, config, co
         strat = strat_base.copy()
         strat.update(t.params)
         strat['name'] = f"{actual_name}_holdout_t{t.number}"
-        if min_dollar_vol is not None and 'min_avg_dollar_volume_21' not in strat:
-            strat['min_avg_dollar_volume_21'] = float(min_dollar_vol)
+        strat = inject_liquidity_floor(strat, liquidity_floor)
 
         results = evaluate_holdout_for_params(
             strat, config_app, exit_rules, validation_sets,
@@ -440,9 +440,7 @@ def objective(trial: optuna.Trial, strategy_name: str, config, config_app, exit_
         strat['name'] = f"{actual_name}_Trial_{trial.number}"
 
         # 流動性ハード制約（最適化対象外・全戦略共通。戦略側の明示指定があればそちらを優先）
-        min_dollar_vol = config.get('general', {}).get('min_avg_dollar_volume_21')
-        if min_dollar_vol is not None and 'min_avg_dollar_volume_21' not in strat:
-            strat['min_avg_dollar_volume_21'] = float(min_dollar_vol)
+        strat = inject_liquidity_floor(strat, load_min_avg_dollar_volume_21(config))
 
         # Parse optimization params from TOML and apply via Optuna trial
         param_defs = parse_optimization_params(config, actual_name)

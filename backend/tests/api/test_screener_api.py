@@ -332,3 +332,50 @@ def test_screener_dashboard_excludes_theme_rows_from_items(client):
         for item in cat.get("items", []):
             assert item["ticker"] not in ("THEME1", "THEME2")
 
+
+def test_screener_dashboard_excludes_illiquid_symbols(client):
+    """P1-8 是正の回帰テスト（2026-08-13）: 全戦略共通の流動性ハード制約
+    (min_avg_dollar_volume_21) が `/screener/dashboard` にも適用され、閾値未満の銘柄は
+    結果に出ないこと。従来 `/screener` にのみ適用され、dashboard には適用されて
+    いなかった（doc/in_progress/screener_filter_unification_plan.md §7 P1-8）。
+
+    AAPL に実在プリセット `check_1d_gain`（min_change_1d_pct=4.0 /
+    min_vol_surge_rel_spy_21=1.0 / max_sma50_atr_mult=6.0 / min_adr_pct_21=4.0 /
+    min_market_cap=1e9）を満たす値を与えつつ、avg_dollar_volume_21 だけ閾値($2M)未満
+    にする。
+    """
+    db = _TestSession()
+    from datetime import date
+    d = date(2026, 5, 20)
+    ind1 = db.query(Indicator).filter(Indicator.symbol_id == 1, Indicator.date == d).first()
+    ind1.change_1d_pct = 10.0
+    ind1.vol_surge_rel_spy_21 = 2.0
+    ind1.sma50_atr_mult = 1.0
+    ind1.adr_pct_21 = 10.0
+    ind1.avg_dollar_volume_21 = 500_000.0  # 閾値 $2M 未満(P1-8実測: 最悪ANPAで$108,939)
+    dp1 = db.query(DailyPrice).filter(DailyPrice.symbol_id == 1, DailyPrice.date == d).first()
+    dp1.market_cap = 2e9
+    db.commit()
+    db.close()
+
+    resp = client.get("/api/screener/dashboard")
+    assert resp.status_code == 200
+    data = resp.json()
+    check_cat = next(c for c in data["rise"] if c["id"] == "check_1d_gain")
+    tickers = [item["ticker"] for item in check_cat["items"]]
+    assert "AAPL" not in tickers
+
+
+def test_screener_dashboard_applied_filters_include_liquidity_floor(client):
+    """applied_filters に常時適用の制約(min_avg_dollar_volume_21)が含まれること
+    （§5 Phase 1「applied_filters の記録・出力」。流動性床が2度にわたり無効化されていた
+    事故は、これがあれば結果を見た瞬間に発覚していた）。
+    """
+    resp = client.get("/api/screener/dashboard")
+    assert resp.status_code == 200
+    data = resp.json()
+    for cat in data.get("rise", []) + data.get("fall", []):
+        assert cat.get("applied_filters") is not None
+        assert "min_avg_dollar_volume_21" in cat["applied_filters"]
+        assert "exclude_theme_category" in cat["applied_filters"]
+

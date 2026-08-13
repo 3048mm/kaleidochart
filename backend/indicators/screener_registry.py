@@ -295,6 +295,19 @@ def to_frame_column(canonical: str) -> str:
     return RANK_FRAME_ALIASES.get(canonical, canonical)
 
 
+# ============================================================
+# OUTPUT_EXCLUDED_CATEGORIES — 最終出力から常に除外するカテゴリ
+# ============================================================
+# テーマ（実在ETF・仮想合成指数）は実売買の対象にしないため、買いシグナル／表示候補には出さない。
+# ただし**リーディングテーマ判定と構成銘柄への波及には category=='テーマ' の行が必要**なので、
+# フィルタ処理の途中では保持し、最終出力の直前でだけ落とす（2段構え）。
+# 2026-07-29 にバックテスト側、2026-08-05 に API 側と別々に修正され、その間の1週間
+# 本番画面に仮想合成指数が出ていた（doc/in_progress/screener_filter_unification_plan.md §1.2）。
+# 定義を1箇所に集約して再発を防ぐ。適用位置（フィルタ後・出力直前）は変えないこと
+# （前に出すとテーマ行が消えてリーディングテーマ判定が壊れる）。
+OUTPUT_EXCLUDED_CATEGORIES: frozenset = frozenset({'テーマ'})
+
+
 def resolve_filter_spec(key: str, known_columns: AbstractSet, rank_columns: AbstractSet) -> FilterSpec:
     """キー1つを FilterSpec に解決する。解決できなければ UnknownFilterKeyError。
 

@@ -30,6 +30,7 @@ from backend.backtest.backtest_screener import scan_signals_for_date, SignalReco
 from backend.backtest.backtest_simulator import simulate_trade, ExitRules, TradeResult
 from backend.backtest.backtest_report import calculate_metrics, print_comparison_table, save_results_json
 from backend.backtest.strategy_normalizer import normalize_strategy_keys
+from backend.backtest.common_constraints import load_min_avg_dollar_volume_21, inject_liquidity_floor
 
 
 def load_config(config_path: str) -> dict:
@@ -502,11 +503,16 @@ def run_backtest(config: dict, strategy_filter: str = None, refresh_cache: bool 
     consider_tax = config.get('general', {}).get('consider_tax', 0.0)
     entry_mode = config.get('general', {}).get('entry_mode', 'close')
     # 流動性ハード制約（最適化対象外・全戦略共通。戦略側の明示指定があればそちらを優先）
-    min_dollar_vol = config.get('general', {}).get('min_avg_dollar_volume_21')
+    liquidity_floor = load_min_avg_dollar_volume_21(config)
+    from backend.indicators import screener_registry
     for strat in strategies:
         strat_name = strat.get('name', 'Strategy')
-        if min_dollar_vol is not None and 'min_avg_dollar_volume_21' not in strat:
-            strat = {**strat, 'min_avg_dollar_volume_21': float(min_dollar_vol)}
+        strat = inject_liquidity_floor(strat, liquidity_floor)
+        # applied_filters: 実際に適用されるフィルタキー一覧を実行開始時に1行だけログ出力する
+        # （流動性床がサイレントに無効化されていた事故＝計画書 §7 P1-8 は、これがあれば
+        # 結果を見た瞬間に発覚していた。日次ループの中では出さない）
+        applied_filters = sorted(k for k in strat if not screener_registry.is_non_filter_key(k))
+        print(f"  [{strat_name}] applied filters: {applied_filters}")
         metrics, trades = run_single_strategy(
             strat, df_indicators, df_prices, df_ranks, df_symbols, df_theme_constituents,
             trading_dates, exit_rules, show_progress=True, consider_tax=consider_tax,
