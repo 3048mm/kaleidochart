@@ -895,6 +895,19 @@ $env:STOCKTOOL_ENV="sandbox"
 > しかも実データ由来のテストでは踏まないケースだったため、
 > **レジストリ駆動で全キーを機械的に列挙する**という設計（§3.2.1 (c)）が効いた。
 
+#### P2-2: 🔴 マージ後、最適化実行で90件の誤検知（**本計画が持ち込んだ回帰**・修正済み）
+
+| 項目 | 内容 |
+| :--- | :--- |
+| **事象** | main へのマージ後、ユーザーが最適化を実行したところ `WARNING: Invalid or unsupported strategy parameters detected in config!` が **90件**出力された（`min_market_cap` / `min_vol_surge_21` など**ごく基本的なキーが全て「未知」**扱い） |
+| **原因** | `optimization_runner.py:631` は `validate_strategies_config(strategies, pd.DataFrame(), pd.DataFrame())` と **列を持たない DataFrame** を渡す。旧実装はカラム集合を `api.screener_router._INDICATOR_COLUMNS` から得ていたため DataFrame に依存しなかったが、**逆依存を削除した際に「渡された DataFrame の列」だけに依存させてしまった** |
+| **影響** | `run_optimization` 系のみ。**警告出力だけで停止はせず、結果は正しい**（`run_backtest` は正しい DataFrame を渡すため無影響）。ただし検証が事実上無効化されており、本物のタイポを見逃す状態だった |
+| **なぜテストで見つからなかったか** | 私が追加した `..._current_backtest_config_has_zero_errors` は**実カラムを持つ DataFrame** を渡していた。**実際の呼び出し側は空の DataFrame を渡す**という現実を再現していなかった（P1-2 / P0-2 と同じ「フィクスチャが現実より恵まれている」パターン。本計画で**3度目**） |
+| **対応** | カラム集合の権威を**モデル定義（`Indicator` / `DailyPrice`）**に変更し、引数の DataFrame は補助（派生列の追加）とした。この関数の責務は**スキーマ検証**（キー名が妥当か）であり、「実際に供給されているか」の検証は適用時の `MissingFilterColumnError` の責務なので、この分担が正しい。回帰テストを**実際の呼び出し方（空 DataFrame）で**追加 |
+
+> **教訓（本計画で3度目）**: テストのフィクスチャが現実の呼び出し側より恵まれていると、
+> テストが緑でも本番で壊れる。**「実際の呼び出し側と同じ渡し方」でのテストを1本入れる**こと。
+
 ### Phase 1「検証系2箇所」（2026-08-10）で判明したこと
 
 | ID | 事象 | 影響 / 対応 |

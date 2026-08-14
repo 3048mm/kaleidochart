@@ -7,6 +7,7 @@
 - 修正2: min_avg_dollar_volume_21 による最適化対象外のハード足切り。
 """
 from datetime import date, timedelta
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -305,6 +306,35 @@ def test_validate_strategies_config_rejects_typo_key():
 
     assert len(errors) == 1
     assert "min_vol_surge_2" in errors[0]
+
+
+def test_validate_strategies_config_with_empty_dataframes_has_zero_errors():
+    """**空の DataFrame を渡しても**現行 backtest_config.toml でエラーが0件であること。
+
+    回帰テスト（計画書 §7 P2-2）: `optimization_runner.py` は
+    `validate_strategies_config(strategies, pd.DataFrame(), pd.DataFrame())` と
+    **列を持たない DataFrame** を渡す。カラム集合を引数の DataFrame だけから作ると
+    全キーが「未知」と判定され、2026-08-14 に本番で90件の誤検知が出た。
+
+    カラム集合の権威はモデル定義であり、DataFrame は補助でしかない
+    （「実際に供給されているか」の検証は適用時の MissingFilterColumnError の責務）。
+
+    既存の `..._current_backtest_config_has_zero_errors` は実カラムを持つ
+    DataFrame を渡していたため、この経路を再現できずすり抜けた。
+    """
+    import tomli
+    from backend.backtest.backtest_runner import validate_strategies_config
+
+    config_path = (Path(__file__).resolve().parents[3]
+                   / "backend" / "backtest" / "backtest_config.toml")
+    with open(config_path, "rb") as f:
+        config = tomli.load(f)
+
+    # optimization_runner.py と同一の呼び出し（列を持たない DataFrame）
+    errors = validate_strategies_config(config.get("strategy", []),
+                                        pd.DataFrame(), pd.DataFrame())
+
+    assert errors == [], f"空 DataFrame で誤検知が出た（{len(errors)}件）: {errors[:5]}"
 
 
 def test_validate_strategies_config_allows_vcp_attached_params():

@@ -550,14 +550,29 @@ def validate_strategies_config(strategies: list, df_ind: pd.DataFrame, df_prices
     停止する。doc/in_progress/screener_filter_unification_plan.md §3.1.3 の U-1 決定）。
     df_ranks はバックテスト側で long 形式に melt 済みのためランク名が列名に現れず使えない
     （§3.1.2）。RelativeRank モデルの実カラムからランク列集合を組み立てる。
+
+    **カラム集合の権威はモデル定義**であり、引数の DataFrame は補助（派生列の追加）でしかない。
+    これは**この関数がスキーマ検証（キー名が妥当か）を担うため**で、
+    「実際に供給されているか」の検証は適用時の `MissingFilterColumnError` の責務。
+
+    引数を DataFrame の列だけに依存させると、**空の DataFrame を渡す呼び出し側で
+    全キーが「未知」になる**（`optimization_runner.py` が `pd.DataFrame()` を渡しており、
+    2026-08-14 に本番で90件の誤検知として顕在化した。計画書 §7 P2-2）。
     """
-    from backend.db.models import RelativeRank
+    from backend.db.models import RelativeRank, Indicator, DailyPrice
     from backend.backtest.strategy_normalizer import normalize_strategy_keys
     from backend.indicators import screener_registry
 
     strategies = [normalize_strategy_keys(s) for s in strategies]
 
-    known_columns = set(df_ind.columns) | set(df_prices.columns) | set(screener_registry.VIRTUAL_COLUMNS)
+    # モデル定義（権威） + 渡された DataFrame の列（派生列などの補助） + 仮想カラム
+    known_columns = (
+        {c for c in Indicator.__table__.columns.keys()}
+        | {c for c in DailyPrice.__table__.columns.keys()}
+        | set(getattr(df_ind, 'columns', ()))
+        | set(getattr(df_prices, 'columns', ()))
+        | set(screener_registry.VIRTUAL_COLUMNS)
+    )
     rank_columns = {
         col for col in RelativeRank.__table__.columns.keys()
         if col not in ('id', 'symbol_id', 'date', 'group_name')
