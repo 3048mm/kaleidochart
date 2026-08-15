@@ -64,12 +64,24 @@ def test_objective_applies_fast_pruning():
         # Run objective function with 1 period
         periods = [("2022-01-01", "2022-12-31")]
         
-        # When fast_prune=True is implemented, objective should return the heavy prune penalty (around -2100.0)
-        # instead of a normal custom score.
+        # シグナル0件なので fast_prune が発火し、通常スコアではなく重い罰点が返ること。
         score = objective(mock_trial, "B", config, config_app, exit_rules, periods)
-        
-        # Since it yielded 0 hits, the expected penalty for 0 hits:
-        # base_penalty - (1.0 - 0.0) * 2000.0 = -2100.0
-        assert score == -2100.0
+
+        # 2026-08-15: fast_prune の発火点を min_avg_hits_per_day(1.0) から
+        # prune_floor_hits_per_day(既定 0.2) へ引き下げた（resolve_prune_floor）。
+        # fast_prune は学習時間短縮のための速度の安全弁であって評価の門番ではなく、
+        # 1.0 に置かれていたことで「Bull で健全でも Bear が僅かに薄いだけで
+        # スコアが確定する」崖になっていたため（計画書 §7 / issue_list 参照）。
+        #   旧: base_penalty - (1.0 - 0.0) * 2000.0 = -2100.0
+        #   新: base_penalty - (0.2 - 0.0) * 2000.0 =  -500.0
+        # 罰点の「大きさ」ではなく「0件なら足切りされる」ことがこのテストの本旨なので、
+        # 期待値は式から導出して固定する。
+        from optimization_runner import calculate_prune_penalty, resolve_prune_floor
+        prune_conf = config.get('optimization_pruning', {})
+        floor = resolve_prune_floor({}, prune_conf, min_avg=1.0)
+        expected = calculate_prune_penalty(0.0, hit_rate_pct=0.0,
+                                           bounds=(floor, 5.0, 5.0))
+        assert score == expected
+        assert score < 0
     finally:
         optimization_runner.get_cached_data = original_get_cached_data

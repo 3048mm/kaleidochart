@@ -153,6 +153,32 @@ def resolve_detect_band(strat_base: dict, prune_conf: dict, min_avg: float, max_
     return (float(band_lo), float(band_hi), float(band_floor))
 
 
+def resolve_prune_floor(strat_base: dict, prune_conf: dict, min_avg: float) -> float:
+    """fast_prune（高速足切り）の発火点を解決する（2026-08-15 追加）。
+
+    `fast_prune` は **学習時間短縮のための速度の安全弁**であって、評価の門番ではない
+    （`doc/issue_list.md` 2026-07-23 エントリ）。ところが発火点が実用帯の下限
+    （`min_avg_hits_per_day` = 1.0）に置かれていたため、実質的に評価を支配していた:
+
+      - `calculate_prune_penalty` は `base_penalty = -100` から始まる**不連続**な罰点で、
+        1.000 件/日なら実スコア（例 +50）、0.999 なら -100 と 150 ポイント跳ぶ
+      - 罰点は `return` で**残りの期間の評価をスキップ**する。Bull で健全（1.09）でも
+        Bear が僅かに薄い（0.91）だけでスコアが -323 に確定していた（B5 の実例）
+
+    そこで発火点を `prune_floor_hits_per_day`（既定 0.2 件/日 ≒ 251営業日で50件未満の
+    「明らかに死んでいる」領域）まで下げ、`prune_floor`〜`min_avg` の範囲は
+    `detect_adequacy` の連続的な減衰（`x/lo`、下限 `detect_floor`）に委ねる。
+
+    **戦略側が既に `min_avg_hits_per_day` を `prune_floor` より低く設定している場合は
+    その値を尊重する**（E2 の 0.02、E1 の 0.05 等。引き締めになってはいけない）。
+
+    解決順序: 戦略側 > [optimization_pruning] > コード既定 0.2。
+    """
+    floor = float(strat_base.get('prune_floor_hits_per_day',
+                                 prune_conf.get('prune_floor_hits_per_day', 0.2)))
+    return min(float(min_avg), floor)
+
+
 def calculate_prune_penalty(avg_hits: float, hit_rate_pct: float, bounds: tuple):
     """
     Calculate directional penalty when a trial fails pruning condition.
@@ -450,7 +476,10 @@ def objective(trial: optuna.Trial, strategy_name: str, config, config_app, exit_
         min_avg = strat_base.get('min_avg_hits_per_day', prune_conf.get('min_avg_hits_per_day', 1.0))
         max_avg = strat_base.get('max_avg_hits_per_day', prune_conf.get('max_avg_hits_per_day', 5.0))
         min_hit_rate = strat_base.get('min_hit_rate_pct', prune_conf.get('min_hit_rate_pct', 5.0))
-        prune_bounds = (min_avg, max_avg, min_hit_rate)
+        # fast_prune の発火点は「速度の安全弁」まで下げる（resolve_prune_floor 参照）。
+        # 実用帯の下限 min_avg はソフト側（detect_band）が引き続き使う。
+        prune_min = resolve_prune_floor(strat_base, prune_conf, min_avg)
+        prune_bounds = (prune_min, max_avg, min_hit_rate)
         
         # Extract tax and drawdown threshold options
         max_allowed_dd = strat_base.get('max_allowed_dd', 20.0)

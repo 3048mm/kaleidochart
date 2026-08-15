@@ -10,7 +10,8 @@ test_optimization_score.py — 最適化バックテストの目的関数（再�
 import math
 import pytest
 
-from optimization_runner import calculate_custom_score, detect_adequacy, resolve_detect_band
+from optimization_runner import (calculate_custom_score, detect_adequacy, resolve_detect_band,
+                                 resolve_prune_floor, calculate_prune_penalty)
 
 
 # =============================================================
@@ -205,3 +206,70 @@ def test_resolve_detect_band_strategy_override_wins_over_global():
     prune_conf = {'detect_lo': 1.0, 'detect_hi': 12.0}
     band = resolve_detect_band(strat_base=strat_base, prune_conf=prune_conf, min_avg=0.05, max_avg=3.0)
     assert band == (2.0, 12.0, 0.4)
+
+
+# =============================================================
+# resolve_prune_floor — fast_prune の発火点を「速度の安全弁」まで下げる（2026-08-15）
+#
+# 背景: fast_prune は学習時間短縮のための仕組みなのに、発火点が実用帯の下限
+# （min_avg_hits_per_day = 1.0）に置かれていたため実質的に評価を支配していた。
+# base_penalty=-100 の不連続に加え、罰点が return で残り期間の評価をスキップするため、
+# Bull で健全（1.09）でも Bear が僅かに薄い（0.91）だけでスコアが -323 に確定していた。
+# =============================================================
+
+def test_prune_floor_defaults_to_global_value():
+    """既定では [optimization_pruning] の prune_floor_hits_per_day が使われること。"""
+    floor = resolve_prune_floor(strat_base={}, prune_conf={'prune_floor_hits_per_day': 0.2},
+                                min_avg=1.0)
+    assert floor == 0.2
+
+
+def test_prune_floor_never_tightens_a_strategy_specific_min_avg():
+    """戦略側が min_avg を floor より低く設定している場合、その値を尊重すること。
+
+    E2 は min_avg_hits_per_day=0.02、E1 は 0.05 を個別設定している。
+    ここで floor(0.2) を無条件に採用すると **これらの戦略が逆に厳しくなる**。
+    """
+    floor = resolve_prune_floor(strat_base={}, prune_conf={'prune_floor_hits_per_day': 0.2},
+                                min_avg=0.02)
+    assert floor == 0.02
+
+
+def test_prune_floor_strategy_override_wins():
+    """戦略側の prune_floor_hits_per_day が最優先されること。"""
+    floor = resolve_prune_floor(strat_base={'prune_floor_hits_per_day': 0.05},
+                                prune_conf={'prune_floor_hits_per_day': 0.2}, min_avg=1.0)
+    assert floor == 0.05
+
+
+def test_no_penalty_between_prune_floor_and_practical_band():
+    """floor 以上・実用帯未満（0.2〜1.0）では罰点が出ないこと（＝実スコアが計算される）。
+
+    回帰テスト: B5 は Bear 2022 で 0.91 件/日 だったため -323 の罰点を受け、
+    Bull 期間（1.09 で健全）が一切評価されないままスコアが確定していた。
+    """
+    bounds = (0.2, 5.0, 5.0)   # (prune_floor, max_avg, min_hit_rate)
+    for avg in (0.91, 0.65, 0.61, 0.98, 0.21):
+        assert calculate_prune_penalty(avg, hit_rate_pct=50.0, bounds=bounds) is None, (
+            f'avg={avg} で罰点が出た（floor=0.2 未満でないのに足切りされている）'
+        )
+
+
+def test_penalty_still_fires_below_prune_floor():
+    """floor 未満（明らかに死んでいる領域）では従来どおり罰点が出ること。"""
+    bounds = (0.2, 5.0, 5.0)
+    penalty = calculate_prune_penalty(0.05, hit_rate_pct=50.0, bounds=bounds)
+    assert penalty is not None and penalty < 0
+
+
+def test_detect_adequacy_gives_gradient_below_practical_band():
+    """0.2〜1.0 は detect_adequacy が連続的に割り引くこと（崖ではなく傾斜）。"""
+    band = (1.0, 5.0, 0.4)   # (lo, hi, floor)
+    assert detect_adequacy(1.0, band) == 1.0
+    # lo 未満は x/lo で線形に減衰し、floor が下限
+    assert detect_adequacy(0.91, band) == pytest.approx(0.91)
+    assert detect_adequacy(0.65, band) == pytest.approx(0.65)
+    assert detect_adequacy(0.2, band) == pytest.approx(0.4)   # floor で下げ止まる
+    # 単調非増加であること（崖が無い）
+    vals = [detect_adequacy(x / 100, band) for x in range(20, 101)]
+    assert all(a <= b + 1e-9 for a, b in zip(vals, vals[1:]))
