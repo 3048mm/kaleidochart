@@ -776,9 +776,32 @@ melt の `available_vars` が落としていた6列（`rs_value_rank` / `rs_roc_
 
 ### Phase 3: 完全 DataFrame 化（案3）
 
-- [ ] `ScreenerFrame` 契約の定義（正準列名・dtype・派生列・wide ランク）と `assert_frame_contract()`
-- [ ] **[TDD-red]** 2つのローダが同一フレームを返すことのテスト
-- [ ] `load_from_sqlite()`（`build_cross_section` を拡張）／`load_from_parquet()` の実装
+- [x] `ScreenerFrame` 契約の定義（正準列名・dtype・派生列・wide ランク）と `assert_frame_contract()`
+      （3a・コミット `ece1e96`）→ `backend/indicators/screener_frame.py` 新設。
+      `IDENTITY_COLUMNS`/`PRICE_COLUMNS`/`FrameContractError`/`assert_frame_contract()`。
+      既存コードは変更せず追加のみ。
+- [x] **[TDD-red]** 2つのローダが同一フレームを返すことのテスト（3b）
+      → `backend/tests/api/test_screener_frame_loaders.py`（新規7件）。SQLite 側
+      （`load_cross_section`）と Parquet 側（`scan_signals_for_date` と同じ
+      `ind_day + price_day + symbols` マージ）の両方が `assert_frame_contract()` を通ること、
+      `IDENTITY_COLUMNS`/`PRICE_COLUMNS` の列集合一致、ランクがフレーム内名
+      （`rs21_rank` 等）で入ること、テーマ行が保持されること、NULL の多い列が object dtype に
+      ならないこと、`load_cross_section` の結果を `apply_filters_to_df` にそのまま渡せること
+      （3c の前哨）を検証。全 GREEN。
+- [x] `load_from_sqlite()`（`build_cross_section` を拡張）／`load_from_parquet()` の実装（3b）
+      → `backend/api/screener_cross_section.py` に **`load_cross_section(db, target_date,
+      prev_date=None)`** を新設（`load_from_sqlite` という関数名では実装していない。計画書
+      §3.3.1 (b) の表記どおりの命名で実装した）。Indicator の全カラム（id/symbol_id/date を除く）
+      ＋ RelativeRank の全カラム（フレーム内名へリネーム）＋ 特殊フィルタの `prev_requires`
+      和集合を `prev_` 付きで取得し、SQLAlchemy 行タプル由来の object dtype を
+      `pd.to_numeric` で明示的に float 化してから `assert_frame_contract()` を通す。
+      Parquet 側は**新規実装しない**（計画書の指示どおり）— `scan_signals_for_date` の
+      既存マージがそのまま契約を満たすことをテストで確認。
+      既存 `build_cross_section` は `load_cross_section` の薄いラッパへ再実装
+      （symbol_id/category + 特殊フィルタが要求する指標/ランクへ列を絞り込むだけで、
+      戻り値の形・挙動は変更していない。既存テスト `test_screener_special_filter_behavior.py`
+      ほかで回帰なしを確認）。**API の切替（3c）は未実施**（`_apply_filter` /
+      `_parse_expression_to_filter` は現状のまま）。
 - [ ] ランクの long/wide 変換を廃止し、両経路とも wide で統一
 - [ ] `apply_filters(frame, strategy)` を単一エンジンとして確立（`apply_filters_to_df` を改称・整理）
 - [ ] `screener_router.py` を DataFrame 経路へ切替（SQL は取得のみに縮退）
