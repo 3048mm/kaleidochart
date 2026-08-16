@@ -535,6 +535,79 @@ ScreenerFrame（1営業日分・wide・正準列名・派生列込み）
 - 更新: `doc/backend_specification.md` §6.7（**現状の記述は陳腐化している** — `avg_dollar_volume_21` が
   抽出対象に載っておらず、`relative_ranks` を long 形式前提で説明している）
 
+#### 3.3.1 詳細設計（2026-08-17 確定）
+
+Phase 1 で `apply_filters_to_df` は**完全にレジストリ駆動**になった。したがって Phase 3 の本体は
+「**API 側が同じフレームを作って同じ関数を呼ぶ**」ことに尽きる。新しいエンジンは書かない。
+
+##### (a) `ScreenerFrame` 契約（新規 `backend/indicators/screener_frame.py`）
+
+1営業日分のクロスセクション DataFrame。`apply_filters_to_df` が受け取れる形を「契約」として明文化する。
+
+| 区分 | 列 |
+| :--- | :--- |
+| 同一性 | `symbol_id` / `ticker` / `name` / `category` / `active` |
+| 価格 | `date` / `open` / `high` / `low` / `close` / `volume` / `market_cap` |
+| 指標 | `Indicator` の正準列名（必要なものだけ） |
+| ランク | **フレーム内名**（`to_frame_column()` 経由。`rs21_rank` 等） |
+| 前日 | `prev_<正準名>` |
+| 派生 | `change_intraday_pct` / `dist_21ema_pct`（`apply_filters_to_df` が生成） |
+
+```python
+def assert_frame_contract(df, *, required=None) -> None:
+    """フレームが契約を満たすか検査する。満たさなければ例外。"""
+```
+
+検査項目:
+1. 同一性の列が全て存在する
+2. **数値列が object dtype になっていない** ← **P1-2 の根治**。
+   列が丸ごと NULL だと object になり、特殊フィルタが `TypeError: float > None` を出す。
+   従来は `except Exception` に飲まれてプリセットが黙って消えていた
+3. `required`（`RequiredColumns`）を渡した場合、そのハード要求が全て存在する
+
+##### (b) 2つのローダ
+
+| ローダ | 実装場所 | 備考 |
+| :--- | :--- | :--- |
+| `load_cross_section(db, date, prev_date, required)` | `api/screener_cross_section.py` | 既存 `build_cross_section` を拡張。価格列・全必要指標・ランク（フレーム内名）・前日列を1回で引く |
+| （Parquet 側） | `backtest_screener.scan_signals_for_date` の既存マージ | **新規実装しない**。既に契約を満たしているので `assert_frame_contract` を通すだけ |
+
+##### (c) API の切り替え
+
+- `get_screener()` と `_build_preset_query()` を「**フレームを作る → `apply_filters_to_df` を呼ぶ → レスポンスを組む**」へ。
+- **`_apply_filter`（148行）と `_parse_expression_to_filter`（80行）を削除**。SQL は取得のみに縮退。
+- `/screener/dashboard` は**クロスセクションを1回だけ作って全18プリセットで使い回す**。
+  現状はプリセットごとに SQL クエリを発行しているため、**性能はむしろ改善する見込み**（要実測）。
+- 周辺処理（上位200件スライス・sparkline・テーマ解決）は**フレームから組み直す**。
+  ここが唯一の「作り直し」であり、回帰リスクの実体。
+
+##### (d) long/wide の統一（P0-1 / P0-2）
+
+`backtest_runner.preload_data` の melt を削除し、ランクを **wide のまま**扱う。
+`backtest_screener` / `scenario_runner` の「long から `indicator_name` で抽出して再 wide 化」も不要になる。
+melt の `available_vars` が落としていた6列（`rs_value_rank` / `rs_roc_ema_rank_e*`）も自動的に使えるようになる。
+
+**(c) とは独立に実施できる**ため、切り替えの前後どちらでもよい。両方を同時に動かさないこと。
+
+##### (e) 検証（受入基準）
+
+| 項目 | 基準 |
+| :--- | :--- |
+| パリティテスト97件 | 全 GREEN（**両経路が同じエンジンになるので当然通るが、通らなければ切り替えミス**） |
+| 本番データ差分 | **Phase 1・2 完了時点のスナップショット（`tmp/phase0_baseline_20260814_010127.json`）に対して差分ゼロ** |
+| 性能（ウォーム） | `/screener` 0.51秒以内・`/screener/dashboard` 最新日 0.83秒／過去日 1.59秒以内（U-4: ベースライン×1.5） |
+| 全テスト | ワークツリーで 953 passed 相当（環境要因の1件を除く） |
+
+##### (f) 実施順序
+
+1. **3a**: `screener_frame.py`（契約＋`assert_frame_contract`）＋ TDD。**既存コードは変更しない**（追加のみ）
+2. **3b**: `load_cross_section()` の実装＋「2つのローダが契約を満たす」テスト。**まだ API は切り替えない**
+3. **3c**: API を切り替え、`_apply_filter` / `_parse_expression_to_filter` を削除
+4. **3d**: melt の廃止（P0-1 / P0-2）
+5. **3e**: 性能・差分実測、仕様書更新（`backend_specification.md` §6.7 の陳腐化解消を含む）
+
+各段で全テスト＋差分実測を挟む。**3c が最も危険**なので、そこだけは差分ゼロを確認するまで次に進まない。
+
 **影響範囲**:
 - ⚠️ 回帰リスク最大。API のソート・上位200件スライス・sparkline 生成等の周辺処理を作り直す必要がある
 - ⚠️ 性能退行の可能性（1日分 ≒ 3,000銘柄 × 数十列。API は既に特殊フィルタ用に同等のクロスセクションを
