@@ -237,25 +237,27 @@ is_close_gt_ema63 = { type = "categorical", choices = [true] }
 
 [[strategy]]
 name = "B6_rs_macd_and_theme"
-description = "相対トレンド・出来高が強く、上昇テーマに属し、RS-MACDがプラス圏の銘柄"
+# 2026-08-17: B6 のコンセプトを「加速」で確定（ユーザー判断）。
+# 旧パラメータ（is_rs_macd_hist_rising_21=true）でのシナリオテストが、最適化後（false）に対し
+# 全5モデル中4モデルで優位（full_position で CAGR 32.43→55.76・最終資産 35.8万→72.4万、
+# DD は 38.9→38.3 とむしろ改善）。最適化が戦略コンセプトそのものを捨てていた。
+description = "相対トレンド・出来高が強く、上昇テーマに属し、RS-MACDがプラス圏かつ加速している銘柄"
 max_hits_per_day = 10
 sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
-min_change_1d_pct = 4.0 
-min_dist_21ema_pct = 9.0 
+min_change_1d_pct = 9.0 
+min_dist_21ema_pct = 3.0 
 min_vol_surge_21 = 1.8 
 min_adr_pct_21 = 6.0 
-max_sma50_atr_mult = 5.0
+max_sma50_atr_mult = 7.5
 min_market_cap = 1e7
-min_rs_trend_rank_s21 = 0.8
+min_rs_trend_rank_s21 = 0.9
 min_rs_macd_hist_21 = 0.0 
-min_theme_rs_trend_s21 = 1.0 
+min_theme_rs_trend_s21 = 0.9 
 is_theme_rs_trend_rank_s14_gt_s21 = true
 is_close_gt_ema63 = true
-# 2026-08-15: ベースラインを preset へ同期した際も、この項目だけは false を維持する
-# （description「RS-MACDがプラス圏」と値の整合を取った 2026-07-15 の決着を尊重。
-#  探索空間は [true, false] 両方を探るため、出発点の違いだけで探索は制約されない）。
-is_rs_macd_hist_rising_21 = false
+# 2026-08-17: 加速条件は B6 の定義そのものなので探索対象から外し true で固定した（下記参照）。
+is_rs_macd_hist_rising_21 = true
 max_allowed_dd = 35.0   # MTM 再校正（旧: 未設定=デフォルト 20.0）
 
 [strategy.optimization]
@@ -271,7 +273,10 @@ min_rs_macd_hist_21 = { type = "float", min = 0.0, max = 0.5, step = 0.1 }
 min_theme_rs_trend_s21 = { type = "float", min = 0.9, max = 2.0, step = 0.1 }
 is_theme_rs_trend_rank_s14_gt_s21   = { type = "categorical", choices = [true] }
 is_close_gt_ema63 = { type = "categorical", choices = [true] }
-is_rs_macd_hist_rising_21 = { type = "categorical", choices = [true, false] }
+# 2026-08-17: 探索を [true] に固定。加速条件を探索対象にすることは「B6 が B6 でなくなる自由」を
+# 与えるのと同じで、実際に最適化が false を選んで実運用成績が半減した。
+# B2 の min_adr_pct_21 下限引き上げ（2026-07-05）と同型のコンセプト防衛。
+is_rs_macd_hist_rising_21 = { type = "categorical", choices = [true] }
 
 [[strategy]]
 name = "C1_rrg_leading_in"
