@@ -1,6 +1,6 @@
 # スクリーンパラメータ一元化（フィルタ仕様レジストリ → パリティ検証 → 単一エンジン）計画書
 
-- **ステータス**: 🚧 進行中（**2026-08-10 に計画レビュー完了・合意。Phase 0 着手**）
+- **ステータス**: 🚧 進行中（**Phase 0・1・2 完了・main へマージ済み / Phase 3 未着手**。2026-08-16 時点）
 - **実施者**: Claude Code（`claude-opus-5`、オーケストレーター）／実装は implementer・test-writer へ委譲
 - **開始日**: 2026-07-29（**2026-08-10 にソース全体を再調査して全面改訂**） / **完了日**: —
 - **作業ブランチ**: Phase 0 は本体チェックアウト（読み取り専用の計測のみ）。Phase 1 以降はワークツリーを切る
@@ -578,14 +578,14 @@ ScreenerFrame（1営業日分・wide・正準列名・派生列込み）
 
 ### Phase 1: レジストリ ＋ fail-loud（案1）
 
-- [ ] **[TDD-red]** `FILTER_SPECS` の単体テスト（全キーの `requires` が実カラムに解決できること、
+- [x] **[TDD-red]** `FILTER_SPECS` の単体テスト（全キーの `requires` が実カラムに解決できること、 （`test_screener_registry.py` 30件）
       キーの重複が無いこと、`SPECIAL_FILTER_KEYS` との整合）
 - [x] `FilterSpec` / `EXPLICIT_SPECS` / `resolve_filter_spec()` / `resolve_required_columns()` の実装
       → `backend/indicators/screener_registry.py`（新規）。`screener_filters.SPECIAL_FILTER_KEYS` は
       `EXPLICIT_SPECS` の kind="special" からの導出値に置換（関数本体は不変）。
       `backend/tests/indicators/test_screener_registry.py` 全30件（25ケース、うち6件は
       parametrize 展開）GREEN。呼び出し側（screener_router.py 等）の置換は次工程。
-- [ ] **[TDD-red]** fail-loud のテスト（未知キー・必要カラム欠落で `ValueError`。
+- [x] **[TDD-red]** fail-loud のテスト（未知キー・必要カラム欠落で `ValueError`。 （同上）
       現状の「黙って通す」挙動でレッドになることを確認）
 - [x] `backtest_screener.py` の `needs_rs*` or 連鎖・deny-by-default 分岐・`prev_merge_cols` を
       レジストリ導出へ置換
@@ -684,22 +684,22 @@ ScreenerFrame（1営業日分・wide・正準列名・派生列込み）
       `screener_registry.is_non_filter_key()` でメタキー・随伴パラメータを除いたキー集合を
       1行ログ出力（日次ループの外）。`scenario_runner.py` は本チェックリスト項目のログ出力
       対象に含めていない（計画書 §3.1.4 の記述は `run_backtest()` のみを明示）。
-- [ ] **差分実測**: Phase 0 のスナップショットと突合し、抽出銘柄が変化したプリセット・戦略を全件列挙
-- [ ] 全テスト実行 → **ユーザーへ差分報告し、U-2/U-3 の判断を仰ぐ**
-- [ ] 仕様書更新（`backend_specification.md` §5 にレジストリと fail-loud を明記）
+- [x] **差分実測**: Phase 0 のスナップショットと突合し、抽出銘柄が変化したプリセット・戦略を全件列挙 （`tmp/phase0_compare.py`。差分は P1-7 / P1-8 の2要因のみに帰着）
+- [x] 全テスト実行 → **ユーザーへ差分報告し、U-2/U-3 の判断を仰ぐ** （U-3a: 再最適化はユーザーのタイミングで実施と決定 → 2026-08-16 完了）
+- [x] 仕様書更新（`backend_specification.md` §5 にレジストリと fail-loud を明記） （§5.0「スクリーンフィルタ仕様レジストリ」を新設）
 
 ### Phase 2: 経路間パリティテスト（案2）
 
-- [ ] **[TDD]** `FILTER_SPECS` 全キーを列挙するパラメタライズドテストの骨組み
+- [x] **[TDD]** `FILTER_SPECS` 全キーを列挙するパラメタライズドテストの骨組み （`test_screener_parity.py`）
       （フィクスチャ未整備のキーは失敗する形にする）
-- [ ] 各キーの境界値フィクスチャ（SQLite シード ＋ 同値の DataFrame）を整備
-- [ ] **全経路共通ルールのパリティ**（テーマ除外・流動性床）を独立したテストとして追加
+- [x] 各キーの境界値フィクスチャ（SQLite シード ＋ 同値の DataFrame）を整備 （94キー）
+- [x] **全経路共通ルールのパリティ**（テーマ除外・流動性床）を独立したテストとして追加 （テーマ除外・流動性床）
       — テーマ混入バグを 07-29 時点で捕まえられる形になっているかを、当時のコードで**レッドを再現**して確認
-- [ ] `EXPECTED_DIVERGENCE`（S-1 / S-2 等、意図した差異）を理由付きで登録
-- [ ] 既存の同値性テスト（`test_screener_special_filter_behavior.py` 等）を新テストへ統合（重複を解消）
-- [ ] pytest 全件での実行時間を確認し、遅すぎる場合はマーカーで分離
-- [ ] 全テスト実行 → ユーザー報告
-- [ ] 仕様書更新（`architecture.md` §7.1 に「新フィルタ追加時はレジストリ登録＋パリティフィクスチャ必須」を明記）
+- [x] `EXPECTED_DIVERGENCE`（S-1 / S-2 等、意図した差異）を理由付きで登録 （初期値は空。S-1/S-2 は D-2 で統一済みのため）
+- [x] 既存の同値性テスト（`test_screener_special_filter_behavior.py` 等）を新テストへ統合（重複を解消） （**統合せず維持**。`test_screener_special_filter_behavior.py` は API 側の固定期待値テストで目的が異なると判断）
+- [x] pytest 全件での実行時間を確認し、遅すぎる場合はマーカーで分離 （パリティ97件で約4.4秒。分離不要）
+- [x] 全テスト実行 → ユーザー報告
+- [x] 仕様書更新（`architecture.md` §7.1 に「新フィルタ追加時はレジストリ登録＋パリティフィクスチャ必須」を明記） （**§7.2** として新設。§7.1 ではなく新節にした）
 
 ### Phase 3: 完全 DataFrame 化（案3）
 
@@ -718,41 +718,32 @@ ScreenerFrame（1営業日分・wide・正準列名・派生列込み）
 
 ### 作業中メモ
 
-**現在地（2026-08-10）**: Phase 1 の **レジストリ本体（`screener_registry.py`）まで完了・検収済み**。
-次は**呼び出し側6モジュールの置き換え**（`backtest_screener.py` の `needs_rs*` or 連鎖 →
-`screener_cross_section.py` の定数リスト → `scenario_runner.py` のランク事前マージ →
-`backtest_runner.py` のバリデータと逆依存削除 → `screener_router.py` の `is_known` 判定）。
+**現在地（2026-08-16）**: **Phase 0・1・2 が完了し main へマージ済み**（最終 SHA `c60293b`）。
+残るは **Phase 3（完全 DataFrame 化）のみ**。
 
-- 作業ブランチ: `worktree-screener-filter-registry`（`.claude/worktrees/screener-filter-registry`）
-- **差分実測の手順**（ワークツリーのコードを本番データに向けて動かす。読み取り専用）:
-  ```powershell
-  # 1. ワークツリー内で、本体の DB を絶対パスで指定して取得
-  #    （Parquet マスターの場所は DB パスの階層から自動解決される）
-  cd .claude\worktrees\screener-filter-registry
-  $env:PYTHONPATH="backend"
-  & "d:\My Documents\Programing\stocktool\venv\Scripts\python.exe" tmp/phase0_snapshot.py `
-      "d:\My Documents\Programing\stocktool\data\stocktool.db"
+Phase 1・2 の成果（ベースライン §1.5 との対比）:
 
-  # 2. 本体チェックアウトでベースラインと突合（差分ゼロなら exit 0）
-  cd d:\My Documents\Programing\stocktool
-  .\venv\Scripts\python.exe tmp/phase0_compare.py `
-      tmp/phase0_baseline_20260813_121011.json `
-      .claude/worktrees/screener-filter-registry/tmp/phase0_baseline_<新しい方>.json
-  ```
-  `tmp/phase0_compare.py` は**変異データを注入して検出できることを確認済み**
-  （銘柄の消失・架空銘柄の追加・テーマ混入・共通ルール NG の4種）。
-  「何を渡しても差分ゼロ」と言う道具では意味が無いため、信頼する前に必ずこの確認をすること。
-- 注意点は §7 の P0-1〜P0-8 にまとめてある。とくに **P0-5（`Query` 既定値の罠）** は
-  Phase 2 のパリティテスト設計時に必ず参照すること
+| 指標 | 着手前 | 現在 |
+| :--- | ---: | ---: |
+| キー解釈ロジックの実装箇所 | 4 | **1** |
+| 必要カラム宣言の実装箇所 | 4 | **1** |
+| 流動性床の注入箇所 | 5（4モジュール） | **1** |
+| テーマ除外ルールの定義箇所 | 3（2モジュール） | **1** |
+| close_gt 正規化の実装箇所 | 3 | **1** |
+| pytest | 795 | **953**（+158） |
 
-> [!IMPORTANT]
-> **ワークツリーでの pytest は必ず1件失敗する（環境要因・無視してよい）。**
-> `backend/tests/backtest/test_scenario_comparison.py::test_run_comparison_generates_outputs` が
-> `FileNotFoundError: Parquet master cache files not found` で落ちる。`data/` は git 管理外のため
-> ワークツリーの `data/parquet_master/` が空であることが原因で、本体チェックアウトでは通る
-> （Phase 0 の実測: 本体 795 passed / 0 failed）。
-> **ワークツリーでの期待値は「824 passed, 1 failed」**（795 + 新規30 = 825 のうち1件が環境要因）。
-> この1件以外が落ちたら、それは本当の回帰。
+**本計画が発見・修正した本番バグ（5件）**: `is_trend_template` の無効化（P1-7）／
+流動性床が dashboard に未適用（P1-8）／`max_avg_hits_per_day` の欠落（P0-7）／
+`close_gt` 正規化が正準形を破壊（P2-1）／随伴パラメータの取りこぼし（P1-1、本計画が持ち込んだ回帰）。
+
+Phase 3 に着手する際の注意:
+- 差分実測の手順は下記のとおり（`tmp/phase0_snapshot.py` + `tmp/phase0_compare.py`）。
+  **突合スクリプトは変異データで検出能力を確認済み**
+- **Phase 3 の比較基準は Phase 1・2 完了時点のスナップショット**（`tmp/phase0_baseline_20260814_010127.json`）。
+  Phase 0 のもの（`20260813_121011`）と比べると P1-7 / P1-8 の差分が混ざる
+- §7 の P0-1〜P2-2 に落とし穴をまとめてある。とくに **P0-5（`Query` 既定値の罠）**、
+  **P1-6（ハード要求とソフト要求を混ぜない）**、**P2-2（フィクスチャを現実の呼び出し方に合わせる）**
+
 
 ---
 
