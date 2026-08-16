@@ -151,31 +151,15 @@ def test_no_filters_returns_none(db):
     assert evaluate_special_filters(merged, df_tc, {}) is None
 
 
-def test_min_market_cap_exempts_themes(db):
-    """S-1: min_market_cap はテーマを免除する（バックテストと同一の意味論）。"""
-    from api.screener_router import _apply_filter
-    q = db.query(Symbol.id).join(
-        Indicator, Symbol.id == Indicator.symbol_id
-    ).join(
-        DailyPrice, (Symbol.id == DailyPrice.symbol_id) & (Indicator.date == DailyPrice.date)
-    ).filter(Symbol.active == 1, Symbol.category.in_(["テーマ", "個別"]),
-             Indicator.date == LATEST)
-    q = _apply_filter(q, "min_market_cap", 5e8, db, LATEST)
-    ids = {r.id for r in q.all()}
-    # 個別: mc>=5e8 の株1(1e9)・株2(6e8)のみ。テーマ(mc なし)は免除で通過
-    assert ids == {1, 2, 100, 101}
-
-
-def test_expression_boolean_literal(db):
-    """expression パーサが true/false リテラルを解釈できること。
-
-    既存バグ: 'is_trend_template == false' を含む式全体が黙って無視され、
-    trend_breakdown プリセットが無フィルタで表示されていた。
-    """
-    from api.screener_router import _parse_expression_to_filter
-    clause = _parse_expression_to_filter("is_trend_template == false")
-    assert clause is not None, "boolean リテラルを含む式がパースできない"
-
-    q = db.query(Indicator.symbol_id).filter(Indicator.date == LATEST, clause)
-    ids = {r.symbol_id for r in q.all()}
-    assert ids == {2, 3}
+# 2026-08-17（Phase 3 ステップ 3c）: API 側の SQL フィルタエンジン（_apply_filter /
+# _parse_expression_to_filter）は撤去され、apply_filters_to_df（backtest 側と共通の唯一の
+# エンジン）に一本化された（doc/in_progress/screener_filter_unification_plan.md §3.3.1 (c)）。
+# 以下の2件は削除された旧実装を直接呼んでいたテストで、その実装自体が無くなったため
+# 削除する。同等のカバレッジは以下に引き継がれている:
+#   - S-1（min_market_cap のテーマ免除）: apply_filters_to_df 自身に同じ免除ロジックが
+#     あり（screener_router と backtest が完全に同一の関数を呼ぶため、経路間の差は
+#     構造的に発生しなくなった）、test_screener_parity.py の "min_market_cap"
+#     PARITY_CASE が経路間の一致を検証する。
+#   - expression の true/false リテラル: apply_filters_to_df の expression 評価
+#     （true/false を True/False へ正規化してから pandas.query に渡す実装）を
+#     screener_router.py も直接呼ぶようになったため、SQL 側の別実装は存在しない。

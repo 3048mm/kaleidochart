@@ -573,3 +573,114 @@ def test_apply_filters_vcp_breakout_deny_by_default_without_prev_date():
     )
 
     assert len(filtered) == 0
+
+
+# =============================================================
+# Phase 3c で API 側の _apply_filter / _parse_expression_to_filter を削除したため、
+# それらを直接叩いていた test_screener_special_filter_behavior.py の2テストが消えた。
+# **エンジンが一本化された後はパリティテストでは検出できない**（両経路が同じ関数を
+# 呼ぶので自明に一致してしまう）ため、唯一のエンジンに対する挙動テストとしてここに移す。
+# =============================================================
+
+def _minimal_frame(rows, columns):
+    return pd.DataFrame(rows, columns=columns)
+
+
+def test_apply_filters_expression_accepts_lowercase_boolean_literals():
+    """expression 内の小文字 true/false が pandas.query 用に正規化されること。
+
+    🔴 回帰テスト（計画書 §7 P3-1）:
+    D-2（2026-07-04, commit 487810992）で追加された true/false 正規化は、
+    正規表現の単語境界 `\b` が **リテラルのバックスペース文字 (0x08)** として
+    ファイルに書き込まれており（CLAUDE.md が警告する文字化け事故）、
+    `re.sub` が何にもマッチせず **6週間ずっと no-op** だった。
+    その結果 `merged.query()` が小文字の `false` を受け取って NameError になり、
+    except に握り潰されて **expression フィルタ全体が黙ってスキップ**されていた
+    （= trend_breakdown プリセットが無フィルタで表示される）。
+
+    バックテスト側の戦略で expression を使うものが無かったため気づかれず、
+    Phase 3c でエンジンを一本化した瞬間に露見した。
+    """
+    merged = _minimal_frame([
+        [1, 'A', 'A', '個別', 1, 0, -2.0],   # is_trend_template == false → 通過
+        [2, 'B', 'B', '個別', 1, 1, -2.0],   # true なので落ちる
+    ], ['symbol_id', 'ticker', 'name', 'category', 'active',
+        'is_trend_template', 'rs_ratio_e63'])
+
+    filtered = apply_filters_to_df(
+        merged=merged, target_date='2026-06-26',
+        df_ind=pd.DataFrame(columns=['date', 'symbol_id']),
+        df_ranks=pd.DataFrame(columns=['date', 'symbol_id', 'indicator_name', 'percent_rank']),
+        df_symbols=pd.DataFrame(), df_theme_constituents=pd.DataFrame(),
+        strategy={'name': 't', 'expression': 'is_trend_template == false and rs_ratio_e63 < -1.0'},
+    )
+
+    assert set(filtered['ticker']) == {'A'}, (
+        '小文字の false が正規化されず expression が黙ってスキップされている'
+        '（0x08 混入の再発を疑うこと）'
+    )
+
+
+def test_apply_filters_min_market_cap_exempts_theme_rows():
+    """min_market_cap はテーマ行を免除すること（意味論 S-1）。
+
+    テーマ（実在ETF・仮想指数）は market_cap を持たないため、
+    時価総額フィルタで落とすとリーディングテーマ判定が壊れる。
+    D-2（2026-07-04）で API 側の SQL も pandas 側に合わせて統一した挙動。
+    Phase 3c で SQL 側が消えたので、唯一のエンジンに対する挙動として固定する。
+    """
+    merged = _minimal_frame([
+        [1, 'BIG', 'Big', '個別', 1, 5e8],
+        [2, 'SMALL', 'Small', '個別', 1, 1e7],     # 閾値未満 → 落ちる
+        [100, 'THEME', 'Theme', 'テーマ', 1, None],  # market_cap 無し → 免除される
+    ], ['symbol_id', 'ticker', 'name', 'category', 'active', 'market_cap'])
+
+    filtered = apply_filters_to_df(
+        merged=merged, target_date='2026-06-26',
+        df_ind=pd.DataFrame(columns=['date', 'symbol_id']),
+        df_ranks=pd.DataFrame(columns=['date', 'symbol_id', 'indicator_name', 'percent_rank']),
+        df_symbols=pd.DataFrame(), df_theme_constituents=pd.DataFrame(),
+        strategy={'name': 't', 'min_market_cap': 1e8},
+    )
+
+    # テーマ行は最終出力からは除外されるので、ここで見えるのは個別のみ。
+    # 「テーマがフィルタ段階で落ちていない」ことは、除外前の中間結果ではなく
+    # 個別銘柄の通過状況で担保する（BIG が残り SMALL が落ちる）。
+    assert set(filtered['ticker']) == {'BIG'}
+
+
+def test_apply_filters_does_not_remerge_prev_when_already_present():
+    """呼び出し側が prev_ 列を持たせている場合、前日を再マージしないこと。
+
+    🔴 回帰テスト（計画書 §7 P3-2）: ガードが無いと二重マージで pandas が
+    `_x`/`_y` サフィックスを付け、素の `prev_` 列名が消えて RRG / RS-MACD / VCP
+    フィルタが丸ごと壊れる（2026-07-28 に流動性床を無効化した衝突と同型）。
+    API の load_cross_section は prev_ 列を含むフレームを渡すため、この経路を踏む。
+    """
+    # A: 前日 Improving（ratio<0）→ 当日 Leading（ratio>0, mom>0）へ転換し、mom も加速 → 通過
+    # B: 当日も Lagging のまま → 落ちる
+    merged = _minimal_frame([
+        [1, 'A', 'A', '個別', 1, 0.5, 0.6, -0.4, 0.5],
+        [2, 'B', 'B', '個別', 1, -0.5, -0.6, -0.4, -0.5],
+    ], ['symbol_id', 'ticker', 'name', 'category', 'active',
+        'rs_ratio_e21', 'rs_momentum_e21', 'prev_rs_ratio_e21', 'prev_rs_momentum_e21'])
+
+    # 前日データを別途渡す（ガードが無ければ再マージされてしまう状況）。
+    # 値は意図的に「転換条件を満たさない」ものにしてあるので、再マージされれば A も落ちる。
+    df_ind = pd.DataFrame([
+        ['2026-06-25', 1, 9.9, 9.9],
+        ['2026-06-25', 2, 9.9, 9.9],
+    ], columns=['date', 'symbol_id', 'rs_ratio_e21', 'rs_momentum_e21'])
+
+    filtered = apply_filters_to_df(
+        merged=merged, target_date='2026-06-26',
+        df_ind=df_ind,
+        df_ranks=pd.DataFrame(columns=['date', 'symbol_id', 'indicator_name', 'percent_rank']),
+        df_symbols=pd.DataFrame(), df_theme_constituents=pd.DataFrame(),
+        strategy={'name': 't', 'rrg_leading_in': True},
+        prev_date='2026-06-25',
+    )
+
+    # _x/_y 衝突が起きていれば MissingFilterColumnError になるか結果が変わる。
+    # ガードが効いていればフレーム上の prev_ 列がそのまま使われ、A のみ通過する。
+    assert set(filtered['ticker']) == {'A'}
