@@ -247,7 +247,15 @@ def apply_filters_to_df(
                 merged = merged.merge(r_df, on='symbol_id', how='left').reset_index(drop=True)
 
     # --- RRG / RS-MACD / VCP breakout の前日マージ ---
-    if required.prev and prev_date is not None:
+    # 呼び出し側（API の load_cross_section 等）が既に prev_ 列を持たせている場合は再マージしない。
+    # ランク側の has_all_premerged と対称。ガードが無いと、既に prev_ 列があるフレームに
+    # 対して二重マージが走り pandas が _x/_y サフィックスを付けるため、素の prev_ 列名が
+    # 消えて **RRG / RS-MACD / VCP フィルタが丸ごと壊れる**
+    # （2026-07-28 に流動性床を無効化した _x/_y 衝突と同型。計画書 §1.2 F1）。
+    _prev_premerged = bool(required.prev) and all(
+        f'prev_{c}' in merged.columns for c in required.prev
+    )
+    if required.prev and prev_date is not None and not _prev_premerged:
         if ind_day_cache is not None:
             ind_prev_all = ind_day_cache.get(prev_date)
         else:
@@ -482,8 +490,8 @@ def apply_filters_to_df(
             # 小文字の true/false リテラルを pandas.query が解釈できる形へ正規化
             # (API 側 _parse_expression_to_filter と同一の式を受け付けるため)
             import re as _re
-            expr_normalized = _re.sub(r'true', 'True', expression)
-            expr_normalized = _re.sub(r'false', 'False', expr_normalized)
+            expr_normalized = _re.sub(r'\btrue\b', 'True', expression)
+            expr_normalized = _re.sub(r'\bfalse\b', 'False', expr_normalized)
             # We use query() which is generally safe for simple filters
             # Ensure we only keep rows where expression is true
             merged = merged[mask].copy()

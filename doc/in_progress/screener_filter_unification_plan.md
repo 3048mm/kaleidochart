@@ -535,6 +535,79 @@ ScreenerFrame（1営業日分・wide・正準列名・派生列込み）
 - 更新: `doc/backend_specification.md` §6.7（**現状の記述は陳腐化している** — `avg_dollar_volume_21` が
   抽出対象に載っておらず、`relative_ranks` を long 形式前提で説明している）
 
+#### 3.3.1 詳細設計（2026-08-17 確定）
+
+Phase 1 で `apply_filters_to_df` は**完全にレジストリ駆動**になった。したがって Phase 3 の本体は
+「**API 側が同じフレームを作って同じ関数を呼ぶ**」ことに尽きる。新しいエンジンは書かない。
+
+##### (a) `ScreenerFrame` 契約（新規 `backend/indicators/screener_frame.py`）
+
+1営業日分のクロスセクション DataFrame。`apply_filters_to_df` が受け取れる形を「契約」として明文化する。
+
+| 区分 | 列 |
+| :--- | :--- |
+| 同一性 | `symbol_id` / `ticker` / `name` / `category` / `active` |
+| 価格 | `date` / `open` / `high` / `low` / `close` / `volume` / `market_cap` |
+| 指標 | `Indicator` の正準列名（必要なものだけ） |
+| ランク | **フレーム内名**（`to_frame_column()` 経由。`rs21_rank` 等） |
+| 前日 | `prev_<正準名>` |
+| 派生 | `change_intraday_pct` / `dist_21ema_pct`（`apply_filters_to_df` が生成） |
+
+```python
+def assert_frame_contract(df, *, required=None) -> None:
+    """フレームが契約を満たすか検査する。満たさなければ例外。"""
+```
+
+検査項目:
+1. 同一性の列が全て存在する
+2. **数値列が object dtype になっていない** ← **P1-2 の根治**。
+   列が丸ごと NULL だと object になり、特殊フィルタが `TypeError: float > None` を出す。
+   従来は `except Exception` に飲まれてプリセットが黙って消えていた
+3. `required`（`RequiredColumns`）を渡した場合、そのハード要求が全て存在する
+
+##### (b) 2つのローダ
+
+| ローダ | 実装場所 | 備考 |
+| :--- | :--- | :--- |
+| `load_cross_section(db, date, prev_date, required)` | `api/screener_cross_section.py` | 既存 `build_cross_section` を拡張。価格列・全必要指標・ランク（フレーム内名）・前日列を1回で引く |
+| （Parquet 側） | `backtest_screener.scan_signals_for_date` の既存マージ | **新規実装しない**。既に契約を満たしているので `assert_frame_contract` を通すだけ |
+
+##### (c) API の切り替え
+
+- `get_screener()` と `_build_preset_query()` を「**フレームを作る → `apply_filters_to_df` を呼ぶ → レスポンスを組む**」へ。
+- **`_apply_filter`（148行）と `_parse_expression_to_filter`（80行）を削除**。SQL は取得のみに縮退。
+- `/screener/dashboard` は**クロスセクションを1回だけ作って全18プリセットで使い回す**。
+  現状はプリセットごとに SQL クエリを発行しているため、**性能はむしろ改善する見込み**（要実測）。
+- 周辺処理（上位200件スライス・sparkline・テーマ解決）は**フレームから組み直す**。
+  ここが唯一の「作り直し」であり、回帰リスクの実体。
+
+##### (d) long/wide の統一（P0-1 / P0-2）
+
+`backtest_runner.preload_data` の melt を削除し、ランクを **wide のまま**扱う。
+`backtest_screener` / `scenario_runner` の「long から `indicator_name` で抽出して再 wide 化」も不要になる。
+melt の `available_vars` が落としていた6列（`rs_value_rank` / `rs_roc_ema_rank_e*`）も自動的に使えるようになる。
+
+**(c) とは独立に実施できる**ため、切り替えの前後どちらでもよい。両方を同時に動かさないこと。
+
+##### (e) 検証（受入基準）
+
+| 項目 | 基準 |
+| :--- | :--- |
+| パリティテスト97件 | 全 GREEN（**両経路が同じエンジンになるので当然通るが、通らなければ切り替えミス**） |
+| 本番データ差分 | **Phase 1・2 完了時点のスナップショット（`tmp/phase0_baseline_20260814_010127.json`）に対して差分ゼロ** |
+| 性能（ウォーム） | `/screener` 0.51秒以内・`/screener/dashboard` 最新日 0.83秒／過去日 1.59秒以内（U-4: ベースライン×1.5） |
+| 全テスト | ワークツリーで 953 passed 相当（環境要因の1件を除く） |
+
+##### (f) 実施順序
+
+1. **3a**: `screener_frame.py`（契約＋`assert_frame_contract`）＋ TDD。**既存コードは変更しない**（追加のみ）
+2. **3b**: `load_cross_section()` の実装＋「2つのローダが契約を満たす」テスト。**まだ API は切り替えない**
+3. **3c**: API を切り替え、`_apply_filter` / `_parse_expression_to_filter` を削除
+4. **3d**: melt の廃止（P0-1 / P0-2）
+5. **3e**: 性能・差分実測、仕様書更新（`backend_specification.md` §6.7 の陳腐化解消を含む）
+
+各段で全テスト＋差分実測を挟む。**3c が最も危険**なので、そこだけは差分ゼロを確認するまで次に進まない。
+
 **影響範囲**:
 - ⚠️ 回帰リスク最大。API のソート・上位200件スライス・sparkline 生成等の周辺処理を作り直す必要がある
 - ⚠️ 性能退行の可能性（1日分 ≒ 3,000銘柄 × 数十列。API は既に特殊フィルタ用に同等のクロスセクションを
@@ -703,46 +776,73 @@ ScreenerFrame（1営業日分・wide・正準列名・派生列込み）
 
 ### Phase 3: 完全 DataFrame 化（案3）
 
-- [ ] `ScreenerFrame` 契約の定義（正準列名・dtype・派生列・wide ランク）と `assert_frame_contract()`
-- [ ] **[TDD-red]** 2つのローダが同一フレームを返すことのテスト
-- [ ] `load_from_sqlite()`（`build_cross_section` を拡張）／`load_from_parquet()` の実装
+- [x] `ScreenerFrame` 契約の定義（正準列名・dtype・派生列・wide ランク）と `assert_frame_contract()`
+      （3a・コミット `ece1e96`）→ `backend/indicators/screener_frame.py` 新設。
+      `IDENTITY_COLUMNS`/`PRICE_COLUMNS`/`FrameContractError`/`assert_frame_contract()`。
+      既存コードは変更せず追加のみ。
+- [x] **[TDD-red]** 2つのローダが同一フレームを返すことのテスト（3b）
+      → `backend/tests/api/test_screener_frame_loaders.py`（新規7件）。SQLite 側
+      （`load_cross_section`）と Parquet 側（`scan_signals_for_date` と同じ
+      `ind_day + price_day + symbols` マージ）の両方が `assert_frame_contract()` を通ること、
+      `IDENTITY_COLUMNS`/`PRICE_COLUMNS` の列集合一致、ランクがフレーム内名
+      （`rs21_rank` 等）で入ること、テーマ行が保持されること、NULL の多い列が object dtype に
+      ならないこと、`load_cross_section` の結果を `apply_filters_to_df` にそのまま渡せること
+      （3c の前哨）を検証。全 GREEN。
+- [x] `load_from_sqlite()`（`build_cross_section` を拡張）／`load_from_parquet()` の実装（3b）
+      → `backend/api/screener_cross_section.py` に **`load_cross_section(db, target_date,
+      prev_date=None)`** を新設（`load_from_sqlite` という関数名では実装していない。計画書
+      §3.3.1 (b) の表記どおりの命名で実装した）。Indicator の全カラム（id/symbol_id/date を除く）
+      ＋ RelativeRank の全カラム（フレーム内名へリネーム）＋ 特殊フィルタの `prev_requires`
+      和集合を `prev_` 付きで取得し、SQLAlchemy 行タプル由来の object dtype を
+      `pd.to_numeric` で明示的に float 化してから `assert_frame_contract()` を通す。
+      Parquet 側は**新規実装しない**（計画書の指示どおり）— `scan_signals_for_date` の
+      既存マージがそのまま契約を満たすことをテストで確認。
+      既存 `build_cross_section` は `load_cross_section` の薄いラッパへ再実装
+      （symbol_id/category + 特殊フィルタが要求する指標/ランクへ列を絞り込むだけで、
+      戻り値の形・挙動は変更していない。既存テスト `test_screener_special_filter_behavior.py`
+      ほかで回帰なしを確認）。**API の切替（3c）は未実施**（`_apply_filter` /
+      `_parse_expression_to_filter` は現状のまま）。
 - [ ] ランクの long/wide 変換を廃止し、両経路とも wide で統一
-- [ ] `apply_filters(frame, strategy)` を単一エンジンとして確立（`apply_filters_to_df` を改称・整理）
-- [ ] `screener_router.py` を DataFrame 経路へ切替（SQL は取得のみに縮退）
-- [ ] `_apply_filter` / `_parse_expression_to_filter` の削除
-- [ ] 性能実測（U-4 の受入基準に対する合否判定）
-- [ ] 抽出結果の差分実測（Phase 1 完了時点のスナップショットと突合し、差分ゼロを確認）
+- [x] `apply_filters(frame, strategy)` を単一エンジンとして確立（`apply_filters_to_df` を改称・整理） （3c。`apply_filters_to_df` の名前は維持し、API がこれを呼ぶ形にした）
+- [x] `screener_router.py` を DataFrame 経路へ切替（SQL は取得のみに縮退） （3c）
+- [x] `_apply_filter` / `_parse_expression_to_filter` の削除 （3c。`_EXPR_OPS` / `_resolve_column` / `_RANK_COLUMN_ALIASES` も併せて削除）
+- [x] 性能実測（U-4 の受入基準に対する合否判定） （3c。/screener 0.235s・dashboard 最新日 0.579s／過去日 0.612s。全て基準内。**過去日は 0.95-1.06s から改善**）
+- [x] 抽出結果の差分実測（Phase 1 完了時点のスナップショットと突合し、差分ゼロを確認） （3c。**同日前後比較で差分ゼロ**。DB が日々進みベースライン日付が漂流するため、stash して同じ日付で取り直す統制付き比較を実施）
 - [ ] 全テスト実行 + sandbox での API スモーク
 - [ ] 仕様書更新（`architecture.md` §2/§3、`backend_specification.md` §5・**§6.7 の陳腐化解消**）、
       `issue_list.md` P3「スクリーナーの完全 DataFrame 化」をクローズ
 
 ### 作業中メモ
 
-**現在地（2026-08-16）**: **Phase 0・1・2 が完了し main へマージ済み**（最終 SHA `c60293b`）。
-残るは **Phase 3（完全 DataFrame 化）のみ**。
+**現在地（2026-08-17）**: **Phase 3c まで完了**。残るは **3d（melt 廃止）と 3e（sandbox スモーク・仕様書更新）**。
 
-Phase 1・2 の成果（ベースライン §1.5 との対比）:
+| ステップ | 状態 | コミット |
+| :--- | :--- | :--- |
+| 3a `ScreenerFrame` 契約 | 完了 | `ece1e96` |
+| 3b `load_cross_section()` | 完了 | `c7bdeb1` |
+| 3c API 切り替え・SQL 撤去 | **完了・差分ゼロ** | `d5af561` |
+| 3d melt 廃止（P0-1 / P0-2） | 未着手 | — |
+| 3e sandbox スモーク・仕様書 | 未着手 | — |
 
-| 指標 | 着手前 | 現在 |
-| :--- | ---: | ---: |
-| キー解釈ロジックの実装箇所 | 4 | **1** |
-| 必要カラム宣言の実装箇所 | 4 | **1** |
-| 流動性床の注入箇所 | 5（4モジュール） | **1** |
-| テーマ除外ルールの定義箇所 | 3（2モジュール） | **1** |
-| close_gt 正規化の実装箇所 | 3 | **1** |
-| pytest | 795 | **953**（+158） |
+**3c 完了時点の実測**:
 
-**本計画が発見・修正した本番バグ（5件）**: `is_trend_template` の無効化（P1-7）／
-流動性床が dashboard に未適用（P1-8）／`max_avg_hits_per_day` の欠落（P0-7）／
-`close_gt` 正規化が正準形を破壊（P2-1）／随伴パラメータの取りこぼし（P1-1、本計画が持ち込んだ回帰）。
+| 指標 | 値 |
+| :--- | ---: |
+| pytest | 976 passed（環境要因1件を除く） |
+| 本番データ差分 | **ゼロ**（同日前後比較） |
+| `/screener`（ウォーム） | 0.235秒（基準 0.51秒） |
+| dashboard 最新日 | 0.579秒（基準 0.83秒） |
+| dashboard 過去日 | 0.612秒（基準 1.59秒。**従来 0.95-1.06秒から改善**） |
 
-Phase 3 に着手する際の注意:
-- 差分実測の手順は下記のとおり（`tmp/phase0_snapshot.py` + `tmp/phase0_compare.py`）。
-  **突合スクリプトは変異データで検出能力を確認済み**
-- **Phase 3 の比較基準は Phase 1・2 完了時点のスナップショット**（`tmp/phase0_baseline_20260814_010127.json`）。
-  Phase 0 のもの（`20260813_121011`）と比べると P1-7 / P1-8 の差分が混ざる
-- §7 の P0-1〜P2-2 に落とし穴をまとめてある。とくに **P0-5（`Query` 既定値の罠）**、
-  **P1-6（ハード要求とソフト要求を混ぜない）**、**P2-2（フィクスチャを現実の呼び出し方に合わせる）**
+> **差分実測の注意**: 本番 DB は日次パイプラインで進むため、`resolve_target_dates()` が選ぶ
+> 対象日が実行のたびに漂流する。過去のスナップショットとの単純比較はデータ差分に埋もれる。
+> **`git stash` で変更を外して同じ日に取り直す統制付き比較**を行うこと。
+
+**3d 着手時の注意**:
+- `preload_data` の melt を外すと `df_ranks` が wide になる。`backtest_screener` /
+  `scenario_runner` の `indicator_name` による抽出も同時に不要になるが、
+  **テストフィクスチャが long 形式で書かれている**ものが多数あるため影響範囲が広い
+- **3c とは独立**。両方を同時に動かさないこと
 
 
 ---

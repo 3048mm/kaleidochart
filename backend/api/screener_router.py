@@ -7,14 +7,15 @@ indicators/screener_filters.py (audit D-2).
 """
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session, aliased
-from sqlalchemy import desc, func, or_, and_, Column as SAColumn, select
+from sqlalchemy import desc, func, Column as SAColumn
 from typing import List, Optional, Dict, Any
 from datetime import date as dt_date, timedelta
-import os, re, logging, tomli
+import os, logging, tomli
+import pandas as pd
 from db.models import Symbol, DailyPrice, Indicator, RelativeRank, ThemeConstituent, Earning
 from api import schemas
 from api.deps import get_api_db
-from api.screener_cross_section import build_cross_section, evaluate_special_filters
+from api.screener_cross_section import load_cross_section
 from indicators.screener_filters import SPECIAL_FILTER_KEYS
 from indicators import screener_registry
 
@@ -76,23 +77,6 @@ _VIRTUAL_COLUMNS = {
     "dist_ema21_pct": lambda: (DailyPrice.close - Indicator.ema_21) / Indicator.ema_21 * 100,
     "dist_21ema_pct": lambda: (DailyPrice.close - Indicator.ema_21) / Indicator.ema_21 * 100,
     "dist_sma50_pct": lambda: (DailyPrice.close - Indicator.sma_50) / Indicator.sma_50 * 100,
-}
-
-# --- Rank Column Aliases for mapping old naming rules to new RelativeRank columns ---
-_RANK_COLUMN_ALIASES = {
-    "rs_ratio_14": "rs_ratio_rank_e14",
-    "rs_ratio_21": "rs_ratio_rank_e21",
-    "rs_ratio_63": "rs_ratio_rank_e63",
-    "rs_momentum_14": "rs_momentum_rank_e14",
-    "rs_momentum_21": "rs_momentum_rank_e21",
-    "rs_momentum_63": "rs_momentum_rank_e63",
-    "rs_trend_14": "rs_trend_rank_s14",
-    "rs_trend_21": "rs_trend_rank_s21",
-    "rs_trend_63": "rs_trend_rank_s63",
-    "rs_roc_ema_14": "rs_roc_ema_rank_e14",
-    "rs_roc_ema_21": "rs_roc_ema_rank_e21",
-    "rs_roc_ema_63": "rs_roc_ema_rank_e63",
-    "rs_value": "rs_value_rank",
 }
 
 # --- レジストリ fail-loud 判定用: 既知カラム集合 / ランクカラム集合 ---
@@ -196,248 +180,11 @@ _COLUMN_LABELS = {
     "rs_roc_ema_rank_e63": "RS ROC Rank 63",
 }
 
-def _resolve_column(name: str):
-    """Resolve a filter key to a SQLAlchemy column expression, or None."""
-    if name in _INDICATOR_COLUMNS:
-        return _INDICATOR_COLUMNS[name]
-    if name in _VIRTUAL_COLUMNS:
-        return _VIRTUAL_COLUMNS[name]()
-    return None
-
-def _apply_filter(query, key: str, value, db: Session, latest_date):
-    """Apply a single filter key=value to a query. Returns modified query or original on failure."""
-    try:
-        # Theme numerical filters (Supports both RelativeRank and Indicator columns)
-        # New pattern: min_theme_rs_ratio_rank_e21 (RelativeRank)
-        # New pattern: min_theme_rs_trend_s21 (Indicator)
-        theme_rank_match = re.match(r'^(min|max)_theme_(.+)$', key)
-        if theme_rank_match:
-            direction, col_name = theme_rank_match.group(1), theme_rank_match.group(2)
-            
-            is_theme_filter = False
-            is_rank = False
-            col_attr = getattr(RelativeRank, col_name, None)
-            
-            if col_attr is not None:
-                is_theme_filter = True
-                is_rank = True
-            else:
-                if col_name.endswith('_rank'):
-                    old_indicator = col_name[:-5]
-                    mapped_col = _RANK_COLUMN_ALIASES.get(old_indicator)
-                    if mapped_col:
-                        col_attr = getattr(RelativeRank, mapped_col, None)
-                        if col_attr is not None:
-                            is_theme_filter = True
-                            is_rank = True
-                else:
-                    # Check if it's a standard Indicator column (e.g. rs_trend_s21)
-                    col_attr = _resolve_column(col_name)
-                    if col_attr is not None:
-                        is_theme_filter = True
-                        is_rank = False
-                        
-            if is_theme_filter:
-                if is_rank:
-                    _rk_date = db.query(func.max(RelativeRank.date)).filter(RelativeRank.date <= latest_date).scalar()
-                    if not _rk_date:
-                        return query
-                    
-                    theme_q = db.query(RelativeRank.symbol_id).filter(
-                        RelativeRank.date == _rk_date,
-                        RelativeRank.group_name == "テーマ"
-                    )
-                    if direction == 'min':
-                        theme_q = theme_q.filter(col_attr >= float(value))
-                    else:
-                        theme_q = theme_q.filter(col_attr <= float(value))
-                    theme_subq = theme_q.subquery()
-                else:
-                    # Indicator base theme filter
-                    theme_q = db.query(Indicator.symbol_id).filter(
-                        Indicator.date == latest_date
-                    )
-                    if direction == 'min':
-                        theme_q = theme_q.filter(col_attr >= float(value))
-                    else:
-                        theme_q = theme_q.filter(col_attr <= float(value))
-                    theme_subq = theme_q.subquery()
-                
-                # Find stocks belonging to those themes
-                stock_in_themes_subq = db.query(ThemeConstituent.symbol_id).filter(
-                    ThemeConstituent.theme_id.in_(select(theme_subq))
-                ).subquery()
-                
-                # Filter original query
-                query = query.filter(
-                    or_(
-                        (Symbol.category == "テーマ") & (Symbol.id.in_(select(theme_subq))),
-                        (Symbol.category == "個別") & (Symbol.id.in_(select(stock_in_themes_subq)))
-                    )
-                )
-                return query
-
-        # Individual RelativeRank filters (Support new & old naming rules)
-        # New pattern: min_rs_ratio_rank_e21
-        # Old pattern: min_rs_ratio_21_rank
-        rank_match = re.match(r'^(min|max)_(.+)$', key)
-        if rank_match:
-            direction, col_name = rank_match.group(1), rank_match.group(2)
-            is_rank_filter = False
-            col_attr = getattr(RelativeRank, col_name, None)
-            if col_attr is not None:
-                is_rank_filter = True
-            else:
-                if col_name.endswith('_rank'):
-                    old_indicator = col_name[:-5]
-                    mapped_col = _RANK_COLUMN_ALIASES.get(old_indicator)
-                    if mapped_col:
-                        col_attr = getattr(RelativeRank, mapped_col, None)
-                        if col_attr is not None:
-                            is_rank_filter = True
-
-            if is_rank_filter:
-                _rk_date = db.query(func.max(RelativeRank.date)).filter(RelativeRank.date <= latest_date).scalar()
-                if not _rk_date:
-                    return query
-                rank_subq = db.query(
-                    RelativeRank.symbol_id,
-                    col_attr.label('rank_val')
-                ).filter(
-                    RelativeRank.date == _rk_date
-                ).subquery(name=f"rank_{col_name}_{direction}")
-                query = query.join(rank_subq, Symbol.id == rank_subq.c.symbol_id, isouter=False)
-                if direction == 'min':
-                    query = query.filter(rank_subq.c.rank_val >= float(value))
-                else:
-                    query = query.filter(rank_subq.c.rank_val <= float(value))
-                return query
-
-        # Close-above filters: is_close_gt_ema63=true → DailyPrice.close > Indicator.ema_63
-        if key.startswith('is_close_gt_') or key.startswith('close_gt_'):
-            ind_name = key[12:] if key.startswith('is_close_gt_') else key[9:]
-            # 短縮名（ema63 → ema_63）の正規化はレジストリに一本化した。
-            # ここに複製されていた実装は**ガードが無く**、既に正準形の入力を壊していた
-            # （'ema_150' → 'ema_1_50' という実在しない列名になり、_resolve_column が
-            #  None を返してフィルタがサイレントに素通しされる。2026-08-11 に
-            #  パリティテストが検出。計画書 §7 P2-1）
-            ind_name = screener_registry.normalize_close_gt_target(ind_name)
-            ind_col = _resolve_column(ind_name)
-            if ind_col is not None:
-                query = query.filter(DailyPrice.close > ind_col)
-            return query
-
-        # Standard min/max filters
-        match = re.match(r'^(min|max)_(.+)$', key)
-        if match:
-            direction, col_name = match.group(1), match.group(2)
-            col = _resolve_column(col_name)
-            if col is None:
-                return query
-            if direction == 'min':
-                if col_name == 'market_cap':
-                    # S-1: テーマ（market_cap なし）は免除する（バックテストと同一の意味論）
-                    query = query.filter(or_(col >= float(value), Symbol.category == 'テーマ'))
-                else:
-                    query = query.filter(col >= float(value))
-            else:
-                query = query.filter(col <= float(value))
-            return query
-
-        # Exact match
-        col = _resolve_column(key)
-        if col is not None:
-            query = query.filter(col == float(value))
-            return query
-
-    except Exception as e:
-        logger.warning(f"Screener filter '{key}={value}' skipped due to error: {e}")
-    return query
-
 # --- Special boolean filters ---
 # 実体は indicators/screener_filters.py の純関数群に一本化（audit D-2）。
-# API からは api/screener_cross_section.py 経由で評価する。
-
-# --- Expression parser for OR/complex conditions ---
-_EXPR_OPS = {
-    '>': lambda a, b: a > b,
-    '>=': lambda a, b: a >= b,
-    '<': lambda a, b: a < b,
-    '<=': lambda a, b: a <= b,
-    '==': lambda a, b: a == b,
-    '!=': lambda a, b: a != b,
-}
-
-def _parse_expression_to_filter(expr_str: str):
-    """Parse a simple expression string into SQLAlchemy filter clause.
-    Supports: column op value [and|or column op value ...]
-    Returns a filter clause or None on error.
-    """
-    try:
-        # Tokenize: split by 'and' / 'or' as logical connectors
-        parts = re.split(r'\b(and|or)\b', expr_str)
-        conditions = []
-        connectors = []
-
-        for part in parts:
-            part = part.strip()
-            if part in ('and', 'or'):
-                connectors.append(part)
-                continue
-            if not part:
-                continue
-
-            # Parse "column op value" or "column op column"
-            # (value: 数値または true/false リテラル。true=1.0, false=0.0 として扱う)
-            m = re.match(r'^(\w+)\s*(>=|<=|!=|==|>|<)\s*(-?[\d.]+|true|false)$', part, re.IGNORECASE)
-            if m:
-                col_name, op, val_str = m.group(1), m.group(2), m.group(3)
-                col = _resolve_column(col_name)
-                if col is None:
-                    logger.warning(f"Expression: unknown column '{col_name}'")
-                    return None
-                if val_str.lower() == 'true':
-                    val = 1.0
-                elif val_str.lower() == 'false':
-                    val = 0.0
-                else:
-                    val = float(val_str)
-                conditions.append(_EXPR_OPS[op](col, val))
-            else:
-                # Try column-to-column comparison: "col1 op col2"
-                m2 = re.match(r'^(\w+)\s*(>=|<=|!=|==|>|<)\s*(\w+)$', part)
-                if not m2:
-                    logger.warning(f"Expression parse failed for segment: '{part}'")
-                    return None
-                col_name_l, op, col_name_r = m2.group(1), m2.group(2), m2.group(3)
-                col_l = _resolve_column(col_name_l)
-                col_r = _resolve_column(col_name_r)
-                if col_l is None:
-                    logger.warning(f"Expression: unknown column '{col_name_l}'")
-                    return None
-                if col_r is None:
-                    logger.warning(f"Expression: unknown column '{col_name_r}'")
-                    return None
-                conditions.append(_EXPR_OPS[op](col_l, col_r))
-
-        if not conditions:
-            return None
-
-        # Combine with connectors
-        result = conditions[0]
-        for i, conn in enumerate(connectors):
-            next_cond = conditions[i + 1] if i + 1 < len(conditions) else None
-            if next_cond is None:
-                break
-            if conn == 'or':
-                result = or_(result, next_cond)
-            else:
-                result = and_(result, next_cond)
-
-        return result
-    except Exception as e:
-        logger.error(f"Expression parse error for '{expr_str}': {e}")
-        return None
+# フィルタ適用の実装は backend/backtest/backtest_screener.py::apply_filters_to_df に一本化
+# （Phase 3 ステップ 3c。doc/in_progress/screener_filter_unification_plan.md §3.3.1 (c)）。
+# 旧 _apply_filter（SQLAlchemy）・_parse_expression_to_filter・_resolve_column は撤去済み。
 
 
 # ============================================================
@@ -505,48 +252,60 @@ def get_screener_dashboard(
     db: Session = Depends(get_api_db),
     target_date: Optional[str] = Query(None, description="Optional target date YYYY-MM-DD")
 ):
-    """Screener dashboard: builds each preset card from screener_presets.toml."""
+    """Screener dashboard: builds each preset card from screener_presets.toml.
+
+    Phase 3 ステップ 3c（doc/in_progress/screener_filter_unification_plan.md §3.3.1 (c)）:
+    基準日1営業日分の ScreenerFrame（load_cross_section）を1回だけ構築し、全プリセットで
+    使い回した上で apply_filters_to_df（唯一のフィルタエンジン）に通す。SQL は取得のみ。
+    """
+    from backend.backtest.backtest_screener import apply_filters_to_df
+    from backend.backtest.common_constraints import inject_liquidity_floor
+
     # Determine the date to use
     if target_date:
         latest_date_result = db.query(func.max(Indicator.date)).filter(Indicator.date <= target_date).scalar()
     else:
         latest_date_result = db.query(func.max(Indicator.date)).scalar()
-        
+
     if not latest_date_result:
         return schemas.ScreenerDashboardResponse(rise=[], fall=[])
 
     # Get previous date for RRG transition check
     previous_date_result = db.query(func.max(Indicator.date)).filter(Indicator.date < latest_date_result).scalar()
 
-    # Shared cross-section for special boolean filters (built once per request,
-    # evaluated with the same pure functions as the backtest engine)
-    merged_cs, df_tc_cs = build_cross_section(db, latest_date_result, previous_date_result)
+    # 基準日1営業日分の ScreenerFrame（全銘柄・全指標・ランク・前日列込み）を1回だけ構築し、
+    # 全プリセットで使い回す（旧実装はプリセットごとに SQL クエリを発行していた）。
+    frame, df_tc = load_cross_section(db, latest_date_result, previous_date_result)
+    # DailyPrice は LEFT JOIN で取り込まれるため（load_cross_section は Indicator 側を母集合と
+    # する）、旧実装の INNER JOIN（Symbol×Indicator×DailyPrice）と挙動を揃えるため、
+    # 価格が無い行（本来あり得ないが念のため）は除外する。
+    frame = frame[frame['close'].notna()].copy()
 
-    # Base query wrapper function
-    def q_base():
-        return db.query(Symbol.id, Symbol.ticker, Symbol.name, DailyPrice.open, DailyPrice.close, Indicator.change_1d_pct).join(
-            Indicator, Symbol.id == Indicator.symbol_id
-        ).join(
-            DailyPrice, (Symbol.id == DailyPrice.symbol_id) & (Indicator.date == DailyPrice.date)
-        ).filter(Symbol.active == True, Symbol.category.in_(["テーマ", "個別"]), Indicator.date == latest_date_result)
+    # apply_filters_to_df の theme 生値フィルタ（is_theme_rs_ratio_e21_gt_e63 等）が直接参照する
+    # df_symbols（id/category のみ。evaluate_special_filters の df_symbols_proxy と同じ形）。
+    df_symbols = frame[["symbol_id", "category"]].rename(columns={"symbol_id": "id"})
+    # ランクは frame に既にフレーム内名でマージ済み（has_all_premerged により再取得は
+    # 自動的にスキップされる）ため、df_ranks は空でよい。
+    df_ranks_empty = pd.DataFrame(columns=["symbol_id", "date", "indicator_name", "percent_rank"])
 
-    def fetch_top_8(query, passing_ids, is_rise=True):
-        if passing_ids is None:
-            results = query.limit(8).all()
-        else:
-            results = [r for r in query.all() if r.id in passing_ids][:8]
-        if not results:
+    def _fetch_top_8(filtered: pd.DataFrame, is_rise: bool = True):
+        if filtered.empty:
             return []
-            
-        # Get all mapped themes for these 8 stocks with RelativeRank on target date
-        stock_ids = [r.id for r in results]
-        
+
+        # Default sort: by 1Day% (Prev Close base) descending → top 8（旧 SQL の ORDER BY と同じ）
+        sort_key = filtered['change_1d_pct'].fillna(float('-inf'))
+        top = filtered.assign(_sort_key=sort_key).sort_values('_sort_key', ascending=False).head(8)
+
+        stock_ids = [int(s) for s in top['symbol_id'].tolist()]
+        if not stock_ids:
+            return []
+
         # Bulk-preload rs_trend_s21 history for the last 30 trading days
         date_rows = db.query(Indicator.date).filter(
             Indicator.date <= latest_date_result
         ).distinct().order_by(desc(Indicator.date)).limit(30).all()
         history_dates = [dr[0] for dr in date_rows]
-        
+
         trend_rows = db.query(
             Indicator.symbol_id,
             Indicator.date,
@@ -555,12 +314,12 @@ def get_screener_dashboard(
             Indicator.symbol_id.in_(stock_ids),
             Indicator.date.in_(history_dates)
         ).order_by(Indicator.symbol_id, Indicator.date).all()
-        
+
         from collections import defaultdict
         stock_trends = defaultdict(list)
         for tr in trend_rows:
             stock_trends[tr.symbol_id].append(tr.rs_trend_s21 if tr.rs_trend_s21 is not None else 0.0)
-        
+
         # We query the mapping and theme rank in one query
         theme_ranks = db.query(
             ThemeConstituent.symbol_id.label("stock_id"),
@@ -574,7 +333,7 @@ def get_screener_dashboard(
         ).filter(
             ThemeConstituent.symbol_id.in_(stock_ids)
         ).all()
-        
+
         # Group theme ranks by stock_id
         stock_themes = defaultdict(list)
         for tr in theme_ranks:
@@ -583,13 +342,14 @@ def get_screener_dashboard(
                 "name": tr.theme_name.split("::")[1] if "::" in tr.theme_name else tr.theme_name,
                 "rs_ratio": tr.rs_ratio_21 if tr.rs_ratio_21 is not None else 0.0
             })
-            
+
         items = []
-        for r in results:
-            chg = r.change_1d_pct if r.change_1d_pct is not None else 0.0
-            
+        for row in top.itertuples():
+            sid = int(row.symbol_id)
+            chg = row.change_1d_pct if not pd.isna(row.change_1d_pct) else 0.0
+
             # Find the strongest or weakest theme
-            themes_for_stock = stock_themes.get(r.id, [])
+            themes_for_stock = stock_themes.get(sid, [])
             best_weakest_theme = None
             if themes_for_stock:
                 if is_rise:
@@ -598,102 +358,101 @@ def get_screener_dashboard(
                 else:
                     # Fall: pick the one with min RSRatio
                     best_weakest_theme = min(themes_for_stock, key=lambda x: x["rs_ratio"])
-            
+
             theme_ticker = best_weakest_theme["ticker"] if best_weakest_theme else None
             theme_name = best_weakest_theme["name"] if best_weakest_theme else None
             theme_rs = best_weakest_theme["rs_ratio"] if best_weakest_theme else None
-            
+
             items.append(schemas.ScreenerDashboardItem(
-                id=r.id, 
-                ticker=r.ticker, 
-                name=r.name, 
+                id=sid,
+                ticker=row.ticker,
+                name=row.name,
                 change_pct=chg,
                 theme_ticker=theme_ticker,
                 theme_name=theme_name,
                 theme_rs_ratio=theme_rs,
-                rs_trend_history=stock_trends.get(r.id, [])
+                rs_trend_history=stock_trends.get(sid, [])
             ))
         return items
 
-    def _build_preset_query(preset_def: dict):
-        """Build a query from a single preset definition (TOML dict)."""
-        q = q_base()
+    def _run_preset(preset_def: dict):
+        """1プリセット分のフィルタを apply_filters_to_df へ委譲する。
+
+        Returns:
+            (filtered_df, applied_filters)
+        未知キー・必要カラム欠落は apply_filters_to_df 内で UnknownFilterKeyError /
+        MissingFilterColumnError として送出される（呼び出し元 try/except が捕捉し、
+        他のプリセットは正常表示を続ける。U-1 (b)）。
+        """
+        preset_filters = preset_def.get("filters", {})
+        filters: Dict[str, Any] = dict(preset_filters)
         applied_filters = set()
 
         # Apply expression-based filters (OR conditions etc.)
         expression = preset_def.get("expression")
         if expression:
-            expr_filter = _parse_expression_to_filter(expression)
-            if expr_filter is not None:
-                q = q.filter(expr_filter)
-                applied_filters.add("expression")
-            else:
-                logger.warning(f"Preset '{preset_def.get('id')}': expression parse failed, skipping expression.")
+            filters["expression"] = expression
+            applied_filters.add("expression")
 
-        # Apply standard AND and boolean filters
-        filters = preset_def.get("filters", {})
-        special_flags = {}
-        for key, value in filters.items():
+        # rrg_intensity_threshold は preset 直下 / [preset.filters] のどちらに書いてもよい旧仕様を維持
+        if "rrg_intensity_threshold" not in filters:
+            thr = preset_def.get("rrg_intensity_threshold")
+            if thr:
+                filters["rrg_intensity_threshold"] = thr
+
+        for key, value in preset_filters.items():
             if key in SPECIAL_FILTER_KEYS:
                 if value is True:
-                    special_flags[key] = True
                     applied_filters.add(key)
                 continue
             if screener_registry.is_non_filter_key(key):
-                # 制御キー（_use_hysteresis / expression 等）と特殊フィルタの随伴パラメータ
-                # （is_vcp_breakout の pivot_tol 等）は、フィルタキーとして解決を試みない
+                # 制御キー（_use_hysteresis 等）と特殊フィルタの随伴パラメータ
+                # （is_vcp_breakout の pivot_tol 等）は applied_filters に含めない
                 continue
-
-            # fail-loud: レジストリで解決できないキーは UnknownFilterKeyError を送出し、
-            # このプリセット全体をエラー扱いにする（呼び出し元の try/except が捕捉し、
-            # 他のプリセットは正常表示を続ける。U-1 (b)）
-            screener_registry.resolve_filter_spec(key, _KNOWN_FILTER_COLUMNS, _RANK_FILTER_COLUMNS)
-
-            q = _apply_filter(q, key, value, db, latest_date_result)
             applied_filters.add(key)
-
-        # Special boolean filters: evaluated on the shared cross-section
-        passing_ids = None
-        if special_flags:
-            thr = preset_def.get("rrg_intensity_threshold", 0.0)
-            if thr == 0.0:
-                thr = preset_def.get("filters", {}).get("rrg_intensity_threshold", 0.0)
-            passing_ids = evaluate_special_filters(
-                merged_cs, df_tc_cs, special_flags, float(thr),
-                params=preset_def.get("filters", {}))
 
         # ---- 全戦略共通の流動性ハード制約（最適化対象外・常時適用。UIには出さない） ----
         # P1-8 是正: 従来 /screener にのみ適用され /screener/dashboard には未適用だった
-        # （doc/in_progress/screener_filter_unification_plan.md §7 P1-8。2026-08-13 修正）。
+        # （doc/in_progress/screener_filter_unification_plan.md §7 P1-8）。
+        filters = inject_liquidity_floor(filters, _MIN_AVG_DOLLAR_VOLUME_21)
         if _MIN_AVG_DOLLAR_VOLUME_21 is not None:
-            q = q.filter(Indicator.avg_dollar_volume_21 >= _MIN_AVG_DOLLAR_VOLUME_21)
             applied_filters.add("min_avg_dollar_volume_21")
 
-        # テーマ・仮想指数は実売買不可能なため、結果からは常に除外する
-        # （リーディングテーマ判定・構成銘柄への波及には category=='テーマ' 行が必要なため、
-        # 上記フィルタ処理では保持しているが、実際の表示候補にはしない。backtest側の
-        # apply_filters_to_df と同じ扱い。除外カテゴリの定義は screener_registry に一本化
-        # ＝ §5 Phase 1）
-        q = q.filter(Symbol.category.notin_(tuple(screener_registry.OUTPUT_EXCLUDED_CATEGORIES)))
+        # frame は全プリセットで使い回すため、apply_filters_to_df が書き換える対象は必ず
+        # コピーを渡す。df_ind には frame をそのまま渡す（テーマ生値フィルタの当日参照に使われる）。
+        # prev_date は実際の前日を渡してよい。frame は load_cross_section が prev_ 列を
+        # マージ済みだが、apply_filters_to_df 側に premerged ガード（ランクと対称）を
+        # 入れたため二重マージは起きない。
+        filtered = apply_filters_to_df(
+            merged=frame.copy(),
+            target_date=latest_date_result,
+            df_ind=frame,
+            df_ranks=df_ranks_empty,
+            df_symbols=df_symbols,
+            df_theme_constituents=df_tc,
+            strategy=filters,
+            prev_date=previous_date_result,
+        )
+
+        # テーマ・仮想指数の最終出力除外は apply_filters_to_df が行う（screener_registry の
+        # OUTPUT_EXCLUDED_CATEGORIES に一本化済み）。
         applied_filters.add("exclude_theme_category")
 
-        # Default sort: by 1Day% (Prev Close base) descending
-        q = q.order_by(desc(Indicator.change_1d_pct))
-        return q, passing_ids, sorted(applied_filters)
+        return filtered, sorted(applied_filters)
 
     # Load presets from TOML
     presets = _load_presets()
-    
+
     rise_categories = []
     fall_categories = []
 
     for p in presets.get("rise", []):
         try:
-            q, passing_ids, applied_filters = _build_preset_query(p)
+            filtered_df, applied_filters = _run_preset(p)
             rise_categories.append(schemas.ScreenerDashboardCategory(
                 id=p["id"], name=p["name"], subname=p.get("subname"),
                 subtitle=p.get("subtitle"),
-                group=p.get("group", "Check"), items=fetch_top_8(q, passing_ids, is_rise=True),
+                group=p.get("group", "Check"), items=_fetch_top_8(filtered_df, is_rise=True),
                 applied_filters=applied_filters
             ))
         except Exception as e:
@@ -709,11 +468,11 @@ def get_screener_dashboard(
 
     for p in presets.get("fall", []):
         try:
-            q, passing_ids, applied_filters = _build_preset_query(p)
+            filtered_df, applied_filters = _run_preset(p)
             fall_categories.append(schemas.ScreenerDashboardCategory(
                 id=p["id"], name=p["name"], subname=p.get("subname"),
                 subtitle=p.get("subtitle"),
-                group=p.get("group", "Warning"), items=fetch_top_8(q, passing_ids, is_rise=False),
+                group=p.get("group", "Warning"), items=_fetch_top_8(filtered_df, is_rise=False),
                 applied_filters=applied_filters
             ))
         except Exception as e:
@@ -746,37 +505,37 @@ def get_screener(
     require_positive_eps: bool = Query(False),
     expression: Optional[str] = Query(None, description="Expression filter string"),
 ):
-    """Dynamic screener: all min_*/max_*/exact filters via query params, routed through the generic engine."""
+    """Dynamic screener: all min_*/max_*/exact filters via query params, routed through apply_filters_to_df.
+
+    Phase 3 ステップ 3c: SQL のフィルタ組み立てをやめ、基準日1営業日分の ScreenerFrame を
+    構築して apply_filters_to_df（唯一のフィルタエンジン）に通す。
+    """
+    from backend.backtest.backtest_screener import apply_filters_to_df
+    from backend.backtest.common_constraints import inject_liquidity_floor
+    from backend.backtest.strategy_normalizer import normalize_strategy_keys
+
     # Determine the date to use for indicators
     if target_date:
         latest_date_result = db.query(func.max(Indicator.date)).filter(Indicator.date <= target_date).scalar()
     else:
         latest_date_result = db.query(func.max(Indicator.date)).scalar()
-        
+
     if not latest_date_result:
         return []
 
     # Get previous date for transition check
     previous_date_result = db.query(func.max(Indicator.date)).filter(Indicator.date < latest_date_result).scalar()
 
+    frame, df_tc = load_cross_section(db, latest_date_result, previous_date_result)
+    # 旧実装の INNER JOIN（Symbol×Indicator×DailyPrice）と挙動を揃える（get_screener_dashboard と同じ理由）。
+    frame = frame[frame['close'].notna()].copy()
+    df_symbols = frame[["symbol_id", "category"]].rename(columns={"symbol_id": "id"})
+    df_ranks_empty = pd.DataFrame(columns=["symbol_id", "date", "indicator_name", "percent_rank"])
+
     # 実際に適用されたフィルタキー一覧（ログ出力用。§5 Phase 1。/screener はエンベロープ化
     # しない方針のため、レスポンスには含めず logger.info のみで記録する）
     _applied_filters = set()
-
-    # Base query for active symbols
-    query = db.query(Symbol, Indicator, DailyPrice).join(
-        Indicator, Symbol.id == Indicator.symbol_id
-    ).join(
-        DailyPrice, (Symbol.id == DailyPrice.symbol_id) & (Indicator.date == DailyPrice.date)
-    ).filter(Symbol.active == 1, Symbol.category.in_(["テーマ", "個別"]))
-
-    # Filter by the determined date
-    query = query.filter(Indicator.date == latest_date_result)
-
-    # ---- 全戦略共通の流動性ハード制約（最適化対象外・常時適用。UIには出さない） ----
-    if _MIN_AVG_DOLLAR_VOLUME_21 is not None and "avg_dollar_volume_21" in _INDICATOR_COLUMNS:
-        query = query.filter(_INDICATOR_COLUMNS["avg_dollar_volume_21"] >= _MIN_AVG_DOLLAR_VOLUME_21)
-        _applied_filters.add("min_avg_dollar_volume_21")
+    filters: Dict[str, Any] = {}
 
     # ---- Dynamic filters from query params ----
     # Collect all query params except reserved ones
@@ -785,7 +544,6 @@ def get_screener(
                         "rs_rank_21_gt_63", "theme_rs21_gt_63", "theme_rs_rank_21_gt_63",
                         "rs_rank_14_gt_21", "theme_rs14_gt_21", "theme_rs_rank_14_gt_21",
                         "require_positive_eps", "preset", "expression"}
-    from backend.backtest.strategy_normalizer import normalize_strategy_keys
     normalized_params = normalize_strategy_keys(dict(request.query_params))
 
     for key, value in normalized_params.items():
@@ -793,33 +551,74 @@ def get_screener(
             continue
         if not value:
             continue
-        query = _apply_filter(query, key, value, db, latest_date_result)
+        # 未知キーはこれまで通り黙ってスキップする（/screener はプリセット単位のエラー分離が
+        # 無いため、U-1 (b) の fail-loud 対象外。旧 _apply_filter も except Exception で
+        # キー単位に黙って無視していた挙動を維持する）。
+        try:
+            spec = screener_registry.resolve_filter_spec(key, _KNOWN_FILTER_COLUMNS, _RANK_FILTER_COLUMNS)
+        except screener_registry.UnknownFilterKeyError:
+            logger.warning(f"Screener filter '{key}={value}' skipped: unknown key")
+            continue
+        if spec.kind == 'special':
+            # 特殊フィルタは専用のクエリ引数（9種、下記）でのみ有効化する（旧実装と同じ挙動。
+            # 生の動的パラメータとしては常に _resolve_column が None を返し無視されていた）。
+            continue
+        if spec.kind == 'close_gt':
+            filters[key] = True
+        else:
+            try:
+                filters[key] = float(value)
+            except (TypeError, ValueError):
+                logger.warning(f"Screener filter '{key}={value}' skipped: invalid numeric value")
+                continue
         _applied_filters.add(key)
 
     # ---- Expression filter ----
     if expression:
-        expr_filter = _parse_expression_to_filter(expression)
-        if expr_filter is not None:
-            query = query.filter(expr_filter)
-            _applied_filters.add("expression")
+        filters["expression"] = expression
+        _applied_filters.add("expression")
 
-    # ---- Special boolean filters (shared cross-section, same code path as backtest) ----
-    _special_flags = {}
-    if rs_rank_21_gt_63: _special_flags["is_rs_ratio_rank_e21_gt_e63"] = True
-    if theme_rs21_gt_63: _special_flags["is_theme_rs_ratio_e21_gt_e63"] = True
-    if theme_rs_rank_21_gt_63: _special_flags["is_theme_rs_ratio_rank_e21_gt_e63"] = True
-    if rs_rank_14_gt_21: _special_flags["is_rs_ratio_rank_e14_gt_e21"] = True
-    if theme_rs14_gt_21: _special_flags["is_theme_rs_ratio_e14_gt_e21"] = True
-    if theme_rs_rank_14_gt_21: _special_flags["is_theme_rs_ratio_rank_e14_gt_e21"] = True
-    if rrg_leading_in: _special_flags["rrg_leading_in"] = True
-    if rrg_lagging_in: _special_flags["rrg_lagging_in"] = True
-    if rrg_improving_in: _special_flags["rrg_improving_in"] = True
-    _applied_filters |= set(_special_flags)
+    # ---- Special boolean filters ----
+    if rs_rank_21_gt_63: filters["is_rs_ratio_rank_e21_gt_e63"] = True
+    if theme_rs21_gt_63: filters["is_theme_rs_ratio_e21_gt_e63"] = True
+    if theme_rs_rank_21_gt_63: filters["is_theme_rs_ratio_rank_e21_gt_e63"] = True
+    if rs_rank_14_gt_21: filters["is_rs_ratio_rank_e14_gt_e21"] = True
+    if theme_rs14_gt_21: filters["is_theme_rs_ratio_e14_gt_e21"] = True
+    if theme_rs_rank_14_gt_21: filters["is_theme_rs_ratio_rank_e14_gt_e21"] = True
+    if rrg_leading_in: filters["rrg_leading_in"] = True
+    if rrg_lagging_in: filters["rrg_lagging_in"] = True
+    if rrg_improving_in: filters["rrg_improving_in"] = True
+    if rrg_intensity_threshold:
+        filters["rrg_intensity_threshold"] = rrg_intensity_threshold
+    _applied_filters |= {k for k in (
+        "is_rs_ratio_rank_e21_gt_e63", "is_theme_rs_ratio_e21_gt_e63",
+        "is_theme_rs_ratio_rank_e21_gt_e63", "is_rs_ratio_rank_e14_gt_e21",
+        "is_theme_rs_ratio_e14_gt_e21", "is_theme_rs_ratio_rank_e14_gt_e21",
+        "rrg_leading_in", "rrg_lagging_in", "rrg_improving_in",
+    ) if k in filters}
 
-    _passing_ids = None
-    if _special_flags:
-        _merged_cs, _df_tc_cs = build_cross_section(db, latest_date_result, previous_date_result)
-        _passing_ids = evaluate_special_filters(_merged_cs, _df_tc_cs, _special_flags, rrg_intensity_threshold)
+    # ---- 全戦略共通の流動性ハード制約（最適化対象外・常時適用。UIには出さない） ----
+    filters = inject_liquidity_floor(filters, _MIN_AVG_DOLLAR_VOLUME_21)
+    if _MIN_AVG_DOLLAR_VOLUME_21 is not None:
+        _applied_filters.add("min_avg_dollar_volume_21")
+
+    # applied_filters: /screener はレスポンスをリストで返す既存契約（エンベロープ化しない）
+    # ため、実際に適用されたフィルタキー一覧はログにのみ記録する（U-1 決定に基づく制約。
+    # doc/in_progress/screener_filter_unification_plan.md §5 Phase 1）
+    logger.info(f"GET /screener applied_filters: {sorted(_applied_filters)}")
+
+    # prev_date は実際の前日を渡す（apply_filters_to_df 側の premerged ガードにより
+    # 二重マージは起きない）。
+    filtered = apply_filters_to_df(
+        merged=frame.copy(),
+        target_date=latest_date_result,
+        df_ind=frame,
+        df_ranks=df_ranks_empty,
+        df_symbols=df_symbols,
+        df_theme_constituents=df_tc,
+        strategy=filters,
+        prev_date=previous_date_result,
+    )
 
     if require_positive_eps:
         target_eval_date = target_date if target_date else dt_date.today().strftime('%Y-%m-%d')
@@ -832,49 +631,21 @@ def get_screener(
             (Earning.symbol_id == latest_earnings_subq.c.symbol_id) &
             (Earning.period_date == latest_earnings_subq.c.max_date)
         ).filter(Earning.eps_basic > 0).subquery()
-        query = query.filter(Symbol.id.in_(eps_filter_subq))
-        _applied_filters.add("require_positive_eps")
+        valid_ids = {r[0] for r in db.query(eps_filter_subq.c.symbol_id).all()}
+        filtered = filtered[filtered['symbol_id'].isin(valid_ids)]
 
-    # テーマ・仮想指数は実売買不可能なため、結果からは常に除外する
-    # （リーディングテーマ判定・構成銘柄への波及には category=='テーマ' 行が必要なため、
-    # 上記フィルタ処理では保持しているが、実際の表示候補にはしない。backtest側の
-    # apply_filters_to_df と同じ扱い。除外カテゴリの定義は screener_registry に一本化
-    # ＝ §5 Phase 1）
-    query = query.filter(Symbol.category.notin_(tuple(screener_registry.OUTPUT_EXCLUDED_CATEGORIES)))
-    _applied_filters.add("exclude_theme_category")
-
-    # applied_filters: /screener はレスポンスをリストで返す既存契約（エンベロープ化しない）
-    # ため、実際に適用されたフィルタキー一覧はログにのみ記録する（U-1 決定に基づく制約。
-    # doc/in_progress/screener_filter_unification_plan.md §5 Phase 1）
-    logger.info(f"GET /screener applied_filters: {sorted(_applied_filters)}")
-
-    results = query.all()
-
-    # Apply special boolean filters as a post-filter (shared logic result)
-    if _passing_ids is not None:
-        results = [r for r in results if r.Symbol.id in _passing_ids]
-
-    if not results:
+    if filtered.empty:
         return []
-        
-    # Ranks must be synced with the indicator date
-    latest_rank_date = db.query(func.max(RelativeRank.date)).filter(RelativeRank.date <= latest_date_result).scalar()
-    
-    # BULK-load ranks for this date to avoid massive IN-clause performance bottleneck
-    ranks = db.query(RelativeRank).filter(
-        RelativeRank.date == latest_rank_date
-    ).all() if latest_rank_date else []
-    
-    # Map ranks
-    rank_map_21 = {r.symbol_id: r.rs_ratio_rank_e21 for r in ranks if r.rs_ratio_rank_e21 is not None}
-    rank_map_63 = {r.symbol_id: r.rs_ratio_rank_e63 for r in ranks if r.rs_ratio_rank_e63 is not None}
-    
-    # Slice to top 200 items by rs_ratio_21_rank before querying price history (huge optimization!)
-    results.sort(key=lambda r: rank_map_21.get(r.Symbol.id, 0.0), reverse=True)
-    results = results[:200]
-    
-    symbol_ids = [r.Symbol.id for r in results]
-    
+
+    # Slice to top 200 items by rs_ratio_21_rank (frame 内名: rs21_rank) before querying
+    # price history (huge optimization!). 欠損は 0.0 として扱う（旧 rank_map.get(id, 0.0) と同じ）。
+    sort_key = filtered['rs21_rank'].fillna(0.0) if 'rs21_rank' in filtered.columns else 0.0
+    filtered = filtered.assign(_sort_key=sort_key).sort_values(
+        '_sort_key', ascending=False
+    ).drop(columns='_sort_key').head(200)
+
+    symbol_ids = [int(s) for s in filtered['symbol_id'].tolist()]
+
     # Sparkline data: Need the past 21 days only for the top 200 sliced symbols
     start_date_sparkline = latest_date_result - timedelta(days=40)
     history = db.query(DailyPrice.symbol_id, DailyPrice.close, DailyPrice.date).filter(
@@ -882,28 +653,38 @@ def get_screener(
         DailyPrice.date >= start_date_sparkline,
         DailyPrice.date <= latest_date_result
     ).order_by(DailyPrice.date.asc()).all()
-    
+
     history_map = {}
     for h in history:
         if h.symbol_id not in history_map:
             history_map[h.symbol_id] = []
         history_map[h.symbol_id].append(h.close)
-        
+
+    def _int_or_none(v):
+        return None if pd.isna(v) else int(v)
+
+    def _float_or(v, default=0.0):
+        return default if pd.isna(v) else float(v)
+
+    def _float_or_none(v):
+        return None if pd.isna(v) else float(v)
+
     # Build response
     out = []
-    for sym, ind, dp in results:
-        hist_prices = history_map.get(sym.id, [])
+    for row in filtered.itertuples():
+        sid = int(row.symbol_id)
+        hist_prices = history_map.get(sid, [])
         hist_prices = hist_prices[-21:] if len(hist_prices) > 21 else hist_prices
-        
-        close_1w = hist_prices[-6] if len(hist_prices) >= 6 else hist_prices[0] if hist_prices else dp.close
-        close_1m = hist_prices[-21] if len(hist_prices) >= 21 else hist_prices[0] if hist_prices else dp.close
-        
-        c_1d = ind.change_1d_pct if ind.change_1d_pct is not None else 0.0
-        c_1w = ind.change_1w_pct if ind.change_1w_pct is not None else 0.0
-        c_1m = ind.change_1m_pct if ind.change_1m_pct is not None else 0.0
-        
-        d_21ema = ((dp.close - ind.ema_21) / ind.ema_21 * 100) if ind.ema_21 else 0.0
-        
+
+        c_1d = _float_or(row.change_1d_pct)
+        c_1w = _float_or(row.change_1w_pct)
+        c_1m = _float_or(row.change_1m_pct)
+
+        d_21ema = _float_or(getattr(row, 'dist_21ema_pct', float('nan')))
+
+        rank_21 = _float_or(getattr(row, 'rs21_rank', float('nan')))
+        rank_63 = _float_or(getattr(row, 'rs63_rank', float('nan')))
+
         sparkline_data = []
         if hist_prices:
             m_min, m_max = min(hist_prices), max(hist_prices)
@@ -912,43 +693,43 @@ def get_screener(
                 sparkline_data = [(p - m_min) / rng for p in hist_prices]
             else:
                 sparkline_data = [0.5 for _ in hist_prices]
-                
+
         out.append(schemas.ScreenerResultItem(
-            id=sym.id,
-            ticker=sym.ticker,
-            name=sym.name,
-            category=sym.category,
-            close=dp.close,
+            id=sid,
+            ticker=row.ticker,
+            name=row.name,
+            category=row.category,
+            close=float(row.close),
             change_pct=c_1d,
             change_1w_pct=c_1w,
             change_1m_pct=c_1m,
             dist_21ema_pct=d_21ema,
-            rs_ratio_21_rank=rank_map_21.get(sym.id, 0.0),
-            rs_ratio_63_rank=rank_map_63.get(sym.id, 0.0),
-            rs_ratio_rank_e21=rank_map_21.get(sym.id, 0.0),
-            rs_ratio_rank_e63=rank_map_63.get(sym.id, 0.0),
-            rs_ratio_21=ind.rs_ratio_e21,
-            rs_ratio_63=ind.rs_ratio_e63,
-            rs_ratio_e21=ind.rs_ratio_e21,
-            rs_ratio_e63=ind.rs_ratio_e63,
-            rs_momentum_21=ind.rs_momentum_e21,
-            rs_momentum_e21=ind.rs_momentum_e21,
+            rs_ratio_21_rank=rank_21,
+            rs_ratio_63_rank=rank_63,
+            rs_ratio_rank_e21=rank_21,
+            rs_ratio_rank_e63=rank_63,
+            rs_ratio_21=_float_or_none(row.rs_ratio_e21),
+            rs_ratio_63=_float_or_none(row.rs_ratio_e63),
+            rs_ratio_e21=_float_or_none(row.rs_ratio_e21),
+            rs_ratio_e63=_float_or_none(row.rs_ratio_e63),
+            rs_momentum_21=_float_or_none(row.rs_momentum_e21),
+            rs_momentum_e21=_float_or_none(row.rs_momentum_e21),
             sparkline=sparkline_data,
-            vol_surge_21=ind.vol_surge_21,
-            adr_pct_21=ind.adr_pct_21,
-            sma50_atr_mult=ind.sma50_atr_mult,
-            dist_sma50_atr=ind.sma50_atr_mult,
-            is_trend_template=ind.is_trend_template,
-            trend_template_ok=ind.is_trend_template,
-            market_cap=dp.market_cap,
-            up_down_vol_ratio_50=ind.up_down_vol_ratio_50,
-            is_rs_blue_dot=ind.is_rs_blue_dot,
-            rs_blue_dot=ind.is_rs_blue_dot,
-            is_rs_red_dot=ind.is_rs_red_dot,
-            rs_red_dot=ind.is_rs_red_dot,
-            vcr=ind.vcr,
-            vol_accum_days_5=ind.vol_accum_days_5
+            vol_surge_21=_float_or_none(row.vol_surge_21),
+            adr_pct_21=_float_or_none(row.adr_pct_21),
+            sma50_atr_mult=_float_or_none(row.sma50_atr_mult),
+            dist_sma50_atr=_float_or_none(row.sma50_atr_mult),
+            is_trend_template=_int_or_none(row.is_trend_template),
+            trend_template_ok=_int_or_none(row.is_trend_template),
+            market_cap=_float_or_none(row.market_cap),
+            up_down_vol_ratio_50=_float_or_none(row.up_down_vol_ratio_50),
+            is_rs_blue_dot=_int_or_none(row.is_rs_blue_dot),
+            rs_blue_dot=_int_or_none(row.is_rs_blue_dot),
+            is_rs_red_dot=_int_or_none(row.is_rs_red_dot),
+            rs_red_dot=_int_or_none(row.is_rs_red_dot),
+            vcr=_float_or_none(row.vcr),
+            vol_accum_days_5=_int_or_none(row.vol_accum_days_5)
         ))
-        
+
     out.sort(key=lambda x: x.rs_ratio_21_rank, reverse=True)
     return out
