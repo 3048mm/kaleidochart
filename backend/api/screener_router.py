@@ -81,7 +81,7 @@ _VIRTUAL_COLUMNS = {
 
 # --- レジストリ fail-loud 判定用: 既知カラム集合 / ランクカラム集合 ---
 # _build_preset_query の is_known 判定を screener_registry.resolve_filter_spec() へ
-# 委譲するために使う（doc/in_progress/screener_filter_unification_plan.md §3.1.2）。
+# 委譲するために使う（doc/completed/screener_filter_unification_plan.md §3.1.2）。
 _KNOWN_FILTER_COLUMNS = frozenset(_INDICATOR_COLUMNS.keys()) | frozenset(_VIRTUAL_COLUMNS.keys())
 _RANK_FILTER_COLUMNS = frozenset(
     col for col in RelativeRank.__table__.columns.keys()
@@ -183,7 +183,7 @@ _COLUMN_LABELS = {
 # --- Special boolean filters ---
 # 実体は indicators/screener_filters.py の純関数群に一本化（audit D-2）。
 # フィルタ適用の実装は backend/backtest/backtest_screener.py::apply_filters_to_df に一本化
-# （Phase 3 ステップ 3c。doc/in_progress/screener_filter_unification_plan.md §3.3.1 (c)）。
+# （Phase 3 ステップ 3c。doc/completed/screener_filter_unification_plan.md §3.3.1 (c)）。
 # 旧 _apply_filter（SQLAlchemy）・_parse_expression_to_filter・_resolve_column は撤去済み。
 
 
@@ -254,7 +254,7 @@ def get_screener_dashboard(
 ):
     """Screener dashboard: builds each preset card from screener_presets.toml.
 
-    Phase 3 ステップ 3c（doc/in_progress/screener_filter_unification_plan.md §3.3.1 (c)）:
+    Phase 3 ステップ 3c（doc/completed/screener_filter_unification_plan.md §3.3.1 (c)）:
     基準日1営業日分の ScreenerFrame（load_cross_section）を1回だけ構築し、全プリセットで
     使い回した上で apply_filters_to_df（唯一のフィルタエンジン）に通す。SQL は取得のみ。
     """
@@ -413,7 +413,7 @@ def get_screener_dashboard(
 
         # ---- 全戦略共通の流動性ハード制約（最適化対象外・常時適用。UIには出さない） ----
         # P1-8 是正: 従来 /screener にのみ適用され /screener/dashboard には未適用だった
-        # （doc/in_progress/screener_filter_unification_plan.md §7 P1-8）。
+        # （doc/completed/screener_filter_unification_plan.md §7 P1-8）。
         filters = inject_liquidity_floor(filters, _MIN_AVG_DOLLAR_VOLUME_21)
         if _MIN_AVG_DOLLAR_VOLUME_21 is not None:
             applied_filters.add("min_avg_dollar_volume_21")
@@ -604,7 +604,7 @@ def get_screener(
 
     # applied_filters: /screener はレスポンスをリストで返す既存契約（エンベロープ化しない）
     # ため、実際に適用されたフィルタキー一覧はログにのみ記録する（U-1 決定に基づく制約。
-    # doc/in_progress/screener_filter_unification_plan.md §5 Phase 1）
+    # doc/completed/screener_filter_unification_plan.md §5 Phase 1）
     logger.info(f"GET /screener applied_filters: {sorted(_applied_filters)}")
 
     # prev_date は実際の前日を渡す（apply_filters_to_df 側の premerged ガードにより

@@ -179,7 +179,7 @@ def apply_filters_to_df(
             0.0
         )
 
-    # --- レジストリで必要カラムを解決する（doc/in_progress/screener_filter_unification_plan.md §3.1.4） ---
+    # --- レジストリで必要カラムを解決する（doc/completed/screener_filter_unification_plan.md §3.1.4） ---
     from backend.db.models import RelativeRank
     known_columns = set(merged.columns) | set(screener_registry.VIRTUAL_COLUMNS)
     # RelativeRank の実カラム。df_ranks（wide）は日によって欠測カラムを持ちうるため、

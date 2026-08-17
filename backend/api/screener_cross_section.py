@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 # クロスセクションに必要な Indicator カラム。
 # レジストリの kind='special' 全 spec の requires/prev_requires の和集合から導出する
-# （doc/in_progress/screener_filter_unification_plan.md §3.1.4 (e)）。実在の Indicator 列だけに
+# （doc/completed/screener_filter_unification_plan.md §3.1.4 (e)）。実在の Indicator 列だけに
 # 絞る（requires にはランク列も混ざるため。ランクは _RANK_COL_MAP 経由で別途取り込む）。
 _INDICATOR_COLUMN_NAMES = {c.name for c in Indicator.__table__.columns}
 
@@ -61,7 +61,7 @@ _RANK_COL_MAP = dict(screener_registry.RANK_FRAME_ALIASES)
 # load_cross_section() 用の全カラムリスト（Phase 3 ステップ 3b）
 # ============================================================
 # ScreenerFrame 契約の「指標」区分は Indicator の全カラム（id/symbol_id/date を除く）を
-# 正準名のまま持つ（doc/in_progress/screener_filter_unification_plan.md §3.3.1 (b)）。
+# 正準名のまま持つ（doc/completed/screener_filter_unification_plan.md §3.3.1 (b)）。
 # 「どの列を引くか」の手書きリストを作らないことが本計画の目的そのものなので、
 # _IND_COLS（特殊フィルタが要求する列だけ）とは別に全カラムを持つ。
 _ALL_INDICATOR_COLS = [
@@ -81,7 +81,7 @@ def load_cross_section(db, target_date, prev_date=None) -> Tuple[pd.DataFrame, p
     """SQLite から ScreenerFrame 契約を満たすクロスセクションを構築する。
 
     `backtest_screener.scan_signals_for_date` が Parquet 側で組む merged と同じ形の
-    1営業日分フレームを SQLite から構築する（doc/in_progress/screener_filter_unification_plan.md
+    1営業日分フレームを SQLite から構築する（doc/completed/screener_filter_unification_plan.md
     §3.3.1 (b)）。まだ API はこの関数を呼ばない（切替は Phase 3 ステップ 3c）。
 
     Returns:

@@ -1,6 +1,6 @@
 """2つのローダ（SQLite / Parquet 側）が ScreenerFrame 契約を満たすことの検証（Phase 3 ステップ 3b）。
 
-`doc/in_progress/screener_filter_unification_plan.md` §3.3.1 (b) に対応する。
+`doc/completed/screener_filter_unification_plan.md` §3.3.1 (b) に対応する。
 この時点では API の切替（3c）は行わない。`load_cross_section()` の新設と、
 2つのローダが同じ契約を満たすことだけを検証する。
 """

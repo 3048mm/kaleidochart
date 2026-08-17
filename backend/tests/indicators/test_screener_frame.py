@@ -3,7 +3,7 @@ test_screener_frame.py — Phase 3 ステップ 3a TDD: ScreenerFrame 契約の�
 
 `screener_frame.py`（新規予定モジュール、backend/indicators/screener_frame.py）が
 1営業日分のクロスセクション DataFrame の契約（同一性の列・数値列の dtype・ハード要求カラム）を
-検査できることを検証する。仕様は doc/in_progress/screener_filter_unification_plan.md
+検査できることを検証する。仕様は doc/completed/screener_filter_unification_plan.md
 §3.3.1 (a)（Phase 3 詳細設計）そのもの。
 
 この時点では backend/indicators/screener_frame.py が未実装のため、このファイル全体が

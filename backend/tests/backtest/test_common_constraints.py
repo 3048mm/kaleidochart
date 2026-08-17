@@ -2,7 +2,7 @@
 
 従来 4モジュール5箇所（screener_router.py / backtest_runner.py / optimization_runner.py(2箇所) /
 scenario_runner.py）に独立実装されていた注入ロジックを
-backend/backtest/common_constraints.py へ集約する（doc/in_progress/screener_filter_unification_plan.md
+backend/backtest/common_constraints.py へ集約する（doc/completed/screener_filter_unification_plan.md
 §5 Phase 1）。
 """
 from backend.backtest.common_constraints import (

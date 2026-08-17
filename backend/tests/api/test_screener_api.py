@@ -267,7 +267,7 @@ def test_screener_api_excludes_theme_rows_from_results(client):
 def test_screener_dashboard_unknown_filter_key_isolated_as_error(client, monkeypatch):
     """2026-08-13: 未知キーを含むプリセットは items=[] かつ error 付きで返り、
     他のプリセットは正常表示を続けること（U-1 (b)。
-    doc/in_progress/screener_filter_unification_plan.md §3 Phase 1）。
+    doc/completed/screener_filter_unification_plan.md §3 Phase 1）。
     """
     import api.screener_router as router_module
 
@@ -337,7 +337,7 @@ def test_screener_dashboard_excludes_illiquid_symbols(client):
     """P1-8 是正の回帰テスト（2026-08-13）: 全戦略共通の流動性ハード制約
     (min_avg_dollar_volume_21) が `/screener/dashboard` にも適用され、閾値未満の銘柄は
     結果に出ないこと。従来 `/screener` にのみ適用され、dashboard には適用されて
-    いなかった（doc/in_progress/screener_filter_unification_plan.md §7 P1-8）。
+    いなかった（doc/completed/screener_filter_unification_plan.md §7 P1-8）。
 
     AAPL に実在プリセット `check_1d_gain`（min_change_1d_pct=4.0 /
     min_vol_surge_rel_spy_21=1.0 / max_sma50_atr_mult=6.0 / min_adr_pct_21=4.0 /

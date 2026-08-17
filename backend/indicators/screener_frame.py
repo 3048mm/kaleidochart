@@ -1,7 +1,7 @@
 """
 screener_frame.py — ScreenerFrame 契約（1営業日分のクロスセクション DataFrame が満たすべき形）。
 
-`doc/in_progress/screener_filter_unification_plan.md` §3.3.1 (a)（Phase 3 ステップ 3a）が仕様。
+`doc/completed/screener_filter_unification_plan.md` §3.3.1 (a)（Phase 3 ステップ 3a）が仕様。
 どちらのローダ（SQLite 経由 / Parquet 経由）で構築したフレームでも、この契約を満たしていなければ
 `apply_filters_to_df` に安全に渡せない。
 

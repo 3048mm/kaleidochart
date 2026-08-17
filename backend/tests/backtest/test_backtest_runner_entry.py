@@ -274,7 +274,7 @@ def test_fast_prune_uses_episode_count_not_raw_signal_count():
 
 # =============================================================
 # validate_strategies_config — screener_registry.resolve_filter_spec() への置換
-# （doc/in_progress/screener_filter_unification_plan.md §5 Phase 1「検証系2箇所」）
+# （doc/completed/screener_filter_unification_plan.md §5 Phase 1「検証系2箇所」）
 # =============================================================
 
 def _real_df_ind_and_prices():

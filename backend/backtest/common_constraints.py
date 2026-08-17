@@ -1,7 +1,7 @@
 """
 common_constraints.py — 全戦略共通のハード制約（流動性床）の単一実装。
 
-`doc/in_progress/screener_filter_unification_plan.md` §5 Phase 1「流動性床
+`doc/completed/screener_filter_unification_plan.md` §5 Phase 1「流動性床
 （min_avg_dollar_volume_21）の注入を単一の純関数へ集約」に対応する。
 
 従来、以下の4モジュール5箇所に独立実装（コピペ）されていた:

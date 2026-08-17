@@ -153,7 +153,7 @@ def test_no_filters_returns_none(db):
 
 # 2026-08-17（Phase 3 ステップ 3c）: API 側の SQL フィルタエンジン（_apply_filter /
 # _parse_expression_to_filter）は撤去され、apply_filters_to_df（backtest 側と共通の唯一の
-# エンジン）に一本化された（doc/in_progress/screener_filter_unification_plan.md §3.3.1 (c)）。
+# エンジン）に一本化された（doc/completed/screener_filter_unification_plan.md §3.3.1 (c)）。
 # 以下の2件は削除された旧実装を直接呼んでいたテストで、その実装自体が無くなったため
 # 削除する。同等のカバレッジは以下に引き継がれている:
 #   - S-1（min_market_cap のテーマ免除）: apply_filters_to_df 自身に同じ免除ロジックが

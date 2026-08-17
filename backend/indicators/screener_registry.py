@@ -2,7 +2,7 @@
 screener_registry.py — スクリーンフィルタキーの宣言的レジストリ。
 
 フィルタキー文字列（"min_vol_surge_21" 等）を FilterSpec に解決する唯一の場所。
-`doc/in_progress/screener_filter_unification_plan.md` §3.1（Phase 1 詳細設計）が仕様。
+`doc/completed/screener_filter_unification_plan.md` §3.1（Phase 1 詳細設計）が仕様。
 
 設計上の制約（§3.1.2）:
 - `backend/indicators/` の純粋性を壊さないため、このモジュールは pandas も SQLAlchemy も
@@ -59,7 +59,7 @@ class RequiredColumns:
 # ============================================================
 # METADATA_KEYS — フィルタではない制御キー
 # ============================================================
-# 現在3箇所に分散している除外集合の和集合（doc/in_progress/screener_filter_unification_plan.md
+# 現在3箇所に分散している除外集合の和集合（doc/completed/screener_filter_unification_plan.md
 # §3.1.3 の [!WARNING] 参照）:
 #   1. backend/backtest/backtest_runner.py::validate_strategies_config の METADATA_KEYS
 #   2. backend/backtest/backtest_screener.py::apply_filters_to_df の skip リスト
@@ -288,7 +288,7 @@ def is_non_filter_key(key: str) -> bool:
 # ============================================================
 # 未登録の正準名は恒等（そのままの名前でフレームに入る）。現在 screener_cross_section の
 # _RANK_COL_MAP と backtest_screener の alias_map に同じ6件が重複しているため、
-# 両者をここへ寄せる（doc/in_progress/screener_filter_unification_plan.md §3.1.4 (a)）。
+# 両者をここへ寄せる（doc/completed/screener_filter_unification_plan.md §3.1.4 (a)）。
 RANK_FRAME_ALIASES: dict = {
     'rs_ratio_rank_e14': 'rs14_rank',
     'rs_ratio_rank_e21': 'rs21_rank',
@@ -311,7 +311,7 @@ def to_frame_column(canonical: str) -> str:
 # ただし**リーディングテーマ判定と構成銘柄への波及には category=='テーマ' の行が必要**なので、
 # フィルタ処理の途中では保持し、最終出力の直前でだけ落とす（2段構え）。
 # 2026-07-29 にバックテスト側、2026-08-05 に API 側と別々に修正され、その間の1週間
-# 本番画面に仮想合成指数が出ていた（doc/in_progress/screener_filter_unification_plan.md §1.2）。
+# 本番画面に仮想合成指数が出ていた（doc/completed/screener_filter_unification_plan.md §1.2）。
 # 定義を1箇所に集約して再発を防ぐ。適用位置（フィルタ後・出力直前）は変えないこと
 # （前に出すとテーマ行が消えてリーディングテーマ判定が壊れる）。
 OUTPUT_EXCLUDED_CATEGORIES: frozenset = frozenset({'テーマ'})

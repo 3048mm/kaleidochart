@@ -83,7 +83,7 @@ def inject_liquidity_floor(strategies: Dict[str, Dict[str, Any]], min_avg_dollar
     backtest_runner.py と同じ解決順序（戦略側の明示指定があれば尊重）で扱う。
 
     2026-08-13: 実体は `common_constraints.inject_liquidity_floor_all` へ委譲
-    （doc/in_progress/screener_filter_unification_plan.md §5 Phase 1、4モジュール5箇所
+    （doc/completed/screener_filter_unification_plan.md §5 Phase 1、4モジュール5箇所
     への分散実装を1箇所へ集約）。関数名・シグネチャは既存呼び出し側・テストとの
     後方互換のため維持する。
     """
@@ -358,7 +358,7 @@ def run_scenario_test(
     report_strategy_scan_coverage(strategies)
 
     # base_merged は全戦略で共有されるため、個々の戦略ではなくスキャン対象の全戦略の
-    # 和集合を要求ランクとして扱う（doc/in_progress/screener_filter_unification_plan.md §3.1.4）。
+    # 和集合を要求ランクとして扱う（doc/completed/screener_filter_unification_plan.md §3.1.4）。
     # to_frame_column() でのリネームを apply_filters_to_df 側と一致させないと
     # has_all_premerged が誤判定してシナリオテストが常時0件になる（2026-07-18 の実障害と同型）。
     from backend.indicators import screener_registry

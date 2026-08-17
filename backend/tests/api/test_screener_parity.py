@@ -1,6 +1,6 @@
 """スクリーナー経路間パリティテスト（レジストリ駆動。計画書 §3.2.1 / §5 Phase 2）。
 
-`doc/in_progress/screener_filter_unification_plan.md` の Phase 2 に対応する。
+`doc/completed/screener_filter_unification_plan.md` の Phase 2 に対応する。
 ①フロントのスクリーナー API（SQLite・SQLAlchemy）と ②③バックテスト経路（Parquet・pandas）が、
 `indicators/screener_registry.py` の全フィルタキーについて同じ symbol_id 集合を返すことを検証する。
 

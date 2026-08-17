@@ -3,7 +3,7 @@ test_screener_registry.py — Phase 1 TDD-red: FILTER_SPECS 単体テスト ＋ 
 
 screener_registry.py（新規予定モジュール、backend/indicators/screener_registry.py）が
 フィルタキーを唯一の場所で解決し、未知キー・必要カラム欠落を ValueError 系例外で
-検知することを検証する。仕様は doc/in_progress/screener_filter_unification_plan.md
+検知することを検証する。仕様は doc/completed/screener_filter_unification_plan.md
 §3.1（Phase 1 詳細設計）そのもの。
 
 この時点では backend/indicators/screener_registry.py が未実装のため、このファイル全体が

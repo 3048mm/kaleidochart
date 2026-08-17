@@ -813,21 +813,51 @@ melt の `available_vars` が落としていた6列（`rs_value_rank` / `rs_roc_
 - [x] `_apply_filter` / `_parse_expression_to_filter` の削除 （3c。`_EXPR_OPS` / `_resolve_column` / `_RANK_COLUMN_ALIASES` も併せて削除）
 - [x] 性能実測（U-4 の受入基準に対する合否判定） （3c。/screener 0.235s・dashboard 最新日 0.579s／過去日 0.612s。全て基準内。**過去日は 0.95-1.06s から改善**）
 - [x] 抽出結果の差分実測（Phase 1 完了時点のスナップショットと突合し、差分ゼロを確認） （3c。**同日前後比較で差分ゼロ**。DB が日々進みベースライン日付が漂流するため、stash して同じ日付で取り直す統制付き比較を実施）
-- [ ] 全テスト実行 + sandbox での API スモーク
-- [ ] 仕様書更新（`architecture.md` §2/§3、`backend_specification.md` §5・**§6.7 の陳腐化解消**）、
-      `issue_list.md` P3「スクリーナーの完全 DataFrame 化」をクローズ
+- [x] 全テスト実行 + sandbox での API スモーク （3e。977 passed / 環境要因1件。sandbox スモークは下記「3e 実施結果」参照）
+- [x] 仕様書更新（`architecture.md` §2/§3、`backend_specification.md` §5・**§6.7 の陳腐化解消**）、
+      `issue_list.md` P3「スクリーナーの完全 DataFrame 化」をクローズ （3e）
 
 ### 作業中メモ
 
-**現在地（2026-08-18）**: **Phase 3d まで完了**。残るは **3e（sandbox スモーク・仕様書更新）**。
+**現在地（2026-08-18）**: **Phase 3 完了。本計画は完了**（`doc/completed/` へ移動）。
 
 | ステップ | 状態 | コミット |
 | :--- | :--- | :--- |
 | 3a `ScreenerFrame` 契約 | 完了 | `ece1e96` |
 | 3b `load_cross_section()` | 完了 | `c7bdeb1` |
 | 3c API 切り替え・SQL 撤去 | **完了・差分ゼロ** | `d5af561` |
-| 3d melt 廃止（P0-1 / P0-2） | **完了・差分ゼロ** | 未コミット |
-| 3e sandbox スモーク・仕様書 | 未着手 | — |
+| 3d melt 廃止（P0-1 / P0-2） | **完了・差分ゼロ** | `5a02a40` |
+| 3e sandbox スモーク・仕様書 | 完了 | 本コミット |
+
+**3e 実施結果（2026-08-18）**:
+
+sandbox（`STOCKTOOL_DB_PATH=data/sandbox/stocktool_sandbox.db`、ポート 8001、
+ワークツリーのコード）で API を起動し、`/api/system/info` の `is_production=false` を
+確認したうえでスクリーナー系を全て 200 応答で確認した。
+
+| ケース | 結果 |
+| :--- | ---: |
+| フィルタなし（基準） | 11件 / 0.13s |
+| ランク結合 `min_rs_ratio_rank_e21=0.9` | 2件 |
+| **P0-2 の復活列** `min_rs_value_rank=0.9` | 9件 |
+| **P0-2 の復活列** `min_rs_roc_ema_rank_e21=0.9` | 3件 |
+| prev 系 `rrg_leading_in` / `rrg_improving_in` | 0件（RRG 遷移は元々稀。sandbox は350銘柄） |
+| テーマ系 `theme_rs_rank_21_gt_63` | 10件 |
+| **expression**（P3-1 の修正対象） | 3件 |
+| `/screener/dashboard` | rise 13件 / fall 5件 / 0.16s |
+
+> **スモーク実施時の注意（次回のため）**:
+> - `backend/scripts/create_sandbox.py` は `indicators` と `relative_ranks` を**コピーしない**。
+>   そのままではスクリーナーが空になりスモークとして成立しない。
+>   `tmp/extend_sandbox_indicators.py` で2テーブルを補ってから実行すること。
+> - `/screener` に `preset` 引数は**無い**（プリセットはフロントエンド側の概念）。
+>   `?preset=...` を付けても黙って無視され、全ケースが同じ件数を返すため、
+>   「フィルタが効いている」ように見えて何も検証できていない状態になる。実フィルタ引数で叩くこと。
+> - 基準が11件なのは母集団が `active=1` かつ `category in ('テーマ','個別')` に限定され、
+>   出力時に `テーマ` が除外されるため（sandbox の `個別` はちょうど11銘柄）。
+>   この母集団条件は `screener_cross_section.py` と `backtest_screener.py` の**両方に同じ形で存在**する。
+> - `is_trend_template` のような特殊フィルタは、生の動的クエリパラメータとしては
+>   **意図的に無視される**（専用のブール引数9種でのみ有効）。件数が基準と同じでも異常ではない。
 
 **3d 実施結果（2026-08-18、implementer ワーカーによる実装）**:
 

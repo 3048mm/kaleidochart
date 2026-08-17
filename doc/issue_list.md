@@ -75,7 +75,7 @@
   - **残作業（ユーザー判断）**: D/E1/E2/F の過去の最適化 study・シナリオテスト結果は
     トレンドテンプレートが効いていない状態での評価。**再最適化はユーザーのタイミングで実施**する方針
     （2026-08-10 合意）。Phase 2 のパリティテスト導入後に行うと同種の隠れバグを二度踏まずに済む。
-  - 詳細: `doc/in_progress/screener_filter_unification_plan.md` §7 P1-7
+  - 詳細: `doc/completed/screener_filter_unification_plan.md` §7 P1-7
 
 - [x] 🔴 **流動性床が `/screener/dashboard` に適用されていなかった（2026-08-10 発見・同日修正）**
   - **事象**: 「全戦略共通のハード制約」である `min_avg_dollar_volume_21`（$2M/日）が、
@@ -89,7 +89,7 @@
   - **対応**: 値の解決と注入を `backend/backtest/common_constraints.py` に集約し（旧: 4モジュール5箇所）、
     両エンドポイントに適用。**dashboard の表示銘柄は減る**（修正後の実測で消えた67銘柄すべてが
     床未満であることを個別照合済み、説明できない消失はゼロ）。
-  - 詳細: `doc/in_progress/screener_filter_unification_plan.md` §7 P1-8
+  - 詳細: `doc/completed/screener_filter_unification_plan.md` §7 P1-8
 
 - [x] **【データソースの制約】yfinance / Yahoo Finance は株式分割・併合に完全対応できない（2026-07-30 確認 / 2026-08-03 skill へ集約）**
 
@@ -672,9 +672,6 @@
 
 ## P3 — 低（将来フェーズ・プロセス系）
 
-- [ ] **スクリーナーの完全 DataFrame 化（D-2 の最終形）**（2026-07-04 発見）
-  - 特殊フィルタは共通化済みだが、数値 min/max フィルタは SQL のままで、特殊フィルタ使用時は Indicator を2回読む（1日分のため実害は小）。
-  - スクリーナー全体をクロスセクション DataFrame ベースに寄せて SQL は取得のみにすると、バックテストとの一致範囲が min/max まで広がりコードも単純になる。
 - [ ] **個別銘柄シナリオテストに ATR 連動指値エントリーの約定モデルを追加**（2026-07-05 バックテスト設計レビューから）
   - 「シグナル翌日に `基準価格 − k×ATR` の指値を置き、Low が指値以下なら約定」を再現する。約定ルールは標準規約に従う: 寄付が指値以下なら**寄付価格**で約定、そうでなければ Low ≤ 指値で指値約定。
   - 指値方式は約定率が 100% でなくなり逆選択（弱い個体だけ刺さる）が起きるため、**未約定シグナルのその後のリターン（機会損失）を併記**して指値の深さ k を評価できるようにする。
@@ -693,6 +690,34 @@
 
 ## 完了済みタスク (Completed)
 
+- [x] 🎯 **スクリーナーの完全 DataFrame 化（D-2 の最終形）＋ スクリーン条件の3経路統合**（2026-07-04 起票 / 2026-08-18 完了）:
+  起票時の課題は「特殊フィルタは共通化済みだが数値 min/max は SQL のまま」だったが、調査の結果、
+  **キーの解釈が4箇所・必要カラムの宣言が4箇所・流動性床が5箇所・テーマ除外が3箇所に分散**しており、
+  「片側にだけ実装した」障害の温床になっていることが分かったため、統合の範囲を広げて実施した。
+  - **Phase 1**: `indicators/screener_registry.py` を新設し、フィルタキーの解釈と必要カラムの導出を1箇所へ集約。
+    未知キー・カラム欠落は例外で停止（fail-loud）。流動性床は `backtest/common_constraints.py` に一本化。
+  - **Phase 2**: `backend/tests/api/test_screener_parity.py` で**全94キー**について SQLite 版と Parquet 版の
+    抽出結果一致を検証（97テスト）。
+  - **Phase 3**: `indicators/screener_frame.py`（フレーム契約）と `api/screener_cross_section.py::load_cross_section()`
+    を追加し、`/screener` と `/screener/dashboard` を DataFrame 経路へ切替。
+    API 側の SQL フィルタ実装（`_apply_filter` / `_parse_expression_to_filter` / `_RANK_COLUMN_ALIASES` 等）を**全削除**。
+    ランクの long/wide 往復（`preload_data` の melt）も廃止。
+  - **副産物として発見・修正した本番バグ7件**:
+    ① `is_trend_template` がバックテストで完全に no-op（D/E1/E2/F の母集団が意図の4倍だった）／
+    ② `/screener/dashboard` に流動性床が無く、表示82件中10件が $2M 未満（最悪 ANPA $108,939/日）／
+    ③ `max_avg_hits_per_day` がメタデータキー集合から非対称に欠落／
+    ④ `close_gt` の正規化が `ema_150` を `ema_1_50` に壊していた／
+    ⑤ `backtest_screener.py` に混入したリテラルのバックスペース (0x08) により
+    expression の true/false 正規化が6週間 no-op（D-2 の I-6 修正がバックテスト側で一度も効いていなかった）／
+    ⑥ 前日列の再マージにガードが無く `_x`/`_y` 衝突を起こしうる状態（2026-07-28 の流動性事故と同型）／
+    ⑦ melt の列挙漏れで `rs_value_rank` / `rs_roc_ema_rank_e5〜e200` の6ランク列が
+    バックテストから恒久的に見えていなかった（本番データでは全行100%値が入っている）。
+  - **実績**: テスト 795 → 977件。実装箇所はキー解釈 4→1・カラム宣言 4→1・流動性床 5→1・
+    テーマ除外 3→1・`close_gt` 正規化 3→1。本番データでの抽出結果は**全フェーズで差分ゼロ**
+    （日次でデータが進むため `git stash` による同日前後比較で検証）。
+    バックテストのランク保持メモリは 6.6倍削減（Bull 期間 2,315MB → 354MB）。
+  - 詳細: `doc/completed/screener_filter_unification_plan.md`、仕様は `architecture.md` §2.1 / §7.2、
+    `backend_specification.md` §5.0 / §6.7。
 - [x] 🎯 **B1_theme_leaderの探索レンジ引き締めと再最適化**: B1の再最適化での悪化（score 50.1→35.9・DD -35.5%→-61.9%）が、B5と同型の探索レンジの緩さ（`min_vol_surge_21`下限0.5・`max_sma50_atr_mult`上限10.0）で説明できるかを検証。`backtest_config.toml`をB5と同じ引き締め（vol_surge下限1.5・sma50_atr_mult上限6.0、既定値も7.0→6.0にレンジ内へ揃えた）に変更し200トライアルで再最適化した結果、score 35.87→**88.48**まで回復（元baseline 50.1も大幅に上回った）。仮説が実測で裏付けられた。選ばれたパラメータ（`min_vol_surge_21=1.7`・`max_sma50_atr_mult=3.0`）も新レンジの健全な範囲に収束。 - 2026-08-04
 - [x] 🎯 **`category='テーマ'`（実在ETF・仮想合成指数）が個別銘柄シナリオテスト・最適化バックテスト・生スクリーナーAPIで実際の買い候補/結果として混入していた**: `apply_filters_to_df`のベースフィルタが個別銘柄だけでなくテーマ行も売買候補として扱う設計だった。トレードログ集計では観測されたテーマ側トレードは全て仮想合成指数（`_XXX_`形式、実在ETFは0件）で、戦略Dでは全トレードの21.7%に達していた。`apply_filters_to_df`末尾でテーマ行を最終出力から除外（リーディングテーマ判定の中間データとしては引き続き機能）するよう修正。2026-08-01時点で全12戦略の再実行・再最適化を経てテーマ混入0件を確認済み。
   - **生スクリーナーAPI側は当初スコープ外としていたが、2026-08-05に本番のフロントエンド（B6「RS MACD and Theme」プリセット）で仮想合成指数`_GRCL0C_`が結果に混入しているのをユーザーが発見し、同型のバグと判明・追加修正**: `screener_router.py`の`get_screener()`（`/screener`本体）と`get_screener_dashboard()`内`_build_preset_query()`の両方で、フィルタ適用後・結果返却前に`query.filter(Symbol.category != 'テーマ')`を追加（リーディングテーマ判定の中間サブクエリは別途Indicator/RelativeRankテーブルに対して独立に発行されるため影響を受けない）。TDDでテスト2件追加（`/screener`本体・ダッシュボード双方）、修正前に一時的に無効化してREDを確認後に復元。バックエンド全体573件 pytest 全件合格。 - 2026-07-29〜08-05

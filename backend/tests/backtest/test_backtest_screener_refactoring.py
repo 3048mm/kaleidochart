@@ -423,7 +423,7 @@ def test_apply_filters_theme_leadership_filter_still_works_after_theme_exclusion
 
 
 # ============================================================
-# レジストリ導出（doc/in_progress/screener_filter_unification_plan.md §3.1.4）のテスト
+# レジストリ導出（doc/completed/screener_filter_unification_plan.md §3.1.4）のテスト
 # ============================================================
 
 def test_apply_filters_raises_missing_filter_column_error():

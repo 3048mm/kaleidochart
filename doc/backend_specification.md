@@ -485,7 +485,9 @@ S&P500（SPY）の動向や市場全体の統計から算出される、市場�
         - `true` の場合、`data/parquet_master/` に格納されている Parquet Master キャッシュ（全期間履歴マスター）から `symbol_id` で直接高速フィルタリングし、2019年以前を含む全期間の時系列データを構築して返却する。
     - **レスポンス構造**: `ChartResponse` 型。`data` (時系列配列) に加え、`metadata` (銘柄基本情報) および `themes` (関連テーマ情報の配列) を含みます。
     - **テーマ解決ロジック**: `theme_constituents` テーブルによる直接の紐付けに加え、`symbols` テーブルの `tags` カラムに含まれるカンマ区切りのタグもテーマとして解決し、リンク可能な情報を返却します。
-*   **`GET /api/screener_data`**: スクリーナー用のカスタムフィルタ（「SMA50より上」「時価総額 10M以上」等）に合致する銘柄群と各指標値を返却。
+*   **`GET /api/screener`**: スクリーナー用のカスタムフィルタ（「SMA50より上」「時価総額 10M以上」等）に合致する銘柄群と各指標値を返却。フィルタはクエリパラメータで直接指定する（プリセットはフロントエンド側の概念で、このエンドポイントに `preset` 引数は無い）。
+*   **`GET /api/screener/dashboard`**: `data/screener_presets.toml` の全プリセットを一括評価し、Rise / Fall のカテゴリ別にまとめて返却。
+*   **`GET /api/screener/presets` / `GET /api/screener/meta`**: プリセット定義とフィルタ項目のメタ情報を返却（UI のフォーム構築用）。
 *   **`GET /api/group_data/{ticker}`**: セクタまたはテーマの「グループ詳細画面」用データ。
     - **レスポンス構造**: `GroupDataResponse` 型。ETF 自体の詳細情報（`feature`）と、構成要素（テーマまたは銘柄）のリック（`constituents`）を含みます。
 
@@ -534,6 +536,29 @@ D-2（2026-07-04）で特殊ブールフィルタの実体は `indicators/screen
 > 「未知のキー」として実行時に停止する。これは意図した設計で、**黙って無視されるより
 > 止まる方が安全**という判断に基づく（過去、`is_trend_template` が実列名との不一致で
 > バックテストにおいて完全に no-op のまま長期間放置された事故がある）。
+
+#### 単一フィルタエンジンとフレーム契約（2026-08-18 / Phase 3）
+
+レジストリで**キーの解釈**を一本化したのに続き、**評価エンジンそのもの**も一本化した。
+`/screener` と `/screener/dashboard` は SQL でフィルタを組み立てるのをやめ、
+基準日1営業日分の断面を DataFrame（**ScreenerFrame**）として構築して
+`backtest/backtest_screener.py::apply_filters_to_df()` に渡す。
+これは最適化バックテスト・個別銘柄シナリオテストが呼ぶのと**同一の関数**である。
+
+| 要素 | 場所 | 役割 |
+| :--- | :--- | :--- |
+| `ScreenerFrame` の契約 | `indicators/screener_frame.py` | 同一性列（`symbol_id`/`ticker`/`name`/`category`/`active`）の存在と、数値列が `object` dtype でないことを `assert_frame_contract()` で検査 |
+| SQLite → フレーム | `api/screener_cross_section.py::load_cross_section()` | `Indicator` 全列 ＋ `RelativeRank` 全列（フレーム内名へリネーム）＋ 前日列 ＋ 価格・同一性列。母集団は `active=1` かつ `category in ('テーマ','個別')` |
+| Parquet → フレーム | `backtest/backtest_runner.py::preload_data()` | §6.7 参照。母集団の絞り込みは `apply_filters_to_df` 冒頭で同一条件を適用 |
+| フィルタ評価 | `backtest/backtest_screener.py::apply_filters_to_df()` | **唯一のフィルタエンジン**。SQL 側に同等のロジックは存在しない |
+
+これにより、API 側にあった `_apply_filter()` / `_parse_expression_to_filter()` /
+`_RANK_COLUMN_ALIASES` 等の**SQL 版フィルタ実装は全て削除**された。
+「片側にだけ実装した」という障害は、実装先が1つしか無くなったことで構造的に発生しない。
+
+**ランクは全経路で wide 形式**（`rs_ratio_rank_e21` 等が列名）。
+`indicator_name` / `percent_rank` という long 形式は Phase 3d で廃止された。
+正準名とフレーム内名の対応は `screener_registry.to_frame_column()` が一手に担う。
 
 #### 全経路共通のルール
 
@@ -765,22 +790,47 @@ min_market_cap = 3e8
 - **Parquet 一撃ロード**: 全歴史が蓄積されている [data/parquet_master/](file:///d:/My%20Documents/Programing/stocktool/data/parquet_master/) の Parquet ファイル群（またはバックテスト用一時 Parquet）から `pd.read_parquet()` で一撃ロード（約1〜2秒）し、メモリ上で瞬時にシミュレーションを行います。これにより、並列バックテスト時でも本番 SQLite への Busy ロックは 100% 発生しません。
 - **独立性**: バックテスト専用キャッシュおよびParquetマスターは、稼働中の本番 API サーバー（SQLite）とは完全に分離されており、双方の競合フリーな並行稼働が物理的に保証されます。
 
-### 6.7 キャッシュ対象カラム (Cached Keys)
-バックテスト時のメモリ（RAM）消費を最小限に抑え、最適化時のOOM（Out of Memory）を防ぐため、DB内の全カラムではなく**戦略評価に必須なカラムのみ**を選択的に抽出・キャッシュしています。
+### 6.7 プリロードするデータの範囲 (Preloaded Data)
 
-**1. `indicators` テーブル**
-*   **抽出対象**: `symbol_id`, `date`, `sma_50`, `ema_21`, `atr_14`, `adr_pct_21`, `sma50_atr_mult`, `vol_surge_21`, `vol_surge_rel_spy_21`, `rs_ratio_e21`, `rs_ratio_e63`, `rs_momentum_e21`, `rs_trend_s21`, `is_trend_template`, `market_cap`, `td9`
-*   **除外対象**: `sma_5/21/63/150/200` 等の別期間MA群、14日/63日の RS momentum/condition、`atr_pct_14`, `dist_52w_high_pct` 等（現状の戦略で直接使用しないもの）。※除外されているものは必要になったタイミングで `backtest_runner.py` に追記します。
-*   **特記事項 (`market_cap`)**: 時価総額は過去の履歴が存在しないケースが多いため、切り取った期間内での穴埋めではなく「DB全期間の中から最新 of `market_cap` を取得し、過去の日付にグローバル・バックフィル（適用）」する特殊処理を施しています。
+> **2026-08-18 改訂**（Phase 3d）。旧版は「戦略評価に必須なカラムのみを選択的に抽出する」
+> という**カラム・ホワイトリスト方式**を記述していたが、これは既に実装から失われている。
+> 加えて `relative_ranks` を long 形式（`indicator_name` / `percent_rank`）と記述していたが、
+> Parquet も SQLite も**一貫して wide 形式**である。旧記述は現行実装と一致しない。
 
-**2. `symbols` テーブル**
-*   **抽出対象**: `id`, `ticker`, `name`, `category`, `active`
-*   **除外対象**: `exchange`, `asset_class`, `theme_type`, `tags` など
+`backtest_runner.py::preload_data()` は Parquet マスターの各ファイルを
+**カラムを絞らずそのまま読み込み**、**日付のプッシュダウンフィルタのみ**で
+メモリ量を制御します。
 
-**3. その他テーブル**
-*   **`daily_prices`**: PK (`id`) 以外を全て抽出。
-*   **`relative_ranks`**: 対象指標名が `rs_ratio_e21` および `rs_ratio_e63` のレコードのみに絞り、`symbol_id`, `indicator_name`, `date`, `percent_rank` のみを抽出（`group_name`, `id` を除外）。
-*   **`market_signals`, `fundamental_data`**: 現状のバックテストエンジンでは利用していないため、完全に除外。
+| テーブル | 列数 | 読み込み範囲 |
+| :--- | ---: | :--- |
+| `symbols` | 11 | 全件（日付を持たないため全行） |
+| `daily_prices` | 9 | `start_date - 45日` 〜 `end_date`（21日ローリング計算のバッファ） |
+| `indicators` | 63 | `start_date` 〜 `end_date` |
+| `relative_ranks` | 26 | `start_date` 〜 `end_date` |
+| `theme_constituents` | 4 | 全件 |
+| `market_signals` / `fundamental_data` | — | **読み込まない**（バックテストエンジンは未使用） |
+
+**カラム選択をやめた理由**: ホワイトリストは「新しいフィルタを追加したのに列が来ていない」
+という取りこぼし（計画書 §1.2 の F4「データ供給の差」）を構造的に生む。実際、
+流動性フィルタが使う `avg_dollar_volume_21` は旧ホワイトリストに一度も載らないまま
+運用されていた（実装側が先に列選択をやめていたため実害には至らず、
+仕様書だけが取り残された）。現在は
+`indicators/screener_registry.py` の `resolve_required_columns()` が
+**戦略から必要カラムを宣言的に導出**し、欠けていれば `MissingFilterColumnError` で
+即座に停止する（fail-loud）ため、事前の列間引きは不要かつ有害である。
+
+**メモリ**: 列を絞らない代わりに、**ランクの long 形式への `melt` を廃止**した（Phase 3d）。
+melt は行数を16倍に膨らませており、これがメモリ消費の主因だった。
+
+| 学習期間 | melt あり | wide（現行） |
+| :--- | ---: | ---: |
+| Bear 2022 | 1,376 MB | **210 MB** |
+| Bull 2024-25 | 2,315 MB | **354 MB** |
+
+**`market_cap` の特記事項**: 時価総額は過去の履歴が存在しないケースが多いため、
+切り取った期間内での穴埋めではなく「全期間の中から最新の `market_cap` を取得し、
+過去の日付にグローバル・バックフィルする」特殊処理を施しています。
+なお `market_cap` は `indicators` ではなく **`daily_prices` 側の列**です。
 
 ### 6.8 実行方法
 ```bash

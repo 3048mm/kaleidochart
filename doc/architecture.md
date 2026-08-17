@@ -33,6 +33,9 @@ graph TD
 2. **バックエンド APIサーバー**
    * フレームワーク: FastAPI (Python)
    * 役割: フロントエンドからのリクエストに応じ、DBからデータを取得・JSON整形して返す。
+   * **スクリーナーだけは例外的に「取得」と「評価」を分離している**（2026-08 / Phase 3）。
+     SQL は基準日1営業日分の断面（ScreenerFrame）を**取り出すだけ**で、フィルタ評価は
+     バックテストエンジンと同一の関数 `apply_filters_to_df()` が行う。詳細は §2.1。
 3. **データ収集・インジケータ計算層 (バッチ処理)**
    * 役割: スプレッドシートからの銘柄同期、yfinanceからの日次データ取得、テクニカル指標・相対評価の算出、Parquetへのアーカイブマージ、およびSQLiteへの2年分同期。
 4. **バックテストエンジン (CLIバッチ)**
@@ -49,14 +52,36 @@ graph TD
    * API: `/api/portfolio/...` 配下のRESTfulエンドポイント群
    * ロジック: `backend/api/portfolio_logic.py`（純粋関数）、`backend/api/portfolio_service.py`（サービス層）
 
+### 2.1 スクリーン条件の単一評価エンジン
+
+スクリーン条件は歴史的に **① フロントのスクリーナー（SQLite）／② 最適化バックテスト（Parquet）／
+③ 個別銘柄シナリオテスト（Parquet）** の3経路で**別々に実装**されており、
+「片側にだけ実装した」「黙って素通しした」という障害を繰り返していた。
+2026-08 に以下の3層へ再編し、実装先を1つに畳んだ。
+
+| 層 | モジュール | 責務 |
+| :--- | :--- | :--- |
+| **キーの定義** | `indicators/screener_registry.py` | フィルタキー → `FilterSpec` の解決と、戦略から必要カラムを導出する唯一の場所。未知キー・カラム欠落は例外で停止（fail-loud） |
+| **データ供給** | `api/screener_cross_section.py`（SQLite）／`backtest/backtest_runner.py::preload_data()`（Parquet） | 同じ列構成の DataFrame（ScreenerFrame）を作る。契約は `indicators/screener_frame.py` が検査 |
+| **評価** | `backtest/backtest_screener.py::apply_filters_to_df()` | **唯一のフィルタエンジン**。①②③すべてがこの関数を呼ぶ |
+
+- **SQL でのフィルタ組み立ては存在しない。** API 側の SQL は断面の取得のみを行う。
+- 経路間の同一性は `backend/tests/api/test_screener_parity.py` が
+  **全フィルタキーについて** SQLite 版と Parquet 版の抽出結果一致を検証する。
+- ランク（`relative_ranks`）は Parquet・SQLite・両エンジンを通じて **wide 形式で統一**。
+- データ層（ホット/コールド）を統合したわけではない点に注意。統合したのは
+  **「フィルタ評価」であって「保存形式」ではない**（ホット/コールド分離は §11 の中核設計）。
+
+新しいフィルタを追加・変更するときの必須手順は §7.2 を参照。
+
 ## 3. プロジェクト・ディレクトリ構成方針
 全てのソースコードは役割別に `backend/` または `frontend/` 配下に集約されています。
 
 *   **`backend/`**: Python関連の全ソースコード・パッケージを集約する親ディレクトリ。
     *   **`api/`**: バックエンドAPIサーバー（FastAPI）のロジック。責務別ルーターに分割（2026-07-04 audit D-1 対応）。
         *   `routers.py`: コア（/ping, /system/info, /symbols + 後方互換 re-export）。
-        *   `screener_router.py`: スクリーナーエンジンと /screener* エンドポイント。
-        *   `screener_cross_section.py`: 基準日クロスセクション構築と特殊フィルタ評価（実体は `indicators/screener_filters.py` の純関数＝バックテストと同一。audit D-2 対応）。
+        *   `screener_router.py`: /screener* エンドポイント。**フィルタ評価は持たない**（`apply_filters_to_df()` に委譲。§2.1）。
+        *   `screener_cross_section.py`: 基準日クロスセクション（ScreenerFrame）の構築。`load_cross_section()` が SQLite から指標・ランク・前日列・価格をまとめて1枚の DataFrame にする。
         *   `chart_router.py`: /chart, /earnings。
         *   `dashboard_router.py`: /dashboard, /available_dates, /theme, /group_data, /ranking。
         *   `panel_builders.py`: ダッシュボード系画面の共通アイテムビルダー。
@@ -68,6 +93,9 @@ graph TD
     *   **`data_collection/`**: データ取得、スクレイピングに関連するモジュール。
     *   **`db/`**: SQLAlchemyのモデル定義およびデータベース接続用コアロジック。
     *   **`indicators/`**: 純粋なテクニカル指標・計算アルゴリズム用モジュール群（責務別にファイルを分割管理）。
+        *   `screener_filters.py`: 特殊ブールフィルタの実体（①②③が共有する純関数）。
+        *   `screener_registry.py`: フィルタキーの唯一の定義場所（§2.1）。**pandas も SQLAlchemy も import しない**ことで `indicators/` の純粋性を保つ。
+        *   `screener_frame.py`: ScreenerFrame の契約検査（`assert_frame_contract()`）。
     *   **`pipeline/`**: データ取得・指標算出・DB保存などの一連の更新処理（T2〜T5フェーズ）を統括するモジュール。
     *   **`backtest/`**: バックテストエンジン（設定ファイル、シグナルスキャナー、トレードシミュレータ、レポート生成）。
     *   **`scripts/`**: バッチ処理の実行エントリポイント (`update_pipeline.py` 等)。

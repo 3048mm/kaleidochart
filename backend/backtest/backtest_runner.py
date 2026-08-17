@@ -531,7 +531,7 @@ def validate_strategies_config(strategies: list, df_ind: pd.DataFrame, df_prices
     """戦略設定の各フィルタキーがレジストリで解決できるかを検証する（純関数）。
 
     返すのは「警告」ではなく「エラー」として扱う（呼び出し側で空でなければ ValueError に変換して
-    停止する。doc/in_progress/screener_filter_unification_plan.md §3.1.3 の U-1 決定）。
+    停止する。doc/completed/screener_filter_unification_plan.md §3.1.3 の U-1 決定）。
     df_ranks は wide 形式（SQLite と同一スキーマ）のまま渡されるが、ここではモデル定義を
     権威として使うため df_ranks 自体は参照しない。RelativeRank モデルの実カラムから
     ランク列集合を組み立てる。
