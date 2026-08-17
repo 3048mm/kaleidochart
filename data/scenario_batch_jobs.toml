@@ -127,3 +127,27 @@ study_name = "G3_bluedot_leader"
 # base_study_name = "opt_strategy_B4_rs_trend_with_theme_multi_period"
 # [job.override_params]
 # min_vol_surge_21 = 2.0
+
+# 2026-08-16: B6 の「書き戻し前」パラメータでの比較検証。
+# 2026-08-16 のシナリオテストで B6 は取引数 393 と多いのに CAGR 32.43 で B 中最下位、
+# 1取引 +3.24% / PF 1.40 と B2/B3/B5（+5〜6% / PF 1.8〜1.9）に見劣りした。
+# 書き戻しで min_change_1d_pct 9.0→4.0・is_rs_macd_hist_rising_21 true→false と
+# 「急騰かつ加速」の選別が大きく緩んだのが原因か（＝最適化前の方が良かったか）を検証する。
+# 値は c60293b^ 時点の screener_presets.toml（RS MACD and Theme）から取得。
+[[job]]
+name = "B6_prev_params"
+strategy_code = "B6_rs_macd_and_theme"
+source = "manual"
+  [job.override_params]
+  min_change_1d_pct = 9.0
+  min_dist_21ema_pct = 3.0
+  min_vol_surge_21 = 1.8
+  min_adr_pct_21 = 6.0
+  max_sma50_atr_mult = 7.5
+  min_market_cap = 1e7
+  min_rs_trend_rank_s21 = 0.9
+  min_rs_macd_hist_21 = 0.0
+  min_theme_rs_trend_s21 = 0.9
+  is_theme_rs_trend_rank_s14_gt_s21 = true
+  is_close_gt_ema63 = true
+  is_rs_macd_hist_rising_21 = true
