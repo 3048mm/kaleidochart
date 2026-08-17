@@ -253,8 +253,8 @@ def seed_sqlite(session) -> None:
 def to_dataframes():
     """②③バックテスト経路（pandas）へ「1つの真実」を書き出す。
 
-    ランクは SQLite が wide・バックテストが long という既知の差（P0-1）があるため、
-    ここで機械的に long へ変換する（_RANK_BY_ID を手で複製しない）。
+    ランクは SQLite・バックテストとも wide 形式（P0-1/P0-2 解消済み。melt を廃止したため）。
+    _RANK_BY_ID（symbol_id -> {canonical: value}）をそのまま wide の行に変換するだけでよい。
     """
     df_symbols = pd.DataFrame([
         {"id": s["id"], "ticker": s["ticker"], "name": s["name"], "category": s["category"], "active": 1}
@@ -271,11 +271,8 @@ def to_dataframes():
             ind_rows.append({"symbol_id": sid, "date": d, **row})
     df_ind = pd.DataFrame(ind_rows)
 
-    rank_rows = []
-    for sid, row in _RANK_BY_ID.items():
-        for canonical, value in row.items():
-            rank_rows.append({"symbol_id": sid, "date": LATEST, "indicator_name": canonical, "percent_rank": value})
-    df_ranks = pd.DataFrame(rank_rows, columns=["symbol_id", "date", "indicator_name", "percent_rank"])
+    rank_rows = [{"symbol_id": sid, "date": LATEST, **row} for sid, row in _RANK_BY_ID.items()]
+    df_ranks = pd.DataFrame(rank_rows)
 
     return df_symbols, df_prices, df_ind, df_ranks, df_tc
 
@@ -521,7 +518,7 @@ def _liquidity_frames():
         rows.append({**_default_indicator_row(), "symbol_id": sid, "date": LATEST,
                      "avg_dollar_volume_21": adv, "change_1d_pct": 1.0})
     df_ind = pd.DataFrame(rows)
-    df_ranks = pd.DataFrame(columns=["symbol_id", "date", "indicator_name", "percent_rank"])
+    df_ranks = pd.DataFrame(columns=["symbol_id", "date"])
     df_tc = pd.DataFrame(columns=["theme_id", "symbol_id"])
     return df_symbols, df_prices, df_ind, df_ranks, df_tc
 

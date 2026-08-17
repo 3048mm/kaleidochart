@@ -44,7 +44,7 @@ def test_objective_calculates_cagr_correctly():
     df_symbols = pd.DataFrame(columns=['id', 'ticker', 'name', 'category', 'active'])
     df_prices = pd.DataFrame(columns=['symbol_id', 'date', 'open', 'high', 'low', 'close', 'volume', 'market_cap'])
     df_indicators = pd.DataFrame(columns=['symbol_id', 'date', 'change_1d_pct'])
-    df_ranks = pd.DataFrame(columns=['symbol_id', 'date', 'indicator_name', 'percent_rank'])
+    df_ranks = pd.DataFrame(columns=['symbol_id', 'date'])
     df_tc = pd.DataFrame(columns=['theme_id', 'symbol_id'])
     trading_dates = [pd.Timestamp('2022-01-03').date(), pd.Timestamp('2022-01-04').date()]
 

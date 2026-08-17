@@ -1,6 +1,7 @@
 import os
 import logging
 import pandas as pd
+import numpy as np
 import pathlib
 import json
 import time
@@ -544,10 +545,14 @@ def run_scenario_test(
             if ranks_day is not None:
                 for canonical in required_rank_columns:
                     frame_col = screener_registry.to_frame_column(canonical)
-                    r_df = ranks_day[ranks_day['indicator_name'] == canonical][['symbol_id', 'percent_rank']].rename(
-                        columns={'percent_rank': frame_col}
-                    )
-                    base_merged = base_merged.merge(r_df, on='symbol_id', how='left').reset_index(drop=True)
+                    if canonical in ranks_day.columns:
+                        r_df = ranks_day[['symbol_id', canonical]].rename(columns={canonical: frame_col})
+                        base_merged = base_merged.merge(r_df, on='symbol_id', how='left').reset_index(drop=True)
+                    else:
+                        # ranks_day に該当カラムが無い場合は NaN 列として供給する
+                        # （apply_filters_to_df 側の has_all_premerged 判定・fail-loud 検査が
+                        #  「列自体は存在する」ことを前提にしているため。§3.1.4 (a)(e)）
+                        base_merged[frame_col] = np.nan
             
             for strat_name, strat_rules in strategies.items():
                 # 除外は run_scenario_test 冒頭の report_strategy_scan_coverage() で

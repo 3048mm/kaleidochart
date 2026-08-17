@@ -87,7 +87,7 @@ def test_scenario_runner_integration(mock_preload, mock_session, mock_scenario_d
         symbols,
         prices,
         indicators,
-        pd.DataFrame(columns=['date', 'symbol_id', 'indicator_name', 'percent_rank']),
+        pd.DataFrame(columns=['date', 'symbol_id']),
         pd.DataFrame(columns=['theme_id', 'symbol_id']),
         prices['date'].unique().tolist()
     )
@@ -174,7 +174,7 @@ def test_scenario_runner_excludes_illiquid_symbols(mock_preload, mock_session, t
         symbols,
         prices,
         indicators,
-        pd.DataFrame(columns=['date', 'symbol_id', 'indicator_name', 'percent_rank']),
+        pd.DataFrame(columns=['date', 'symbol_id']),
         pd.DataFrame(columns=['theme_id', 'symbol_id']),
         dates
     )

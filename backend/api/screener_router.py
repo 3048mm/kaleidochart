@@ -286,7 +286,7 @@ def get_screener_dashboard(
     df_symbols = frame[["symbol_id", "category"]].rename(columns={"symbol_id": "id"})
     # ランクは frame に既にフレーム内名でマージ済み（has_all_premerged により再取得は
     # 自動的にスキップされる）ため、df_ranks は空でよい。
-    df_ranks_empty = pd.DataFrame(columns=["symbol_id", "date", "indicator_name", "percent_rank"])
+    df_ranks_empty = pd.DataFrame(columns=["symbol_id", "date"])
 
     def _fetch_top_8(filtered: pd.DataFrame, is_rise: bool = True):
         if filtered.empty:
@@ -530,7 +530,7 @@ def get_screener(
     # 旧実装の INNER JOIN（Symbol×Indicator×DailyPrice）と挙動を揃える（get_screener_dashboard と同じ理由）。
     frame = frame[frame['close'].notna()].copy()
     df_symbols = frame[["symbol_id", "category"]].rename(columns={"symbol_id": "id"})
-    df_ranks_empty = pd.DataFrame(columns=["symbol_id", "date", "indicator_name", "percent_rank"])
+    df_ranks_empty = pd.DataFrame(columns=["symbol_id", "date"])
 
     # 実際に適用されたフィルタキー一覧（ログ出力用。§5 Phase 1。/screener はエンベロープ化
     # しない方針のため、レスポンスには含めず logger.info のみで記録する）

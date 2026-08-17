@@ -121,25 +121,9 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
         df_prices = df_prices[(df_prices['date'] >= sd) & (df_prices['date'] <= ed)]
         df_indicators = df_indicators[(df_indicators['date'] >= sd) & (df_indicators['date'] <= ed)]
         df_ranks = df_ranks[(df_ranks['date'] >= sd) & (df_ranks['date'] <= ed)]
-        
-        # Ensure df_ranks wide percent_ranks is properly melted to narrow format if it is still wide
-        # (Though parquet_cache_manager keeps relative_ranks narrow, we ensure 100% safety)
-        if not df_ranks.empty and 'indicator_name' not in df_ranks.columns:
-            available_vars = [
-                col for col in [
-                    'rs_ratio_rank_e5', 'rs_ratio_rank_e14', 'rs_ratio_rank_e21', 'rs_ratio_rank_e63', 'rs_ratio_rank_e200',
-                    'rs_trend_rank_s5', 'rs_trend_rank_s14', 'rs_trend_rank_s21', 'rs_trend_rank_s63', 'rs_trend_rank_s200',
-                    'rs_momentum_rank_e5', 'rs_momentum_rank_e14', 'rs_momentum_rank_e21', 'rs_momentum_rank_e63', 'rs_momentum_rank_e200',
-                    'rs_macd_hist_rank_21'
-                ] if col in df_ranks.columns
-            ]
-            df_ranks = df_ranks.melt(
-                id_vars=['symbol_id', 'date'],
-                value_vars=available_vars,
-                var_name='indicator_name',
-                value_name='percent_rank'
-            ).dropna(subset=['percent_rank'])
-            
+
+        # df_ranks は Parquet 上も wide 形式（SQLite と同一スキーマ）なので、
+        # long への melt は行わずそのまま wide で返す（P0-1/P0-2 対応）。
         log(f"  -> In-memory pandas slicing completed in {time.time()-t_slice:.3f}s")
         
         # Log memory usage metrics
@@ -548,8 +532,9 @@ def validate_strategies_config(strategies: list, df_ind: pd.DataFrame, df_prices
 
     返すのは「警告」ではなく「エラー」として扱う（呼び出し側で空でなければ ValueError に変換して
     停止する。doc/in_progress/screener_filter_unification_plan.md §3.1.3 の U-1 決定）。
-    df_ranks はバックテスト側で long 形式に melt 済みのためランク名が列名に現れず使えない
-    （§3.1.2）。RelativeRank モデルの実カラムからランク列集合を組み立てる。
+    df_ranks は wide 形式（SQLite と同一スキーマ）のまま渡されるが、ここではモデル定義を
+    権威として使うため df_ranks 自体は参照しない。RelativeRank モデルの実カラムから
+    ランク列集合を組み立てる。
 
     **カラム集合の権威はモデル定義**であり、引数の DataFrame は補助（派生列の追加）でしかない。
     これは**この関数がスキーマ検証（キー名が妥当か）を担うため**で、

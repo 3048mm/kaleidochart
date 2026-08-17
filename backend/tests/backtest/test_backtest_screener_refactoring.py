@@ -24,12 +24,10 @@ def test_apply_filters_new_naming_rs_ratio_rank():
 
     df_ind = pd.DataFrame(columns=['date', 'symbol_id'])
     df_ranks = pd.DataFrame([
-        # date, symbol_id, indicator_name, percent_rank
-        ['2026-06-26', 1, 'rs_ratio_rank_e21', 0.8],
-        ['2026-06-26', 1, 'rs_ratio_rank_e63', 0.5],
-        ['2026-06-26', 2, 'rs_ratio_rank_e21', 0.4],
-        ['2026-06-26', 2, 'rs_ratio_rank_e63', 0.6],
-    ], columns=['date', 'symbol_id', 'indicator_name', 'percent_rank'])
+        # date, symbol_id, rs_ratio_rank_e21, rs_ratio_rank_e63
+        ['2026-06-26', 1, 0.8, 0.5],
+        ['2026-06-26', 2, 0.4, 0.6],
+    ], columns=['date', 'symbol_id', 'rs_ratio_rank_e21', 'rs_ratio_rank_e63'])
 
     df_symbols = pd.DataFrame()
     df_theme_constituents = pd.DataFrame()
@@ -69,7 +67,7 @@ def test_apply_filters_new_naming_dist_ema21():
         merged=merged,
         target_date='2026-06-26',
         df_ind=pd.DataFrame(columns=['date', 'symbol_id']),
-        df_ranks=pd.DataFrame(columns=['date', 'symbol_id', 'indicator_name', 'percent_rank']),
+        df_ranks=pd.DataFrame(columns=['date', 'symbol_id']),
         df_symbols=pd.DataFrame(),
         df_theme_constituents=pd.DataFrame(),
         strategy=strategy
@@ -95,7 +93,7 @@ def test_apply_filters_new_naming_close_gt_ema63():
         merged=merged,
         target_date='2026-06-26',
         df_ind=pd.DataFrame(columns=['date', 'symbol_id']),
-        df_ranks=pd.DataFrame(columns=['date', 'symbol_id', 'indicator_name', 'percent_rank']),
+        df_ranks=pd.DataFrame(columns=['date', 'symbol_id']),
         df_symbols=pd.DataFrame(),
         df_theme_constituents=pd.DataFrame(),
         strategy=strategy
@@ -126,7 +124,7 @@ def test_apply_filters_theme_rs_ratio_e14_gt_e21():
         ['2026-06-26', 11, 0.5, 0.9], # THEME_B: 0.5 < 0.9 (Fail)
     ], columns=['date', 'symbol_id', 'rs_ratio_e14', 'rs_ratio_e21'])
 
-    df_ranks = pd.DataFrame(columns=['date', 'symbol_id', 'indicator_name', 'percent_rank'])
+    df_ranks = pd.DataFrame(columns=['date', 'symbol_id'])
     
     df_symbols = pd.DataFrame([
         [1, 'STK1', '個別'],
@@ -177,10 +175,10 @@ def test_apply_filters_min_theme_rs_ratio_rank_e14():
 
     # Setup ranks for themes: THEME_A has 0.8 (>=0.7), THEME_B has 0.5 (<0.7)
     df_ranks = pd.DataFrame([
-        # date, symbol_id, indicator_name, percent_rank
-        ['2026-06-26', 10, 'rs_ratio_rank_e14', 0.8],
-        ['2026-06-26', 11, 'rs_ratio_rank_e14', 0.5],
-    ], columns=['date', 'symbol_id', 'indicator_name', 'percent_rank'])
+        # date, symbol_id, rs_ratio_rank_e14
+        ['2026-06-26', 10, 0.8],
+        ['2026-06-26', 11, 0.5],
+    ], columns=['date', 'symbol_id', 'rs_ratio_rank_e14'])
     
     df_symbols = pd.DataFrame([
         [1, 'STK1', '個別'],
@@ -231,7 +229,7 @@ def test_apply_filters_min_theme_rs_trend_s21():
         ['2026-06-26', 11, 0.8], # THEME_B: 0.8 < 1.2 (Fail)
     ], columns=['date', 'symbol_id', 'rs_trend_s21'])
 
-    df_ranks = pd.DataFrame(columns=['date', 'symbol_id', 'indicator_name', 'percent_rank'])
+    df_ranks = pd.DataFrame(columns=['date', 'symbol_id'])
     
     df_symbols = pd.DataFrame([
         [1, 'STK1', '個別'],
@@ -279,7 +277,7 @@ def test_apply_filters_is_rs_blue_dot():
         merged=merged,
         target_date='2026-06-26',
         df_ind=pd.DataFrame(columns=['date', 'symbol_id']),
-        df_ranks=pd.DataFrame(columns=['date', 'symbol_id', 'indicator_name', 'percent_rank']),
+        df_ranks=pd.DataFrame(columns=['date', 'symbol_id']),
         df_symbols=pd.DataFrame(),
         df_theme_constituents=pd.DataFrame(),
         strategy=strategy
@@ -308,12 +306,10 @@ def test_apply_filters_is_theme_rs_trend_rank_s14_gt_s21():
 
     # Setup ranks for themes: THEME_A (s14: 0.8 > s21: 0.5 - Pass), THEME_B (s14: 0.4 < s21: 0.6 - Fail)
     df_ranks = pd.DataFrame([
-        # date, symbol_id, indicator_name, percent_rank
-        ['2026-06-26', 10, 'rs_trend_rank_s14', 0.8],
-        ['2026-06-26', 10, 'rs_trend_rank_s21', 0.5],
-        ['2026-06-26', 11, 'rs_trend_rank_s14', 0.4],
-        ['2026-06-26', 11, 'rs_trend_rank_s21', 0.6],
-    ], columns=['date', 'symbol_id', 'indicator_name', 'percent_rank'])
+        # date, symbol_id, rs_trend_rank_s14, rs_trend_rank_s21
+        ['2026-06-26', 10, 0.8, 0.5],
+        ['2026-06-26', 11, 0.4, 0.6],
+    ], columns=['date', 'symbol_id', 'rs_trend_rank_s14', 'rs_trend_rank_s21'])
     
     df_symbols = pd.DataFrame([
         [1, 'STK1', '個別'],
@@ -366,7 +362,7 @@ def test_apply_filters_excludes_theme_rows_from_final_output():
         merged=merged,
         target_date='2026-06-26',
         df_ind=pd.DataFrame(columns=['date', 'symbol_id']),
-        df_ranks=pd.DataFrame(columns=['date', 'symbol_id', 'indicator_name', 'percent_rank']),
+        df_ranks=pd.DataFrame(columns=['date', 'symbol_id']),
         df_symbols=pd.DataFrame(),
         df_theme_constituents=pd.DataFrame(),
         strategy=strategy
@@ -395,9 +391,9 @@ def test_apply_filters_theme_leadership_filter_still_works_after_theme_exclusion
 
     df_ind = pd.DataFrame(columns=['date', 'symbol_id'])
     df_ranks = pd.DataFrame([
-        ['2026-06-26', 10, 'rs_ratio_rank_e14', 0.8],
-        ['2026-06-26', 11, 'rs_ratio_rank_e14', 0.5],
-    ], columns=['date', 'symbol_id', 'indicator_name', 'percent_rank'])
+        ['2026-06-26', 10, 0.8],
+        ['2026-06-26', 11, 0.5],
+    ], columns=['date', 'symbol_id', 'rs_ratio_rank_e14'])
 
     df_symbols = pd.DataFrame([
         [1, 'STK1', '個別'],
@@ -449,7 +445,7 @@ def test_apply_filters_raises_missing_filter_column_error():
             merged=merged,
             target_date='2026-06-26',
             df_ind=pd.DataFrame(columns=['date', 'symbol_id']),
-            df_ranks=pd.DataFrame(columns=['date', 'symbol_id', 'indicator_name', 'percent_rank']),
+            df_ranks=pd.DataFrame(columns=['date', 'symbol_id']),
             df_symbols=pd.DataFrame(),
             df_theme_constituents=pd.DataFrame(),
             strategy=strategy,
@@ -481,7 +477,7 @@ def test_apply_filters_x_y_suffix_collision_raises_instead_of_silent_pass():
             merged=merged,
             target_date='2026-06-26',
             df_ind=pd.DataFrame(columns=['date', 'symbol_id']),
-            df_ranks=pd.DataFrame(columns=['date', 'symbol_id', 'indicator_name', 'percent_rank']),
+            df_ranks=pd.DataFrame(columns=['date', 'symbol_id']),
             df_symbols=pd.DataFrame(),
             df_theme_constituents=pd.DataFrame(),
             strategy=strategy,
@@ -507,19 +503,10 @@ def test_apply_filters_merges_only_required_rank_columns():
 
     # 6ランク全種類ぶんのデータを用意しておく（旧実装ならこれを全部引いてしまう）
     df_ranks = pd.DataFrame([
-        ['2026-06-26', 1, 'rs_ratio_rank_e14', 0.9],
-        ['2026-06-26', 1, 'rs_ratio_rank_e21', 0.8],
-        ['2026-06-26', 1, 'rs_ratio_rank_e63', 0.7],
-        ['2026-06-26', 1, 'rs_trend_rank_s14', 0.6],
-        ['2026-06-26', 1, 'rs_trend_rank_s21', 0.5],
-        ['2026-06-26', 1, 'rs_trend_rank_s63', 0.4],
-        ['2026-06-26', 2, 'rs_ratio_rank_e14', 0.1],
-        ['2026-06-26', 2, 'rs_ratio_rank_e21', 0.1],
-        ['2026-06-26', 2, 'rs_ratio_rank_e63', 0.1],
-        ['2026-06-26', 2, 'rs_trend_rank_s14', 0.1],
-        ['2026-06-26', 2, 'rs_trend_rank_s21', 0.1],
-        ['2026-06-26', 2, 'rs_trend_rank_s63', 0.1],
-    ], columns=['date', 'symbol_id', 'indicator_name', 'percent_rank'])
+        ['2026-06-26', 1, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4],
+        ['2026-06-26', 2, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1],
+    ], columns=['date', 'symbol_id', 'rs_ratio_rank_e14', 'rs_ratio_rank_e21', 'rs_ratio_rank_e63',
+                'rs_trend_rank_s14', 'rs_trend_rank_s21', 'rs_trend_rank_s63'])
 
     filtered = apply_filters_to_df(
         merged=merged,
@@ -537,6 +524,46 @@ def test_apply_filters_merges_only_required_rank_columns():
         assert unused_col not in filtered.columns, (
             f"必要でないランク列 {unused_col} が merge されている（過剰マージ）"
         )
+    assert len(filtered) == 1
+    assert filtered.iloc[0]['ticker'] == 'STK1'
+
+
+def test_apply_filters_min_rs_value_rank_now_usable():
+    """P0-2 の解消確認: melt が落としていた6ランク列（rs_value_rank / rs_roc_ema_rank_e*）が
+    バックテスト側から使えるようになったこと。
+
+    旧実装（backtest_runner.preload_data の melt）は available_vars に
+    rs_value_rank / rs_roc_ema_rank_e5/e14/e21/e63/e200 を含めていなかったため、
+    これらのキーを指定しても merge されずサイレントに素通し（全銘柄通過）していた
+    （計画書 §7 P0-2）。wide 化により RelativeRank の実カラムであれば全て自動的に
+    供給されるようになり、期待どおり絞り込まれることを確認する。
+    """
+    merged = pd.DataFrame([
+        [1, 'STK1', 'Stock 1', '個別', 1],
+        [2, 'STK2', 'Stock 2', '個別', 1],
+    ], columns=['symbol_id', 'ticker', 'name', 'category', 'active'])
+
+    strategy = {
+        'name': 'test_strat',
+        'min_rs_value_rank': 0.5,
+    }
+
+    df_ranks = pd.DataFrame([
+        ['2026-06-26', 1, 0.8],
+        ['2026-06-26', 2, 0.2],
+    ], columns=['date', 'symbol_id', 'rs_value_rank'])
+
+    filtered = apply_filters_to_df(
+        merged=merged,
+        target_date='2026-06-26',
+        df_ind=pd.DataFrame(columns=['date', 'symbol_id']),
+        df_ranks=df_ranks,
+        df_symbols=pd.DataFrame(),
+        df_theme_constituents=pd.DataFrame(),
+        strategy=strategy,
+    )
+
+    assert 'rs_value_rank' in filtered.columns
     assert len(filtered) == 1
     assert filtered.iloc[0]['ticker'] == 'STK1'
 
@@ -565,7 +592,7 @@ def test_apply_filters_vcp_breakout_deny_by_default_without_prev_date():
         merged=merged,
         target_date='2026-06-26',
         df_ind=pd.DataFrame(columns=['date', 'symbol_id']),
-        df_ranks=pd.DataFrame(columns=['date', 'symbol_id', 'indicator_name', 'percent_rank']),
+        df_ranks=pd.DataFrame(columns=['date', 'symbol_id']),
         df_symbols=pd.DataFrame(),
         df_theme_constituents=pd.DataFrame(),
         strategy=strategy,
@@ -610,7 +637,7 @@ def test_apply_filters_expression_accepts_lowercase_boolean_literals():
     filtered = apply_filters_to_df(
         merged=merged, target_date='2026-06-26',
         df_ind=pd.DataFrame(columns=['date', 'symbol_id']),
-        df_ranks=pd.DataFrame(columns=['date', 'symbol_id', 'indicator_name', 'percent_rank']),
+        df_ranks=pd.DataFrame(columns=['date', 'symbol_id']),
         df_symbols=pd.DataFrame(), df_theme_constituents=pd.DataFrame(),
         strategy={'name': 't', 'expression': 'is_trend_template == false and rs_ratio_e63 < -1.0'},
     )
@@ -638,7 +665,7 @@ def test_apply_filters_min_market_cap_exempts_theme_rows():
     filtered = apply_filters_to_df(
         merged=merged, target_date='2026-06-26',
         df_ind=pd.DataFrame(columns=['date', 'symbol_id']),
-        df_ranks=pd.DataFrame(columns=['date', 'symbol_id', 'indicator_name', 'percent_rank']),
+        df_ranks=pd.DataFrame(columns=['date', 'symbol_id']),
         df_symbols=pd.DataFrame(), df_theme_constituents=pd.DataFrame(),
         strategy={'name': 't', 'min_market_cap': 1e8},
     )
@@ -675,7 +702,7 @@ def test_apply_filters_does_not_remerge_prev_when_already_present():
     filtered = apply_filters_to_df(
         merged=merged, target_date='2026-06-26',
         df_ind=df_ind,
-        df_ranks=pd.DataFrame(columns=['date', 'symbol_id', 'indicator_name', 'percent_rank']),
+        df_ranks=pd.DataFrame(columns=['date', 'symbol_id']),
         df_symbols=pd.DataFrame(), df_theme_constituents=pd.DataFrame(),
         strategy={'name': 't', 'rrg_leading_in': True},
         prev_date='2026-06-25',

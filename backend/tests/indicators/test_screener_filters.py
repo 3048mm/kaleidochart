@@ -74,7 +74,7 @@ def _make_ind_row(symbol_id, d, **overrides):
 
 
 def _empty_ranks():
-    return pd.DataFrame(columns=["symbol_id", "date", "indicator_name", "percent_rank"])
+    return pd.DataFrame(columns=["symbol_id", "date"])
 
 
 def _empty_theme_constituents():
@@ -103,12 +103,9 @@ class TestRsRank21Gt63:
         ])
         # Rank data: Stock1 rs21 > rs63, Stock2 rs21 < rs63, Stock3 rs21 == rs63
         df_ranks = pd.DataFrame([
-            {"symbol_id": 1, "date": td, "indicator_name": "rs_ratio_rank_e21", "percent_rank": 0.8},
-            {"symbol_id": 1, "date": td, "indicator_name": "rs_ratio_rank_e63", "percent_rank": 0.5},
-            {"symbol_id": 2, "date": td, "indicator_name": "rs_ratio_rank_e21", "percent_rank": 0.3},
-            {"symbol_id": 2, "date": td, "indicator_name": "rs_ratio_rank_e63", "percent_rank": 0.7},
-            {"symbol_id": 3, "date": td, "indicator_name": "rs_ratio_rank_e21", "percent_rank": 0.5},
-            {"symbol_id": 3, "date": td, "indicator_name": "rs_ratio_rank_e63", "percent_rank": 0.5},
+            {"symbol_id": 1, "date": td, "rs_ratio_rank_e21": 0.8, "rs_ratio_rank_e63": 0.5},
+            {"symbol_id": 2, "date": td, "rs_ratio_rank_e21": 0.3, "rs_ratio_rank_e63": 0.7},
+            {"symbol_id": 3, "date": td, "rs_ratio_rank_e21": 0.5, "rs_ratio_rank_e63": 0.5},
         ])
 
         strategy = {
@@ -206,10 +203,8 @@ class TestThemeRsRank21Gt63:
         ])
         # Rank data: THM1 (10) rs21(0.8) > rs63(0.3), THM2 (11) rs21(0.2) < rs63(0.7)
         df_ranks = pd.DataFrame([
-            {"symbol_id": 10, "date": td, "indicator_name": "rs_ratio_rank_e21", "percent_rank": 0.8},
-            {"symbol_id": 10, "date": td, "indicator_name": "rs_ratio_rank_e63", "percent_rank": 0.3},
-            {"symbol_id": 11, "date": td, "indicator_name": "rs_ratio_rank_e21", "percent_rank": 0.2},
-            {"symbol_id": 11, "date": td, "indicator_name": "rs_ratio_rank_e63", "percent_rank": 0.7},
+            {"symbol_id": 10, "date": td, "rs_ratio_rank_e21": 0.8, "rs_ratio_rank_e63": 0.3},
+            {"symbol_id": 11, "date": td, "rs_ratio_rank_e21": 0.2, "rs_ratio_rank_e63": 0.7},
         ])
         # Theme constituents: Stock1 -> THM1, Stock2 -> THM2
         df_theme_const = pd.DataFrame([

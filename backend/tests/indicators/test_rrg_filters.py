@@ -53,7 +53,7 @@ def base_data():
     for col in ['change_1d_pct', 'change_1w_pct', 'change_1m_pct', 'sma50_atr_mult', 'vol_surge_21', 'rel_vol_vs_spy_21', 'rs_trend_s21', 'is_trend_template']:
         df_ind[col] = 1.0
         
-    df_ranks = pd.DataFrame(columns=["symbol_id", "date", "indicator_name", "percent_rank"])
+    df_ranks = pd.DataFrame(columns=["symbol_id", "date"])
     df_theme_constituents = pd.DataFrame(columns=["theme_id", "symbol_id"])
     
     return {

@@ -182,7 +182,8 @@ def apply_filters_to_df(
     # --- レジストリで必要カラムを解決する（doc/in_progress/screener_filter_unification_plan.md §3.1.4） ---
     from backend.db.models import RelativeRank
     known_columns = set(merged.columns) | set(screener_registry.VIRTUAL_COLUMNS)
-    # RelativeRank の実カラム。df_ranks は long 形式でランク名が列に出ないため使えない。
+    # RelativeRank の実カラム。df_ranks（wide）は日によって欠測カラムを持ちうるため、
+    # 「解決可能なキーかどうか」の判定にはモデル定義を権威として使う。
     rank_columns = {
         c for c in RelativeRank.__table__.columns.keys()
         if c not in ('id', 'symbol_id', 'date', 'group_name')
@@ -241,10 +242,14 @@ def apply_filters_to_df(
 
             for canonical in (ranks_to_merge if ranks_day is not None else ()):
                 frame_col = screener_registry.to_frame_column(canonical)
-                r_df = ranks_day[ranks_day['indicator_name'] == canonical][['symbol_id', 'percent_rank']].rename(
-                    columns={'percent_rank': frame_col}
-                )
-                merged = merged.merge(r_df, on='symbol_id', how='left').reset_index(drop=True)
+                if canonical in ranks_day.columns:
+                    r_df = ranks_day[['symbol_id', canonical]].rename(columns={canonical: frame_col})
+                    merged = merged.merge(r_df, on='symbol_id', how='left').reset_index(drop=True)
+                else:
+                    # ranks_day に該当カラムが無い場合は、long 形式時代と同じく NaN 列として
+                    # 供給する（列自体は存在させる）。列を作らずに素通しすると、下流の
+                    # MissingFilterColumnError 検査が「列が無い」と誤検知するため。
+                    merged[frame_col] = np.nan
 
     # --- RRG / RS-MACD / VCP breakout の前日マージ ---
     # 呼び出し側（API の load_cross_section 等）が既に prev_ 列を持たせている場合は再マージしない。

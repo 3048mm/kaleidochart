@@ -153,11 +153,8 @@ def build_parquet_style_frames_for_apply_filters():
     for col in _IND_COL_NAMES:
         df_ind[col] = pd.to_numeric(df_ind[col], errors="coerce")
 
-    rank_rows = []
-    for sid, row in _RANK_BY_ID.items():
-        for canonical, value in row.items():
-            rank_rows.append({"symbol_id": sid, "date": LATEST, "indicator_name": canonical, "percent_rank": value})
-    df_ranks = pd.DataFrame(rank_rows, columns=["symbol_id", "date", "indicator_name", "percent_rank"])
+    rank_rows = [{"symbol_id": sid, "date": LATEST, **row} for sid, row in _RANK_BY_ID.items()]
+    df_ranks = pd.DataFrame(rank_rows)
 
     df_symbols = pd.DataFrame([
         {"id": s["id"], "ticker": s["ticker"], "name": s["name"], "category": s["category"], "active": 1}

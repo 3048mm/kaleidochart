@@ -802,7 +802,12 @@ melt の `available_vars` が落としていた6列（`rs_value_rank` / `rs_roc_
       戻り値の形・挙動は変更していない。既存テスト `test_screener_special_filter_behavior.py`
       ほかで回帰なしを確認）。**API の切替（3c）は未実施**（`_apply_filter` /
       `_parse_expression_to_filter` は現状のまま）。
-- [ ] ランクの long/wide 変換を廃止し、両経路とも wide で統一
+- [x] ランクの long/wide 変換を廃止し、両経路とも wide で統一 （3d。`preload_data` の melt ブロックを削除、
+      `backtest_screener.apply_filters_to_df` / `scenario_runner.py` の日次ランクマージを
+      `ranks_day[['symbol_id', canonical]]` ベースの wide 抽出へ置換。`screener_router.py` の
+      プレースホルダ `df_ranks_empty` も `["symbol_id","date"]` へ整理。P0-2 の解消確認テスト
+      （`test_apply_filters_min_rs_value_rank_now_usable`）を追加。テストフィクスチャ9ファイルを
+      long→wide へ移行（期待値は無変更）。詳細は下記「3d 実施結果」参照）
 - [x] `apply_filters(frame, strategy)` を単一エンジンとして確立（`apply_filters_to_df` を改称・整理） （3c。`apply_filters_to_df` の名前は維持し、API がこれを呼ぶ形にした）
 - [x] `screener_router.py` を DataFrame 経路へ切替（SQL は取得のみに縮退） （3c）
 - [x] `_apply_filter` / `_parse_expression_to_filter` の削除 （3c。`_EXPR_OPS` / `_resolve_column` / `_RANK_COLUMN_ALIASES` も併せて削除）
@@ -814,17 +819,63 @@ melt の `available_vars` が落としていた6列（`rs_value_rank` / `rs_roc_
 
 ### 作業中メモ
 
-**現在地（2026-08-17）**: **Phase 3c まで完了**。残るは **3d（melt 廃止）と 3e（sandbox スモーク・仕様書更新）**。
+**現在地（2026-08-18）**: **Phase 3d まで完了**。残るは **3e（sandbox スモーク・仕様書更新）**。
 
 | ステップ | 状態 | コミット |
 | :--- | :--- | :--- |
 | 3a `ScreenerFrame` 契約 | 完了 | `ece1e96` |
 | 3b `load_cross_section()` | 完了 | `c7bdeb1` |
 | 3c API 切り替え・SQL 撤去 | **完了・差分ゼロ** | `d5af561` |
-| 3d melt 廃止（P0-1 / P0-2） | 未着手 | — |
+| 3d melt 廃止（P0-1 / P0-2） | **完了・差分ゼロ** | 未コミット |
 | 3e sandbox スモーク・仕様書 | 未着手 | — |
 
-**3c 完了時点の実測**:
+**3d 実施結果（2026-08-18、implementer ワーカーによる実装）**:
+
+- `backend/backtest/backtest_runner.py::preload_data` の melt ブロック（`available_vars` の定義と
+  `df_ranks.melt(...)`）を削除。`df_ranks` は Parquet 読み込み時点の wide のまま返す。
+- `backend/backtest/backtest_screener.py::apply_filters_to_df` のランクマージを
+  `ranks_day[ranks_day['indicator_name']==canonical]` から `ranks_day[['symbol_id', canonical]]`
+  （列が無ければ `merged[frame_col] = np.nan` で現行同様の欠測扱いを維持）へ置換。
+- `backend/backtest/scenario_runner.py` の日次ランク事前マージも同様に wide 抽出へ置換
+  （`to_frame_column()` でのリネームは維持。`has_all_premerged` 誤判定の再発防止は不変）。
+- `backend/api/screener_router.py` の `df_ranks_empty` プレースホルダ2箇所を
+  `pd.DataFrame(columns=["symbol_id","date"])` へ整理（API 挙動は無変更）。
+- P0-2 解消確認: `test_apply_filters_min_rs_value_rank_now_usable`
+  （`backend/tests/backtest/test_backtest_screener_refactoring.py`）を追加。
+  `min_rs_value_rank` が melt で恒久的に落とされていたランク列だが、wide 化後は
+  レジストリの `resolve_required_columns()` 経由で自動的に merge され機能することを確認。
+  なお本番 Parquet の `relative_ranks` を確認したところ、melt が落としていた6列
+  （`rs_value_rank` / `rs_roc_ema_rank_e5/e14/e21/e63/e200`）は **全行 100% 値が入っている**
+  （2026-08 の 31,884 行で非 NaN 31,884）。欠測ゆえに省かれていたのではなく、
+  `available_vars` の列挙漏れで**使えるデータを捨てていた**。
+- テストフィクスチャの long→wide 移行（期待値は無変更）: `test_backtest_screener_refactoring.py`
+  （20箇所）・`test_screener_filters.py`（11箇所）・`test_screener_parity.py`（3箇所）・
+  `test_backtest_runner_entry.py`（3箇所）・`test_screener_frame_loaders.py`（2箇所）・
+  `test_scenario_runner.py`（2箇所）・`test_optimization_cagr.py`／`test_optimization_pruning.py`／
+  `test_rrg_filters.py`（各1箇所）。
+
+**3d 実測**:
+
+| 指標 | 値 |
+| :--- | ---: |
+| pytest | **977 passed / 1 failed**（環境要因1件のみ。着手前と同じ） |
+| 本番データ差分（ワーカー実測） | **ゼロ** |
+| 本番データ差分（**オーケストレーターによる再実測・検収**） | **ゼロ**。`tmp/phase0_baseline_20260818_005706.json`（melt あり＝`git stash` 中）vs `tmp/phase0_baseline_20260818_005636.json`（melt 廃止後）。①②③すべて完全一致 |
+| `df_ranks` メモリ（`tmp/measure_melt_removal_after.py` で `preload_data()` を実呼び出し） | Bear 2022: 1,376MB → **210.0MB**／Bull 2024-25: 2,315MB → **353.5MB**（ともに **6.6倍削減**） |
+| `preload_data` 合計メモリ（同日43営業日窓、`phase0_snapshot.py` ログ） | melt あり 347.32MB → wide **127.15MB** |
+
+> melt 前の数値は §7 P0-1 計測時点の `tmp/measure_melt_cost.py` 実測を援用（同一 Parquet
+> マスターに対する同一ロジックのため差分なし）。melt 自体の所要は Bear 1.07秒 / Bull 1.81秒、
+> `groupby` キャッシュ構築は long 2.84秒・4.70秒 → wide 0.18秒・0.36秒。
+> **時間短縮は 1 trial あたり数秒に留まり、本命はメモリ 6.6 倍の削減**（メモリ枯渇対策で
+> `n_jobs=1` に固定されている経緯があるため、並列実行の再検討余地が生まれる）。
+
+> **差分実測の注意**: 本番 DB は日次パイプラインで進むため、`resolve_target_dates()` が選ぶ
+> 対象日が実行のたびに漂流する。過去のスナップショットとの単純比較はデータ差分に埋もれる。
+> **`git stash` で変更を外して同じ日に取り直す統制付き比較**を行うこと。
+
+**3c 完了時点の実測（参考。3d では性能の再実測は行っていない — melt は最適化バックテスト経路の
+Parquet プリロードのみに影響し、`/screener`・`/screener/dashboard` の応答時間には無関係）**:
 
 | 指標 | 値 |
 | :--- | ---: |
@@ -833,16 +884,6 @@ melt の `available_vars` が落としていた6列（`rs_value_rank` / `rs_roc_
 | `/screener`（ウォーム） | 0.235秒（基準 0.51秒） |
 | dashboard 最新日 | 0.579秒（基準 0.83秒） |
 | dashboard 過去日 | 0.612秒（基準 1.59秒。**従来 0.95-1.06秒から改善**） |
-
-> **差分実測の注意**: 本番 DB は日次パイプラインで進むため、`resolve_target_dates()` が選ぶ
-> 対象日が実行のたびに漂流する。過去のスナップショットとの単純比較はデータ差分に埋もれる。
-> **`git stash` で変更を外して同じ日に取り直す統制付き比較**を行うこと。
-
-**3d 着手時の注意**:
-- `preload_data` の melt を外すと `df_ranks` が wide になる。`backtest_screener` /
-  `scenario_runner` の `indicator_name` による抽出も同時に不要になるが、
-  **テストフィクスチャが long 形式で書かれている**ものが多数あるため影響範囲が広い
-- **3c とは独立**。両方を同時に動かさないこと
 
 
 ---

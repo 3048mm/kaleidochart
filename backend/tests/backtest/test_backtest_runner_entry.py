@@ -62,15 +62,9 @@ def _build_frames(signal_days=range(5), n_symbols=1, dollar_volume=None):
             ind_rows.append(ind_row)
             rank_rows.append({
                 "symbol_id": sid, "date": d,
-                "indicator_name": "rs_ratio_rank_e21", "percent_rank": 0.9,
-            })
-            rank_rows.append({
-                "symbol_id": sid, "date": d,
-                "indicator_name": "rs_ratio_rank_e14", "percent_rank": 0.5,
-            })
-            rank_rows.append({
-                "symbol_id": sid, "date": d,
-                "indicator_name": "rs_ratio_rank_e63", "percent_rank": 0.5,
+                "rs_ratio_rank_e21": 0.9,
+                "rs_ratio_rank_e14": 0.5,
+                "rs_ratio_rank_e63": 0.5,
             })
 
     df_prices = pd.DataFrame(price_rows)
