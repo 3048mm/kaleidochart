@@ -803,42 +803,46 @@ melt の `available_vars` が落としていた6列（`rs_value_rank` / `rs_roc_
       ほかで回帰なしを確認）。**API の切替（3c）は未実施**（`_apply_filter` /
       `_parse_expression_to_filter` は現状のまま）。
 - [ ] ランクの long/wide 変換を廃止し、両経路とも wide で統一
-- [ ] `apply_filters(frame, strategy)` を単一エンジンとして確立（`apply_filters_to_df` を改称・整理）
-- [ ] `screener_router.py` を DataFrame 経路へ切替（SQL は取得のみに縮退）
-- [ ] `_apply_filter` / `_parse_expression_to_filter` の削除
-- [ ] 性能実測（U-4 の受入基準に対する合否判定）
-- [ ] 抽出結果の差分実測（Phase 1 完了時点のスナップショットと突合し、差分ゼロを確認）
+- [x] `apply_filters(frame, strategy)` を単一エンジンとして確立（`apply_filters_to_df` を改称・整理） （3c。`apply_filters_to_df` の名前は維持し、API がこれを呼ぶ形にした）
+- [x] `screener_router.py` を DataFrame 経路へ切替（SQL は取得のみに縮退） （3c）
+- [x] `_apply_filter` / `_parse_expression_to_filter` の削除 （3c。`_EXPR_OPS` / `_resolve_column` / `_RANK_COLUMN_ALIASES` も併せて削除）
+- [x] 性能実測（U-4 の受入基準に対する合否判定） （3c。/screener 0.235s・dashboard 最新日 0.579s／過去日 0.612s。全て基準内。**過去日は 0.95-1.06s から改善**）
+- [x] 抽出結果の差分実測（Phase 1 完了時点のスナップショットと突合し、差分ゼロを確認） （3c。**同日前後比較で差分ゼロ**。DB が日々進みベースライン日付が漂流するため、stash して同じ日付で取り直す統制付き比較を実施）
 - [ ] 全テスト実行 + sandbox での API スモーク
 - [ ] 仕様書更新（`architecture.md` §2/§3、`backend_specification.md` §5・**§6.7 の陳腐化解消**）、
       `issue_list.md` P3「スクリーナーの完全 DataFrame 化」をクローズ
 
 ### 作業中メモ
 
-**現在地（2026-08-16）**: **Phase 0・1・2 が完了し main へマージ済み**（最終 SHA `c60293b`）。
-残るは **Phase 3（完全 DataFrame 化）のみ**。
+**現在地（2026-08-17）**: **Phase 3c まで完了**。残るは **3d（melt 廃止）と 3e（sandbox スモーク・仕様書更新）**。
 
-Phase 1・2 の成果（ベースライン §1.5 との対比）:
+| ステップ | 状態 | コミット |
+| :--- | :--- | :--- |
+| 3a `ScreenerFrame` 契約 | 完了 | `ece1e96` |
+| 3b `load_cross_section()` | 完了 | `c7bdeb1` |
+| 3c API 切り替え・SQL 撤去 | **完了・差分ゼロ** | `d5af561` |
+| 3d melt 廃止（P0-1 / P0-2） | 未着手 | — |
+| 3e sandbox スモーク・仕様書 | 未着手 | — |
 
-| 指標 | 着手前 | 現在 |
-| :--- | ---: | ---: |
-| キー解釈ロジックの実装箇所 | 4 | **1** |
-| 必要カラム宣言の実装箇所 | 4 | **1** |
-| 流動性床の注入箇所 | 5（4モジュール） | **1** |
-| テーマ除外ルールの定義箇所 | 3（2モジュール） | **1** |
-| close_gt 正規化の実装箇所 | 3 | **1** |
-| pytest | 795 | **953**（+158） |
+**3c 完了時点の実測**:
 
-**本計画が発見・修正した本番バグ（5件）**: `is_trend_template` の無効化（P1-7）／
-流動性床が dashboard に未適用（P1-8）／`max_avg_hits_per_day` の欠落（P0-7）／
-`close_gt` 正規化が正準形を破壊（P2-1）／随伴パラメータの取りこぼし（P1-1、本計画が持ち込んだ回帰）。
+| 指標 | 値 |
+| :--- | ---: |
+| pytest | 976 passed（環境要因1件を除く） |
+| 本番データ差分 | **ゼロ**（同日前後比較） |
+| `/screener`（ウォーム） | 0.235秒（基準 0.51秒） |
+| dashboard 最新日 | 0.579秒（基準 0.83秒） |
+| dashboard 過去日 | 0.612秒（基準 1.59秒。**従来 0.95-1.06秒から改善**） |
 
-Phase 3 に着手する際の注意:
-- 差分実測の手順は下記のとおり（`tmp/phase0_snapshot.py` + `tmp/phase0_compare.py`）。
-  **突合スクリプトは変異データで検出能力を確認済み**
-- **Phase 3 の比較基準は Phase 1・2 完了時点のスナップショット**（`tmp/phase0_baseline_20260814_010127.json`）。
-  Phase 0 のもの（`20260813_121011`）と比べると P1-7 / P1-8 の差分が混ざる
-- §7 の P0-1〜P2-2 に落とし穴をまとめてある。とくに **P0-5（`Query` 既定値の罠）**、
-  **P1-6（ハード要求とソフト要求を混ぜない）**、**P2-2（フィクスチャを現実の呼び出し方に合わせる）**
+> **差分実測の注意**: 本番 DB は日次パイプラインで進むため、`resolve_target_dates()` が選ぶ
+> 対象日が実行のたびに漂流する。過去のスナップショットとの単純比較はデータ差分に埋もれる。
+> **`git stash` で変更を外して同じ日に取り直す統制付き比較**を行うこと。
+
+**3d 着手時の注意**:
+- `preload_data` の melt を外すと `df_ranks` が wide になる。`backtest_screener` /
+  `scenario_runner` の `indicator_name` による抽出も同時に不要になるが、
+  **テストフィクスチャが long 形式で書かれている**ものが多数あるため影響範囲が広い
+- **3c とは独立**。両方を同時に動かさないこと
 
 
 ---
