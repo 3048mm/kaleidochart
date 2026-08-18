@@ -379,8 +379,21 @@ export const ScenarioDetailView: React.FC<ScenarioDetailViewProps> = ({ strategy
               summary.profit_factor.toFixed(2),
               '総利益 / 総損失の比率（期待値）',
               summary.profit_factor >= 1.0 ? 'good' : 'bad',
-              summary.is_monte_carlo && summary.profit_factor_avg !== undefined 
-                ? `(平均: ${summary.profit_factor_avg.toFixed(2)})` 
+              summary.is_monte_carlo && summary.profit_factor_avg !== undefined
+                ? `(平均: ${summary.profit_factor_avg.toFixed(2)})`
+                : undefined
+            )}
+            {renderKPICard(
+              summary.is_monte_carlo ? '1取引平均 (10回平均)' : '1取引平均リターン',
+              summary.avg_trade_pnl_pct !== undefined && summary.avg_trade_pnl_pct !== null
+                ? fmtPct(summary.avg_trade_pnl_pct, 2)
+                : '—',
+              '取引1回あたりの平均損益率（建玉に対するリターン）',
+              summary.avg_trade_pnl_pct !== undefined && summary.avg_trade_pnl_pct !== null
+                ? (summary.avg_trade_pnl_pct >= 0 ? 'good' : 'bad')
+                : 'neutral',
+              summary.is_monte_carlo && summary.avg_trade_pnl_pct_avg !== undefined && summary.avg_trade_pnl_pct_avg !== null
+                ? `(平均: ${fmtPct(summary.avg_trade_pnl_pct_avg, 2)})`
                 : undefined
             )}
             {renderKPICard(
@@ -747,6 +760,7 @@ export const ScenarioDetailView: React.FC<ScenarioDetailViewProps> = ({ strategy
                         <th style={{ padding: '10px 8px' }}>Trades</th>
                         <th style={{ padding: '10px 8px' }}>Win Rate</th>
                         <th style={{ padding: '10px 8px' }}>PF</th>
+                        <th style={{ padding: '10px 8px' }}>Avg P&L%</th>
                         <th style={{ padding: '10px 8px' }}>SPY Return</th>
                         <th style={{ padding: '10px 8px', textAlign: 'right' }}>Vs SPY</th>
                       </tr>
@@ -799,6 +813,9 @@ export const ScenarioDetailView: React.FC<ScenarioDetailViewProps> = ({ strategy
                             <td style={{ padding: '12px 8px' }}>{item.total_trades}</td>
                             <td style={{ padding: '12px 8px' }}>{fmtPct(item.win_rate * 100, 1)}</td>
                             <td style={{ padding: '12px 8px', color: pfColor, fontWeight: '500' }}>{item.profit_factor.toFixed(2)}</td>
+                            <td style={{ padding: '12px 8px', color: item.avg_pnl_pct >= 0 ? 'var(--accent-green)' : 'var(--accent-red)', fontWeight: '500' }}>
+                              {fmtPct(item.avg_pnl_pct, 2)}
+                            </td>
                             <td style={{ padding: '12px 8px', color: spyColor }}>{fmtPct(item.spy_return_pct)}</td>
                             <td style={{ padding: '12px 8px', textAlign: 'right' }}>
                               <span style={{
