@@ -207,17 +207,24 @@ def get_dashboard(
 @router.get("/theme/{symbol_id}", response_model=schemas.ThemeDetailResponse)
 def get_theme_detail(
     symbol_id: int,
+    date: Optional[str] = Query(None),
     db: Session = Depends(get_api_db)
 ):
     """
     Get detailed theme data including constituent stocks and chart data for the Theme Detail View.
+
+    date（YYYY-MM-DD）を指定すると、その日以前の最新営業日時点のスナップショットを返す。
+    テーマ本体と構成銘柄で基準日がずれないよう、以降のプリロードにも同じ target_date を渡す。
     """
     sym = db.query(Symbol).filter(Symbol.id == symbol_id).first()
     if not sym:
         raise HTTPException(status_code=404, detail="Theme not found")
 
-    # Get latest price for theme
-    dp = db.query(DailyPrice).filter(DailyPrice.symbol_id == symbol_id).order_by(desc(DailyPrice.date)).first()
+    # Get latest price for theme（date 指定時はその日以前の最新行）
+    price_q = db.query(DailyPrice).filter(DailyPrice.symbol_id == symbol_id)
+    if date:
+        price_q = price_q.filter(DailyPrice.date <= date)
+    dp = price_q.order_by(desc(DailyPrice.date)).first()
     if not dp:
         raise HTTPException(status_code=404, detail="No price data for theme")
 
@@ -328,13 +335,13 @@ def get_theme_detail(
             Symbol.tags.like(f'%{sym.ticker}%')
         ).order_by(Symbol.ticker).all()
 
-    # 構成銘柄の sparkline を一括取得。上限日付なし = 「各銘柄の全期間から最新30件」であり、
-    # ランク行は価格行より新しい日付を持たないため per-symbol の date <= c_dp.date と等価
-    c_spark_preload = preload_sparklines(db, [s.id for s in constituent_symbols], None)
+    # 構成銘柄の sparkline を一括取得。上限を target_date に揃えることで
+    # per-symbol の date <= c_dp.date と等価になり、過去日指定でも未来の行が混ざらない
+    c_spark_preload = preload_sparklines(db, [s.id for s in constituent_symbols], str(target_date))
 
     # Preload details (prices and indicators) for all constituents in bulk
     c_ids = [s.id for s in constituent_symbols]
-    c_details_preload = preload_constituent_details(db, c_ids)
+    c_details_preload = preload_constituent_details(db, c_ids, target_date=target_date)
 
     constituents = []
     for c_sym in constituent_symbols:
@@ -357,10 +364,12 @@ def get_theme_detail(
         c_rs_spark = _get_sparkline_data(db, c_id, str(c_dp.date), 21, preloaded=c_spark_preload)
 
         # short history for RRG
+        # price_history_126 は日付昇順。RrgChart は末尾を最新として扱う
+        # （slice(-trailLength) / isLast 判定）ため、ここで反転してはならない
         c_full_hist = c_details_preload["price_history_126"].get(c_id, [])
         c_ind_dict = c_details_preload["indicator_history_126"].get(c_id, {})
         c_chart_data = []
-        for h in reversed(c_full_hist):
+        for h in c_full_hist:
             ds = str(h.date)
             i = c_ind_dict.get(ds)
             c_chart_data.append(schemas.ChartDataPoint(

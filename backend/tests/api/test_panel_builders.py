@@ -180,3 +180,84 @@ def test_build_leading_item_with_preload_equals_without(db):
         without = _build_leading_item(db, sym, dp, target)
         with_pre = _build_leading_item(db, sym, dp, target, preload=preload)
         assert with_pre == without, f"symbol_id={sid} の leading item が preload 有無で不一致"
+
+
+def test_preload_constituent_details_populates_latest_rank(db):
+    """テーマ構成銘柄のプリロードが latest_rank を埋めること。
+
+    回帰テスト: ranks_by_pair を組み立てながら preload["latest_rank"] へ
+    代入していなかったため、/api/theme/{id} の構成銘柄ランクが全て 0% に
+    なっていた（テーマ詳細画面の RSR21% / RSM21% がゼロ）。
+    """
+    from api.panel_builders import preload_constituent_details
+
+    pre = preload_constituent_details(db, ALL_IDS)
+
+    # sym 1: 各銘柄の最新価格日（DATES 末尾 = TARGET_DATE）のランクが入る
+    r1 = pre["latest_rank"].get(1)
+    assert r1 is not None, "sym 1 の latest_rank が未設定"
+    assert r1.date == TARGET_DATE
+    assert r1.rs_ratio_rank_e21 == pytest.approx(39 / 100.0)
+
+    # sym 5: target_date より新しい行を持つ銘柄は、その最新日のランクを引く
+    r5 = pre["latest_rank"].get(5)
+    assert r5 is not None, "sym 5 の latest_rank が未設定"
+    assert r5.date == TARGET_DATE + timedelta(days=3)
+    assert r5.rs_ratio_rank_e21 == pytest.approx(0.9)
+
+    # sym 4: 価格データなし → キー自体が存在しない（latest_price と同じ扱い）
+    assert 4 not in pre["latest_rank"]
+    assert 4 not in pre["latest_price"]
+
+    # latest_rank の日付は latest_price の日付と一致する
+    for sid, dp in pre["latest_price"].items():
+        r = pre["latest_rank"].get(sid)
+        if r is not None:
+            assert r.date == dp.date, f"symbol_id={sid} のランク日付が価格日付と不一致"
+
+
+def test_preload_constituent_details_respects_target_date(db):
+    """target_date を指定したら、その日以前の最新の価格・ランクを返すこと。
+
+    テーマ詳細（/api/theme/{id}?date=）で過去日を指定しても構成銘柄だけ
+    最新日の値が出てしまう不具合の回帰テスト。
+    """
+    from api.panel_builders import preload_constituent_details
+
+    past = TARGET_DATE - timedelta(days=5)  # DATES の j=34
+    pre = preload_constituent_details(db, ALL_IDS, target_date=past)
+
+    # sym 1: 指定日ちょうどの行
+    assert pre["latest_price"][1].date == past
+    assert pre["latest_price"][1].close == pytest.approx(100.0 + 34)
+    r1 = pre["latest_rank"][1]
+    assert r1 is not None and r1.date == past
+    assert r1.rs_ratio_rank_e21 == pytest.approx(34 / 100.0)
+
+    # 指定日以前に遡って履歴が並ぶ（未来の行が混ざらない）
+    assert pre["recent_closes_21"][1][0] == pytest.approx(100.0 + 34)
+    assert all(p.date <= past for p in pre["price_history_126"][1])
+
+    # sym 5: 指定日より前にデータが無い銘柄はキーごと落ちる
+    assert 5 not in pre["latest_price"]
+    assert 5 not in pre["latest_rank"]
+
+    # target_date=TARGET_DATE なら sym 5 は TARGET_DATE の行（future の行ではない）
+    pre_t = preload_constituent_details(db, ALL_IDS, target_date=TARGET_DATE)
+    assert pre_t["latest_price"][5].date == TARGET_DATE
+    assert pre_t["latest_price"][5].close == pytest.approx(500.0)
+    assert pre_t["latest_rank"][5].rs_ratio_rank_e21 == pytest.approx(0.5)
+
+
+def test_preload_constituent_details_target_date_accepts_str(db):
+    """target_date は文字列（API のクエリパラメータ）でも date と同じ結果になること。"""
+    from api.panel_builders import preload_constituent_details
+
+    past = TARGET_DATE - timedelta(days=5)
+    pre_date = preload_constituent_details(db, ALL_IDS, target_date=past)
+    pre_str = preload_constituent_details(db, ALL_IDS, target_date=str(past))
+
+    assert pre_str["latest_price"].keys() == pre_date["latest_price"].keys()
+    for sid in pre_date["latest_price"]:
+        assert pre_str["latest_price"][sid].date == pre_date["latest_price"][sid].date
+        assert pre_str["recent_closes_21"][sid] == pre_date["recent_closes_21"][sid]

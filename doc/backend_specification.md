@@ -489,7 +489,12 @@ S&P500（SPY）の動向や市場全体の統計から算出される、市場�
 *   **`GET /api/screener/dashboard`**: `data/screener_presets.toml` の全プリセットを一括評価し、Rise / Fall のカテゴリ別にまとめて返却。
 *   **`GET /api/screener/presets` / `GET /api/screener/meta`**: プリセット定義とフィルタ項目のメタ情報を返却（UI のフォーム構築用）。
 *   **`GET /api/group_data/{ticker}`**: セクタまたはテーマの「グループ詳細画面」用データ。
+    - **クエリパラメータ**: `date: str | None`（`YYYY-MM-DD`）。指定日以前の最新営業日にフォールバックする。
     - **レスポンス構造**: `GroupDataResponse` 型。ETF 自体の詳細情報（`feature`）と、構成要素（テーマまたは銘柄）のリック（`constituents`）を含みます。
+*   **`GET /api/theme/{symbol_id}`**: テーマ詳細（構成銘柄一覧つき）。グループ詳細画面はテーマの場合、`group_data` を取得したあとこの API のレスポンスで上書きするため、**画面に見えている構成銘柄の値はこちらが出処**。
+    - **クエリパラメータ**: `date: str | None`（`YYYY-MM-DD`）。指定するとその日以前の最新営業日時点のスナップショットを返す（休場日は直前の営業日にフォールバック）。省略時は最新営業日。
+    - **基準日の一貫性**: テーマ本体と構成銘柄の価格・指標・ランク・チャートはすべて同一の `target_date` を基準に取得する。構成銘柄側は `preload_constituent_details(db, ids, target_date=...)` と `preload_sparklines(db, ids, str(target_date))` に基準日を渡すことで担保している（渡し忘れると構成銘柄だけ最新日の値が混ざる）。
+    - **`chart_data` の並び順は日付昇順（末尾が最新）** — 本体・構成銘柄とも。これは `/api/chart/{symbol_id}` や `group_data` の `feature` を含む全 API 共通の規約であり、フロントの `RrgChart` が `slice(-trailLength)` と `isLast = i === points.length - 1` で**末尾を最新として扱う**ため、降順にすると軌跡が最古 N 日になりティッカーラベル付きの現在位置が過去の点に打たれる。`preload_constituent_details` の `price_history_126` は既に昇順なので、消費側で `reversed()` してはならない（2026-07-17〜2026-08-19 の間、この二重反転で構成銘柄の RRG が半年前の位置を表示していた）。
 
 ### 5.0 スクリーンフィルタ仕様レジストリ (`indicators/screener_registry.py`)
 

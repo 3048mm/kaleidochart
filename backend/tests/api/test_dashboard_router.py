@@ -197,3 +197,67 @@ def test_theme_detail_query_count_does_not_scale_with_constituents(tmp_path):
         f"構成銘柄3件で {q_small} クエリ、30件で {q_large} クエリ — "
         "テーマ詳細画面で構成銘柄ごとの N+1 クエリが発生している"
     )
+
+
+def test_theme_detail_respects_date_param(tmp_path):
+    """GET /api/theme/{id}?date= が指定日時点のテーマ本体・構成銘柄を返すこと。
+
+    date を受け取らず常に最新日を返していたため、テーマ詳細画面で過去日を
+    指定しても構成銘柄だけ最新日の値が表示されていた（回帰テスト）。
+    シードの close は 100.0 + symbol_id * 0.1 + (DATES のインデックス)。
+    """
+    client, _ = _make_client(tmp_path, "theme_date", 3)
+
+    past = TARGET_DATE - timedelta(days=5)   # DATES[29]
+    r = client.get(f"/api/theme/12?date={past}")
+    assert r.status_code == 200
+    data = r.json()
+
+    assert data["close"] == pytest.approx(100.0 + 12 * 0.1 + 29)
+    assert data["constituents"], "構成銘柄が空"
+    for c in data["constituents"]:
+        assert c["close"] == pytest.approx(100.0 + c["id"] * 0.1 + 29), \
+            f"構成銘柄 {c['ticker']} が指定日の終値になっていない"
+
+    # チャートデータも指定日で打ち切られる（本体・構成銘柄とも日付昇順）
+    assert data["chart_data"][-1]["time"] == str(past)
+    for c in data["constituents"]:
+        assert c["chart_data"][-1]["time"] == str(past)
+        assert all(p["time"] <= str(past) for p in c["chart_data"])
+
+
+def test_theme_detail_chart_data_is_ascending(tmp_path):
+    """テーマ本体・構成銘柄の chart_data がともに日付昇順であること。
+
+    RrgChart は末尾を最新として扱う（`slice(-trailLength)` と
+    `isLast = i === points.length - 1`）ため、降順だと軌跡が「最古 N 日」になり、
+    ティッカーラベル付きの現在位置が半年前の点に打たれる。
+    回帰: 0fe00d7（2026-07-17）で昇順を返す price_history_126 に差し替えた際に
+    `for h in reversed(c_full_hist)` が残置され、構成銘柄だけ降順になっていた。
+    """
+    client, _ = _make_client(tmp_path, "theme_order", 3)
+
+    data = client.get("/api/theme/12").json()
+
+    times = [p["time"] for p in data["chart_data"]]
+    assert times == sorted(times), "テーマ本体の chart_data が昇順でない"
+    assert times[-1] == str(TARGET_DATE)
+
+    assert data["constituents"], "構成銘柄が空"
+    for c in data["constituents"]:
+        c_times = [p["time"] for p in c["chart_data"]]
+        assert c_times == sorted(c_times), f"{c['ticker']} の chart_data が昇順でない"
+        assert c_times[-1] == str(TARGET_DATE),             f"{c['ticker']} の chart_data 末尾が最新日でない"
+
+
+def test_theme_detail_without_date_uses_latest(tmp_path):
+    """date 未指定は従来どおり最新日（DATES[34]）を返すこと。"""
+    client, _ = _make_client(tmp_path, "theme_nodate", 3)
+
+    r = client.get("/api/theme/12")
+    assert r.status_code == 200
+    data = r.json()
+
+    assert data["close"] == pytest.approx(100.0 + 12 * 0.1 + 34)
+    for c in data["constituents"]:
+        assert c["close"] == pytest.approx(100.0 + c["id"] * 0.1 + 34)

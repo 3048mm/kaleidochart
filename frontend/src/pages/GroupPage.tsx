@@ -41,7 +41,12 @@ export const GroupPage: React.FC = () => {
             })
             .then((groupJson: GroupDataResponse) => {
                 if (groupJson.group_type === 'theme') {
-                    return fetch(`/api/theme/${groupJson.feature.id}`)
+                    // テーマは詳細 API で上書きするため、基準日を必ず引き継ぐ
+                    // （渡さないと構成銘柄だけ最新日の値になる）
+                    const themeUrl = dateParam
+                        ? `/api/theme/${groupJson.feature.id}?date=${encodeURIComponent(dateParam)}`
+                        : `/api/theme/${groupJson.feature.id}`;
+                    return fetch(themeUrl)
                         .then(res => res.json())
                         .then((themeJson: ThemeDetailResponse) => {
                             setData(themeJson);

@@ -168,10 +168,14 @@ def build_panel_preload(db: Session, symbol_ids, target_date: str) -> PanelPrelo
     )
 
 
-def preload_constituent_details(db: Session, symbol_ids: List[int]) -> dict:
+def preload_constituent_details(db: Session, symbol_ids: List[int],
+                                target_date=None) -> dict:
     """
     Preloads prices, indicators and relative ranks for constituent symbols in a few SQL queries.
     Avoids delayed ORM attribute loading and parameter-binding limits.
+
+    target_date（date または 'YYYY-MM-DD' 文字列）を指定すると、その日以前の
+    最新行だけを対象にする（テーマ詳細の過去日表示用）。None なら全期間の最新行。
     """
     import pandas as pd
     from sqlalchemy import tuple_
@@ -187,17 +191,20 @@ def preload_constituent_details(db: Session, symbol_ids: List[int]) -> dict:
     if not symbol_ids:
         return preload
 
-    # Fetch max date first to establish cutoff
-    max_date = db.query(func.max(DailyPrice.date)).scalar()
-    if not max_date:
+    # 上限日付を確定してから遡り窓を決める（target_date 未指定なら全体の最新日）
+    upper_date = _to_date(target_date) if target_date is not None else None
+    if upper_date is None:
+        upper_date = db.query(func.max(DailyPrice.date)).scalar()
+    if not upper_date:
         return preload
-        
-    cutoff_date = max_date - timedelta(days=250)
-    
+
+    cutoff_date = upper_date - timedelta(days=250)
+
     # 1. Fetch DailyPrice history for all symbols
     price_rows = db.query(DailyPrice).filter(
         DailyPrice.symbol_id.in_(symbol_ids),
-        DailyPrice.date >= cutoff_date
+        DailyPrice.date >= cutoff_date,
+        DailyPrice.date <= upper_date
     ).order_by(DailyPrice.symbol_id, DailyPrice.date.desc()).all()
     
     prices_by_symbol = {}
@@ -209,7 +216,8 @@ def preload_constituent_details(db: Session, symbol_ids: List[int]) -> dict:
     # 2. Fetch Indicator history for all symbols
     indicator_rows = db.query(Indicator).filter(
         Indicator.symbol_id.in_(symbol_ids),
-        Indicator.date >= cutoff_date
+        Indicator.date >= cutoff_date,
+        Indicator.date <= upper_date
     ).order_by(Indicator.symbol_id, Indicator.date.desc()).all()
     
     indicators_by_symbol = {}
@@ -243,6 +251,7 @@ def preload_constituent_details(db: Session, symbol_ids: List[int]) -> dict:
             
         s_prices_126 = s_prices[:126]
         preload["latest_price"][sid] = s_prices_126[0]
+        preload["latest_rank"][sid] = ranks_by_pair.get((sid, s_prices_126[0].date))
         preload["recent_closes_21"][sid] = [p.close for p in s_prices_126[:21]]
         preload["price_history_126"][sid] = list(reversed(s_prices_126))
         
