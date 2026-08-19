@@ -21,7 +21,7 @@ if backtest_dir not in sys.path:
 
 from backtest.backtest_runner import preload_data, run_single_strategy
 from backtest.backtest_simulator import ExitRules
-from backtest.common_constraints import load_min_avg_dollar_volume_21, inject_liquidity_floor
+from backtest.common_constraints import load_min_avg_dollar_volume_21, inject_liquidity_floor, load_tax_rate
 from db.database import init_db
 from db import database
 
@@ -369,7 +369,7 @@ def run_holdout_validation(study, strat_base: dict, actual_name: str, config, co
         return
 
     entry_mode = config.get('general', {}).get('entry_mode', 'close')
-    consider_tax = float(config.get('general', {}).get('consider_tax', 0.0))
+    consider_tax = load_tax_rate(config)
     liquidity_floor = load_min_avg_dollar_volume_21(config)
 
     print("=" * 70)
@@ -483,7 +483,7 @@ def objective(trial: optuna.Trial, strategy_name: str, config, config_app, exit_
         
         # Extract tax and drawdown threshold options
         max_allowed_dd = strat_base.get('max_allowed_dd', 20.0)
-        consider_tax = float(config.get('general', {}).get('consider_tax', 0.0))
+        consider_tax = load_tax_rate(config)
         entry_mode = config.get('general', {}).get('entry_mode', 'close')
 
         # 検出件数の実用帯 detect_band=(lo, hi, floor)。
@@ -708,9 +708,14 @@ def main():
 
     study_name = actual_name
     
+    tax_rate = load_tax_rate(config)
     print("=" * 60)
     print(f"  Optuna Optimization Runner: Strategy {actual_name} (from: {args.strategy})")
     print(f"  Periods: {periods}")
+    if tax_rate > 0.0:
+        print(f"  [Tax] 適用税率: {tax_rate * 100:.1f}% (consider_tax={tax_rate})")
+    else:
+        print("  [Tax] 税なし (consider_tax=0.0)")
     print("=" * 60)
     
     study = optuna.create_study(

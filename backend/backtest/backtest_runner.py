@@ -30,7 +30,7 @@ from backend.backtest.backtest_screener import scan_signals_for_date, SignalReco
 from backend.backtest.backtest_simulator import simulate_trade, ExitRules, TradeResult
 from backend.backtest.backtest_report import calculate_metrics, print_comparison_table, save_results_json
 from backend.backtest.strategy_normalizer import normalize_strategy_keys
-from backend.backtest.common_constraints import load_min_avg_dollar_volume_21, inject_liquidity_floor
+from backend.backtest.common_constraints import load_min_avg_dollar_volume_21, inject_liquidity_floor, load_tax_rate
 
 
 def load_config(config_path: str) -> dict:
@@ -484,7 +484,11 @@ def run_backtest(config: dict, strategy_filter: str = None, refresh_cache: bool 
     all_results = {}
     all_trades = {}
 
-    consider_tax = config.get('general', {}).get('consider_tax', 0.0)
+    consider_tax = load_tax_rate(config)
+    if consider_tax > 0.0:
+        print(f"  [Tax] 適用税率: {consider_tax * 100:.1f}% (consider_tax={consider_tax})")
+    else:
+        print("  [Tax] 税なし (consider_tax=0.0)")
     entry_mode = config.get('general', {}).get('entry_mode', 'close')
     # 流動性ハード制約（最適化対象外・全戦略共通。戦略側の明示指定があればそちらを優先）
     liquidity_floor = load_min_avg_dollar_volume_21(config)

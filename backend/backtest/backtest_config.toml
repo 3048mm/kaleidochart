@@ -5,7 +5,7 @@
 start_date = "2021-03-26"
 end_date   = "2026-03-26"
 failsafe_max_days = 120
-consider_tax = 20.0
+consider_tax = 0.2  # 単位は率（0.2=20%）。%表記(20.0)を書くと InvalidTaxRateError になる
 # エントリー方式: "close"=シグナル当日終値（オーバーナイト発注運用と整合） / "next_open"=翌営業日寄付（保守側の感度計測用）
 entry_mode = "close"
 # 流動性ハード制約（最適化対象外・全戦略共通）: 21日平均売買代金がこの値未満の銘柄はシグナル対象外

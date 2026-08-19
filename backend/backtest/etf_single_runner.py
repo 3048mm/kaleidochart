@@ -1339,17 +1339,29 @@ if __name__ == "__main__":
     parser.add_argument("--start-date", type=str, required=True, help="Start date (YYYY-MM-DD)")
     parser.add_argument("--end-date", type=str, required=True, help="End date (YYYY-MM-DD)")
     parser.add_argument("--capital", type=float, default=100000.0, help="Initial capital")
-    parser.add_argument("--tax", type=float, default=0.0, help="Tax rate (e.g. 0.20 for 20%%)")
+    parser.add_argument("--tax", type=float, default=None,
+                         help="Tax rate (e.g. 0.20 for 20%%). 省略時は backtest_config.toml [general] consider_tax を使う")
     parser.add_argument("--output-dir", type=str, default="output/etf_single")
 
     args = parser.parse_args()
+
+    # 税率解決: 明示指定があればそれを、無ければ backtest_config.toml の値を使う
+    from backend.backtest.common_constraints import load_tax_rate
+    if args.tax is not None:
+        consider_tax = load_tax_rate({'general': {'consider_tax': args.tax}})
+    else:
+        consider_tax = load_tax_rate()
+    if consider_tax > 0.0:
+        print(f"  [Tax] 適用税率: {consider_tax * 100:.1f}% (consider_tax={consider_tax})")
+    else:
+        print("  [Tax] 税なし (consider_tax=0.0)")
 
     result = run_etf_single_backtest(
         ticker=args.ticker,
         start_date=args.start_date,
         end_date=args.end_date,
         initial_capital=args.capital,
-        consider_tax=args.tax,
+        consider_tax=consider_tax,
         output_dir=args.output_dir,
     )
 

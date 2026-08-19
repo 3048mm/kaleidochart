@@ -713,9 +713,22 @@ if __name__ == '__main__':
     parser.add_argument('--config-path', type=str, default='data/screener_presets.toml', help='Path to the screener config TOML file')
     parser.add_argument('--use-vxv-vix', action='store_true', help='Use VXV/VIX ratio instead of VIX directly for market sentiment score')
     parser.add_argument('--regime-model', type=str, default='full_position', choices=['full_position', 'spy_sma200', 'spy_sma63', 'vxv_vix_ema', 'mts_raw'], help='Market regime switching model')
-    
+    parser.add_argument('--tax', type=float, default=None,
+                         help='適用税率（率。0.2=20%%）。省略時は backtest_config.toml [general] consider_tax を使う')
+
     args = parser.parse_args()
-    
+
+    # 税率解決: 明示指定があればそれを、無ければ backtest_config.toml の値を使う
+    # （common_constraints.load_tax_rate() 経由で単位検証も統一する）
+    if args.tax is not None:
+        consider_tax = common_constraints.load_tax_rate({'general': {'consider_tax': args.tax}})
+    else:
+        consider_tax = common_constraints.load_tax_rate()
+    if consider_tax > 0.0:
+        print(f"  [Tax] 適用税率: {consider_tax * 100:.1f}% (consider_tax={consider_tax})")
+    else:
+        print("  [Tax] 税なし (consider_tax=0.0)")
+
     print(f"Running scenario test from {args.start_date} to {args.end_date}...")
     result = run_scenario_test(
         start_date=args.start_date,
@@ -729,7 +742,8 @@ if __name__ == '__main__':
         refresh_cache=args.refresh_cache,
         config_path=args.config_path,
         use_vxv_vix=args.use_vxv_vix,
-        regime_model=args.regime_model
+        regime_model=args.regime_model,
+        consider_tax=consider_tax
     )
     
     print("\nScenario Test Summary:")

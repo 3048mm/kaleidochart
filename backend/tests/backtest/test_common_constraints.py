@@ -5,10 +5,14 @@ scenario_runner.py）に独立実装されていた注入ロジックを
 backend/backtest/common_constraints.py へ集約する（doc/completed/screener_filter_unification_plan.md
 §5 Phase 1）。
 """
+import pytest
+
 from backend.backtest.common_constraints import (
+    InvalidTaxRateError,
     inject_liquidity_floor,
     inject_liquidity_floor_all,
     load_min_avg_dollar_volume_21,
+    load_tax_rate,
 )
 
 
@@ -83,3 +87,38 @@ class TestLoadMinAvgDollarVolume21:
         """
         val = load_min_avg_dollar_volume_21()
         assert val == 2e6  # backend/backtest/backtest_config.toml の現行値
+
+
+class TestLoadTaxRate:
+    """税率（consider_tax）の解決と検証。単位は率（0.2=20%）。
+
+    `> 1.0` の値は「20% のつもりで 20.0 と書く事故」を検出してエラーにする
+    （doc/in_progress/tax_rate_wiring_plan.md §3.1）。
+    """
+
+    def test_zero_is_allowed(self):
+        """0.0（税なし）は正当な設定として許可する。"""
+        config = {"general": {"consider_tax": 0.0}}
+        assert load_tax_rate(config) == 0.0
+
+    def test_valid_rate_passes(self):
+        config = {"general": {"consider_tax": 0.2}}
+        assert load_tax_rate(config) == 0.2
+
+    def test_percent_style_value_raises(self):
+        """20.0（%のつもり）は率の範囲を超えるためエラー。"""
+        config = {"general": {"consider_tax": 20.0}}
+        with pytest.raises(InvalidTaxRateError):
+            load_tax_rate(config)
+
+    def test_negative_rate_raises(self):
+        config = {"general": {"consider_tax": -0.1}}
+        with pytest.raises(InvalidTaxRateError):
+            load_tax_rate(config)
+
+    def test_missing_key_defaults_to_zero(self):
+        config = {"general": {}}
+        assert load_tax_rate(config) == 0.0
+
+    def test_invalid_tax_rate_error_is_value_error_subclass(self):
+        assert issubclass(InvalidTaxRateError, ValueError)
