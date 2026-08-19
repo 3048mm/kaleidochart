@@ -61,3 +61,31 @@ def inject_liquidity_floor_all(strategies: StrategiesType, floor: Optional[float
     if isinstance(strategies, dict):
         return {name: inject_liquidity_floor(filters, floor) for name, filters in strategies.items()}
     return [inject_liquidity_floor(strat, floor) for strat in strategies]
+
+
+class InvalidTaxRateError(ValueError):
+    """税率が率（0.0〜1.0）として不正。20% を 20.0 と書く事故を検出する。"""
+
+
+def load_tax_rate(config: Optional[Mapping[str, Any]] = None) -> float:
+    """backtest_config.toml の [general] consider_tax を率として解決する。
+
+    値は**率**（0.2 = 20%）。1.0 を超える値は単位の取り違え（20.0 = 2000%）
+    としてエラーにする。0.0（税なし）は正当な設定として許可する。
+    キー欠如時は 0.0（税なし）を既定値とする。
+
+    config を渡した場合はそれを使う（既にロード済みの呼び出し側用）。
+    渡さなければ backtest_config.toml を直接読み込む。
+    """
+    if config is None:
+        try:
+            with open(_BACKTEST_CONFIG_PATH, "rb") as f:
+                config = tomli.load(f)
+        except OSError:
+            return 0.0
+    rate = float(config.get("general", {}).get("consider_tax", 0.0))
+    if rate < 0.0 or rate > 1.0:
+        raise InvalidTaxRateError(
+            f"consider_tax は率で指定してください（20% なら 0.2）。現在値: {rate}"
+        )
+    return rate

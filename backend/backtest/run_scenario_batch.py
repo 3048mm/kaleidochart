@@ -32,6 +32,7 @@ if _backend_dir not in sys.path:
 
 from backend.backtest.scenario_runner import run_scenario_test
 from backend.backtest.backtest_runner import preload_data
+from backend.backtest.common_constraints import load_tax_rate
 
 # Global variable inside each subprocess memory space to hold the preloaded data cache
 _child_preloaded_data = None
@@ -142,7 +143,8 @@ def generate_preset_toml(strategy_name: str, best_params: dict, toml_path: str):
 def run_single_mc_scenario(strat: str, model: str, run_idx: int,
                            start_date: str, end_date: str,
                            preset_toml_path: str, project_root: str,
-                           portfolio: dict = None) -> dict:
+                           portfolio: dict = None,
+                           consider_tax: float = 0.0) -> dict:
     """
     単一のモンテカルロ実行を行う。サブプロセス内で呼ばれる。
 
@@ -151,6 +153,9 @@ def run_single_mc_scenario(strat: str, model: str, run_idx: int,
     Args:
         portfolio: ポートフォリオ構成パラメータ（`resolve_portfolio_params()` の戻り値）。
                    省略時は既定値。
+        consider_tax: 適用税率（率。0.2=20%）。並列 MC はサブプロセス（ProcessPoolExecutor）で
+                      走るため、親プロセスで解決した値を明示的に引数として渡す必要がある
+                      （子プロセスは親のメモリ空間を共有しない）。
     """
     portfolio = portfolio or dict(DEFAULT_PORTFOLIO)
     global _child_preloaded_data
@@ -189,7 +194,8 @@ def run_single_mc_scenario(strat: str, model: str, run_idx: int,
             monte_carlo_mode=True,
             monte_carlo_seed=run_idx,
             regime_model=model,
-            preloaded_data=_child_preloaded_data
+            preloaded_data=_child_preloaded_data,
+            consider_tax=consider_tax
         )
         summary = res['summary']
         return {
@@ -346,12 +352,20 @@ def main():
     n_models = len(models)
     total_blocks = n_jobs * n_models  # 進捗表示・ETA 算出用の「job x model」単位数
 
+    # 税率は backtest_config.toml [general] consider_tax から解決する
+    # （jobs_path=scenario_batch_jobs.toml とは別ファイルなので混同しないこと）。
+    tax_rate = load_tax_rate()
+
     print("=" * 60)
     print(f"Scenario Batch: {n_jobs} jobs x {n_models} models x {num_runs} MC runs")
     if job_names:
         print(f"  (--jobs 指定により {len(all_jobs)} 件中 {n_jobs} 件に絞り込み: {[j['name'] for j in jobs]})")
     print(f"Period: {start_date} to {end_date}")
     print(f"Jobs file: {jobs_path}")
+    if tax_rate > 0.0:
+        print(f"  [Tax] 適用税率: {tax_rate * 100:.1f}% (consider_tax={tax_rate})")
+    else:
+        print("  [Tax] 税なし (consider_tax=0.0)")
     print("=" * 60)
 
     # 失敗した run の出力先に「前回の結果」が残っているかを後で判定するための基準時刻
@@ -427,7 +441,8 @@ def main():
                         strat_name, model, run_idx,
                         start_date, end_date,
                         preset_toml_path, project_root_here,
-                        portfolio
+                        portfolio,
+                        tax_rate
                     ): run_idx
                     for run_idx in range(num_runs)
                 }

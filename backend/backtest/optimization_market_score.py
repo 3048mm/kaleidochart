@@ -19,11 +19,12 @@ project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 sys.path.append(project_root)
 
 from backend.backtest.scenario_runner import run_scenario_test
+from backend.backtest.common_constraints import load_tax_rate
 
 # Suppress Optuna verbose logging to keep terminal clean
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
-def objective(trial):
+def objective(trial, consider_tax: float = 0.0):
     # 1. Suggest raw weight components (0.0 to 1.0)
     w_spy_trend = trial.suggest_float('spy_trend', 0.0, 1.0)
     w_breadth = trial.suggest_float('breadth', 0.0, 1.0)
@@ -56,7 +57,8 @@ def objective(trial):
             config_path="data/screener_presets_B_only.toml",
             market_weights=weights,
             scaling_ratio=scaling_ratio,
-            output_dir="output/scenario_opt_temp"
+            output_dir="output/scenario_opt_temp",
+            consider_tax=consider_tax
         )
         
         summary = result['summary']
@@ -93,12 +95,18 @@ def main():
     parser.add_argument('--n-trials', type=int, default=20, help='Number of optimization trials')
     args = parser.parse_args()
     
+    tax_rate = load_tax_rate()
+
     print("=" * 70)
     print("   Starting Market Trend Score Weights Optimization (Optuna)")
     print("   Goal: Optimize Dashboard Weights for Max Calmar Ratio")
     print(f"   Target Period: 2021-03-26 to 2026-03-26 | Trials: {args.n_trials}")
+    if tax_rate > 0.0:
+        print(f"   [Tax] 適用税率: {tax_rate * 100:.1f}% (consider_tax={tax_rate})")
+    else:
+        print("   [Tax] 税なし (consider_tax=0.0)")
     print("=" * 70, flush=True)
-    
+
     study = optuna.create_study(direction='maximize')
     
     # Enforce default baseline weights as trial 0 (25% each, ratio=1.0)
@@ -111,7 +119,7 @@ def main():
     }
     study.enqueue_trial(baseline_weights)
     
-    study.optimize(objective, n_trials=args.n_trials)
+    study.optimize(lambda t: objective(t, consider_tax=tax_rate), n_trials=args.n_trials)
     
     # Normalize the best weights
     best_params = study.best_params

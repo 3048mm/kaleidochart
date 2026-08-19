@@ -7,6 +7,7 @@ import datetime
 from backend.backtest.scenario_runner import run_scenario_test
 from backend.db import database
 from backend.backtest.backtest_runner import preload_data
+from backend.backtest.common_constraints import load_tax_rate
 
 def run_comparison(
     start_date: str,
@@ -27,9 +28,16 @@ def run_comparison(
     for side-by-side comparison.
     """
     models = ['full_position', 'spy_sma200', 'spy_sma63', 'vxv_vix_ema', 'mts_raw']
-    
+
     os.makedirs(output_dir, exist_ok=True)
-    
+
+    # 税率は backtest_config.toml [general] consider_tax から解決する
+    consider_tax = load_tax_rate()
+    if consider_tax > 0.0:
+        print(f"  [Tax] 適用税率: {consider_tax * 100:.1f}% (consider_tax={consider_tax})")
+    else:
+        print("  [Tax] 税なし (consider_tax=0.0)")
+
     results = {}
     equity_curves = {}
     
@@ -51,7 +59,8 @@ def run_comparison(
             refresh_cache=refresh_cache,
             config_path=config_path,
             use_vxv_vix=use_vxv_vix,
-            regime_model=model
+            regime_model=model,
+            consider_tax=consider_tax
         )
         
         # Load the summary
