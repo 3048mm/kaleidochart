@@ -14,6 +14,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## エラーリトライ規律（AIエージェント向け・厳守）
 - **同一エラーで3回失敗したら打ち切る**（`doc/agent_execution_rules.md` §4）。打ち切り後はアプローチを変えるか、エラー内容を報告してユーザーの判断を仰ぐ。同じ呼び出しをそのまま再送することを禁止する。
+- **打ち切る前に既知の回避手段を引き、無ければ書き残す**（詳細は `doc/agent_execution_rules.md` §4.1）:
+  `grep -n "<エラー原文の一部>" doc/agent_execution_rules.md doc/project_knowhow.md`
+  ヒットしたらその対策ルールを4回目の自己流リトライより優先する。ヒットせず、その後解決できたら**解決した時点で**該当ドキュメントに追記する（**エラー原文をコードブロックで必ず含める**＝次セッションの検索キー）。
 - `File has not been read yet` / `File has been modified since read` で Edit が拒否されたら、**対象ファイルを Read し直してから** Edit する。長いセッションやコンテキスト要約（compaction）後は Read 状態が失われているため、記憶を頼りに Edit しない。
 - `sleep` によるポーリング待機を禁止する（この環境ではブロックされる）。長時間コマンドは `run_in_background` で実行し、完了通知を待つ。
 - Python 実行は常に**リポジトリ本体の venv** を使う。本体では `.\venv\Scripts\python.exe`、**ワークツリー内には venv が存在しない**ため `..\..\..\venv\Scripts\python.exe` または絶対パスで本体の venv を参照する。素の `python` は venv 外の Python を拾い、`ModuleNotFoundError`（pytest 等が見つからない）の原因になる。
