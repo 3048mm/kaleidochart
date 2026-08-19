@@ -30,6 +30,8 @@ export interface BacktestScenarioSummary {
   final_capital_avg?: number;
   final_capital_max?: number;
   final_capital_min?: number;
+  avg_trade_pnl_pct?: number;
+  avg_trade_pnl_pct_avg?: number;
   yearly_performance?: { [year: string]: YearlyPerformanceItem };
   exit_reasons?: {
     [reason: string]: {

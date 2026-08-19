@@ -543,6 +543,19 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
                 : undefined
             )}
             {renderKPICard(
+              summary.is_monte_carlo ? '1取引平均 (10回平均)' : '1取引平均リターン',
+              summary.avg_trade_pnl_pct !== undefined && summary.avg_trade_pnl_pct !== null
+                ? `${summary.avg_trade_pnl_pct >= 0 ? '+' : ''}${summary.avg_trade_pnl_pct.toFixed(2)}%`
+                : '—',
+              '取引1回あたりの平均損益率（建玉に対するリターン）',
+              summary.avg_trade_pnl_pct !== undefined && summary.avg_trade_pnl_pct !== null
+                ? (summary.avg_trade_pnl_pct >= 0 ? 'good' : 'bad')
+                : 'neutral',
+              summary.is_monte_carlo && summary.avg_trade_pnl_pct_avg !== undefined && summary.avg_trade_pnl_pct_avg !== null
+                ? `(平均: ${summary.avg_trade_pnl_pct_avg >= 0 ? '+' : ''}${summary.avg_trade_pnl_pct_avg.toFixed(2)}%)`
+                : undefined
+            )}
+            {renderKPICard(
               summary.is_monte_carlo ? '最大DD (10回平均)' : 'Max Drawdown (最悪下落率)',
               `${(summary.max_drawdown * 100).toFixed(2)}%`,
               'ピークからの最大口座下落幅',

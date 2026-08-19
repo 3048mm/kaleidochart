@@ -64,6 +64,60 @@ def test_scenario_reporter_generates_summary(mock_trade_history, mock_spy_data):
     assert 'cagr' in summary
     assert summary['cagr'] == pytest.approx(6.26, abs=0.1)
 
+    # 1取引平均リターン（建玉に対する pnl_pct の単純平均）: (0.10 + -0.05) / 2 * 100 = 2.5
+    assert 'avg_trade_pnl_pct' in summary
+    assert summary['avg_trade_pnl_pct'] == pytest.approx(2.5)
+
+
+def test_avg_trade_pnl_pct_empty_trade_history(mock_spy_data):
+    """トレード履歴が空のとき、avg_trade_pnl_pct は 0.0 になる。"""
+    reporter = ScenarioReporter()
+    summary = reporter.generate_summary(
+        trade_history=[],
+        initial_capital=100000.0,
+        final_capital=100000.0,
+        start_date=pd.Timestamp('2024-01-01'),
+        end_date=pd.Timestamp('2024-01-31'),
+        spy_prices=mock_spy_data
+    )
+    assert summary['avg_trade_pnl_pct'] == 0.0
+
+
+def test_avg_trade_pnl_pct_missing_and_mixed_sign(mock_spy_data):
+    """pnl_pct が欠損したトレードはスキップし、正負混在も正しく平均できる。"""
+    trade_history = [
+        {
+            'ticker': 'AAPL', 'entry_date': pd.Timestamp('2024-01-01'),
+            'exit_date': pd.Timestamp('2024-01-10'), 'entry_price': 100.0, 'exit_price': 120.0,
+            'shares': 100, 'amount': 10000.0, 'exit_reason': 'profit_target',
+            'pnl_pct': 0.20, 'pnl_amount': 2000.0, 'capital_after': 102000.0
+        },
+        {
+            'ticker': 'MSFT', 'entry_date': pd.Timestamp('2024-01-05'),
+            'exit_date': pd.Timestamp('2024-01-12'), 'entry_price': 200.0, 'exit_price': 160.0,
+            'shares': 50, 'amount': 10000.0, 'exit_reason': 'stop_loss',
+            'pnl_pct': -0.20, 'pnl_amount': -2000.0, 'capital_after': 100000.0
+        },
+        {
+            # pnl_pct が欠損しているトレードは平均計算から除外される
+            'ticker': 'GOOG', 'entry_date': pd.Timestamp('2024-01-08'),
+            'exit_date': pd.Timestamp('2024-01-15'), 'entry_price': 300.0, 'exit_price': 300.0,
+            'shares': 10, 'amount': 3000.0, 'exit_reason': 'unknown',
+            'pnl_pct': None, 'pnl_amount': 0.0, 'capital_after': 100000.0
+        }
+    ]
+    reporter = ScenarioReporter()
+    summary = reporter.generate_summary(
+        trade_history=trade_history,
+        initial_capital=100000.0,
+        final_capital=100000.0,
+        start_date=pd.Timestamp('2024-01-01'),
+        end_date=pd.Timestamp('2024-01-31'),
+        spy_prices=mock_spy_data
+    )
+    # (0.20 + -0.20) / 2 * 100 = 0.0（欠損トレードは除外）
+    assert summary['avg_trade_pnl_pct'] == pytest.approx(0.0)
+
 def test_scenario_reporter_exports_csv(mock_trade_history, tmp_path):
     reporter = ScenarioReporter()
     output_file = tmp_path / "trade_logs.csv"

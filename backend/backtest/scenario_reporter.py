@@ -58,6 +58,13 @@ class ScenarioReporter:
             if total_losses > 0:
                 profit_factor = round(total_gains / total_losses, 2)
 
+        # --- 1取引あたり平均リターン（建玉に対する pnl_pct の単純平均） ---
+        avg_trade_pnl_pct = 0.0
+        if trade_history:
+            pcts = [t['pnl_pct'] for t in trade_history if t.get('pnl_pct') is not None]
+            if pcts:
+                avg_trade_pnl_pct = round(sum(pcts) / len(pcts) * 100, 2)
+
         # --- S1: Max Drawdown (with date and tickers) ---
         max_drawdown = self._calculate_max_drawdown(equity_curve)
 
@@ -169,6 +176,7 @@ class ScenarioReporter:
             'losing_trades': losing_trades,
             'win_rate': round(win_rate, 4),
             'profit_factor': profit_factor,
+            'avg_trade_pnl_pct': avg_trade_pnl_pct,
             'avg_holding_days_win': round(avg_holding_win, 2),
             'avg_holding_days_loss': round(avg_holding_loss, 2),
             'max_drawdown': max_drawdown,

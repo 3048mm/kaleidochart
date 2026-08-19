@@ -85,6 +85,7 @@ const PanelCard: React.FC<PanelCardProps> = ({ model, data, initialEquity, isAct
   const winRate = summary?.win_rate_avg ?? summary?.win_rate;
   const trades = summary?.total_trades_avg ?? summary?.total_trades;
   const pf = summary?.profit_factor_avg ?? summary?.profit_factor;
+  const avgTradePnlPct = summary?.avg_trade_pnl_pct_avg ?? summary?.avg_trade_pnl_pct;
   const finalCap = summary?.final_capital_avg ?? summary?.final_capital;
   const cagrMax = summary?.cagr_max;
   const cagrMin = summary?.cagr_min;
@@ -198,6 +199,7 @@ const PanelCard: React.FC<PanelCardProps> = ({ model, data, initialEquity, isAct
           { label: 'Win Rate', value: winRate !== undefined ? `${(winRate * 100).toFixed(1)}%` : '—' },
           { label: 'Trades', value: trades !== undefined ? String(Math.round(trades)) : '—' },
           { label: 'Profit Factor', value: pf !== undefined ? pf.toFixed(2) : '—' },
+          { label: '1取引平均', value: avgTradePnlPct !== undefined && avgTradePnlPct !== null ? fmtPct(avgTradePnlPct, 2) : '—' },
         ].map(({ label, value, warn }) => (
           <div key={label} style={{
             background: 'rgba(30, 41, 59, 0.5)',

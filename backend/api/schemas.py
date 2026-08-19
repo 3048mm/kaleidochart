@@ -593,6 +593,8 @@ class BacktestScenarioSummary(BaseModel):
     final_capital_avg: Optional[float] = None
     final_capital_max: Optional[float] = None
     final_capital_min: Optional[float] = None
+    avg_trade_pnl_pct: Optional[float] = None
+    avg_trade_pnl_pct_avg: Optional[float] = None
     # Allow extra fields for safety
     model_config = {
         "extra": "allow"

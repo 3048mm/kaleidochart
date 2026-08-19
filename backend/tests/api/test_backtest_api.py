@@ -122,6 +122,9 @@ def test_get_scenario_summary_specific(client, mock_output_dir):
     assert data["cagr"] > 0
     assert data["profit_factor"] == 1.25
     assert data["max_drawdown"] == -0.18  # Convert 18.0 (%) pct to -0.18
+    # scenario_alpha の JSON には avg_trade_pnl_pct が無いので、
+    # 同ディレクトリの scenario_trade_logs.csv (pnl_pct=0.0 の1件) からフォールバック算出される
+    assert data["avg_trade_pnl_pct"] == 0.0
 
 def test_get_scenario_summary_latest(client, mock_output_dir):
     """Test GET /api/backtest/scenario/latest/summary dynamically resolves to the latest folder (scenario_beta)."""
@@ -134,6 +137,9 @@ def test_get_scenario_summary_latest(client, mock_output_dir):
     assert data["max_drawdown"] == -0.12  # Convert 12.0 (%) pct to -0.12
     assert data["yearly_performance"] is not None
     assert data["yearly_performance"]["2026"]["spy_return_pct"] == 5.2
+    # scenario_beta の CSV フォールバック: pnl_pct=[0.0, 0.0667] の平均 * 100
+    expected_avg = round((0.0 + 0.0667) / 2 * 100, 2)
+    assert data["avg_trade_pnl_pct"] == pytest.approx(expected_avg)
 
 def test_get_scenario_equity(client, mock_output_dir):
     """Test GET /api/backtest/scenario/{name}/equity returns parsed CSV data as JSON."""
@@ -165,3 +171,156 @@ def test_get_scenario_not_found(client, mock_output_dir):
     resp = client.get("/api/backtest/scenario/scenario_non_existent/summary")
     assert resp.status_code == 404
     assert "detail" in resp.json()
+
+
+# ============================================================
+# avg_trade_pnl_pct: CSV フォールバックヘルパーの単体テスト
+# ============================================================
+
+from api.backtest_router import _avg_trade_pnl_pct_from_logs, _resolve_avg_trade_pnl_pct
+
+
+def test_avg_trade_pnl_pct_from_logs_computes_average(tmp_path):
+    """CSV の pnl_pct から % 換算した単純平均を算出する。"""
+    csv_content = (
+        "ticker,entry_date,exit_date,entry_price,exit_price,shares,amount,exit_reason,pnl_pct\n"
+        "AAPL,2026-01-01,2026-01-05,100.0,110.0,10,1000.0,strategy,0.10\n"
+        "MSFT,2026-01-02,2026-01-06,200.0,190.0,10,2000.0,stop_loss,-0.05\n"
+    )
+    (tmp_path / "scenario_trade_logs.csv").write_text(csv_content, encoding="utf-8")
+
+    result = _avg_trade_pnl_pct_from_logs(str(tmp_path))
+    # (0.10 + -0.05) / 2 * 100 = 2.5
+    assert result == pytest.approx(2.5)
+
+
+def test_avg_trade_pnl_pct_from_logs_missing_csv_returns_none(tmp_path):
+    """CSV が存在しない場合は例外を出さず None を返す。"""
+    result = _avg_trade_pnl_pct_from_logs(str(tmp_path))
+    assert result is None
+
+
+def test_avg_trade_pnl_pct_from_logs_malformed_rows_are_skipped(tmp_path):
+    """壊れた行 (pnl_pct が非数値・空) はスキップして残りから算出する。"""
+    csv_content = (
+        "ticker,entry_date,exit_date,entry_price,exit_price,shares,amount,exit_reason,pnl_pct\n"
+        "AAPL,2026-01-01,2026-01-05,100.0,110.0,10,1000.0,strategy,0.20\n"
+        "MSFT,2026-01-02,2026-01-06,200.0,190.0,10,2000.0,stop_loss,not_a_number\n"
+        "GOOG,2026-01-03,2026-01-07,300.0,300.0,10,3000.0,unknown,\n"
+    )
+    (tmp_path / "scenario_trade_logs.csv").write_text(csv_content, encoding="utf-8")
+
+    result = _avg_trade_pnl_pct_from_logs(str(tmp_path))
+    # 有効行は AAPL の 0.20 のみ -> 20.0
+    assert result == pytest.approx(20.0)
+
+
+def test_avg_trade_pnl_pct_from_logs_empty_trades_returns_none(tmp_path):
+    """ヘッダーのみで取引が0件の CSV は None を返す。"""
+    csv_content = "ticker,entry_date,exit_date,entry_price,exit_price,shares,amount,exit_reason,pnl_pct\n"
+    (tmp_path / "scenario_trade_logs.csv").write_text(csv_content, encoding="utf-8")
+
+    result = _avg_trade_pnl_pct_from_logs(str(tmp_path))
+    assert result is None
+
+
+def test_resolve_avg_trade_pnl_pct_prefers_json_value(tmp_path):
+    """JSON に avg_trade_pnl_pct があれば CSV を読まずそれを使う。"""
+    # CSV が無くても JSON の値が優先されることを確認
+    summary_data = {"avg_trade_pnl_pct": 5.14}
+    result = _resolve_avg_trade_pnl_pct(str(tmp_path), summary_data)
+    assert result == 5.14
+
+
+def test_resolve_avg_trade_pnl_pct_falls_back_to_csv(tmp_path):
+    """JSON に無ければ CSV から算出する。"""
+    csv_content = (
+        "ticker,entry_date,exit_date,entry_price,exit_price,shares,amount,exit_reason,pnl_pct\n"
+        "AAPL,2026-01-01,2026-01-05,100.0,110.0,10,1000.0,strategy,0.10\n"
+    )
+    (tmp_path / "scenario_trade_logs.csv").write_text(csv_content, encoding="utf-8")
+
+    summary_data = {}  # avg_trade_pnl_pct が無い旧形式の想定
+    result = _resolve_avg_trade_pnl_pct(str(tmp_path), summary_data)
+    assert result == pytest.approx(10.0)
+
+
+# ============================================================
+# avg_trade_pnl_pct: Monte Carlo 集計（B案 = run ごとの平均の平均）
+# ============================================================
+
+@pytest.fixture
+def mc_scenario_dir(tmp_path, monkeypatch):
+    """
+    output/scenario/A/full_position/run_0, run_1 の3階層構造を模した Monte Carlo フィクスチャ。
+    run 間で取引数を非対称にし、A案（全トレード合算）と B案（run 平均の平均）で
+    異なる値になるようにする。
+    """
+    base = tmp_path / "scenario" / "A" / "full_position"
+
+    run0 = base / "run_0"
+    run0.mkdir(parents=True)
+    run0_summary = {
+        "start_date": "2026-01-01",
+        "end_date": "2026-12-31",
+        "initial_capital": 100000.0,
+        "final_capital": 110000.0,
+        "profit_factor": 1.5,
+        "max_drawdown": {"pct": 10.0, "amount": 10000.0},
+        "win_rate": 1.0,
+        "total_trades": 1,
+    }
+    with open(run0 / "scenario_summary.json", "w", encoding="utf-8") as f:
+        json.dump(run0_summary, f)
+    # run_0: 1件のみ, pnl_pct=0.10 -> avg 10.0%
+    (run0 / "scenario_trade_logs.csv").write_text(
+        "ticker,entry_date,exit_date,entry_price,exit_price,shares,amount,exit_reason,pnl_pct\n"
+        "AAPL,2026-01-01,2026-01-05,100.0,110.0,10,1000.0,strategy,0.10\n",
+        encoding="utf-8"
+    )
+
+    run1 = base / "run_1"
+    run1.mkdir(parents=True)
+    run1_summary = {
+        "start_date": "2026-01-01",
+        "end_date": "2026-12-31",
+        "initial_capital": 100000.0,
+        "final_capital": 90000.0,
+        "profit_factor": 0.5,
+        "max_drawdown": {"pct": 20.0, "amount": 20000.0},
+        "win_rate": 0.0,
+        "total_trades": 3,
+    }
+    with open(run1 / "scenario_summary.json", "w", encoding="utf-8") as f:
+        json.dump(run1_summary, f)
+    # run_1: 3件, pnl_pct=-0.10 x3 -> avg -10.0%
+    (run1 / "scenario_trade_logs.csv").write_text(
+        "ticker,entry_date,exit_date,entry_price,exit_price,shares,amount,exit_reason,pnl_pct\n"
+        "MSFT,2026-01-01,2026-01-05,200.0,180.0,10,2000.0,stop_loss,-0.10\n"
+        "GOOG,2026-01-02,2026-01-06,200.0,180.0,10,2000.0,stop_loss,-0.10\n"
+        "AMZN,2026-01-03,2026-01-07,200.0,180.0,10,2000.0,stop_loss,-0.10\n",
+        encoding="utf-8"
+    )
+
+    import api.backtest_router
+    monkeypatch.setattr(api.backtest_router, "OUTPUT_DIR", str(tmp_path))
+    return tmp_path
+
+
+def test_get_scenario_summary_monte_carlo_uses_b_case_average(client, mc_scenario_dir):
+    """
+    Monte Carlo 集計は B案（run ごとの平均を出してから、その平均）を使うこと。
+    A案（全トレード合算の単純平均）とは異なる値になる非対称フィクスチャで検証する。
+    """
+    resp = client.get("/api/backtest/scenario/A__full_position/summary")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["is_monte_carlo"] is True
+
+    # B案: run_0 の平均(10.0) と run_1 の平均(-10.0) の平均 = 0.0
+    assert data["avg_trade_pnl_pct_avg"] == pytest.approx(0.0)
+    assert data["avg_trade_pnl_pct"] == pytest.approx(0.0)
+
+    # A案（全トレード合算）だと (0.10 - 0.10*3) / 4 * 100 = -5.0 になり、B案とは異なる値になるはず
+    a_case_value = ((0.10 - 0.10 - 0.10 - 0.10) / 4) * 100
+    assert data["avg_trade_pnl_pct_avg"] != pytest.approx(a_case_value)

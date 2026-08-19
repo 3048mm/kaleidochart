@@ -1,7 +1,7 @@
 import os
 import csv
 import json
-from typing import List
+from typing import List, Optional
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 
 from api.schemas import (
@@ -169,6 +169,46 @@ def resolve_scenario_path(name: str) -> str:
             return scenario_path_sub
             
         raise HTTPException(status_code=404, detail=f"Scenario '{name}' not found")
+
+def _avg_trade_pnl_pct_from_logs(run_path: str) -> Optional[float]:
+    """
+    scenario_trade_logs.csv から1取引あたり平均リターン（%）を算出する。
+    scenario_summary.json に avg_trade_pnl_pct が無い過去の結果向けのフォールバック。
+    CSV が無い・壊れている場合は None を返す（例外にしない。結果表示が落ちる方が困る）。
+    """
+    csv_file = os.path.join(run_path, "scenario_trade_logs.csv")
+    if not os.path.exists(csv_file):
+        return None
+    try:
+        pcts = []
+        with open(csv_file, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                raw = row.get("pnl_pct")
+                if raw is None or raw == "":
+                    continue
+                try:
+                    pcts.append(float(raw))
+                except (TypeError, ValueError):
+                    continue
+        if not pcts:
+            return None
+        return round(sum(pcts) / len(pcts) * 100, 2)
+    except Exception:
+        return None
+
+
+def _resolve_avg_trade_pnl_pct(run_path: str, summary_data: dict) -> Optional[float]:
+    """
+    run の1取引平均リターン（%）を解決する。
+    scenario_summary.json に avg_trade_pnl_pct があればそれを使い、
+    無ければ同じ run ディレクトリのトレードログ CSV から算出する（フォールバック）。
+    """
+    val = summary_data.get("avg_trade_pnl_pct")
+    if val is not None:
+        return val
+    return _avg_trade_pnl_pct_from_logs(run_path)
+
 
 @router.get("/backtest/scenarios", response_model=List[str])
 def get_scenarios():
@@ -410,11 +450,19 @@ def get_scenario_summary(name: str):
         win_rate_avg = float(np.mean(win_rates))
         total_trades_avg = int(np.mean(total_trades_list))
         profit_factor_avg = float(np.mean(profit_factors))
-        
+
         final_capital_avg = float(np.mean(final_capitals))
         final_capital_max = float(np.max(final_capitals))
         final_capital_min = float(np.min(final_capitals))
-        
+
+        # --- 1取引あたり平均リターン（B案: run ごとの平均を出してから、その平均） ---
+        avg_trade_pnl_pcts = []
+        for s, rp in zip(run_summaries, run_paths):
+            val = _resolve_avg_trade_pnl_pct(rp, s)
+            if val is not None:
+                avg_trade_pnl_pcts.append(val)
+        avg_trade_pnl_pct_avg = float(np.mean(avg_trade_pnl_pcts)) if avg_trade_pnl_pcts else None
+
         # Average exit reasons stats
         exit_reasons_merged = {}
         reasons_detected = set()
@@ -451,9 +499,11 @@ def get_scenario_summary(name: str):
             total_trades=total_trades_avg,
             final_capital=final_capital_avg,
             yearly_performance=yearly_performance,
-            exit_reasons=exit_reasons_merged
+            exit_reasons=exit_reasons_merged,
+            avg_trade_pnl_pct=avg_trade_pnl_pct_avg,
+            avg_trade_pnl_pct_avg=avg_trade_pnl_pct_avg
         )
-        
+
         summary_obj.__dict__.update({
             "is_monte_carlo": True,
             "runs_count": len(run_summaries),
@@ -470,7 +520,9 @@ def get_scenario_summary(name: str):
             "final_capital_avg": final_capital_avg,
             "final_capital_max": final_capital_max,
             "final_capital_min": final_capital_min,
-            "exit_reasons": exit_reasons_merged
+            "exit_reasons": exit_reasons_merged,
+            "avg_trade_pnl_pct": avg_trade_pnl_pct_avg,
+            "avg_trade_pnl_pct_avg": avg_trade_pnl_pct_avg
         })
         
         return summary_obj
@@ -568,7 +620,10 @@ def get_scenario_summary(name: str):
             if isinstance(item, dict):
                 # Inject strategy yearly return pct
                 item["return_pct"] = yearly_returns.get(year, 0.0)
-                
+
+        # 4. 1取引あたり平均リターン（JSON に無ければトレードログ CSV からフォールバック算出）
+        avg_trade_pnl_pct = _resolve_avg_trade_pnl_pct(scenario_path, raw_data)
+
         return BacktestScenarioSummary(
             cagr=cagr,
             profit_factor=profit_factor,
@@ -577,7 +632,8 @@ def get_scenario_summary(name: str):
             total_trades=total_trades,
             final_capital=raw_data.get("final_capital"),
             yearly_performance=yearly_performance,
-            exit_reasons=raw_data.get("exit_reasons", {})
+            exit_reasons=raw_data.get("exit_reasons", {}),
+            avg_trade_pnl_pct=avg_trade_pnl_pct
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read/parse summary JSON: {str(e)}")

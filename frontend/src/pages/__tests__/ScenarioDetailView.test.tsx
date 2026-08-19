@@ -79,5 +79,42 @@ describe('ScenarioDetailView Component', () => {
     expect(screen.queryByText('-45.25%')).not.toBeNull();
     // Check Win Rate value
     expect(screen.queryByText('51.0%')).not.toBeNull();
+    // avg_trade_pnl_pct が未定義（古い結果）のときは — 表示になり、落ちないこと
+    expect(screen.queryByText('—')).not.toBeNull();
+  });
+
+  it('should render avg_trade_pnl_pct when present in the summary (Monte Carlo)', async () => {
+    globalThis.fetch = vi.fn().mockImplementation((url) => {
+      if (url.includes('/summary')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            ...mockSummary,
+            avg_trade_pnl_pct: 5.14,
+            avg_trade_pnl_pct_avg: 5.14
+          })
+        });
+      }
+      if (url.includes('/equity')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(mockEquity) });
+      }
+      if (url.includes('/trades')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(mockTrades) });
+      }
+      return Promise.resolve({ ok: false });
+    }) as any;
+
+    render(
+      <BrowserRouter>
+        <ScenarioDetailView strategyId="B1" modelId="full_position" />
+      </BrowserRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByText('+5.14%')).not.toBeNull();
+    });
+
+    // モンテカルロ時の平均併記
+    expect(screen.queryByText('(平均: +5.14%)')).not.toBeNull();
   });
 });

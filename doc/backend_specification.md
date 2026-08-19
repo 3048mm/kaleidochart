@@ -714,6 +714,29 @@ preset は `load_scenario_config` がロードはしますが、シグナルス�
 （「実行できたがシグナル0件」を正常な結果として受け取らないため）。
 接頭辞は `SCENARIO_TARGET_PREFIX` に一元化されており、`ScenarioScorer` も同じ値を使います。
 
+#### 個別銘柄シナリオテストの結果指標（`scenario_summary.json` / API）
+
+`backend/backtest/scenario_reporter.py` の `generate_summary()` が run ごとに書き出す
+`scenario_summary.json` には、CAGR・Profit Factor・Max Drawdown・Win Rate 等に加えて
+**`avg_trade_pnl_pct`（1取引あたり平均リターン%）** を含む。トレードの `pnl_pct`
+（建玉に対する損益率、小数）の単純平均を % に換算した値（例: `5.14` = +5.14%）。
+CAGR は取引数が多いほど複利効果で膨らみやすいため、「取引数を増やさずに1回あたりの
+質が高い戦略」を見分ける指標として、Profit Factor と並べて使う（2026-08-19 追加。
+判断根拠は B6 パラメータ改定時の事例: CAGR だけでは取引数27%増の旧パラメータが
+勝って見えるが、1取引平均リターンでは新パラメータが上回っていた）。
+
+API (`GET /api/backtest/scenario/{name}/summary`) は以下のルールで解決する:
+- 単一 run: `scenario_summary.json` に値があればそれを使う。**無ければ**同じ run
+  ディレクトリの `scenario_trade_logs.csv` の `pnl_pct` 列から動的に算出する
+  （2026-08-18 以前の結果に `avg_trade_pnl_pct` が無いための後方互換フォールバック。
+  CSV も無い/壊れている場合は例外にせず `null` を返す）。
+- Monte Carlo グループ（複数 run の統合）: **run ごとに平均を算出してから、その平均を
+  取る**（B案）。`profit_factor_avg` 等の既存の Monte Carlo 集計と同じ流儀に揃えるため。
+  全 run のトレードを合算してから単純平均する A案は、取引数の多い run の影響が
+  過大になり他の指標と一貫しなくなるため採用しない。API レスポンスは
+  `avg_trade_pnl_pct`（= `avg_trade_pnl_pct_avg` と同値）と `avg_trade_pnl_pct_avg` の
+  両方を返す（`profit_factor` / `profit_factor_avg` と同じパターン）。
+
 ### 6.1.1 最適化バックテストの目的
 スクリーナーの各種フィルタ条件セット（戦略）の有効性を、過去5年分のヒストリカルデータに対してシミュレーションし、**期間CAGR（複利での資産成長）× DD抑制 × 実用的な検出件数**の合成スコアを主軸に定量的に評価・比較する（2026-07-06 再設計。旧: Expectancy LCB 主軸）。「1トレードで勝つか」ではなく「純粋なスクリーンのみで、どこまで資産を伸ばしつつ DD を抑えられるか」を最適化する（実質 Calmar 型）。無限資金・avg_slots 正規化のままで、固定枠・コスト・レジーム連動は個別銘柄シナリオテストの責務（§6.1）。パラメータの調整→再実行を繰り返す反復的なワークフローを前提とした設計。
 
