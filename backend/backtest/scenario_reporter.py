@@ -272,16 +272,18 @@ class ScenarioReporter:
         if not trade_history:
             # Export empty CSV with headers if no trades
             pd.DataFrame(columns=[
-                'ticker', 'entry_date', 'exit_date', 'entry_price', 'exit_price',
+                'ticker', 'score', 'entry_date', 'exit_date', 'entry_price', 'exit_price',
                 'shares', 'amount', 'exit_reason', 'pnl_pct', 'pnl_amount', 'capital_after'
             ]).to_csv(filepath, index=False)
             return
-            
+
         df = pd.DataFrame(trade_history)
-        
+
         # Select and order relevant columns
+        # score: 何戦略が同じ銘柄を拾ったか（複数戦略の組み合わせジョブでのみ意味を持つ）。
+        # 単独戦略ジョブのトレード記録には無いことがあるため、存在チェックで落とす。
         cols = [
-            'ticker', 'entry_date', 'exit_date', 'entry_price', 'exit_price', 
+            'ticker', 'score', 'entry_date', 'exit_date', 'entry_price', 'exit_price',
             'shares', 'amount', 'exit_reason', 'pnl_pct', 'pnl_amount', 'capital_after'
         ]
         

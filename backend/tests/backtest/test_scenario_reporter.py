@@ -121,16 +121,65 @@ def test_avg_trade_pnl_pct_missing_and_mixed_sign(mock_spy_data):
 def test_scenario_reporter_exports_csv(mock_trade_history, tmp_path):
     reporter = ScenarioReporter()
     output_file = tmp_path / "trade_logs.csv"
-    
+
     reporter.export_trade_logs(mock_trade_history, str(output_file))
-    
+
     assert output_file.exists()
-    
+
     df = pd.read_csv(output_file)
     assert len(df) == 2
     assert 'ticker' in df.columns
     assert 'pnl_amount' in df.columns
     assert 'capital_after' in df.columns
-    
+
     assert df.iloc[0]['ticker'] == 'AAPL'
     assert df.iloc[1]['capital_after'] == 100500.0
+
+
+# ---------------------------------------------------------------------------
+# export_trade_logs — score 列（複数戦略の組み合わせジョブ用、2026-08-21 追加）
+# ---------------------------------------------------------------------------
+def test_export_trade_logs_without_score_still_works(mock_trade_history, tmp_path):
+    """score を持たない従来のトレード履歴（単独戦略ジョブ）でも落ちない。"""
+    reporter = ScenarioReporter()
+    output_file = tmp_path / "trade_logs_no_score.csv"
+
+    reporter.export_trade_logs(mock_trade_history, str(output_file))
+
+    df = pd.read_csv(output_file)
+    assert len(df) == 2
+    assert 'score' not in df.columns
+
+
+def test_export_trade_logs_with_score(tmp_path):
+    """score を持つトレード履歴（複数戦略の組み合わせジョブ）で score 列が出力される。"""
+    reporter = ScenarioReporter()
+    trade_history = [
+        {
+            'ticker': 'TEM', 'score': 3, 'entry_date': pd.Timestamp('2024-01-01'),
+            'exit_date': pd.Timestamp('2024-01-10'), 'entry_price': 100.0, 'exit_price': 110.0,
+            'shares': 100, 'amount': 10000.0, 'exit_reason': 'profit_target',
+            'pnl_pct': 0.10, 'pnl_amount': 1000.0, 'capital_after': 101000.0
+        },
+    ]
+    output_file = tmp_path / "trade_logs_with_score.csv"
+
+    reporter.export_trade_logs(trade_history, str(output_file))
+
+    df = pd.read_csv(output_file)
+    assert 'score' in df.columns
+    assert df.iloc[0]['score'] == 3
+    # score はティッカーの直後（銘柄と一緒に見たいため）
+    assert list(df.columns).index('score') == list(df.columns).index('ticker') + 1
+
+
+def test_export_trade_logs_empty_history_includes_score_header(tmp_path):
+    """トレードが0件でも score 列を含んだ空 CSV のヘッダーが得られる。"""
+    reporter = ScenarioReporter()
+    output_file = tmp_path / "trade_logs_empty.csv"
+
+    reporter.export_trade_logs([], str(output_file))
+
+    df = pd.read_csv(output_file)
+    assert len(df) == 0
+    assert 'score' in df.columns

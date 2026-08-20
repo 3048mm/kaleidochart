@@ -11,6 +11,7 @@ from backend.backtest.run_scenario_batch import (
     filter_jobs_by_names,
     format_elapsed,
     parse_args,
+    resolve_job_strategy_specs,
 )
 
 
@@ -71,25 +72,146 @@ def test_generate_preset_toml(tmp_path):
         "is_close_gt_ema63": True,
         "sort_column": "rs_ratio_rank_e21"
     }
-    
-    generate_preset_toml("B4_rs_trend_with_theme", best_params, str(output_file))
-    
+
+    generate_preset_toml([("B4_rs_trend_with_theme", best_params)], str(output_file))
+
     assert output_file.exists()
     with open(output_file, "rb") as f:
         config = tomli.load(f)
-        
+
     assert config["active_rise_ids"] == ["B4_rs_trend_with_theme_opt"]
     assert len(config["rise"]) == 1
-    
+
     rise_entry = config["rise"][0]
     assert rise_entry["id"] == "B4_rs_trend_with_theme_opt"
     assert rise_entry["name"] == "B4_rs_trend_with_theme_opt"
+    assert rise_entry["group"] == "Check"
     assert rise_entry["use_vxv_vix_hysteresis"] is True
-    
+
     filters = rise_entry["filters"]
     assert filters["min_change_1d_pct"] == 7.0
     assert filters["is_close_gt_ema63"] is True
     assert filters["sort_column"] == "rs_ratio_rank_e21"
+
+
+def test_generate_preset_toml_single_strategy_byte_identical_to_legacy(tmp_path):
+    """単一戦略の出力が、複数戦略対応前の実装とバイト単位で一致すること（後方互換の要）。
+
+    generate_preset_toml() が [(name, params), ...] のリストを受ける形に変わったが、
+    要素数1で呼び出した場合の出力は変更前の実装が生成していた TOML と完全に一致しなければ
+    ならない（既存13ジョブの結果が変わってはいけないため）。
+    """
+    strategy_name = "B4_rs_trend_with_theme"
+    best_params = {
+        "min_change_1d_pct": 7.0,
+        "is_close_gt_ema63": True,
+        "sort_column": "rs_ratio_rank_e21",
+    }
+
+    # 変更前の実装をそのまま再現した期待値（generate_preset_toml の旧ロジック）
+    expected = f'active_rise_ids = ["{strategy_name}_opt"]\nactive_fall_ids = []\n\n'
+    expected += '[[rise]]\n'
+    expected += f'id = "{strategy_name}_opt"\n'
+    expected += f'name = "{strategy_name}_opt"\n'
+    expected += f'subname = "Optuna Best for {strategy_name}"\n'
+    expected += 'group = "Check"\n'
+    expected += 'use_vxv_vix_hysteresis = true\n'
+    expected += 'vxv_vix_hysteresis_type = "vxv_vix_ema"\n'
+    expected += '\n[rise.filters]\n'
+    for k, v in best_params.items():
+        if isinstance(v, bool):
+            toml_val = "true" if v else "false"
+        elif isinstance(v, str):
+            toml_val = f'"{v}"'
+        else:
+            toml_val = v
+        expected += f"{k} = {toml_val}\n"
+
+    output_file = tmp_path / "preset_legacy_compare.toml"
+    generate_preset_toml([(strategy_name, best_params)], str(output_file))
+
+    actual = output_file.read_text(encoding="utf-8")
+    assert actual == expected
+
+
+def test_generate_preset_toml_multi_strategy(tmp_path):
+    """複数戦略を渡すと、その数だけ [[rise]] ブロックが生成され、全て group = "Check" であること。"""
+    output_file = tmp_path / "preset_multi.toml"
+    strategies = [
+        ("B2_theme_rsrank_momentum", {"min_change_1d_pct": 5.0}),
+        ("B5_rs_trend_with_theme", {"min_change_1d_pct": 6.0}),
+        ("B6_rs_macd_and_theme", {"min_change_1d_pct": 7.0}),
+    ]
+
+    generate_preset_toml(strategies, str(output_file))
+
+    with open(output_file, "rb") as f:
+        config = tomli.load(f)
+
+    assert config["active_rise_ids"] == [
+        "B2_theme_rsrank_momentum_opt",
+        "B5_rs_trend_with_theme_opt",
+        "B6_rs_macd_and_theme_opt",
+    ]
+    assert len(config["rise"]) == 3
+    for entry in config["rise"]:
+        assert entry["group"] == "Check"
+
+    ids = [entry["id"] for entry in config["rise"]]
+    assert ids == [
+        "B2_theme_rsrank_momentum_opt",
+        "B5_rs_trend_with_theme_opt",
+        "B6_rs_macd_and_theme_opt",
+    ]
+
+
+# ---------------------------------------------------------------------------
+# resolve_job_strategy_specs — ジョブ定義の複数戦略対応（2026-08-21 追加）
+# ---------------------------------------------------------------------------
+def test_resolve_job_strategy_specs_single():
+    job = {"name": "B2", "strategy_code": "B2_theme_rsrank_momentum", "study_name": "B2_theme_rsrank_momentum"}
+    codes, studies, is_multi = resolve_job_strategy_specs(job)
+    assert codes == ["B2_theme_rsrank_momentum"]
+    assert studies == ["B2_theme_rsrank_momentum"]
+    assert is_multi is False
+
+
+def test_resolve_job_strategy_specs_multi():
+    job = {
+        "name": "B256_union",
+        "strategy_codes": ["B2_x", "B5_x", "B6_x"],
+        "study_names": ["B2_x", "B5_x", "B6_x"],
+    }
+    codes, studies, is_multi = resolve_job_strategy_specs(job)
+    assert codes == ["B2_x", "B5_x", "B6_x"]
+    assert studies == ["B2_x", "B5_x", "B6_x"]
+    assert is_multi is True
+
+
+def test_resolve_job_strategy_specs_length_mismatch_raises():
+    job = {
+        "name": "B256_union",
+        "strategy_codes": ["B2_x", "B5_x", "B6_x"],
+        "study_names": ["B2_x", "B5_x"],
+    }
+    with pytest.raises(ValueError, match="長さが一致しません"):
+        resolve_job_strategy_specs(job)
+
+
+def test_resolve_job_strategy_specs_both_singular_and_plural_raises():
+    job = {
+        "name": "bad",
+        "strategy_code": "B2_x",
+        "strategy_codes": ["B2_x", "B5_x"],
+    }
+    with pytest.raises(ValueError, match="同時に指定できません"):
+        resolve_job_strategy_specs(job)
+
+
+def test_resolve_job_strategy_specs_neither_raises():
+    job = {"name": "bad"}
+    with pytest.raises(ValueError):
+        resolve_job_strategy_specs(job)
 
 
 # ---------------------------------------------------------------------------

@@ -739,6 +739,50 @@ API (`GET /api/backtest/scenario/{name}/summary`) は以下のルールで解決
   `avg_trade_pnl_pct`（= `avg_trade_pnl_pct_avg` と同値）と `avg_trade_pnl_pct_avg` の
   両方を返す（`profit_factor` / `profit_factor_avg` と同じパターン）。
 
+#### 複数戦略の組み合わせ（和集合）ジョブ
+
+`run_scenario_batch.py` は1ジョブに**複数の戦略/study を束ねた preset**を生成できる
+（2026-08-21 追加、`doc/completed/multi_strategy_scenario_plan.md` 参照）。
+
+**背景**: 質の高い戦略ほど枠稼働率が低い（=8枠を使い切れていない）ことが判明した。
+低質な戦略で枠を埋めるのではなく、**質の高い戦略同士を組み合わせて取引数を増やせるか**
+を検証するために導入した。
+
+**`generate_preset_toml()` の入力形式**: `[(strategy_name, best_params), ...]` のリストを
+受け、戦略の数だけ `[[rise]]` ブロックを生成する。全ブロックとも `group = "Check"` を
+維持する（`SCENARIO_TARGET_PREFIX = 'Rise - Check'` が拾えなくなるため — 上記
+「スキャンする戦略の範囲」参照）。要素数1（単一戦略）で呼び出した場合の出力は、
+このリスト対応版になる前とバイト単位で同一（既存ジョブの結果に影響しない）。
+
+**`scenario_batch_jobs.toml` のジョブ定義**: 単数形 `strategy_code` / `study_name`
+（従来どおり）に加え、複数形 `strategy_codes` / `study_names`（配列、同じ長さ）を
+指定できる。単複の併記はエラー、長さ不一致もエラーで停止する。
+
+```toml
+[[job]]
+name = "B256_union"
+strategy_codes = ["B2_theme_rsrank_momentum", "B5_rs_trend_with_theme", "B6_rs_macd_and_theme"]
+study_names    = ["B2_theme_rsrank_momentum", "B5_rs_trend_with_theme", "B6_rs_macd_and_theme"]
+source = "optuna"
+  [job.portfolio]
+  min_score = 1     # 和集合。どれか1戦略でも拾えば買う
+```
+
+**単一戦略ジョブとのエラー処理の違い**: 単一戦略ジョブは `study_name` 欠落や Optuna
+best params 未取得を「その戦略だけ Skip して次のジョブへ continue」で扱う（従来どおり
+変更なし）。一方、複数戦略ジョブは構成する study の**1つでも欠けたらバッチ全体を
+エラーで停止**する（`sys.exit(1)`）。一部だけ読めた状態で走らせると、意図した組み合わせ
+と異なる（=戦略が抜け落ちた）まま実行されてしまうため。
+
+**`score`（トレードログの列）**: `ScenarioScorer.score_signals()` は同一銘柄を何戦略が
+同時に拾ったか（1〜組み合わせ戦略数）を `score` として候補ごとに算出し、
+`ScenarioPortfolio` がポジション・トレード記録までそのまま引き継ぐ。
+`scenario_trade_logs.csv` には `ticker` の直後に `score` 列として出力される
+（単独戦略ジョブのトレード記録には無いため、その場合は列自体が出力されない）。
+`min_score` を上げると「score 2 以上（=複数戦略が重複して拾った銘柄）だけ採用」という
+合流条件に切り替えられる。組み合わせの価値検証は `score` 別に成績（1取引%・勝率）を
+分解して行う。
+
 ### 6.1.1 最適化バックテストの目的
 スクリーナーの各種フィルタ条件セット（戦略）の有効性を、過去5年分のヒストリカルデータに対してシミュレーションし、**期間CAGR（複利での資産成長）× DD抑制 × 実用的な検出件数**の合成スコアを主軸に定量的に評価・比較する（2026-07-06 再設計。旧: Expectancy LCB 主軸）。「1トレードで勝つか」ではなく「純粋なスクリーンのみで、どこまで資産を伸ばしつつ DD を抑えられるか」を最適化する（実質 Calmar 型）。無限資金・avg_slots 正規化のままで、固定枠・コスト・レジーム連動は個別銘柄シナリオテストの責務（§6.1）。パラメータの調整→再実行を繰り返す反復的なワークフローを前提とした設計。
 

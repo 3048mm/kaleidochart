@@ -119,6 +119,24 @@ study_name = "G3_bluedot_leader"
 
 
 
+# 複数戦略の組み合わせ（和集合）ジョブの書き方:
+#   strategy_code / study_name の代わりに strategy_codes / study_names（配列）を使う。
+#   両者は同じ長さでなければならず、長さ不一致・単複併記はエラーで停止する。
+#   [job.portfolio] min_score = 1 は「どれか1戦略でも拾えば買う」和集合の指定。
+#   （score=2以上のみ採用する「合流」を試す場合は min_score を上げる）
+#
+# 2026-08-21: B2 + B5 + B6 の組み合わせ検証。
+# 2026-08-21 の税込みシナリオテストで、質の高い戦略（B2/B5）ほど枠が空いている
+# （枠稼働率 28〜33%）ことが判明した。質を保ったまま取引数を増やせるかを検証する。
+# 詳細: doc/in_progress/multi_strategy_scenario_plan.md
+[[job]]
+name = "B256_union"
+strategy_codes = ["B2_theme_rsrank_momentum", "B5_rs_trend_with_theme", "B6_rs_macd_and_theme"]
+study_names    = ["B2_theme_rsrank_momentum", "B5_rs_trend_with_theme", "B6_rs_macd_and_theme"]
+source = "optuna"
+  [job.portfolio]
+  min_score = 1
+
 # 記述例（手動変更パラメータの比較テスト用）:
 # [[job]]
 # name = "B4_manual_vol_surge_2.0"

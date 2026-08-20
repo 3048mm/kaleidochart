@@ -114,30 +114,93 @@ def get_best_params_from_db(db_path: str, study_name: str) -> dict:
         return None
 
 
-def generate_preset_toml(strategy_name: str, best_params: dict, toml_path: str):
-    """Optuna best params から screener_presets.toml 形式のファイルを生成する。"""
-    toml_str = f'active_rise_ids = ["{strategy_name}_opt"]\nactive_fall_ids = []\n\n'
-    toml_str += '[[rise]]\n'
-    toml_str += f'id = "{strategy_name}_opt"\n'
-    toml_str += f'name = "{strategy_name}_opt"\n'
-    toml_str += f'subname = "Optuna Best for {strategy_name}"\n'
-    toml_str += 'group = "Check"\n'
-    toml_str += 'use_vxv_vix_hysteresis = true\n'
-    toml_str += 'vxv_vix_hysteresis_type = "vxv_vix_ema"\n'
-    toml_str += '\n[rise.filters]\n'
+def generate_preset_toml(strategies: list, toml_path: str):
+    """Optuna best params から screener_presets.toml 形式のファイルを生成する。
 
-    for k, v in best_params.items():
-        if isinstance(v, bool):
-            toml_val = "true" if v else "false"
-        elif isinstance(v, str):
-            toml_val = f'"{v}"'
-        else:
-            toml_val = v
-        toml_str += f"{k} = {toml_val}\n"
+    Args:
+        strategies: `[(strategy_name, best_params), ...]` のリスト。
+                    複数指定すると `[[rise]]` ブロックを戦略の数だけ生成する
+                    （和集合で複数戦略を組み合わせたシナリオテスト用）。
+                    単一戦略でも要素数1のリストで渡すこと。
+        toml_path: 出力先パス。
+
+    後方互換: 単一戦略（要素数1）で呼び出した場合、出力される TOML は
+    このリスト対応版になる前とバイト単位で同一になる（回帰テストで担保）。
+    """
+    ids_str = ", ".join(f'"{name}_opt"' for name, _ in strategies)
+    toml_str = f'active_rise_ids = [{ids_str}]\nactive_fall_ids = []\n\n'
+
+    blocks = []
+    for strategy_name, best_params in strategies:
+        block = '[[rise]]\n'
+        block += f'id = "{strategy_name}_opt"\n'
+        block += f'name = "{strategy_name}_opt"\n'
+        block += f'subname = "Optuna Best for {strategy_name}"\n'
+        # group は必ず "Check" にすること。戦略名は
+        # f"{section.capitalize()} - {group} - {name}" で組まれ、
+        # SCENARIO_TARGET_PREFIX = 'Rise - Check' がスキャン対象を決めるため、
+        # ここがずれるとその戦略が黙ってスキャンされなくなる。
+        block += 'group = "Check"\n'
+        block += 'use_vxv_vix_hysteresis = true\n'
+        block += 'vxv_vix_hysteresis_type = "vxv_vix_ema"\n'
+        block += '\n[rise.filters]\n'
+
+        for k, v in best_params.items():
+            if isinstance(v, bool):
+                toml_val = "true" if v else "false"
+            elif isinstance(v, str):
+                toml_val = f'"{v}"'
+            else:
+                toml_val = v
+            block += f"{k} = {toml_val}\n"
+
+        blocks.append(block)
+
+    # ブロック間は空行区切り（単一ブロックのときは join が何も足さないため、
+    # 従来出力とバイト単位で一致する）。
+    toml_str += "\n".join(blocks)
 
     os.makedirs(os.path.dirname(toml_path), exist_ok=True)
     with open(toml_path, "w", encoding="utf-8") as f:
         f.write(toml_str)
+
+
+def resolve_job_strategy_specs(job: dict):
+    """ジョブ定義から `(strategy_codes, study_names, is_multi)` を解決する。
+
+    単数形 (`strategy_code` / `study_name`) と複数形 (`strategy_codes` / `study_names`)
+    の両方を受け付けるが、**併記や長さ不一致はエラー**にする
+    （タイポで意図と違う組み合わせが黙って走る事故を防ぐ）。
+
+    Returns:
+        strategy_codes: list[str]
+        study_names: list[str | None]
+        is_multi: bool — True なら複数戦略ジョブ。呼び出し側は study が1つでも
+                  欠けた場合に即エラー終了しなければならない
+                  （単一戦略ジョブの「Skipping して continue」とは扱いが異なる）。
+    """
+    name = job.get("name")
+    has_single = "strategy_code" in job
+    has_multi = "strategy_codes" in job
+
+    if has_single and has_multi:
+        raise ValueError(
+            f"ジョブ '{name}': strategy_code と strategy_codes は同時に指定できません"
+        )
+    if not has_single and not has_multi:
+        raise ValueError(f"ジョブ '{name}': strategy_code (または strategy_codes) が必要です")
+
+    if has_multi:
+        codes = list(job["strategy_codes"])
+        studies = list(job.get("study_names", [None] * len(codes)))
+        if len(codes) != len(studies):
+            raise ValueError(
+                f"ジョブ '{name}': strategy_codes ({len(codes)}件) と "
+                f"study_names ({len(studies)}件) の長さが一致しません"
+            )
+        return codes, studies, True
+
+    return [job["strategy_code"]], [job.get("study_name")], False
 
 
 def run_single_mc_scenario(strat: str, model: str, run_idx: int,
@@ -333,7 +396,9 @@ def main():
     if list_jobs_only:
         print(f"利用可能なジョブ名（{jobs_path}）:")
         for j in all_jobs:
-            print(f"  {j['name']}  (strategy_code={j['strategy_code']}, source={j.get('source', 'optuna')})")
+            codes, _studies, _is_multi = resolve_job_strategy_specs(j)
+            codes_display = codes[0] if len(codes) == 1 else codes
+            print(f"  {j['name']}  (strategy_code={codes_display}, source={j.get('source', 'optuna')})")
         return
 
     try:
@@ -375,43 +440,71 @@ def main():
 
     for job_idx, job in enumerate(jobs, start=1):
         strat_name = job["name"]
-        strategy_code = job["strategy_code"]
         source = job.get("source", "optuna")
 
-        print(f"\n>>> [Job {job_idx}/{n_jobs}] {strat_name} (Base Strategy: {strategy_code}, Source: {source}) ...")
+        try:
+            strategy_codes, study_names, is_multi = resolve_job_strategy_specs(job)
+        except ValueError as e:
+            # 複数 study のうち1つでも欠けたら（＝定義自体が壊れていたら）バッチ全体を止める。
+            # 一部だけ読めた状態で走らせると意図と違う組み合わせになるため、
+            # ここは Skip-continue にしない。
+            print(f"[ERROR] {e}")
+            sys.exit(1)
 
-        # Load parameters
-        best_params = {}
-        if source == "optuna":
-            study_name = job.get("study_name")
-            if not study_name:
-                print(f"  Skipping {strat_name}: 'study_name' is missing for optuna source.")
-                blocks_done += n_models
-                continue
-            best_params = get_best_params_from_db(db_path, study_name)
-        elif source == "manual":
-            base_study_name = job.get("base_study_name")
-            if base_study_name:
-                best_params = get_best_params_from_db(db_path, base_study_name)
+        codes_display = ", ".join(strategy_codes)
+        print(f"\n>>> [Job {job_idx}/{n_jobs}] {strat_name} (Base Strategy: {codes_display}, Source: {source}) ...")
+
+        # Load parameters（戦略ごとに1つずつ）
+        strategies = []  # [(strategy_code, best_params), ...] -> generate_preset_toml に渡す
+        job_skip = False
+        for strategy_code, study_name in zip(strategy_codes, study_names):
+            best_params = {}
+            if source == "optuna":
+                if not study_name:
+                    if is_multi:
+                        print(
+                            f"[ERROR] ジョブ '{strat_name}': 'study_name' が指定されていません "
+                            f"(strategy={strategy_code})"
+                        )
+                        sys.exit(1)
+                    print(f"  Skipping {strat_name}: 'study_name' is missing for optuna source.")
+                    job_skip = True
+                    break
+                best_params = get_best_params_from_db(db_path, study_name)
                 if not best_params:
+                    if is_multi:
+                        print(
+                            f"[ERROR] ジョブ '{strat_name}': Optuna params not found in study "
+                            f"'{study_name}' (strategy={strategy_code})"
+                        )
+                        sys.exit(1)
+                    print(f"  Skipping {strat_name}: Optuna params not found in study '{study_name}'")
+                    job_skip = True
+                    break
+            elif source == "manual":
+                base_study_name = job.get("base_study_name")
+                if base_study_name:
+                    best_params = get_best_params_from_db(db_path, base_study_name)
+                    if not best_params:
+                        best_params = {}
+                else:
                     best_params = {}
-            else:
-                best_params = {}
+            strategies.append((strategy_code, best_params))
 
-        if source == "optuna" and not best_params:
-            print(f"  Skipping {strat_name}: Optuna params not found in study '{job.get('study_name')}'")
+        if job_skip:
             blocks_done += n_models
             continue
 
-        # Apply manual parameter overrides
+        # Apply manual parameter overrides（全戦略に同じ上書きを適用）
         override_params = job.get("override_params", {})
         if override_params:
             print(f"  Applying parameter overrides: {override_params}")
-            best_params.update(override_params)
+            for _, best_params in strategies:
+                best_params.update(override_params)
 
         # Preset TOML を tmp/ に書き出す（実行ごとに再生成）
         preset_toml_path = os.path.join(project_root_here, "tmp", f"preset_{strat_name}_opt.toml")
-        generate_preset_toml(strategy_code, best_params, preset_toml_path)
+        generate_preset_toml(strategies, preset_toml_path)
 
         portfolio = resolve_portfolio_params(job)
         diff = {k: v for k, v in portfolio.items() if v != DEFAULT_PORTFOLIO[k]}
