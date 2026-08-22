@@ -134,16 +134,26 @@ numba は使わない（`moving_averages.py` / `volatility.py` は使ってい�
 
 ### 3.3 フロントエンド
 
-- `ChartWidget` に `structures?: StructurePivot[]` プロパティを追加
+> [!WARNING]
+> **計画時の前提が誤っていた。** `ChartWidget.tsx` はどこからも import されていない
+> **デッドコード**で、実際に描画しているのは `ChartPage.tsx` 自身（自前で
+> `createChart` を呼び、`updateLineSeries` 等でシリーズを管理している）。
+> 実装先を `ChartPage.tsx` に変更した。`ChartWidget.tsx` の扱いは §8 参照。
+
+- `src/api/structurePivot.ts`（新規）— 取得と、描画用データの組み立て
+  - `fetchStructurePivot()` / `buildStructureSegments()` / `buildStructureMarkers()`
+  - 描画そのものは ChartPage に残し、**組み立てだけを純関数へ出してテスト可能にする**
+  - **両端の日付がローソク足のデータに無い線分は捨てる**。lightweight-charts は
+    データに無い時刻を渡すと描画が壊れるため（`full_range` 切り替え直後に効く）
+- `ChartPage.tsx`
   - **構造線**: LL→HL を結ぶ破線 — 2点だけの `addLineSeries`
   - **ピボット線**: ピボット足から構造の終端まで水平線 — 同じく2点の `addLineSeries`
     （`createPriceLine` は時間方向に区切れないので使わない）
-  - **LL / HL ラベル**: ローソク足シリーズの `setMarkers()` を使う
-    （lightweight-charts v4 にラベル描画 API は無い）
-  - 最新の構造は色付き、過去の構造はグレー
-- `ChartPage` に表示トグル「構造ピボット」を追加（既存の SMA/EMA トグルと同じ場所）。
+  - **LL / HL マーカー**: 既存の `markers` 配列へ相乗り（TD9・ATR 乖離と同じ配列）。
+    lightweight-charts v4 にラベル描画 API は無いため `setMarkers()` を使う
+  - 履歴はピボット水準だけを点線で最大30本（`STRUCTURE_HISTORY_LIMIT`）
+- 表示トグル「構造」をツールバーへ、「構造ピボット (LL-HL)」を指標設定パネルへ追加。
   ON のときだけ `/api/chart/{id}/structure_pivot` を fetch する
-- ピボット価格と HL 価格を既存の情報パネルに数値表示する
 
 ## 4. ユーザー確認事項
 
@@ -157,22 +167,25 @@ numba は使わない（`moving_averages.py` / `volatility.py` は使ってい�
 
 ## 5. 実装順序と進捗チェックリスト
 
-- [ ] `backend/tests/indicators/test_structure_pivot.py` を先に書く（TDD red）
-      — `tmp/probe_sp_sanity.py` で検証済みの3ケースを移植:
-      ①LL→戻り高値→HL の確定バーとピボット価格 ②HL 割れによる無効化
-      ③**確定遅延**（HL 確定前のバーでは構造が存在しないこと＝先読みが無いこと）
-- [ ] `backend/indicators/structure_pivot.py` を実装（green）
-- [ ] `backend/tests/api/test_chart_api.py` にエンドポイントのテストを追加
-- [ ] `chart_router.py` に `/chart/{symbol_id}/structure_pivot` を追加
-- [ ] `frontend/src/types.ts` に `StructurePivot` 型を追加
-- [ ] `ChartWidget` に描画を追加（`frontend/src/components/__tests__` にテスト追加）
-- [ ] `ChartPage` にトグルと数値表示を追加
-- [ ] `doc/frontend_specification.md` / `doc/backend_specification.md` §5 にエンドポイントを追記
-- [ ] `tmp/` の使い捨てスクリプトの整理（`sp_core.py` は本番へ移した後に削除）
+- [x] `backend/tests/indicators/test_structure_pivot.py` を先に書く（TDD red）— 18件
+- [x] `backend/indicators/structure_pivot.py` を実装（green）
+- [x] 本番 Parquet でプロトタイプ（`tmp/sp_core.py`）との一致を検証
+      — 30銘柄 / 58,034バーで強度と Tightest 勝者が完全一致（`tmp/verify_structure_pivot_port.py`）
+- [x] `backend/tests/api/test_chart_api.py` にエンドポイントのテストを追加 — 7件
+- [x] `chart_router.py` に `/chart/{symbol_id}/structure_pivot` を追加
+- [x] `frontend/src/types.ts` に `StructurePivot` 型を追加
+- [x] `frontend/src/api/structurePivot.ts` と そのテスト7件
+- [x] `ChartPage` に描画とトグルを追加
+- [x] `doc/frontend_specification.md` / `doc/backend_specification.md` §5.1.2 に追記
+- [ ] **TradingView との目視突合**（§6。ユーザー確認が必要）
+- [ ] `tmp/` の使い捨てスクリプト整理（本体 `tmp/probe_sp_*.py` / `sp_core.py` は
+      実測の再現用に残すか削除するかユーザー判断）
 
 ### 作業中メモ
 
-なし（未着手）
+実装は完了。残りは **TradingView との目視突合**のみ（バックエンド／フロントエンドを
+起動し、同一銘柄で TV のインジケータ（Min 2 / Max 10 / Tightest）と
+LL / HL の位置とピボット価格を突き合わせる）。
 
 ## 6. 検証プラン / 結果
 
@@ -186,16 +199,56 @@ $env:PYTHONPATH="backend"; .\venv\Scripts\python.exe -m pytest backend/tests/ -v
 cd frontend; npm test; npm run build
 ```
 
-**目視検証**: TradingView で同じ銘柄・同じ設定（Min 2 / Max 10 / Tightest）の
-インジケータを表示し、**LL / HL の位置とピボット価格が一致すること**を数銘柄で確認する。
+### 結果（2026-08-23）
+
+| 検証 | 結果 |
+| :--- | :--- |
+| `backend/tests/indicators/test_structure_pivot.py` | **18件 green** |
+| `backend/tests/api/test_chart_api.py` | **8件 green**（うち構造ピボット7件） |
+| `frontend/src/api/__tests__/structurePivot.test.ts` | **7件 green** |
+| バックエンド全体 `pytest backend/tests/` | **1,033件 green / 1件 fail**（下記） |
+| フロントエンド `npm test` | **19件 green / 2件 fail**（下記） |
+| `npm run build`（`tsc -b` 込み） | **成功** |
+| 本番 Parquet でプロトタイプとの一致 | **30銘柄 / 58,034バーで完全一致** |
+
+**失敗3件はいずれも本タスクと無関係。**
+
+| 失敗 | 原因 | 確認方法 |
+| :--- | :--- | :--- |
+| `test_scenario_comparison.py::test_run_comparison_generates_outputs` | **ワークツリーに本番データが無い**（`data/` は gitignore のため Parquet マスターが存在せず、`FileNotFoundError: Parquet master cache files not found`）。本タスクは `backend/backtest/` を一切変更していない | `git diff --stat main..HEAD` で変更ファイルを確認。**merge 前に本体チェックアウトで再実行して確認すること** |
+| `RsLineChart.test.tsx` の2件 | `chart.addHistogramSeries is not a function`。lightweight-charts のモック不足 | 変更を `git stash` して実行し、**着手前から失敗していることを確認済み** |
+
+### 残: TradingView との目視突合（ユーザー確認）
+
+同じ銘柄・同じ設定（Min 2 / Max 10 / Tightest）で TradingView のインジケータを表示し、
+**LL / HL の位置とピボット価格が一致すること**を数銘柄で確認する。
 一致しない場合は確定遅延の扱いか勝者選択の順序を疑う。
+
+> [!NOTE]
+> **意図的な差異**: TV 版は履歴のピボット線を現在バーまで延長し続ける
+> （`line.set_x2(hl.l, bar_index + 5)`）。本実装は**構造が死んだバーで打ち切る**。
+> LL / HL の位置とピボット価格は一致するが、線の右端は一致しない。
 
 ## 7. 途中発生した課題
 
-（未着手）
+| # | 事象 | 原因 | 解決 |
+| :--- | :--- | :--- | :--- |
+| 1 | 実装先の想定が誤り | `ChartWidget.tsx` はどこからも import されていないデッドコードで、描画しているのは `ChartPage.tsx` 自身だった | 実装先を `ChartPage.tsx` へ変更（§3.3）。`ChartWidget.tsx` 自体は触っていない（§8） |
+| 2 | API のテストが本番 Parquet を読んでいた | FastAPI のルータ関数を直接呼ぶと `Query(False)` が **Query オブジェクトのまま渡り truthy** になり、`if full_range:` が常に真になっていた | ロジックを素の引数を取る純関数 `build_structure_pivot_response()` へ出し、ルータは委譲のみに。テストは純関数を呼ぶ |
+| 3 | 恣意的な `MIN_BARS = 30` ガードが確定遅延テストを潰した | 短い系列を一律で弾いていたため、「確定バーの前後で構造の有無が変わる」ことを検証できなかった | 探索範囲から導く `_min_bars_required(min_len) = 2*min_len + 3` に置き換え |
+| 4 | ワークツリーが進行中タスクのコミット4件の上に乗っていた | `worktree.baseRef` が `head` で、本体が `worktree-objective-quality-first` に居たため | 固有コミットが無い時点で `git reset --hard main` し、main 基点に付け替えた |
 
 ## 8. スコープ外・残作業
 
+- **`frontend/src/components/ChartWidget.tsx` の扱い** — どこからも import されていない
+  デッドコード（181行）。削除するか ChartPage をこれに寄せるかは別途判断。本タスクでは触っていない
+- **`frontend/src/components/__tests__/RsLineChart.test.tsx` の失敗2件** —
+  `chart.addHistogramSeries is not a function`。**本タスク着手前から失敗している**
+  （変更を stash して確認済み）。lightweight-charts のモックに
+  `addHistogramSeries` が無いのが原因。修正は別タスク
+- **`chart_router.py` の DB パス解決の重複** — 本タスクで `_resolve_active_db_path()` を
+  切り出したが、既存の2箇所（`get_chart_data` 内）は同じ処理をインラインで持ったまま。
+  動いているコードなので今回は触らず、寄せるのは別途
 - ショート側（HH-LH）の描画
 - **スクリーナー／バックテストへの結線**（§1 の実測により見送り）
 
