@@ -262,10 +262,15 @@ is_rs_macd_hist_rising_21 = true
 max_allowed_dd = 35.0   # MTM 再校正（旧: 未設定=デフォルト 20.0）
 
 [strategy.optimization]
-min_change_1d_pct    = { type = "float", min = 4.0, max = 10.0, step = 1.0 }
+# 2026-08-21: 下限 4.0→8.0。税込み最適化で下限 4.0 に張り付き、「急騰」条件が
+# 事実上無効化された（取引 534→743・1取引 3.83%→2.29% と質が劣化）。
+# 加速条件を [true] に固定しても、急騰の閾値が自由なら「加速しているだけの
+# 平凡な銘柄」を拾えてしまう。is_rs_macd_hist_rising_21 と対で防衛する。
+min_change_1d_pct    = { type = "float", min = 8.0, max = 10.0, step = 1.0 }
 min_dist_21ema_pct   = { type = "float", min = -1.0, max = 20.0, step = 1.0 }
 min_vol_surge_21   = { type = "float", min = 1.5, max = 5.0, step = 0.1 }
-min_adr_pct_21     = { type = "float", min = 1.0, max = 6.0, step = 0.5 }
+# 2026-08-21: 下限 1.0→5.0。上と同じ理由（税込みベストが 6.0→2.5 へ緩めていた）。
+min_adr_pct_21     = { type = "float", min = 5.0, max = 6.0, step = 0.5 }
 max_sma50_atr_mult = { type = "float", min = 2.0, max = 8.0, step = 0.5 }
 # 2026-07-24: 探索下限を 1e5→1e7 に引き上げ（B2 と同一理由。詳細は B2 側コメント参照）
 min_market_cap     = { type = "categorical", choices = [1e7, 5e7, 1e8, 3e8, 1e9] }
