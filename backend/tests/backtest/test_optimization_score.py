@@ -1,13 +1,13 @@
 """
 test_optimization_score.py — 最適化バックテストの目的関数（再設計後）の純関数テスト。
 
-再設計の要点（doc/in_progress/objective_redesign_plan.md）:
-  score = period_CAGR / dd_penalty × detect_adequacy(avg_hits_per_day)
-  - 主指標を expectancy_lcb（トレード単価）→ 期間CAGR（複利での資産成長）へ差し替え
-  - DDペナルティ（閾値付き2乗・max_allowed_dd）は CAGR に対して掛ける（Calmar型）
-  - 検出件数は実用帯 detect_band=(lo, hi, floor) の係数でソフトに選好する
+2026-08-22 再設計（doc/in_progress/objective_quality_first_plan.md）:
+  score = avg_gain × (1 - dd_est/100)  （検出件数が quality_gate=[lo, hi] の内側の場合のみ）
+  - 主指標を period_CAGR（資産成長）→ avg_gain（1トレード平均リターン% = 質）へ差し替え
+  - 検出件数は掛け算（detect_adequacy）ではなくゲート（帯の外は失格・帯の内はスコアに無関係）
+  - DD ペナルティは閾値付き2乗をやめ、dd_est = |型1DD| × avg_slots**0.5 / 9.1（型3相当への
+    換算）を使った回復コスト型 `1 - dd_est/100` に変更（旧: `doc/completed/objective_redesign_plan.md`）
 """
-import math
 import pytest
 
 from optimization_runner import (calculate_custom_score, detect_adequacy, resolve_detect_band,
@@ -47,20 +47,32 @@ def test_detect_adequacy_peaks_inside_band():
 
 
 # =============================================================
-# calculate_custom_score
+# calculate_custom_score（2026-08-22 再設計: 質 × DDペナルティ、検出件数はゲート）
+#
+# 背景（doc/in_progress/objective_quality_first_plan.md §2.3/§2.4）:
+#   旧: score = period_CAGR / dd_penalty × detect_adequacy(hits/day) × lcb_gate
+#   新: 検出件数が quality_gate=[lo, hi] の外 → 失格
+#       検出件数が quality_gate=[lo, hi] の内 → score = avg_gain × (1 - dd_est/100)
+#   検出件数は掛け算ではなくゲート。帯の中にいる限り取引数はスコアに影響しない
+#   （「量を増やして点を稼ぐ」経路を消すのが本改修の核心）。
+#   dd_est = |型1DD| × avg_slots**0.5 / 9.1（型3 相当への換算。§2.4）。
 # =============================================================
 
-def _metrics(strat_multiplier=1.2, max_drawdown_pct=-10.0, total_trades=756,
-             expectancy_lcb=None):
+GATE = (0.3, 12.0)  # (lo, hi) 検出件数ゲート
+
+
+def _metrics(avg_gain=3.0, max_drawdown_pct=-10.0, total_trades=756,
+             avg_slots=1.0, expectancy_lcb=None):
     """テスト用 metrics 生成（必要キーのみ）。
 
     expectancy_lcb を渡した時のみキーを含める（None ならキー自体を持たせない＝
     LCBゲート後方互換のケースを再現）。
     """
     m = {
-        'strat_multiplier': strat_multiplier,
+        'avg_gain': avg_gain,
         'max_drawdown_pct': max_drawdown_pct,
         'total_trades': total_trades,
+        'avg_slots': avg_slots,
     }
     if expectancy_lcb is not None:
         m['expectancy_lcb'] = expectancy_lcb
@@ -68,103 +80,150 @@ def _metrics(strat_multiplier=1.2, max_drawdown_pct=-10.0, total_trades=756,
 
 
 def test_none_metrics_returns_sentinel():
-    assert calculate_custom_score(None, 252, 20.0, BAND) == -1000.0
-    assert calculate_custom_score({}, 252, 20.0, BAND) == -1000.0
+    assert calculate_custom_score(None, 252, GATE) == -1000.0
+    assert calculate_custom_score({}, 252, GATE) == -1000.0
 
 
 def test_below_min_trades_gate():
     # 5件未満は勾配ゲート（-100 + trades*20）。Optuna が「近づいている」ことを学べる
     m = _metrics(total_trades=3)
-    assert calculate_custom_score(m, 252, 20.0, BAND) == pytest.approx(-40.0)
+    assert calculate_custom_score(m, 252, GATE) == pytest.approx(-40.0)
 
 
-def test_score_uses_period_cagr_formula():
-    # 1年（252営業日）・strat_mult=1.2 → CAGR=20%。dd=10%(<=閾値20) → penalty=1+sqrt(10)*0.1
-    # avg=3件/日（帯内） → factor=1.0。score = 20 / (1+0.31623) ≈ 15.195
-    m = _metrics(strat_multiplier=1.2, max_drawdown_pct=-10.0, total_trades=756)
-    expected = 20.0 / (1.0 + math.sqrt(10.0) * 0.1)
-    assert calculate_custom_score(m, 252, 20.0, BAND) == pytest.approx(expected, abs=1e-6)
+def test_detection_below_gate_lo_is_disqualified():
+    # 0.29件/日（下限0.3をわずかに下回る）は失格（大きな負値）
+    m = _metrics(total_trades=int(1000 * 0.299), avg_gain=10.0)  # 総日数1000で0.299件/日
+    score = calculate_custom_score(m, 1000, GATE)
+    assert score < -100.0
 
 
-def test_cagr_is_annualized():
-    # 2年（504営業日）で strat_mult=1.44 → 年率CAGR=20%（1.44=1.2^2）
-    m = _metrics(strat_multiplier=1.44, max_drawdown_pct=-10.0, total_trades=1512)
-    expected = 20.0 / (1.0 + math.sqrt(10.0) * 0.1)
-    assert calculate_custom_score(m, 504, 20.0, BAND) == pytest.approx(expected, abs=1e-3)
+def test_detection_at_gate_lo_boundary_is_not_disqualified():
+    # 0.3件/日ちょうどはゲート内（境界含む）。通常のスコア計算が行われる
+    m = _metrics(total_trades=300, avg_gain=3.0, max_drawdown_pct=0.0)  # 総日数1000で0.3件/日
+    score = calculate_custom_score(m, 1000, GATE)
+    assert score == pytest.approx(3.0)  # DD=0 なので score=avg_gain そのまま
 
 
-def test_higher_cagr_scores_higher():
-    # DD・件数固定でCAGRが高いほどスコアが高い（成長を最適化している）
-    low = calculate_custom_score(_metrics(strat_multiplier=1.2), 252, 20.0, BAND)
-    high = calculate_custom_score(_metrics(strat_multiplier=1.4), 252, 20.0, BAND)
+def test_detection_above_gate_hi_is_disqualified():
+    # 20件/日（上限12超）は失格
+    m = _metrics(total_trades=252 * 20, avg_gain=10.0)
+    score = calculate_custom_score(m, 252, GATE)
+    assert score < -100.0
+
+
+def test_detection_at_gate_hi_boundary_is_not_disqualified():
+    # 12件/日ちょうどはゲート内（境界含む）
+    m = _metrics(total_trades=12000, avg_gain=3.0, max_drawdown_pct=0.0)  # 総日数1000で12件/日
+    score = calculate_custom_score(m, 1000, GATE)
+    assert score == pytest.approx(3.0)
+
+
+def test_quantity_within_band_does_not_affect_score():
+    # 帯内である限り、検出件数はスコアに影響しない（量を稼ぐ経路が消えていることの回帰）
+    m_low = _metrics(avg_gain=3.0, total_trades=int(252 * 1.0), avg_slots=2.0)   # 1件/日
+    m_high = _metrics(avg_gain=3.0, total_trades=int(252 * 10.0), avg_slots=2.0)  # 10件/日
+    assert calculate_custom_score(m_low, 252, GATE) == pytest.approx(
+        calculate_custom_score(m_high, 252, GATE))
+
+
+def test_score_is_quality_times_dd_factor():
+    # score = avg_gain × (1 - dd_est/100), dd_est = |max_drawdown_pct| × avg_slots**0.5 / 9.1
+    m = _metrics(avg_gain=5.0, max_drawdown_pct=-40.0, total_trades=756, avg_slots=2.0)
+    dd_est = 40.0 * (2.0 ** 0.5) / 9.1
+    expected = 5.0 * (1.0 - dd_est / 100.0)
+    assert calculate_custom_score(m, 252, GATE) == pytest.approx(expected, rel=1e-9)
+
+
+def test_known_dd_conversion_matches_calibration_example():
+    # 型1DD 95.1・avg_slots 8.26 → dd_est ≈ 30.0（計画書 §2.4 の実測校正例）
+    m = _metrics(avg_gain=1.0, max_drawdown_pct=-95.1, total_trades=756, avg_slots=8.26)
+    dd_est = 95.1 * (8.26 ** 0.5) / 9.1
+    assert dd_est == pytest.approx(30.0, abs=0.5)
+    score = calculate_custom_score(m, 252, GATE)
+    assert score == pytest.approx(1.0 * (1.0 - dd_est / 100.0), rel=1e-9)
+
+
+def test_higher_quality_scores_higher():
+    # DD・件数固定で質（avg_gain）が高いほどスコアが高い
+    low = calculate_custom_score(_metrics(avg_gain=2.0), 252, GATE)
+    high = calculate_custom_score(_metrics(avg_gain=5.0), 252, GATE)
     assert high > low
 
 
-def test_dd_penalty_beyond_threshold_collapses_score():
-    # CAGR・件数固定でDDが閾値を超えると急落する
-    m_low_dd = _metrics(strat_multiplier=1.3, max_drawdown_pct=-10.0)
-    m_high_dd = _metrics(strat_multiplier=1.3, max_drawdown_pct=-40.0)  # 閾値20超
-    s_low = calculate_custom_score(m_low_dd, 252, 20.0, BAND)
-    s_high = calculate_custom_score(m_high_dd, 252, 20.0, BAND)
+def test_deeper_dd_lowers_score():
+    # 質・件数固定でDDが深いほどスコアが下がる
+    m_low_dd = _metrics(avg_gain=5.0, max_drawdown_pct=-10.0, avg_slots=2.0)
+    m_high_dd = _metrics(avg_gain=5.0, max_drawdown_pct=-60.0, avg_slots=2.0)
+    s_low = calculate_custom_score(m_low_dd, 252, GATE)
+    s_high = calculate_custom_score(m_high_dd, 252, GATE)
     assert s_low > s_high
-    assert s_high < s_low * 0.5  # 2乗ペナルティで大きく沈む
 
 
-def test_detection_out_of_band_discounts_score():
-    # CAGR・DD固定で、検出件数が帯外（過多）だとスコアが割り引かれる
-    in_band = calculate_custom_score(
-        _metrics(strat_multiplier=1.3, total_trades=756), 252, 20.0, BAND)   # 3件/日
-    over = calculate_custom_score(
-        _metrics(strat_multiplier=1.3, total_trades=5040), 252, 20.0, BAND)  # 20件/日
-    assert in_band > over
-    # factor 比（1.0 vs max(0.4, 12/20=0.6)）に一致
-    assert over == pytest.approx(in_band * 0.6, rel=1e-6)
+def test_dd_conversion_divisor_is_configurable():
+    # dd_divisor を小さくすると dd_est が大きくなり、スコアが下がる（ハードコードしない）
+    m = _metrics(avg_gain=5.0, max_drawdown_pct=-90.0, avg_slots=9.0)
+    default_score = calculate_custom_score(m, 252, GATE)
+    tightened = calculate_custom_score(m, 252, GATE, dd_divisor=5.0)
+    assert tightened < default_score
 
 
-def test_negative_cagr_penalized_by_dd_depth():
-    # CAGR<=0 は成長がマイナス。DDが深いほどさらに沈める（detect係数は掛けない）
-    m = _metrics(strat_multiplier=0.8, max_drawdown_pct=-15.0, total_trades=756)  # CAGR=-20%
-    assert calculate_custom_score(m, 252, 20.0, BAND) == pytest.approx(-35.0)
+def test_dd_conversion_slots_exponent_is_configurable():
+    # slots指数を変えられること（0にするとavg_slotsの影響が消える=sqrt補正なし相当）
+    m = _metrics(avg_gain=5.0, max_drawdown_pct=-45.5, avg_slots=9.0)
+    score_no_slots_effect = calculate_custom_score(m, 252, GATE, dd_slots_exponent=0.0)
+    expected_dd_est = 45.5 * (9.0 ** 0.0) / 9.1  # = 45.5/9.1 = 5.0
+    assert expected_dd_est == pytest.approx(5.0)
+    assert score_no_slots_effect == pytest.approx(5.0 * (1.0 - 5.0 / 100.0), rel=1e-9)
+
+
+def test_missing_avg_slots_falls_back_to_raw_dd_without_conversion():
+    # 既存 trial には avg_slots が保存されていないため、その場合は換算せず素の DD を使う
+    # （フォールバック方針。doc/in_progress/objective_quality_first_plan.md §5 検証6）
+    m = _metrics(avg_gain=5.0, max_drawdown_pct=-30.0)
+    del m['avg_slots']
+    score = calculate_custom_score(m, 252, GATE)
+    expected = 5.0 * (1.0 - 30.0 / 100.0)
+    assert score == pytest.approx(expected, rel=1e-9)
 
 
 # =============================================================
-# expectancy_lcb ソフトゲート（CAGRの右裾過適合対策）
+# expectancy_lcb ソフトゲート（質主軸でも単価エッジの下限が無いスクリーンを減点する）
 # =============================================================
 
 def test_lcb_gate_discounts_nonpositive_lcb():
-    # CAGR>0 でも 1トレードLCB<=0（単価で勝てていない＝生存者バイアス疑い）は割り引く
-    base = calculate_custom_score(_metrics(strat_multiplier=1.3, expectancy_lcb=0.5), 252, 20.0, BAND)
-    gated = calculate_custom_score(_metrics(strat_multiplier=1.3, expectancy_lcb=-0.1), 252, 20.0, BAND)
+    # 1トレードLCB<=0（単価で勝てていない＝生存者バイアス疑い）は割り引く
+    base = calculate_custom_score(_metrics(avg_gain=5.0, expectancy_lcb=0.5), 252, GATE)
+    gated = calculate_custom_score(_metrics(avg_gain=5.0, expectancy_lcb=-0.1), 252, GATE)
     assert gated < base
     assert gated == pytest.approx(base * 0.5, rel=1e-9)  # デフォルト係数 0.5
 
 
 def test_lcb_gate_boundary_zero_is_gated():
     # LCB==0 は「>0 でない」ので割り引く（境界はゲート側）
-    base = calculate_custom_score(_metrics(strat_multiplier=1.3, expectancy_lcb=0.5), 252, 20.0, BAND)
-    at_zero = calculate_custom_score(_metrics(strat_multiplier=1.3, expectancy_lcb=0.0), 252, 20.0, BAND)
+    base = calculate_custom_score(_metrics(avg_gain=5.0, expectancy_lcb=0.5), 252, GATE)
+    at_zero = calculate_custom_score(_metrics(avg_gain=5.0, expectancy_lcb=0.0), 252, GATE)
     assert at_zero == pytest.approx(base * 0.5, rel=1e-9)
 
 
 def test_lcb_gate_no_effect_when_positive():
     # LCB>0 は減点なし（キー無し=後方互換ケースと一致）
-    absent = calculate_custom_score(_metrics(strat_multiplier=1.3), 252, 20.0, BAND)
-    positive = calculate_custom_score(_metrics(strat_multiplier=1.3, expectancy_lcb=0.5), 252, 20.0, BAND)
+    absent = calculate_custom_score(_metrics(avg_gain=5.0), 252, GATE)
+    positive = calculate_custom_score(_metrics(avg_gain=5.0, expectancy_lcb=0.5), 252, GATE)
     assert positive == pytest.approx(absent, rel=1e-12)
 
 
 def test_lcb_gate_skipped_when_key_absent():
     # expectancy_lcb キーが無い metrics は割り引かない（後方互換）
-    m = _metrics(strat_multiplier=1.3)
+    m = _metrics(avg_gain=5.0)
     assert 'expectancy_lcb' not in m
-    with_pos = calculate_custom_score(_metrics(strat_multiplier=1.3, expectancy_lcb=1.0), 252, 20.0, BAND)
-    assert calculate_custom_score(m, 252, 20.0, BAND) == pytest.approx(with_pos, rel=1e-12)
+    with_pos = calculate_custom_score(_metrics(avg_gain=5.0, expectancy_lcb=1.0), 252, GATE)
+    assert calculate_custom_score(m, 252, GATE) == pytest.approx(with_pos, rel=1e-12)
 
 
 def test_lcb_gate_penalty_is_configurable():
-    base = calculate_custom_score(_metrics(strat_multiplier=1.3, expectancy_lcb=0.5), 252, 20.0, BAND)
+    base = calculate_custom_score(_metrics(avg_gain=5.0, expectancy_lcb=0.5), 252, GATE)
     gated = calculate_custom_score(
-        _metrics(strat_multiplier=1.3, expectancy_lcb=-0.1), 252, 20.0, BAND, lcb_gate_penalty=0.25)
+        _metrics(avg_gain=5.0, expectancy_lcb=-0.1), 252, GATE, lcb_gate_penalty=0.25)
     assert gated == pytest.approx(base * 0.25, rel=1e-9)
 
 

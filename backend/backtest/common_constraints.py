@@ -67,12 +67,19 @@ class InvalidTaxRateError(ValueError):
     """税率が率（0.0〜1.0）として不正。20% を 20.0 と書く事故を検出する。"""
 
 
-def load_tax_rate(config: Optional[Mapping[str, Any]] = None) -> float:
+def load_tax_rate(config: Optional[Mapping[str, Any]] = None, for_optimization: bool = False) -> float:
     """backtest_config.toml の [general] consider_tax を率として解決する。
 
     値は**率**（0.2 = 20%）。1.0 を超える値は単位の取り違え（20.0 = 2000%）
     としてエラーにする。0.0（税なし）は正当な設定として許可する。
     キー欠如時は 0.0（税なし）を既定値とする。
+
+    for_optimization=True の場合は `consider_tax_optimization` を読む（型1: 最適化
+    バックテスト経路専用。既定 0.0 = 税なし）。False（既定）の場合は従来どおり
+    `consider_tax` を読む（型2・型3: 実運用シミュレーション経路。既定 0.2 のまま）。
+    型1が税込みで最適化すると取引数の減少がCAGR改善を上回り型3の成績を悪化させる
+    実測があったため経路を分離した（doc/in_progress/objective_quality_first_plan.md §3.2）。
+    単位検証（`> 1.0` でエラー）はどちらの経路にも同じく適用する。
 
     config を渡した場合はそれを使う（既にロード済みの呼び出し側用）。
     渡さなければ backtest_config.toml を直接読み込む。
@@ -83,9 +90,10 @@ def load_tax_rate(config: Optional[Mapping[str, Any]] = None) -> float:
                 config = tomli.load(f)
         except OSError:
             return 0.0
-    rate = float(config.get("general", {}).get("consider_tax", 0.0))
+    key = "consider_tax_optimization" if for_optimization else "consider_tax"
+    rate = float(config.get("general", {}).get(key, 0.0))
     if rate < 0.0 or rate > 1.0:
         raise InvalidTaxRateError(
-            f"consider_tax は率で指定してください（20% なら 0.2）。現在値: {rate}"
+            f"{key} は率で指定してください（20% なら 0.2）。現在値: {rate}"
         )
     return rate

@@ -99,6 +99,7 @@ def calculate_metrics(trades: List[TradeResult], spy_period_return: float = 0.0,
             'total_return_pct': 0.0, 'max_drawdown_pct': 0.0,
             'max_drawdown_legacy_pct': 0.0,
             'strat_multiplier': 1.0, 'spy_multiplier': 1.0,
+            'avg_slots': 1.0,
         }
 
     wins = [t for t in trades if t.pnl_pct > 0]
@@ -219,7 +220,11 @@ def calculate_metrics(trades: List[TradeResult], spy_period_return: float = 0.0,
         
         # Multipliers for multi-period compounding
         'strat_multiplier': strat_mult,
-        'spy_multiplier': 1.0 + spy_period_return
+        'spy_multiplier': 1.0 + spy_period_return,
+
+        # Little's Law の平均同時保有スロット数（無限資金・avg_slots 正規化の基準値）。
+        # 型1 DD を型3 相当へ換算する際に使う（optimization_runner.calculate_custom_score）。
+        'avg_slots': avg_slots,
     }
 
 

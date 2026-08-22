@@ -122,3 +122,47 @@ class TestLoadTaxRate:
 
     def test_invalid_tax_rate_error_is_value_error_subclass(self):
         assert issubclass(InvalidTaxRateError, ValueError)
+
+
+class TestLoadTaxRateForOptimization:
+    """税の経路分離（doc/in_progress/objective_quality_first_plan.md §3.2）。
+
+    型1（最適化バックテスト）は `consider_tax_optimization` を、
+    型2・型3（実運用シミュレーション）は従来どおり `consider_tax` を読む。
+    """
+
+    def test_default_reads_consider_tax(self):
+        """for_optimization を指定しない（既定 False）場合は consider_tax を読む。"""
+        config = {"general": {"consider_tax": 0.2, "consider_tax_optimization": 0.0}}
+        assert load_tax_rate(config) == 0.2
+
+    def test_for_optimization_reads_separate_key(self):
+        """for_optimization=True は consider_tax_optimization を読み、consider_tax とは独立。"""
+        config = {"general": {"consider_tax": 0.2, "consider_tax_optimization": 0.0}}
+        assert load_tax_rate(config, for_optimization=True) == 0.0
+
+    def test_for_optimization_missing_key_defaults_to_zero(self):
+        """consider_tax_optimization が未設定なら 0.0（税なし）が既定。"""
+        config = {"general": {"consider_tax": 0.2}}
+        assert load_tax_rate(config, for_optimization=True) == 0.0
+
+    def test_types_return_independently_different_values(self):
+        """型1経路と型2/型3経路が異なる税率を返すこと（回帰: 型3側が巻き込まれない）。"""
+        config = {"general": {"consider_tax": 0.2, "consider_tax_optimization": 0.05}}
+        rate_type1 = load_tax_rate(config, for_optimization=True)
+        rate_type23 = load_tax_rate(config, for_optimization=False)
+        assert rate_type1 == 0.05
+        assert rate_type23 == 0.2
+        assert rate_type1 != rate_type23
+
+    def test_unit_validation_applies_to_optimization_path_too(self):
+        """単位検証（%表記の取り違え検出）は for_optimization=True 側にも効くこと。"""
+        config = {"general": {"consider_tax_optimization": 20.0}}
+        with pytest.raises(InvalidTaxRateError):
+            load_tax_rate(config, for_optimization=True)
+
+    def test_unit_validation_applies_to_default_path(self):
+        """単位検証は for_optimization=False（既定）側にも引き続き効くこと。"""
+        config = {"general": {"consider_tax": 20.0}}
+        with pytest.raises(InvalidTaxRateError):
+            load_tax_rate(config, for_optimization=False)
