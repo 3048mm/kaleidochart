@@ -8,6 +8,7 @@ import os, re, logging
 from db.models import Symbol, DailyPrice, Indicator, RelativeRank, MarketSignal, ThemeConstituent, Earning
 from api import schemas
 from api.deps import get_api_db, get_api_user_db
+from indicators.structure_pivot import DEFAULT_MAX_LEN, DEFAULT_MIN_LEN, find_structures
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -803,3 +804,153 @@ def get_earnings_data(symbol_id: int, db: Session = Depends(get_api_db)):
     return resp
 
 
+
+
+# ============================================================
+# 構造ピボット (LL-HL) — チャート描画用オーバーレイ
+# ============================================================
+
+def _resolve_active_db_path() -> str:
+    """Parquet マスターの場所を解決するための DB パスを返す。"""
+    from db.database import get_active_db_path
+    db_path = get_active_db_path()
+    if db_path:
+        return db_path
+    try:
+        import tomllib
+        config_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            "config.toml")
+        with open(config_path, "rb") as f:
+            return tomllib.load(f).get("system", {}).get("db_path", "data/stocktool.db")
+    except Exception:
+        return "data/stocktool.db"
+
+
+def _load_ohlc_rows_from_parquet(symbol_id: int, db: Session):
+    """Parquet マスターから全期間の (date, high, low, close) を読む。失敗したら None。"""
+    import pandas as pd
+    from pipeline.parquet_cache_manager import (
+        get_parquet_master_dir, get_pointer_file_path, get_latest_master_files)
+
+    try:
+        parquet_dir = get_parquet_master_dir(_resolve_active_db_path())
+        latest_files = get_latest_master_files(get_pointer_file_path(parquet_dir))
+        if not latest_files:
+            return None
+        df = pd.read_parquet(latest_files['prices'],
+                             columns=['symbol_id', 'date', 'high', 'low', 'close'],
+                             filters=[('symbol_id', '==', symbol_id)])
+        if df.empty:
+            return None
+        df['date'] = pd.to_datetime(df['date'])
+        df = df.sort_values('date')
+        rows = [(d.strftime('%Y-%m-%d'), h, l, c)
+                for d, h, l, c in zip(df['date'], df['high'], df['low'], df['close'])]
+
+        # Parquet より新しい分は SQLite 側にしかないので継ぎ足す（/chart と同じ扱い）
+        max_date = df['date'].max().date()
+        newer = db.query(DailyPrice).filter(
+            DailyPrice.symbol_id == symbol_id,
+            DailyPrice.date > max_date,
+        ).order_by(DailyPrice.date.asc()).all()
+        rows.extend((p.date.strftime('%Y-%m-%d'), p.high, p.low, p.close) for p in newer)
+        return rows
+    except Exception as e:
+        logger.warning("structure_pivot: Parquet 読み込みに失敗したため SQLite へフォールバック: %s", e)
+        return None
+
+
+def _load_ohlc_for_structure(symbol_id: int, db: Session, full_range: bool):
+    """構造検出用に (日付文字列, high, low, close) を返す。
+
+    既定は SQLite（直近730日のホットキャッシュ）。`full_range=True` のときだけ
+    Parquet マスターから全期間を読む。チャート本体の期間と揃えるための引数。
+    """
+    import numpy as np
+
+    rows = _load_ohlc_rows_from_parquet(symbol_id, db) if full_range else None
+    if rows is None:
+        prices = db.query(DailyPrice).filter(
+            DailyPrice.symbol_id == symbol_id).order_by(DailyPrice.date.asc()).all()
+        rows = [(p.date.strftime('%Y-%m-%d'), p.high, p.low, p.close) for p in prices]
+
+    rows = [r for r in rows if r[1] is not None and r[2] is not None and r[3] is not None]
+    dates = [r[0] for r in rows]
+    high = np.array([float(r[1]) for r in rows], dtype=np.float64)
+    low = np.array([float(r[2]) for r in rows], dtype=np.float64)
+    close = np.array([float(r[3]) for r in rows], dtype=np.float64)
+    return dates, high, low, close
+
+
+def _structure_to_dict(s, dates: List[str]) -> Dict[str, Any]:
+    """インデックスを日付文字列へ置き換えてフロントへ返す形にする。"""
+    return {
+        "length": s.length,
+        "ll_date": dates[s.ll_index],
+        "ll_price": s.ll_price,
+        "hl_date": dates[s.hl_index],
+        "hl_price": s.hl_price,
+        "pivot_date": dates[s.pivot_index],
+        "pivot_price": s.pivot_price,
+        "confirmed_date": dates[s.confirmed_index],
+        "end_date": dates[s.end_index],
+        "invalidated": s.invalidated,
+        "is_current": s.is_current,
+        "broken_at_confirmation": s.broken_at_confirmation,
+    }
+
+
+def build_structure_pivot_response(
+    symbol_id: int,
+    db: Session,
+    full_range: bool = False,
+    min_len: int = DEFAULT_MIN_LEN,
+    max_len: int = DEFAULT_MAX_LEN,
+) -> Dict[str, Any]:
+    """LL-HL 構造ピボットをオンザフライで計算して返す（チャート描画用）。
+
+    T3 インジケータには持たない。1銘柄あたり最大2,000本程度で計算は 1ms 未満のため、
+    事前計算する理由が無い（採否の実測根拠は
+    `doc/in_progress/structure_pivot_chart_plan.md` §1）。
+
+    `structures` は過去に一度でも Tightest 勝者になった構造の履歴、
+    `current` は最終バー時点で生きている構造（無ければ null）。
+    データ不足のときはエラーにせず空で返す — チャートの一部なので、
+    構造が出ないことで画面全体を落とさない。
+    """
+    symbol = db.query(Symbol).filter(Symbol.id == symbol_id, Symbol.active == 1).first()
+    if not symbol:
+        raise HTTPException(status_code=404, detail="Symbol not found")
+
+    dates, high, low, close = _load_ohlc_for_structure(symbol_id, db, full_range)
+    structures = find_structures(high, low, close, min_len=min_len, max_len=max_len)
+    items = [_structure_to_dict(s, dates) for s in structures]
+
+    return {
+        "metadata": {
+            "ticker": symbol.ticker,
+            "min_len": min_len,
+            "max_len": max_len,
+            "bars": len(dates),
+        },
+        "structures": items,
+        "current": next((it for it in items if it["is_current"]), None),
+    }
+
+
+@router.get("/chart/{symbol_id}/structure_pivot")
+def get_structure_pivot_data(
+    symbol_id: int,
+    db: Session = Depends(get_api_db),
+    full_range: bool = Query(False),
+    min_len: int = Query(DEFAULT_MIN_LEN, ge=1, le=50),
+    max_len: int = Query(DEFAULT_MAX_LEN, ge=1, le=50),
+):
+    """`build_structure_pivot_response` の薄いラッパ。
+
+    ロジックを持たせない。FastAPI の `Query(...)` 既定値は関数を直接呼んだときに
+    Query オブジェクトのまま渡り（かつ truthy）、条件分岐を静かに壊すため、
+    実処理は素の引数を取る純関数側に置く。
+    """
+    return build_structure_pivot_response(symbol_id, db, full_range, min_len, max_len)
