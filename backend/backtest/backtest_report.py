@@ -79,7 +79,8 @@ def calculate_metrics(trades: List[TradeResult], spy_period_return: float = 0.0,
         - profit_factor, expectancy, avg_holding_days
         - pnl_std / expectancy_se / expectancy_lcb: トレードpnl の標本標準偏差・標準誤差・
           下側信頼限界（expectancy − 2×SE）。少数トレードのまぐれを罰する最適化用指標
-        - avg_gain: average PnL% per trade
+        - avg_gain: average PnL% per trade（算術平均）
+        - geo_mean_gain: 1トレードあたりの**幾何平均**リターン%（最適化スコアの主軸）
         - avg_spy_gain: average SPY return% over the same holding periods (benchmark)
         - alpha: avg_gain - avg_spy_gain (excess return over market)
         - total_return_pct
@@ -94,7 +95,7 @@ def calculate_metrics(trades: List[TradeResult], spy_period_return: float = 0.0,
             'profit_factor': 0.0, 'expectancy': 0.0,
             'pnl_std': 0.0, 'expectancy_se': 0.0, 'expectancy_lcb': 0.0,
             'avg_holding_days': 0.0, 'exit_reasons': {},
-            'avg_gain': 0.0, 'avg_spy_gain': 0.0, 'alpha': 0.0,
+            'avg_gain': 0.0, 'geo_mean_gain': 0.0, 'avg_spy_gain': 0.0, 'alpha': 0.0,
             'total_trades': 0, 'win_trades': 0,
             'total_return_pct': 0.0, 'max_drawdown_pct': 0.0,
             'max_drawdown_legacy_pct': 0.0,
@@ -122,6 +123,22 @@ def calculate_metrics(trades: List[TradeResult], spy_period_return: float = 0.0,
 
     # Average gain per trade (key metric for optimization)
     avg_gain = sum(t.pnl_pct for t in trades) / total
+
+    # --- 1トレードあたりの幾何平均リターン%（2026-08-24 追加。最適化スコアの主軸） ---
+    # avg_gain（算術平均）は分散に無関心で、「95%が負けで上位5%が全部稼ぐ」構成と
+    # 「安定して勝つ」構成を同じ点数にする。実際、質主軸の最適化はその歪みへ収束した。
+    # 幾何平均は積なので大きな負けを強く罰する（-50% は +100% でしか戻せないという実態を反映）。
+    # 実測（型3の39観測）でも、算術平均より勝率と整合し（vs勝率 +0.333→+0.498）、
+    # 分散との結びつきが弱まる（+0.907→+0.719）。
+    # CAGR（strat_multiplier）も積＝幾何平均であり、CAGR 主軸が結果として
+    # 1取引%と勝率を両立させていたのはこの性質による（偶然ではない）。
+    # 本指標は CAGR から avg_slots 正規化と年率化を外したもので、**取引数の寄与を含まない**
+    # 純粋な「1トレードの質」を表す。
+    log_sum = 0.0
+    for t in trades:
+        # -100% 以下（全損超）は理論上ありえないが、log の定義域を守るためクリップする
+        log_sum += math.log(max(1e-6, 1.0 + t.pnl_pct / 100.0))
+    geo_mean_gain = (math.exp(log_sum / total) - 1.0) * 100.0
 
     # 期待値の下側信頼限界（LCB = expectancy − 2×SE）。
     # 少数トレード・高分散の「まぐれ」は SE が大きくなり自動的に沈む。
@@ -208,6 +225,7 @@ def calculate_metrics(trades: List[TradeResult], spy_period_return: float = 0.0,
         'avg_holding_days': avg_holding,
         'exit_reasons': exit_reasons,
         'avg_gain': avg_gain,
+        'geo_mean_gain': geo_mean_gain,
         'avg_spy_gain': avg_spy_gain,
         'alpha': alpha,
         

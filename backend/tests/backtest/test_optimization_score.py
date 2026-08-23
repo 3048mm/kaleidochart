@@ -1,14 +1,17 @@
 """
 test_optimization_score.py — 最適化バックテストの目的関数（再設計後）の純関数テスト。
 
-2026-08-23 改訂（doc/in_progress/objective_quality_first_plan.md）:
-  score = avg_gain × sqrt(win_rate)  （検出件数が quality_gate=[lo, hi] の内側の場合のみ）
-  - 主指標は avg_gain（1トレード平均リターン% = 質）
+2026-08-24 改訂（doc/in_progress/objective_quality_first_plan.md）:
+  score = geo_mean_gain  （検出件数が quality_gate=[lo, hi] の内側の場合のみ）
+  - 主指標は geo_mean_gain（1トレードあたりの**幾何平均**リターン%）。
+    算術平均（avg_gain）は分散に無関心で「95%が負けで上位5%が全部稼ぐ」構成を
+    高く評価してしまうため、大負けを罰する幾何平均へ差し替えた。
+    幾何平均は勝率を内在的に要求するので、勝率を明示的に掛ける必要がない（二重計上の回避）。
   - 検出件数は掛け算（detect_adequacy）ではなくゲート（帯の外は失格・帯の内はスコアに無関係）
   - **DD 項は削除**。型1 DD は型3 CAGR と +0.770 の正相関を持つため、減点すると
     良い戦略ほど罰せられる（実測39観測で相関 +0.722→+0.375 と半減）。DD の管理は型3 の責務。
-  - 勝率を sqrt で掛ける。勝率は型3 CAGR をほとんど説明しない（+0.335）が、
-    分布の歪み（上位5%依存）を説明する（+0.594）ため、歪み防止の補正として入れる。
+  - 実測（型3の39観測）: 勝率との整合 算術+0.333 → 幾何+0.498 /
+    分散との結びつき 算術+0.907 → 幾何+0.719
 """
 import pytest
 
@@ -54,7 +57,7 @@ def test_detect_adequacy_peaks_inside_band():
 # 背景（doc/in_progress/objective_quality_first_plan.md §2.3/§2.4）:
 #   旧: score = period_CAGR / dd_penalty × detect_adequacy(hits/day) × lcb_gate
 #   新: 検出件数が quality_gate=[lo, hi] の外 → 失格
-#       検出件数が quality_gate=[lo, hi] の内 → score = avg_gain × sqrt(win_rate)
+#       検出件数が quality_gate=[lo, hi] の内 → score = geo_mean_gain
 #   検出件数は掛け算ではなくゲート。帯の中にいる限り取引数はスコアに影響しない
 #   （「量を増やして点を稼ぐ」経路を消すのが本改修の核心）。
 # =============================================================
@@ -62,15 +65,16 @@ def test_detect_adequacy_peaks_inside_band():
 GATE = (0.3, 12.0)  # (lo, hi) 検出件数ゲート
 
 
-def _metrics(avg_gain=3.0, max_drawdown_pct=-10.0, total_trades=756,
-             avg_slots=1.0, expectancy_lcb=None, win_rate=1.0):
+def _metrics(geo_mean_gain=3.0, max_drawdown_pct=-10.0, total_trades=756,
+             avg_slots=1.0, expectancy_lcb=None, win_rate=0.4, avg_gain=None):
     """テスト用 metrics 生成（必要キーのみ）。
 
     expectancy_lcb を渡した時のみキーを含める（None ならキー自体を持たせない＝
     LCBゲート後方互換のケースを再現）。
     """
     m = {
-        'avg_gain': avg_gain,
+        'geo_mean_gain': geo_mean_gain,
+        'avg_gain': avg_gain if avg_gain is not None else geo_mean_gain,
         'max_drawdown_pct': max_drawdown_pct,
         'total_trades': total_trades,
         'avg_slots': avg_slots,
@@ -94,98 +98,89 @@ def test_below_min_trades_gate():
 
 def test_detection_below_gate_lo_is_disqualified():
     # 0.29件/日（下限0.3をわずかに下回る）は失格（大きな負値）
-    m = _metrics(total_trades=int(1000 * 0.299), avg_gain=10.0)  # 総日数1000で0.299件/日
+    m = _metrics(total_trades=int(1000 * 0.299), geo_mean_gain=10.0)  # 総日数1000で0.299件/日
     score = calculate_custom_score(m, 1000, GATE)
     assert score < -100.0
 
 
 def test_detection_at_gate_lo_boundary_is_not_disqualified():
     # 0.3件/日ちょうどはゲート内（境界含む）。通常のスコア計算が行われる
-    m = _metrics(total_trades=300, avg_gain=3.0)  # 総日数1000で0.3件/日
+    m = _metrics(total_trades=300, geo_mean_gain=3.0)  # 総日数1000で0.3件/日
     score = calculate_custom_score(m, 1000, GATE)
     assert score == pytest.approx(3.0)  # win_rate=1.0 なので score=avg_gain そのまま
 
 
 def test_detection_above_gate_hi_is_disqualified():
     # 20件/日（上限12超）は失格
-    m = _metrics(total_trades=252 * 20, avg_gain=10.0)
+    m = _metrics(total_trades=252 * 20, geo_mean_gain=10.0)
     score = calculate_custom_score(m, 252, GATE)
     assert score < -100.0
 
 
 def test_detection_at_gate_hi_boundary_is_not_disqualified():
     # 12件/日ちょうどはゲート内（境界含む）
-    m = _metrics(total_trades=12000, avg_gain=3.0)  # 総日数1000で12件/日
+    m = _metrics(total_trades=12000, geo_mean_gain=3.0)  # 総日数1000で12件/日
     score = calculate_custom_score(m, 1000, GATE)
     assert score == pytest.approx(3.0)
 
 
 def test_quantity_within_band_does_not_affect_score():
     # 帯内である限り、検出件数はスコアに影響しない（量を稼ぐ経路が消えていることの回帰）
-    m_low = _metrics(avg_gain=3.0, total_trades=int(252 * 1.0), avg_slots=2.0)   # 1件/日
-    m_high = _metrics(avg_gain=3.0, total_trades=int(252 * 10.0), avg_slots=2.0)  # 10件/日
+    m_low = _metrics(geo_mean_gain=3.0, total_trades=int(252 * 1.0), avg_slots=2.0)   # 1件/日
+    m_high = _metrics(geo_mean_gain=3.0, total_trades=int(252 * 10.0), avg_slots=2.0)  # 10件/日
     assert calculate_custom_score(m_low, 252, GATE) == pytest.approx(
         calculate_custom_score(m_high, 252, GATE))
 
 
-def test_score_is_quality_times_sqrt_win_rate():
-    # score = avg_gain × sqrt(win_rate)
-    m = _metrics(avg_gain=5.0, win_rate=0.36)
-    assert calculate_custom_score(m, 252, GATE) == pytest.approx(5.0 * (0.36 ** 0.5), rel=1e-9)
+def test_score_is_geometric_mean():
+    # score = geo_mean_gain（そのまま）
+    m = _metrics(geo_mean_gain=3.33)
+    assert calculate_custom_score(m, 648, GATE) == pytest.approx(3.33)
 
 
-def test_win_rate_accepts_percent_notation():
-    # 勝率が % 表記（36.0）で渡されても小数（0.36）と同値になること
-    frac = calculate_custom_score(_metrics(avg_gain=5.0, win_rate=0.36), 252, GATE)
-    pct = calculate_custom_score(_metrics(avg_gain=5.0, win_rate=36.0), 252, GATE)
-    assert pct == pytest.approx(frac, rel=1e-9)
+def test_win_rate_is_not_multiplied():
+    # 2026-08-24: 勝率は掛けない（幾何平均が内在的に要求するため。二重計上の回避）
+    a = calculate_custom_score(_metrics(geo_mean_gain=3.0, win_rate=0.25), 648, GATE)
+    b = calculate_custom_score(_metrics(geo_mean_gain=3.0, win_rate=0.50), 648, GATE)
+    assert a == pytest.approx(b)
 
 
 def test_higher_quality_scores_higher():
-    # 勝率・件数固定で質（avg_gain）が高いほどスコアが高い
-    low = calculate_custom_score(_metrics(avg_gain=2.0, win_rate=0.36), 252, GATE)
-    high = calculate_custom_score(_metrics(avg_gain=5.0, win_rate=0.36), 252, GATE)
+    # 幾何平均が高いほどスコアが高い
+    low = calculate_custom_score(_metrics(geo_mean_gain=2.0), 648, GATE)
+    high = calculate_custom_score(_metrics(geo_mean_gain=5.0), 648, GATE)
     assert high > low
 
 
-def test_higher_win_rate_scores_higher():
-    # 質・件数固定で勝率が高いほどスコアが高い（分布の歪み防止の補正が効いている）
-    low = calculate_custom_score(_metrics(avg_gain=5.0, win_rate=0.30), 252, GATE)
-    high = calculate_custom_score(_metrics(avg_gain=5.0, win_rate=0.45), 252, GATE)
-    assert high > low
-
-
-def test_win_rate_effect_is_dampened_by_sqrt():
-    # sqrt なので勝率の効き方は線形より緩い。
-    # 勝率が2倍でもスコアは2倍にならず sqrt(2)倍にとどまる
-    lo = calculate_custom_score(_metrics(avg_gain=5.0, win_rate=0.20), 252, GATE)
-    hi = calculate_custom_score(_metrics(avg_gain=5.0, win_rate=0.40), 252, GATE)
-    assert hi == pytest.approx(lo * (2 ** 0.5), rel=1e-9)
-    assert hi < lo * 2
+def test_falls_back_to_avg_gain_when_geo_absent():
+    # 後方互換: 古い metrics（geo_mean_gain 無し）では avg_gain を使う
+    m = _metrics(geo_mean_gain=3.0, avg_gain=5.0)
+    del m['geo_mean_gain']
+    assert calculate_custom_score(m, 648, GATE) == pytest.approx(5.0)
 
 
 def test_drawdown_does_not_affect_score():
     # 2026-08-23: DD 項は削除された。型1 DD は型3 CAGR と正相関するため減点に使わない。
     # DD が違ってもスコアは変わらないことの回帰。
-    shallow = calculate_custom_score(_metrics(avg_gain=5.0, win_rate=0.36,
+    shallow = calculate_custom_score(_metrics(geo_mean_gain=5.0, win_rate=0.36,
                                               max_drawdown_pct=-5.0), 252, GATE)
-    deep = calculate_custom_score(_metrics(avg_gain=5.0, win_rate=0.36,
+    deep = calculate_custom_score(_metrics(geo_mean_gain=5.0, win_rate=0.36,
                                            max_drawdown_pct=-90.0), 252, GATE)
     assert shallow == pytest.approx(deep, rel=1e-9)
 
 
 def test_avg_slots_does_not_affect_score():
     # avg_slots は trial 属性として記録し続けるが、スコアには使わない
-    a = calculate_custom_score(_metrics(avg_gain=5.0, win_rate=0.36, avg_slots=2.0), 252, GATE)
-    b = calculate_custom_score(_metrics(avg_gain=5.0, win_rate=0.36, avg_slots=20.0), 252, GATE)
+    a = calculate_custom_score(_metrics(geo_mean_gain=5.0, win_rate=0.36, avg_slots=2.0), 252, GATE)
+    b = calculate_custom_score(_metrics(geo_mean_gain=5.0, win_rate=0.36, avg_slots=20.0), 252, GATE)
     assert a == pytest.approx(b, rel=1e-9)
 
 
-def test_missing_win_rate_yields_zero_score():
-    # win_rate が無い metrics ではスコアが 0（質だけでは点にならない）
-    m = _metrics(avg_gain=5.0)
+def test_missing_win_rate_does_not_affect_score():
+    # 2026-08-24: 勝率はスコアに使わないので、キーが無くても影響しない
+    m = _metrics(geo_mean_gain=5.0)
     del m['win_rate']
-    assert calculate_custom_score(m, 252, GATE) == pytest.approx(0.0)
+    assert calculate_custom_score(m, 252, GATE) == pytest.approx(5.0)
 
 
 # =============================================================
@@ -199,38 +194,38 @@ def test_missing_win_rate_yields_zero_score():
 
 def test_negative_avg_gain_returns_raw_value():
     # 赤字期間は素の avg_gain をそのまま返す（掛け算しない）
-    m = _metrics(avg_gain=-3.9, win_rate=0.25)
+    m = _metrics(geo_mean_gain=-3.9, win_rate=0.25)
     assert calculate_custom_score(m, 648, GATE) == pytest.approx(-3.9)
 
 
 def test_negative_avg_gain_is_not_improved_by_lcb_gate():
     # ★本命の回帰: lcb ゲートが赤字期間を「改善」してしまわないこと
     penalized = calculate_custom_score(
-        _metrics(avg_gain=-3.9, win_rate=0.25, expectancy_lcb=-0.5), 648, GATE)
+        _metrics(geo_mean_gain=-3.9, win_rate=0.25, expectancy_lcb=-0.5), 648, GATE)
     clean = calculate_custom_score(
-        _metrics(avg_gain=-3.9, win_rate=0.25, expectancy_lcb=0.5), 648, GATE)
+        _metrics(geo_mean_gain=-3.9, win_rate=0.25, expectancy_lcb=0.5), 648, GATE)
     assert penalized == pytest.approx(clean)
     assert penalized == pytest.approx(-3.9)
 
 
 def test_negative_avg_gain_is_monotone():
     # 赤字が深いほどスコアが低い（Optuna が勾配を学べる）
-    mild = calculate_custom_score(_metrics(avg_gain=-1.0, win_rate=0.3), 648, GATE)
-    severe = calculate_custom_score(_metrics(avg_gain=-8.0, win_rate=0.3), 648, GATE)
+    mild = calculate_custom_score(_metrics(geo_mean_gain=-1.0, win_rate=0.3), 648, GATE)
+    severe = calculate_custom_score(_metrics(geo_mean_gain=-8.0, win_rate=0.3), 648, GATE)
     assert severe < mild
 
 
 def test_zero_avg_gain_returns_zero():
     # 境界。0 は掛け算経路に入れない（win_rate を掛けても 0 だが、明示的に確認する）
-    assert calculate_custom_score(_metrics(avg_gain=0.0, win_rate=0.36), 648, GATE) == pytest.approx(0.0)
+    assert calculate_custom_score(_metrics(geo_mean_gain=0.0, win_rate=0.36), 648, GATE) == pytest.approx(0.0)
 
 
 def test_losing_period_never_outranks_profitable_one():
     # 赤字期間が黒字期間より高い点数になることはない（符号反転の回帰）
     losing = calculate_custom_score(
-        _metrics(avg_gain=-3.9, win_rate=0.25, expectancy_lcb=-0.5), 648, GATE)
+        _metrics(geo_mean_gain=-3.9, win_rate=0.25, expectancy_lcb=-0.5), 648, GATE)
     profitable = calculate_custom_score(
-        _metrics(avg_gain=0.5, win_rate=0.25, expectancy_lcb=-0.5), 648, GATE)
+        _metrics(geo_mean_gain=0.5, win_rate=0.25, expectancy_lcb=-0.5), 648, GATE)
     assert profitable > losing
 
 
@@ -240,38 +235,38 @@ def test_losing_period_never_outranks_profitable_one():
 
 def test_lcb_gate_discounts_nonpositive_lcb():
     # 1トレードLCB<=0（単価で勝てていない＝生存者バイアス疑い）は割り引く
-    base = calculate_custom_score(_metrics(avg_gain=5.0, win_rate=0.36, expectancy_lcb=0.5), 252, GATE)
-    gated = calculate_custom_score(_metrics(avg_gain=5.0, win_rate=0.36, expectancy_lcb=-0.1), 252, GATE)
+    base = calculate_custom_score(_metrics(geo_mean_gain=5.0, win_rate=0.36, expectancy_lcb=0.5), 252, GATE)
+    gated = calculate_custom_score(_metrics(geo_mean_gain=5.0, win_rate=0.36, expectancy_lcb=-0.1), 252, GATE)
     assert gated < base
     assert gated == pytest.approx(base * 0.5, rel=1e-9)  # デフォルト係数 0.5
 
 
 def test_lcb_gate_boundary_zero_is_gated():
     # LCB==0 は「>0 でない」ので割り引く（境界はゲート側）
-    base = calculate_custom_score(_metrics(avg_gain=5.0, win_rate=0.36, expectancy_lcb=0.5), 252, GATE)
-    at_zero = calculate_custom_score(_metrics(avg_gain=5.0, win_rate=0.36, expectancy_lcb=0.0), 252, GATE)
+    base = calculate_custom_score(_metrics(geo_mean_gain=5.0, win_rate=0.36, expectancy_lcb=0.5), 252, GATE)
+    at_zero = calculate_custom_score(_metrics(geo_mean_gain=5.0, win_rate=0.36, expectancy_lcb=0.0), 252, GATE)
     assert at_zero == pytest.approx(base * 0.5, rel=1e-9)
 
 
 def test_lcb_gate_no_effect_when_positive():
     # LCB>0 は減点なし（キー無し=後方互換ケースと一致）
-    absent = calculate_custom_score(_metrics(avg_gain=5.0, win_rate=0.36), 252, GATE)
-    positive = calculate_custom_score(_metrics(avg_gain=5.0, win_rate=0.36, expectancy_lcb=0.5), 252, GATE)
+    absent = calculate_custom_score(_metrics(geo_mean_gain=5.0, win_rate=0.36), 252, GATE)
+    positive = calculate_custom_score(_metrics(geo_mean_gain=5.0, win_rate=0.36, expectancy_lcb=0.5), 252, GATE)
     assert positive == pytest.approx(absent, rel=1e-12)
 
 
 def test_lcb_gate_skipped_when_key_absent():
     # expectancy_lcb キーが無い metrics は割り引かない（後方互換）
-    m = _metrics(avg_gain=5.0, win_rate=0.36)
+    m = _metrics(geo_mean_gain=5.0, win_rate=0.36)
     assert 'expectancy_lcb' not in m
-    with_pos = calculate_custom_score(_metrics(avg_gain=5.0, win_rate=0.36, expectancy_lcb=1.0), 252, GATE)
+    with_pos = calculate_custom_score(_metrics(geo_mean_gain=5.0, win_rate=0.36, expectancy_lcb=1.0), 252, GATE)
     assert calculate_custom_score(m, 252, GATE) == pytest.approx(with_pos, rel=1e-12)
 
 
 def test_lcb_gate_penalty_is_configurable():
-    base = calculate_custom_score(_metrics(avg_gain=5.0, win_rate=0.36, expectancy_lcb=0.5), 252, GATE)
+    base = calculate_custom_score(_metrics(geo_mean_gain=5.0, win_rate=0.36, expectancy_lcb=0.5), 252, GATE)
     gated = calculate_custom_score(
-        _metrics(avg_gain=5.0, win_rate=0.36, expectancy_lcb=-0.1), 252, GATE, lcb_gate_penalty=0.25)
+        _metrics(geo_mean_gain=5.0, win_rate=0.36, expectancy_lcb=-0.1), 252, GATE, lcb_gate_penalty=0.25)
     assert gated == pytest.approx(base * 0.25, rel=1e-9)
 
 
