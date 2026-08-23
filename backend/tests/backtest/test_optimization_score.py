@@ -189,6 +189,52 @@ def test_missing_win_rate_yields_zero_score():
 
 
 # =============================================================
+# 赤字期間のガード（2026-08-23 追加）
+#
+# 掛け算のペナルティは、スコアが負のとき「罰」ではなく「ご褒美」になる
+# （負の値に 0.2 を掛けるとゼロに近づく＝改善する）。スコアは2つの学習期間の
+# 平均なので、「片方で大勝ち・片方で赤字かつ罰あり」の構成が最適解として
+# 選ばれてしまっていた。赤字期間は掛け算の経路に入れないこと。
+# =============================================================
+
+def test_negative_avg_gain_returns_raw_value():
+    # 赤字期間は素の avg_gain をそのまま返す（掛け算しない）
+    m = _metrics(avg_gain=-3.9, win_rate=0.25)
+    assert calculate_custom_score(m, 648, GATE) == pytest.approx(-3.9)
+
+
+def test_negative_avg_gain_is_not_improved_by_lcb_gate():
+    # ★本命の回帰: lcb ゲートが赤字期間を「改善」してしまわないこと
+    penalized = calculate_custom_score(
+        _metrics(avg_gain=-3.9, win_rate=0.25, expectancy_lcb=-0.5), 648, GATE)
+    clean = calculate_custom_score(
+        _metrics(avg_gain=-3.9, win_rate=0.25, expectancy_lcb=0.5), 648, GATE)
+    assert penalized == pytest.approx(clean)
+    assert penalized == pytest.approx(-3.9)
+
+
+def test_negative_avg_gain_is_monotone():
+    # 赤字が深いほどスコアが低い（Optuna が勾配を学べる）
+    mild = calculate_custom_score(_metrics(avg_gain=-1.0, win_rate=0.3), 648, GATE)
+    severe = calculate_custom_score(_metrics(avg_gain=-8.0, win_rate=0.3), 648, GATE)
+    assert severe < mild
+
+
+def test_zero_avg_gain_returns_zero():
+    # 境界。0 は掛け算経路に入れない（win_rate を掛けても 0 だが、明示的に確認する）
+    assert calculate_custom_score(_metrics(avg_gain=0.0, win_rate=0.36), 648, GATE) == pytest.approx(0.0)
+
+
+def test_losing_period_never_outranks_profitable_one():
+    # 赤字期間が黒字期間より高い点数になることはない（符号反転の回帰）
+    losing = calculate_custom_score(
+        _metrics(avg_gain=-3.9, win_rate=0.25, expectancy_lcb=-0.5), 648, GATE)
+    profitable = calculate_custom_score(
+        _metrics(avg_gain=0.5, win_rate=0.25, expectancy_lcb=-0.5), 648, GATE)
+    assert profitable > losing
+
+
+# =============================================================
 # expectancy_lcb ソフトゲート（質主軸でも単価エッジの下限が無いスクリーンを減点する）
 # =============================================================
 
