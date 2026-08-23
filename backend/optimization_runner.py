@@ -67,12 +67,10 @@ def detect_adequacy(avg_hits_per_day: float, detect_band: tuple = (1.0, 12.0, 0.
 
 def calculate_custom_score(metrics, total_trading_days,
                            quality_gate: tuple = (0.3, 12.0),
-                           dd_divisor: float = 9.1,
-                           dd_slots_exponent: float = 0.5,
                            lcb_gate_penalty: float = 0.5):
-    """最適化スコアを計算する（高いほど良い）。2026-08-22 再設計（質 × 検出数ゲート型）。
+    """最適化スコアを計算する（高いほど良い）。2026-08-23 改訂（質 × √勝率 / 検出数ゲート型）。
 
-    score = avg_gain × (1 - dd_est/100)     （検出件数が quality_gate=[lo, hi] の内側の場合のみ）
+    score = avg_gain × sqrt(win_rate)     （検出件数が quality_gate=[lo, hi] の内側の場合のみ）
 
     旧版（2026-07-06）は `period_CAGR / dd_penalty × detect_adequacy(hits/day) × lcb_gate` で、
     検出件数を detect_adequacy で**掛け算**して実用帯へ寄せていたが、「量を増やしてもスコアが
@@ -80,13 +78,12 @@ def calculate_custom_score(metrics, total_trading_days,
     再設計では検出件数を**ゲート**（帯の内側なら影響なし・外側なら失格）にし、
     質（1トレード平均リターン% = avg_gain）を直接スコアの主軸にする。
 
-    dd_est（型1 DD → 型3 相当への換算。計画書 §2.4）:
-      dd_est = |max_drawdown_pct| × avg_slots ** dd_slots_exponent / dd_divisor
-      型1 の DD は avg_slots（Little の法則で正規化した枠数）が戦略ごとに異なり、
-      素の値のままでは型3（常に8枠固定）の DD と比較できない。√avg_slots 補正でスケールを揃える。
-      閾値も2乗も使わず、回復コスト 1/(1-DD) の逆数がそのままスコアの係数になる。
-      **既定係数 9.1 は実測13点からの経験値であり理論値ではない**（再最適化後に再検証予定）。
-      metrics に avg_slots が無い場合（旧 trial の再スコアリング等）は換算せず素の DD を使う。
+    **DD 項は 2026-08-23 に削除した。** dd_est（|DD| × √avg_slots / 9.1）の換算式自体は
+    正しく、型3 DD の予測を +0.533 → +0.896 に改善していた。しかし型1 DD は型3 **CAGR** と
+    +0.770 の正相関を持つ（DD が大きい戦略ほど CAGR が高い）ため、これで減点すると
+    良い戦略ほど罰せられる。実測（39観測）でも DD 項ありは型3 CAGR との相関が
+    +0.722 → +0.375 と半減した。**DD の管理は型3（有限資産・実運用相当）の責務**とし、
+    型1 は質の選別に専念する。avg_slots は将来の分析のため trial 属性に記録し続ける。
 
     ゲート/ペナルティ:
     - トレード5件未満（統計的に無意味）: 勾配ゲート
@@ -114,19 +111,28 @@ def calculate_custom_score(metrics, total_trading_days,
         # 過多。calculate_prune_penalty の「過多」と同じ傾斜（-100 - 超過分×50）
         return -100.0 - ((avg_trades_per_day - gate_hi) * 50.0)
 
-    # --- 主指標: 質（1トレード平均リターン%） ---
+    # --- 主指標: 質（1トレード平均リターン%）× √勝率 ---
+    # 2026-08-23 改訂。DD 項を外し、勝率を掛ける形にした。根拠は型1→型3の実測（39観測）:
+    #
+    #   質 x sqrt(勝率)          型3CAGR +0.722 / 分布健全性 +0.717
+    #   質のみ                    +0.720 / +0.692
+    #   質 x (1 - dd_est/100)    +0.375 / +0.441   ← 旧版。DD 項が予測力を半減させていた
+    #
+    # **DD 項を外した理由**: dd_est の換算式自体は正しい（型3 DD の予測は +0.533→+0.896 に改善）。
+    # しかし型1 DD は型3 **CAGR** と +0.770 の正相関を持つ（DD が大きい戦略ほど CAGR が高い）ため、
+    # これで減点すると良い戦略ほど罰せられる。DD の管理は型3（有限資産・実運用相当）の責務とし、
+    # 型1 は質の選別に専念する。avg_slots の記録は将来の分析のため継続する。
+    #
+    # **sqrt を使う理由**: 勝率は型3 CAGR をほとんど説明しない（単体 +0.335）が、
+    # **分布の歪み**（上位5%依存）は説明する（+0.594）。素の勝率を掛けると CAGR 予測が
+    # わずかに劣化する（+0.703）ため、影響を緩めた sqrt を採る。
     avg_gain = metrics.get('avg_gain', 0.0)
+    win_rate = metrics.get('win_rate', 0.0)
+    if win_rate > 1.0:      # % 表記で渡された場合に備える
+        win_rate /= 100.0
+    win_rate = max(0.0, min(1.0, win_rate))
 
-    # --- DD推定: 型1DD(avg_slots正規化済み)を型3相当へ換算し、回復コストの逆数で減点 ---
-    normalized_dd = abs(metrics.get('max_drawdown_pct', 0.0))
-    avg_slots = metrics.get('avg_slots')
-    if avg_slots is None:
-        # 旧 trial の再スコアリング等、avg_slots が保存されていない場合は換算せず素の DD を使う
-        dd_est = normalized_dd
-    else:
-        dd_est = normalized_dd * (avg_slots ** dd_slots_exponent) / dd_divisor
-
-    score = avg_gain * (1.0 - dd_est / 100.0)
+    score = avg_gain * (win_rate ** 0.5)
 
     # --- expectancy_lcb ソフトゲート（単価エッジの下限が無いスクリーンを減点） ---
     # metrics に expectancy_lcb が無い場合はスキップ（後方互換）。
@@ -498,10 +504,6 @@ def objective(trial: optuna.Trial, strategy_name: str, config, config_app, exit_
 
         # dd_est 換算係数（型1DD → 型3相当）。実測13点からの経験値のためハードコードせず設定化する
         # （計画書 §2.4 の過適合懸念。再最適化後に再検証予定）。
-        dd_divisor = float(strat_base.get('dd_conversion_divisor',
-                                          prune_conf.get('dd_conversion_divisor', 9.1)))
-        dd_slots_exponent = float(strat_base.get('dd_conversion_slots_exponent',
-                                                  prune_conf.get('dd_conversion_slots_exponent', 0.5)))
 
         # expectancy_lcb ソフトゲート係数。戦略側 > [optimization_pruning] > コード既定 の順で解決
         lcb_gate_penalty = float(strat_base.get('lcb_gate_penalty',
@@ -548,7 +550,7 @@ def objective(trial: optuna.Trial, strategy_name: str, config, config_app, exit_
                     raise optuna.TrialPruned()
 
             period_score = calculate_custom_score(metrics, len(trading_dates), quality_gate,
-                                                  dd_divisor, dd_slots_exponent, lcb_gate_penalty)
+                                                  lcb_gate_penalty)
             total_score += period_score
             total_trading_days_all += len(trading_dates)
 
