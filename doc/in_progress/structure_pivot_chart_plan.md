@@ -240,8 +240,10 @@ cd frontend; npm test; npm run build
 
 ## 8. スコープ外・残作業
 
-- **`frontend/src/components/ChartWidget.tsx` の扱い** — どこからも import されていない
-  デッドコード（181行）。削除するか ChartPage をこれに寄せるかは別途判断。本タスクでは触っていない
+- ~~**`frontend/src/components/ChartWidget.tsx` の扱い**~~ — **削除済み（2026-08-23）**。
+  初期コミットで追加されて以降、一度も import されたことのないデッドコード（181行）だった
+  （`git log --follow` で確認）。CLAUDE.md のコンポーネント一覧からも外し、
+  「ChartPage のチャートはページ内で直接組んでいる」旨を明記した
 - **`frontend/src/components/__tests__/RsLineChart.test.tsx` の失敗2件** —
   `chart.addHistogramSeries is not a function`。**本タスク着手前から失敗している**
   （変更を stash して確認済み）。lightweight-charts のモックに
