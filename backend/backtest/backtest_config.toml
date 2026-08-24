@@ -5,7 +5,8 @@
 start_date = "2021-03-26"
 end_date   = "2026-03-26"
 failsafe_max_days = 120
-consider_tax = 0.2  # 単位は率（0.2=20%）。%表記(20.0)を書くと InvalidTaxRateError になる
+consider_tax = 0.2  # 単位は率（0.2=20%）。%表記(20.0)を書くと InvalidTaxRateError になる。型2・型3（実運用シミュレーション）専用
+consider_tax_optimization = 0.0  # 型1（最適化バックテスト）専用。既定は税なし（doc/completed/objective_quality_first_plan.md §3.2）
 # エントリー方式: "close"=シグナル当日終値（オーバーナイト発注運用と整合） / "next_open"=翌営業日寄付（保守側の感度計測用）
 entry_mode = "close"
 # 流動性ハード制約（最適化対象外・全戦略共通）: 21日平均売買代金がこの値未満の銘柄はシグナル対象外
@@ -28,7 +29,18 @@ time_stop_days = 7
 # Strategy Parameter Sets
 # =============================================================
 #
-# max_allowed_dd の校正について（2026-07-05 再校正）:
+# max_allowed_dd の校正について（2026-07-05 再校正 / 2026-08-23 以降は**未使用**）:
+#
+#   ★★ 2026-08-23 に最適化スコアから DD 項を削除したため、**この値は現在どこからも
+#      読まれない**（`optimization_runner` の参照はゼロ。`screener_registry.METADATA_KEYS`
+#      には「フィルタではないキー」として登録が残っているのみ）。
+#      削除せず残しているのは、下記の戦略ごとの校正値（4段階）が設計知見だからで、
+#      型3（個別銘柄シナリオ）側で DD を評価する際に再利用しうる。
+#      **再び読むようにする場合は、型1 DD が型3 CAGR と +0.770 の正相関を持つ
+#      （DD が大きい戦略ほど CAGR が高い）ことに注意すること。型1 でこれを罰すると
+#      良い戦略ほど落ちる。詳細: doc/completed/objective_quality_first_plan.md**
+#
+#   （以下は 2026-07-05 当時の校正記録）
 #   最適化スコアの DD ペナルティ閾値。2026-07-05 に DD 計測を mark-to-market 化
 #   （含み損の谷・同時被弾を反映）したため、旧 additive 計測時代の校正値（20% 等）は
 #   MTM スケールでは 2〜4 倍厳しく作用していた。全戦略に MTM 基準の値を明示する。
@@ -261,10 +273,15 @@ is_rs_macd_hist_rising_21 = true
 max_allowed_dd = 35.0   # MTM 再校正（旧: 未設定=デフォルト 20.0）
 
 [strategy.optimization]
-min_change_1d_pct    = { type = "float", min = 4.0, max = 10.0, step = 1.0 }
+# 2026-08-21: 下限 4.0→8.0。税込み最適化で下限 4.0 に張り付き、「急騰」条件が
+# 事実上無効化された（取引 534→743・1取引 3.83%→2.29% と質が劣化）。
+# 加速条件を [true] に固定しても、急騰の閾値が自由なら「加速しているだけの
+# 平凡な銘柄」を拾えてしまう。is_rs_macd_hist_rising_21 と対で防衛する。
+min_change_1d_pct    = { type = "float", min = 8.0, max = 10.0, step = 1.0 }
 min_dist_21ema_pct   = { type = "float", min = -1.0, max = 20.0, step = 1.0 }
 min_vol_surge_21   = { type = "float", min = 1.5, max = 5.0, step = 0.1 }
-min_adr_pct_21     = { type = "float", min = 1.0, max = 6.0, step = 0.5 }
+# 2026-08-21: 下限 1.0→5.0。上と同じ理由（税込みベストが 6.0→2.5 へ緩めていた）。
+min_adr_pct_21     = { type = "float", min = 5.0, max = 6.0, step = 0.5 }
 max_sma50_atr_mult = { type = "float", min = 2.0, max = 8.0, step = 0.5 }
 # 2026-07-24: 探索下限を 1e5→1e7 に引き上げ（B2 と同一理由。詳細は B2 側コメント参照）
 min_market_cap     = { type = "categorical", choices = [1e7, 5e7, 1e8, 3e8, 1e9] }
@@ -625,4 +642,8 @@ detect_floor = 0.4     # 帯外でもこれ以上は割り引かない係数の�
 # スクリーン（生存者バイアス疑い）を高評価しがち。期間CAGRを主指標に保ったまま、
 # expectancy_lcb<=0 の期間スコアをこの係数で割り引き、頑健性を補強する。
 # 1.0 で無効、0.0 で該当期間を完全に潰す。戦略側 [[strategy]] に lcb_gate_penalty で上書き可能。
-lcb_gate_penalty = 0.5
+# 2026-08-22: 0.5 → 0.2 に強化。質主軸の目的関数（avg_gain）は分布の裾に引っ張られ、
+# 「低勝率・たまに大勝ち」の解へ寄る性質がある。実測で A/B1/B2 の3戦略すべてで
+# 勝率が低下し（B1: 38.3%→32.8%）、expectancy_lcb が悪化した（B1: +0.35→-1.27）。
+# B1 は 0.40 未満で lcb>0 の解（勝率38.5%・1取引5.25）が逆転することを実測で確認。
+lcb_gate_penalty = 0.2

@@ -44,47 +44,40 @@ def get_cached_data(config_app, start_date, end_date):
     print("Data preload complete.", flush=True)
     return res
 
-def detect_adequacy(avg_hits_per_day: float, detect_band: tuple = (1.0, 12.0, 0.4)) -> float:
-    """検出件数の「実用帯」係数（0〜1）を返す。多すぎず少なすぎずを緩やかに選好する。
-
-    最適化バックテストは無限資金だが、そのスクリーンは個別銘柄シナリオテスト（有限資産）で使われる。日に多数ヒットしても
-    有限資産では取り切れず、逆に枯れると枠が遊ぶ。そこで avg件/日 を実用帯に収めるための
-    ソフトな選好係数を CAGR スコアに掛ける。ハードな門番は prune 境界（min/max_avg_hits_per_day）
-    が担うため、ここは帯外でも floor 未満には割り引かない（優秀なスクリーンを件数だけで抹殺しない）。
-
-    detect_band = (lo, hi, floor):
-      - lo <= x <= hi : 1.0（減点なし）
-      - x < lo        : max(floor, x/lo)（過少。線形に減衰、floor が下限）
-      - x > hi        : max(floor, hi/x)（過多。反比例で減衰、floor が下限）
-    """
-    lo, hi, floor = detect_band
-    if lo <= avg_hits_per_day <= hi:
-        return 1.0
-    if avg_hits_per_day < lo:
-        return max(floor, avg_hits_per_day / lo) if lo > 0 else 1.0
-    return max(floor, hi / avg_hits_per_day) if avg_hits_per_day > 0 else floor
-
-
-def calculate_custom_score(metrics, total_trading_days, max_allowed_dd: float = 20.0,
-                           detect_band: tuple = (1.0, 12.0, 0.4),
+def calculate_custom_score(metrics, total_trading_days,
+                           quality_gate: tuple = (0.3, 12.0),
                            lcb_gate_penalty: float = 0.5):
-    """最適化スコアを計算する（高いほど良い）。2026-07-06 再設計。
+    """最適化スコアを計算する（高いほど良い）。
 
-    score = period_CAGR / dd_penalty × detect_adequacy(avg_hits_per_day) × lcb_gate
+    score = geo_mean_gain（1トレードあたりの**幾何平均**リターン%）
+            ただし検出件数が quality_gate=(lo, hi) の内側の場合のみ。
 
-    主指標を expectancy_lcb（1トレード単価）から **期間CAGR（複利での資産成長）** へ差し替えた。
-    「1トレードで勝つ」ではなく「資産をどこまで伸ばしつつ DD を抑えるか」を最適化する（実質 Calmar 型）。
-    CAGR は無限資金・avg_slots 正規化のまま（strat_multiplier）。年率化して学習期間の長さ差を公平化する。
-    検出件数は detect_adequacy でソフトに実用帯へ寄せる。詳細: doc/in_progress/objective_redesign_plan.md
+    **型1（最適化バックテスト）が測るのは「1トレードの質」だけ**である。
+    資産成長（CAGR）とドローダウンは型3（個別銘柄シナリオ・有限資産）の責務であり、
+    枠を埋めるのは**個々の戦略ではなく組み合わせの仕事**という役割分担に基づく（§6.1）。
 
-    ゲート/ペナルティ:
-    - トレード5件未満（統計的に無意味）: 勾配ゲート
-    - CAGR<=0（成長がマイナス）: DD の深さでさらに沈める（detect係数は掛けない）
-    - max_allowed_dd 超過: 超過分の2乗ペナルティ
-    - 検出件数が実用帯外: detect_adequacy による係数割引（floor が下限）
-    - expectancy_lcb<=0（1トレード単価で勝てていない=生存者バイアス疑い）: lcb_gate_penalty で割引
-      （CAGRは少数の巨大勝ち=右の裾に支配されやすい。単価エッジの下限が無いスクリーンをソフトに減点し、
-       過適合を抑える。metrics に expectancy_lcb が無ければスキップ=後方互換）
+    構成:
+      1. トレード5件未満 → 勾配ゲート（統計的に無意味）
+      2. 検出件数が帯の外 → 失格。**帯の内側ではスコアに一切影響しない**
+         （「量を増やして点を稼ぐ」経路を断つため、掛け算ではなくゲートにしている）
+      3. 幾何平均が0以下 → その値をそのまま返す（**掛け算の経路に入れない**。下記の罠を参照）
+      4. それ以外 → score = 幾何平均。`expectancy_lcb <= 0` なら lcb_gate_penalty で割引
+
+    **なぜ幾何平均なのか**: 算術平均（`avg_gain`）は分散に無関心で、
+    「95%が負けで上位5%が全部稼ぐ」構成と「安定して勝つ」構成を同じ点数にする。
+    幾何平均は積なので大きな負けを強く罰し、**勝率を内在的に要求する**
+    （勝率を明示的に掛ける必要がない＝二重計上の回避。`avg_gain` は既に勝率を内包している）。
+    CAGR（`strat_multiplier`）も積＝幾何平均であり、旧 CAGR 主軸が結果として
+    1取引%と勝率を両立させていたのはこの性質による。本指標は CAGR から
+    `avg_slots` 正規化と年率化を外し、**取引数の寄与を含まない純粋な質**にしたもの。
+
+    **罠: 掛け算のペナルティは、スコアが負のとき「罰」ではなく「ご褒美」になる。**
+    負の値に係数（<1）を掛けるとゼロに近づく＝改善してしまう。スコアは複数の学習期間の
+    平均なので、これを放置すると「片方で大勝ち・片方で赤字かつ罰あり」の構成が
+    最適解として選ばれる。ステップ3のガードはこれを防ぐためにある。**削除しないこと。**
+
+    設計の経緯と、捨てた案（DD 項・√勝率の掛け算）を捨てた理由:
+    `doc/completed/objective_quality_first_plan.md`
     """
     if not metrics:
         return -1000.0
@@ -95,62 +88,32 @@ def calculate_custom_score(metrics, total_trading_days, max_allowed_dd: float = 
         return -100.0 + (trades_count * 20.0)
     avg_trades_per_day = trades_count / total_trading_days
 
-    # --- 主指標: 期間CAGR（年率化）。無限資金・avg_slots 正規化済みの strat_multiplier から算出 ---
-    strat_mult = metrics.get('strat_multiplier', 1.0)
-    period_years = total_trading_days / 252.0
-    if period_years > 0 and strat_mult > 0:
-        period_cagr = (strat_mult ** (1.0 / period_years) - 1.0) * 100.0
-    else:
-        period_cagr = 0.0
+    # --- 1. 検出件数ゲート（帯の外は失格。帯の内側はスコアに一切影響させない） ---
+    gate_lo, gate_hi = quality_gate
+    if avg_trades_per_day < gate_lo:
+        # 過少。calculate_prune_penalty の「過少」と同じ傾斜（-100 - 不足分×2000）
+        return -100.0 - ((gate_lo - avg_trades_per_day) * 2000.0)
+    if avg_trades_per_day > gate_hi:
+        # 過多。calculate_prune_penalty の「過多」と同じ傾斜（-100 - 超過分×50）
+        return -100.0 - ((avg_trades_per_day - gate_hi) * 50.0)
 
-    # The max_drawdown_pct received here is now already Portfolio-Equivalent (Normalized via Little's Law)
-    normalized_dd = abs(metrics.get('max_drawdown_pct', 0.0))
+    # --- 2. 主指標: 1トレードあたりの幾何平均リターン% ---
+    quality = metrics.get('geo_mean_gain')
+    if quality is None:
+        # 後方互換: 古い metrics には geo_mean_gain が無い
+        quality = metrics.get('avg_gain', 0.0)
 
-    if period_cagr <= 0:
-        # 成長がゼロ以下ならドローダウンが深いほどさらにマイナス（検出係数は掛けない）
-        return period_cagr - normalized_dd
+    # --- 3. 赤字のガード（掛け算の符号反転を防ぐ。docstring の「罠」を参照） ---
+    if quality <= 0:
+        return quality
 
-    # --- しきい値付き2乗 DD ペナルティ（CAGR に対して割る = Calmar 型） ---
-    if normalized_dd <= max_allowed_dd:
-        # 閾値内ならマイルドな割引
-        penalty = 1.0 + (normalized_dd ** 0.5) * 0.1
-    else:
-        # 閾値を超えたら、超過分を2乗して急激にペナルティを増大させる
-        excess = normalized_dd - max_allowed_dd
-        penalty = 1.0 + (max_allowed_dd ** 0.5) * 0.1 + (excess ** 2) * 1.5
-
-    score = period_cagr / penalty
-
-    # --- 検出件数の実用帯係数（多すぎず少なすぎず） ---
-    score *= detect_adequacy(avg_trades_per_day, detect_band)
-
-    # --- expectancy_lcb ソフトゲート（右裾過適合対策） ---
-    # 1トレード期待値の下限(LCB)が 0以下 = 単価では勝てておらず、CAGRが少数の巨大勝ち
-    # （生存者バイアス）に依存している疑い。主指標はCAGRのまま、そうしたスクリーンを割り引く。
-    # metrics に expectancy_lcb が無い場合はスキップ（後方互換）。
+    # --- 4. expectancy_lcb ソフトゲート（単価エッジの下限が無いスクリーンを減点） ---
+    score = quality
     lcb = metrics.get('expectancy_lcb')
     if lcb is not None and lcb <= 0.0:
         score *= lcb_gate_penalty
 
     return score
-
-def resolve_detect_band(strat_base: dict, prune_conf: dict, min_avg: float, max_avg: float) -> tuple:
-    """detect_band=(lo, hi, floor) を解決する（2026-07-21 追加）。
-
-    以前は detect_lo/hi がハードプルーニング境界（min/max_avg_hits_per_day）とは無関係な
-    独立のグローバル既定値（1.0, 12.0）を持っていたため、ハード側だけ戦略ごとに緩めても
-    ソフト側の「実用帯」は一律のグローバル値のまま割り引く不整合があった。
-    detect_lo/hi の既定値を、既に戦略ごとに校正済みのハード境界（min_avg/max_avg）に
-    連動させることでこれを解消する。
-
-    解決順序: 戦略側（strat_base の detect_lo/hi/floor）
-            > [optimization_pruning] のグローバル指定（prune_conf）
-            > ハードプルーニング境界（min_avg/max_avg。floor はコード既定 0.4）
-    """
-    band_lo = strat_base.get('detect_lo', prune_conf.get('detect_lo', min_avg))
-    band_hi = strat_base.get('detect_hi', prune_conf.get('detect_hi', max_avg))
-    band_floor = strat_base.get('detect_floor', prune_conf.get('detect_floor', 0.4))
-    return (float(band_lo), float(band_hi), float(band_floor))
 
 
 def resolve_prune_floor(strat_base: dict, prune_conf: dict, min_avg: float) -> float:
@@ -166,8 +129,10 @@ def resolve_prune_floor(strat_base: dict, prune_conf: dict, min_avg: float) -> f
         Bear が僅かに薄い（0.91）だけでスコアが -323 に確定していた（B5 の実例）
 
     そこで発火点を `prune_floor_hits_per_day`（既定 0.2 件/日 ≒ 251営業日で50件未満の
-    「明らかに死んでいる」領域）まで下げ、`prune_floor`〜`min_avg` の範囲は
-    `detect_adequacy` の連続的な減衰（`x/lo`、下限 `detect_floor`）に委ねる。
+    「明らかに死んでいる」領域）まで下げる。
+    （2026-08-25: `prune_floor`〜`min_avg` の範囲は当時 `detect_adequacy` の連続減衰に
+    委ねていたが、目的関数のゲート化に伴い `detect_adequacy` は廃止した。
+    現在この範囲はスコアに影響せず、`quality_gate` の下限のみが門番として働く。）
 
     **戦略側が既に `min_avg_hits_per_day` を `prune_floor` より低く設定している場合は
     その値を尊重する**（E2 の 0.02、E1 の 0.05 等。引き締めになってはいけない）。
@@ -369,7 +334,8 @@ def run_holdout_validation(study, strat_base: dict, actual_name: str, config, co
         return
 
     entry_mode = config.get('general', {}).get('entry_mode', 'close')
-    consider_tax = load_tax_rate(config)
+    # 型1（最適化）経路: consider_tax_optimization を読む（型2/型3の consider_tax とは分離）
+    consider_tax = load_tax_rate(config, for_optimization=True)
     liquidity_floor = load_min_avg_dollar_volume_21(config)
 
     print("=" * 70)
@@ -477,18 +443,30 @@ def objective(trial: optuna.Trial, strategy_name: str, config, config_app, exit_
         max_avg = strat_base.get('max_avg_hits_per_day', prune_conf.get('max_avg_hits_per_day', 5.0))
         min_hit_rate = strat_base.get('min_hit_rate_pct', prune_conf.get('min_hit_rate_pct', 5.0))
         # fast_prune の発火点は「速度の安全弁」まで下げる（resolve_prune_floor 参照）。
-        # 実用帯の下限 min_avg はソフト側（detect_band）が引き続き使う。
         prune_min = resolve_prune_floor(strat_base, prune_conf, min_avg)
         prune_bounds = (prune_min, max_avg, min_hit_rate)
-        
-        # Extract tax and drawdown threshold options
-        max_allowed_dd = strat_base.get('max_allowed_dd', 20.0)
-        consider_tax = load_tax_rate(config)
+
+        # 型1（最適化）経路: consider_tax_optimization を読む（型2/型3の consider_tax とは分離）
+        consider_tax = load_tax_rate(config, for_optimization=True)
         entry_mode = config.get('general', {}).get('entry_mode', 'close')
 
-        # 検出件数の実用帯 detect_band=(lo, hi, floor)。
-        # 既定値はハードプルーニング境界(min_avg/max_avg)に連動させる（resolve_detect_band 参照）
-        detect_band = resolve_detect_band(strat_base, prune_conf, min_avg, max_avg)
+        # 検出件数ゲート quality_gate=(lo, hi)（2026-08-22 再設計）。
+        # 下限は既存の min_avg_hits_per_day とは別の新設定キー（既定 0.3件/日）。
+        # min_avg_hits_per_day をそのままゲート下限に流用すると、B1/B2/B3/B5/B6 等の
+        # 上位戦略がほぼ全滅する（doc/completed/objective_quality_first_plan.md §2.3 Q3）。
+        # 上限は既存のハードプルーニング上限 max_avg をそのまま流用する。
+        # 2026-08-24: 戦略が min_avg_hits_per_day で**自分より低い**検出下限を宣言している場合は
+        # そちらを尊重する（resolve_prune_floor と同じ「引き締めにならない」流儀）。
+        # E1(0.05) / E2(0.02) は VCP ブレイクアウトで検出が稀なのが仕様だが、
+        # 一律 0.3 のゲートを課すと条件を緩めるしかなくなり、実測で 1取引% が
+        # +1.44 → -0.29 とマイナスに転落した（戦略の性格が別物に変質した）。
+        _gate_default = float(prune_conf.get('quality_gate_min_hits_per_day', 0.3))
+        quality_gate_lo = float(strat_base.get('quality_gate_min_hits_per_day',
+                                               min(_gate_default, float(min_avg))))
+        quality_gate = (quality_gate_lo, max_avg)
+
+        # dd_est 換算係数（型1DD → 型3相当）。実測13点からの経験値のためハードコードせず設定化する
+        # （計画書 §2.4 の過適合懸念。再最適化後に再検証予定）。
 
         # expectancy_lcb ソフトゲート係数。戦略側 > [optimization_pruning] > コード既定 の順で解決
         lcb_gate_penalty = float(strat_base.get('lcb_gate_penalty',
@@ -501,13 +479,16 @@ def objective(trial: optuna.Trial, strategy_name: str, config, config_app, exit_
         expectancy_sum = 0.0
         expectancy_lcb_sum = 0.0
         avg_gain_sum = 0.0
+        geo_mean_gain_sum = 0.0
         avg_spy_gain_sum = 0.0
+        avg_holding_days_sum = 0.0
+        avg_slots_sum = 0.0
         max_dd_overall = 0.0
         periods_with_trades = 0
-        
+
         overall_strat_mult = 1.0
         overall_spy_mult = 1.0
-        
+
         for start_date, end_date in periods:
             df_symbols, df_prices, df_indicators, df_ranks, df_theme_constituents, trading_dates = get_cached_data(config_app, start_date, end_date)
             metrics, _ = run_single_strategy(
@@ -516,12 +497,12 @@ def objective(trial: optuna.Trial, strategy_name: str, config, config_app, exit_
                 fast_prune=True, prune_bounds=prune_bounds, consider_tax=consider_tax,
                 entry_mode=entry_mode
             )
-            
+
             # --- Handle directional penalty branching ---
             if isinstance(metrics, dict) and metrics.get('fast_pruned'):
                 penalty = calculate_prune_penalty(
-                    metrics['avg_per_day'], 
-                    metrics['hit_rate_pct'], 
+                    metrics['avg_per_day'],
+                    metrics['hit_rate_pct'],
                     prune_bounds
                 )
                 if penalty is not None:
@@ -531,8 +512,9 @@ def objective(trial: optuna.Trial, strategy_name: str, config, config_app, exit_
                 else:
                     # Fallback, theoretically shouldn't reach if bounds logic matched
                     raise optuna.TrialPruned()
-                
-            period_score = calculate_custom_score(metrics, len(trading_dates), max_allowed_dd, detect_band, lcb_gate_penalty)
+
+            period_score = calculate_custom_score(metrics, len(trading_dates), quality_gate,
+                                                  lcb_gate_penalty)
             total_score += period_score
             total_trading_days_all += len(trading_dates)
 
@@ -544,11 +526,14 @@ def objective(trial: optuna.Trial, strategy_name: str, config, config_app, exit_
                     expectancy_sum += metrics.get('expectancy', 0.0)
                     expectancy_lcb_sum += metrics.get('expectancy_lcb', 0.0)
                     avg_gain_sum += metrics.get('avg_gain', 0.0)
+                    geo_mean_gain_sum += metrics.get('geo_mean_gain', 0.0)
                     avg_spy_gain_sum += metrics.get('avg_spy_gain', 0.0)
+                    avg_holding_days_sum += metrics.get('avg_holding_days', 0.0)
+                    avg_slots_sum += metrics.get('avg_slots', 1.0)
                     overall_strat_mult *= metrics.get('strat_multiplier', 1.0)
                     overall_spy_mult *= metrics.get('spy_multiplier', 1.0)
                     periods_with_trades += 1
-                
+
         # Average score across periods
         avg_score = total_score / len(periods)
         
@@ -562,19 +547,34 @@ def objective(trial: optuna.Trial, strategy_name: str, config, config_app, exit_
         if periods_with_trades > 0:
             avg_expectancy = expectancy_sum / periods_with_trades
             avg_gain = avg_gain_sum / periods_with_trades
+            # 2026-08-25: スコアの主軸そのものを記録する。これが無いと
+            # 「何を最大化した結果なのか」を DB から事後検証できない（実際、幾何平均へ
+            # 切り替えた後も分析は avg_gain=相加平均を代理に見ていた）。
+            # 集計方法はスコアと同じ「期間ごとの値の相加平均」に揃えてあるので、
+            # lcb ゲートが掛からなければ score とほぼ一致する。
+            trial.set_user_attr("geo_mean_gain", round(geo_mean_gain_sum / periods_with_trades, 3))
             avg_spy = avg_spy_gain_sum / periods_with_trades
             trial.set_user_attr("expectancy", round(avg_expectancy, 3))
             trial.set_user_attr("expectancy_lcb", round(expectancy_lcb_sum / periods_with_trades, 3))
             trial.set_user_attr("avg_gain", round(avg_gain, 3))
             trial.set_user_attr("avg_spy_gain", round(avg_spy, 3))
             trial.set_user_attr("alpha", round(avg_gain - avg_spy, 3))
+            trial.set_user_attr("avg_holding_days", round(avg_holding_days_sum / periods_with_trades, 3))
+            trial.set_user_attr("avg_slots", round(avg_slots_sum / periods_with_trades, 3))
         else:
             trial.set_user_attr("expectancy", 0.0)
             trial.set_user_attr("expectancy_lcb", 0.0)
             trial.set_user_attr("avg_gain", 0.0)
+            trial.set_user_attr("geo_mean_gain", 0.0)
             trial.set_user_attr("avg_spy_gain", 0.0)
             trial.set_user_attr("alpha", 0.0)
-            
+            trial.set_user_attr("avg_holding_days", 0.0)
+            trial.set_user_attr("avg_slots", 1.0)
+
+        # avg_hits_per_day: ゲート判定の再現に必要（§3.3）。全期間通算の日平均ヒット件数
+        avg_hits_per_day = total_trades / total_trading_days_all if total_trading_days_all > 0 else 0.0
+        trial.set_user_attr("avg_hits_per_day", round(avg_hits_per_day, 4))
+
         # Calculate total years across all periods to compute true annualized CAGR
         total_years = 0.0
         for start_date, end_date in periods:
@@ -622,8 +622,7 @@ def objective(trial: optuna.Trial, strategy_name: str, config, config_app, exit_
         trial.set_system_attr("note", params_toml_str)
 
         # --- Trial Summary Log ---
-        avg_per_day_all = total_trades / total_trading_days_all if total_trading_days_all > 0 else 0.0
-        print(f"  [Trial {trial.number}] Score: {avg_score:.2f} | PortCAGR: {portfolio_cagr:+.1f}% (vs SPY {portfolio_vs_spy:+.1f}%) | MaxDD: {max_dd_overall:.1f}% | {avg_per_day_all:.1f} hits/day | Trades: {total_trades} | Win: {trial.user_attrs['win_rate']:.1f}% | AvgGain: {trial.user_attrs['avg_gain']:+.2f}%", flush=True)
+        print(f"  [Trial {trial.number}] Score: {avg_score:.2f} | PortCAGR: {portfolio_cagr:+.1f}% (vs SPY {portfolio_vs_spy:+.1f}%) | MaxDD: {max_dd_overall:.1f}% | {avg_hits_per_day:.1f} hits/day | Trades: {total_trades} | Win: {trial.user_attrs['win_rate']:.1f}% | AvgGain: {trial.user_attrs['avg_gain']:+.2f}%", flush=True)
 
         return avg_score
     except Exception as e:
@@ -708,14 +707,14 @@ def main():
 
     study_name = actual_name
     
-    tax_rate = load_tax_rate(config)
+    tax_rate = load_tax_rate(config, for_optimization=True)
     print("=" * 60)
     print(f"  Optuna Optimization Runner: Strategy {actual_name} (from: {args.strategy})")
     print(f"  Periods: {periods}")
     if tax_rate > 0.0:
-        print(f"  [Tax] 適用税率: {tax_rate * 100:.1f}% (consider_tax={tax_rate})")
+        print(f"  [Tax] 適用税率: {tax_rate * 100:.1f}% (consider_tax_optimization={tax_rate})")
     else:
-        print("  [Tax] 税なし (consider_tax=0.0)")
+        print("  [Tax] 税なし (consider_tax_optimization=0.0)")
     print("=" * 60)
     
     study = optuna.create_study(
