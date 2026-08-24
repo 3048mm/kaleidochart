@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { AreaChart, Area, ResponsiveContainer } from 'recharts';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { fetchScenarioSummary, fetchScenarioEquity, BacktestScenarioSummary, BacktestEquityPoint } from '../api/backtest';
+import { BacktestStrategyCard, CardChartPoint } from '../components/BacktestStrategyCard';
+import { BacktestRunInfo } from '../components/BacktestRunInfo';
 import { ScenarioDetailView } from './ScenarioDetailView';
 
 // ─── 定数 ──────────────────────────────────────────────────────
@@ -50,16 +51,6 @@ const fmt$ = (v: number) =>
 
 const fmtPct = (v: number, decimals = 1) => `${v >= 0 ? '+' : ''}${v.toFixed(decimals)}%`;
 
-const fmtCagr = (v: number | undefined) => {
-  if (v === undefined || v === null) return '—';
-  return fmtPct(v * 100);
-};
-
-const fmtDD = (v: number | undefined) => {
-  if (v === undefined || v === null) return '—';
-  return `${(Math.abs(v) * 100).toFixed(1)}%`;
-};
-
 // CAGR を equity curve から算出
 function calcCagrFromEquity(equity: BacktestEquityPoint[], initialCap: number): number | null {
   if (!equity.length) return null;
@@ -72,6 +63,8 @@ function calcCagrFromEquity(equity: BacktestEquityPoint[], initialCap: number): 
 }
 
 // ─── パネルカード ─────────────────────────────────────────────────
+// 骨格は BacktestStrategyCard（ETF タブと共通）。ここでは API の値を
+// カードが期待する「% 表記の実数」へ揃えて渡すだけにする。
 const PanelCard: React.FC<PanelCardProps> = ({ model, data, initialEquity, isActive, onClick }) => {
   const { summary, equity, loading, error } = data;
 
@@ -90,147 +83,55 @@ const PanelCard: React.FC<PanelCardProps> = ({ model, data, initialEquity, isAct
   const cagrMax = summary?.cagr_max;
   const cagrMin = summary?.cagr_min;
 
-  // Normalize equity for % chart
-  const chartData = equity.length > 0 ? equity.map(pt => ({
-    date: pt.date,
-    strategy: pt.equity,
-    spy: pt.spy_equity,
-  })) : [];
+  // 総ゲイン: API が total_return_pct を返さない旧レスポンス向けに initial からも算出できるようにする
+  const baseCapital = summary?.initial_capital ?? initialEquity;
+  const totalReturnPct = summary?.total_return_pct
+    ?? (finalCap !== undefined && baseCapital > 0 ? (finalCap / baseCapital - 1) * 100 : undefined);
 
+  // ミニグラフ: 実線=戦略 / グレー点線=SPY
+  const chartData: CardChartPoint[] = Array.isArray(equity)
+    ? equity.map(pt => ({
+        date: pt.date,
+        strategy: pt.equity,
+        benchmark: pt.spy_equity ?? null,
+      }))
+    : [];
 
   return (
-    <div
-      onClick={onClick}
-      style={{
-        background: isActive ? 'rgba(30, 41, 59, 0.95)' : 'rgba(15, 23, 42, 0.85)',
-        border: isActive ? `2px solid ${model.color}` : `1px solid ${model.color}33`,
-        borderRadius: '12px',
-        padding: isActive ? '15px' : '16px',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '12px',
-        backdropFilter: 'blur(12px)',
-        boxShadow: isActive ? `0 0 25px ${model.color}30` : `0 0 20px ${model.color}15`,
-        minWidth: 0,
-        cursor: 'pointer',
-        transition: 'all 0.2s ease',
-        transform: isActive ? 'scale(1.02)' : 'none',
-      }}
-    >
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{
-            width: 10, height: 10, borderRadius: '50%',
-            background: model.color, display: 'inline-block',
-            boxShadow: `0 0 8px ${model.color}`,
-          }} />
-          <span style={{ fontWeight: 700, fontSize: '13px', color: '#e2e8f0', letterSpacing: '0.02em' }}>
-            {model.icon} {model.label}
-          </span>
-        </div>
-        {loading && (
-          <span style={{
-            width: 14, height: 14, border: `2px solid ${model.color}`,
-            borderTopColor: 'transparent', borderRadius: '50%',
-            display: 'inline-block', animation: 'spin 0.8s linear infinite'
-          }} />
-        )}
-        {error && <span title={error} style={{ color: '#ef4444', fontSize: '14px' }}>⚠️</span>}
-      </div>
-
-      {/* Mini chart */}
-      <div style={{ height: 80 }}>
-        {chartData.length > 0 ? (
-          <ResponsiveContainer width="100%" height={80}>
-            <AreaChart data={chartData} margin={{ top: 2, right: 0, left: 0, bottom: 2 }}>
-              <defs>
-                <linearGradient id={`grad-${model.id}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={model.color} stopOpacity={0.3} />
-                  <stop offset="95%" stopColor={model.color} stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <Area type="monotone" dataKey="strategy" stroke={model.color} strokeWidth={1.5}
-                fill={`url(#grad-${model.id})`} dot={false} isAnimationActive={false} />
-              <Area type="monotone" dataKey="spy" stroke="#6b7280" strokeWidth={1}
-                strokeDasharray="3 2" fill="none" dot={false} isAnimationActive={false} />
-            </AreaChart>
-          </ResponsiveContainer>
-        ) : (
-          <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            {loading
-              ? <span style={{ color: '#64748b', fontSize: '11px' }}>Loading...</span>
-              : <span style={{ color: '#374151', fontSize: '11px' }}>{error ? 'Error loading data' : 'No data yet'}</span>
-            }
-          </div>
-        )}
-      </div>
-
-      {/* CAGR big number */}
-      <div style={{ textAlign: 'center' }}>
-        <div style={{
-          fontSize: '28px', fontWeight: 800,
-          color: cagr !== null && cagr !== undefined
-            ? (cagr >= 0 ? '#34d399' : '#f87171')
-            : '#64748b',
-          lineHeight: 1.1, fontVariantNumeric: 'tabular-nums',
-        }}>
-          {cagr !== null && cagr !== undefined ? fmtCagr(cagr) : (loading ? '—' : '—')}
-        </div>
-        <div style={{ fontSize: '10px', color: '#64748b', marginTop: '2px', letterSpacing: '0.05em' }}>
-          CAGR (年率)
-        </div>
-        {cagrMax !== undefined && cagrMin !== undefined && (
-          <div style={{ fontSize: '10px', color: '#94a3b8', marginTop: '2px' }}>
-            <span style={{ color: '#34d399' }}>{fmtCagr(cagrMax)}</span>
-            {' / '}
-            <span style={{ color: '#f87171' }}>{fmtCagr(cagrMin)}</span>
-          </div>
-        )}
-      </div>
-
-      {/* Metrics grid */}
-      <div style={{
-        display: 'grid', gridTemplateColumns: '1fr 1fr',
-        gap: '6px', fontSize: '11px',
-      }}>
-        {[
-          { label: 'Max DD', value: maxDD !== undefined ? fmtDD(maxDD) : '—', warn: true },
+    <BacktestStrategyCard
+      cardId={`scenario-${model.id}`}
+      label={model.label}
+      icon={model.icon}
+      color={model.color}
+      chartData={chartData}
+      cagrPct={cagr !== null && cagr !== undefined ? cagr * 100 : null}
+      maxDrawdownPct={maxDD !== undefined ? -Math.abs(maxDD) * 100 : null}
+      cagrRangePct={cagrMax !== undefined && cagrMin !== undefined
+        ? { max: cagrMax * 100, min: cagrMin * 100 }
+        : undefined}
+      rows={[
+        [
+          {
+            label: 'Avg Trade',
+            value: avgTradePnlPct !== undefined && avgTradePnlPct !== null ? fmtPct(avgTradePnlPct, 2) : '—',
+          },
           { label: 'Win Rate', value: winRate !== undefined ? `${(winRate * 100).toFixed(1)}%` : '—' },
+        ],
+        [
           { label: 'Trades', value: trades !== undefined ? String(Math.round(trades)) : '—' },
           { label: 'Profit Factor', value: pf !== undefined ? pf.toFixed(2) : '—' },
-          { label: '1取引平均', value: avgTradePnlPct !== undefined && avgTradePnlPct !== null ? fmtPct(avgTradePnlPct, 2) : '—' },
-        ].map(({ label, value, warn }) => (
-          <div key={label} style={{
-            background: 'rgba(30, 41, 59, 0.5)',
-            borderRadius: '6px', padding: '6px 8px',
-          }}>
-            <div style={{ color: '#64748b', fontSize: '9px', letterSpacing: '0.05em', marginBottom: '2px' }}>
-              {label}
-            </div>
-            <div style={{ color: warn ? '#fbbf24' : '#cbd5e1', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
-              {value}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Final capital */}
-      {finalCap !== undefined && (
-        <div style={{
-          background: `${model.color}11`, borderRadius: '6px',
-          padding: '6px 10px', display: 'flex', justifyContent: 'space-between',
-          alignItems: 'center', borderLeft: `3px solid ${model.color}`,
-        }}>
-          <span style={{ fontSize: '10px', color: '#64748b' }}>最終資産</span>
-          <span style={{ fontSize: '13px', fontWeight: 700, color: '#e2e8f0', fontVariantNumeric: 'tabular-nums' }}>
-            {fmt$(finalCap)}
-          </span>
-        </div>
-      )}
-    </div>
+        ],
+      ]}
+      finalCapital={finalCap}
+      totalReturnPct={totalReturnPct}
+      loading={loading}
+      error={error}
+      isActive={isActive}
+      onClick={onClick}
+    />
   );
 };
+
 
 // ─── メインページ ─────────────────────────────────────────────────
 export const RegimeComparisonPage: React.FC = () => {
@@ -271,6 +172,34 @@ export const RegimeComparisonPage: React.FC = () => {
   }, [selectedStrategy, loadModel]);
 
   const initialEquity = 100000;
+
+  // Run Info は全モデル共通の実行条件。最初に読み込めた summary を代表値として使う。
+  const runInfoSource = useMemo(
+    () => MODELS.map(m => modelData[m.id]?.summary).find(s => s != null) ?? null,
+    [modelData]
+  );
+
+  const runInfoItems = useMemo(() => {
+    if (!runInfoSource) return [];
+    const items: { label: string; value: string }[] = [];
+    if (runInfoSource.start_date && runInfoSource.end_date) {
+      items.push({ label: 'Period', value: `${runInfoSource.start_date} → ${runInfoSource.end_date}` });
+    }
+    if (runInfoSource.trading_days != null) {
+      items.push({ label: 'Trading Days', value: runInfoSource.trading_days.toLocaleString() });
+    }
+    if (runInfoSource.initial_capital != null) {
+      items.push({ label: 'Initial Cap', value: fmt$(runInfoSource.initial_capital) });
+    }
+    if (runInfoSource.consider_tax != null) {
+      items.push({ label: 'Tax Rate', value: `${(runInfoSource.consider_tax * 100).toFixed(0)}%` });
+    }
+    return items;
+  }, [runInfoSource]);
+
+  const runsNote = runInfoSource?.runs_count != null
+    ? `${runInfoSource.runs_count} Monte Carlo runs`
+    : undefined;
 
   return (
     <div style={{ padding: '0', color: '#e2e8f0' }}>
@@ -354,6 +283,9 @@ export const RegimeComparisonPage: React.FC = () => {
         ))}
       </div>
 
+      {/* Run Info（デフォルト非表示・タップで展開） */}
+      <BacktestRunInfo items={runInfoItems} note={runsNote} />
+
       {/* 5パネル */}
       <div className="rc-panel-grid">
         {MODELS.map(m => (
@@ -378,18 +310,15 @@ export const RegimeComparisonPage: React.FC = () => {
         </div>
       )}
 
-      {/* 凡例 */}
+      {/* 凡例（実行条件は Run Info バー側に出すので、ここは線の意味だけ） */}
       <div className="rc-legend">
         <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
           <span style={{ width: 20, height: 1.5, background: '#94a3b8', display: 'inline-block' }} />
-          Strategy equity (avg of 10 MC runs)
+          {runsNote ? `Strategy equity (avg of ${runInfoSource?.runs_count} MC runs)` : 'Strategy equity'}
         </span>
         <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
           <span style={{ width: 20, height: 1, background: '#6b7280', borderTop: '1px dashed', display: 'inline-block' }} />
           SPY benchmark
-        </span>
-        <span style={{ color: '#475569' }}>
-          Initial: $100,000 · Period: 2022-01 to 2026-03 · 10 Monte Carlo runs
         </span>
       </div>
     </div>

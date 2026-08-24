@@ -651,6 +651,7 @@ def run_scenario_test(
         'min_score': min_score,
         'stop_loss_pct': stop_loss_pct,
         'profit_target_pct': profit_target_pct,
+        'consider_tax': consider_tax,
     }
     
     # Use final total equity if available, else fallback to capital
