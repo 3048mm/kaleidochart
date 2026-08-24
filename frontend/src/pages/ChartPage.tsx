@@ -2,7 +2,8 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { createChart, IChartApi, ISeriesApi, CrosshairMode, SeriesMarker } from 'lightweight-charts';
-import { Symbol, ChartDataPoint, EarningData, ChartResponse, ChartSymbolMeta } from '../types';
+import { Symbol, ChartDataPoint, EarningData, ChartResponse, ChartSymbolMeta, StructurePivot } from '../types';
+import { buildStructureMarkers, buildStructureSegments, fetchStructurePivot } from '../api/structurePivot';
 import { appConfig } from '../config';
 import { RrgChart } from '../components/RrgChart';
 import { SymbolDataTable } from '../components/SymbolDataTable';
@@ -160,6 +161,8 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
     const [showBB, setShowBB] = useState(true);
     const [showRsDots, setShowRsDots] = useState(true);
     const [showSma50Atr, setShowSma50Atr] = useState(false);
+    const [showStructurePivot, setShowStructurePivot] = useState(false);
+    const [structures, setStructures] = useState<StructurePivot[]>([]);
 
     const chartRef = useRef<IChartApi | null>(null);
     const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -171,6 +174,7 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
     const rsSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const compSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const sma50AtrSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+    const structureSeriesRef = useRef<ISeriesApi<"Line">[]>([]);
 
     const selected = useMemo(() => {
         const parsedTicker = ticker?.includes(':') ? ticker.split(':')[1] : ticker;
@@ -210,6 +214,20 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
             .catch(err => console.error(err))
             .finally(() => setEarningsLoading(false));
     }, [selected, fullRange]);
+
+    // 1b. 構造ピボット (LL-HL)。トグル ON のときだけ取得する
+    useEffect(() => {
+        if (!selected || !showStructurePivot) {
+            setStructures([]);
+            return;
+        }
+        let cancelled = false;
+        fetchStructurePivot(selected.id, fullRange)
+            .then(list => { if (!cancelled) setStructures(list); })
+            // 構造が出ないだけでチャート全体を落とさない
+            .catch(() => { if (!cancelled) setStructures([]); });
+        return () => { cancelled = true; };
+    }, [selected, fullRange, showStructurePivot]);
 
 
 
@@ -388,6 +406,19 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
                 });
             }
         });
+        // --- Structure Pivot: 現在生きている構造の LL / HL ---
+        if (showStructurePivot) {
+            buildStructureMarkers(structures, new Set(data.map(d => d.time))).forEach(m => {
+                markers.push({
+                    time: m.time as any,
+                    position: 'belowBar',
+                    color: m.color,
+                    shape: 'arrowUp',
+                    text: m.text,
+                });
+            });
+        }
+
         markers.sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
         
         if (isVirtualLineChart && lineSeries) {
@@ -439,6 +470,28 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
         if (showBB) {
             bbSeriesRefs.current.upper!.setData(data.filter(d => d.bb_upper != null).map(d => ({ time: d.time as any, value: d.bb_upper as number })));
             bbSeriesRefs.current.lower!.setData(data.filter(d => d.bb_lower != null).map(d => ({ time: d.time as any, value: d.bb_lower as number })));
+        }
+
+        // --- Structure Pivot (LL-HL) ---
+        // 構造ごとに線を作り直す。本数は「現在の構造 2本 + 履歴の上限」で頭打ちになる
+        structureSeriesRef.current.forEach(series => {
+            try { chart.removeSeries(series); } catch { /* チャート破棄済み */ }
+        });
+        structureSeriesRef.current = [];
+
+        if (showStructurePivot && structures.length > 0) {
+            const segments = buildStructureSegments(structures, new Set(data.map(d => d.time)));
+            segments.forEach(seg => {
+                const series = chart.addLineSeries({
+                    color: seg.color, lineWidth: seg.width, lineStyle: seg.style,
+                    lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false,
+                });
+                series.setData([
+                    { time: seg.from as any, value: seg.fromValue },
+                    { time: seg.to as any, value: seg.toValue },
+                ]);
+                structureSeriesRef.current.push(series);
+            });
         }
 
         // --- Volume Histogram ---
@@ -597,7 +650,8 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
     }, [
         data, compareData, showVolume, showTd9, showBB, showRsDots, showSma50Atr,
         showSma21, showSma50, showSma63, showSma150, showSma200,
-        showEma5, showEma21, showEma50, showEma63, showEma200
+        showEma5, showEma21, showEma50, showEma63, showEma200,
+        showStructurePivot, structures
     ]);
 
     const latest = data.length > 0 ? data[data.length - 1] : null;
@@ -984,6 +1038,7 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
                                     <button className={`toggle-btn ${showBB ? 'active' : ''}`} onClick={() => setShowBB(!showBB)}>BB</button>
                                     <button className={`toggle-btn ${showRsDots ? 'active' : ''}`} onClick={() => setShowRsDots(!showRsDots)}>RS.</button>
                                     <button className={`toggle-btn ${showSma50Atr ? 'active' : ''}`} onClick={() => setShowSma50Atr(!showSma50Atr)}>50/ATR</button>
+                                    <button className={`toggle-btn ${showStructurePivot ? 'active' : ''}`} onClick={() => setShowStructurePivot(!showStructurePivot)} title="LL-HL 構造ピボット">構造</button>
 
                                     <div style={{ borderLeft: '1px solid #333', margin: '0 10px', height: '24px', alignSelf: 'center' }}></div>
 
@@ -1159,6 +1214,7 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
                                 <button className={`toggle-btn ${showBB ? 'active' : ''}`} style={{ padding: '8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }} onClick={() => setShowBB(!showBB)}>ボリンジャーバンド</button>
                                 <button className={`toggle-btn ${showRsDots ? 'active' : ''}`} style={{ padding: '8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }} onClick={() => setShowRsDots(!showRsDots)}>RSシグナルドット</button>
                                 <button className={`toggle-btn ${showSma50Atr ? 'active' : ''}`} style={{ padding: '8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer', gridColumn: 'span 2' }} onClick={() => setShowSma50Atr(!showSma50Atr)}>50SMA/ATR% 乖離</button>
+                                <button className={`toggle-btn ${showStructurePivot ? 'active' : ''}`} style={{ padding: '8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer', gridColumn: 'span 2' }} onClick={() => setShowStructurePivot(!showStructurePivot)}>構造ピボット (LL-HL)</button>
                             </div>
                         </div>
 

@@ -636,6 +636,46 @@ ticker を永続キーにする設計は「DB を作り直しても追随でき�
 > Sandbox 検証時は、設定漏れによる本番汚染（片方だけ指定し heal が本番 user_data.db に向く事故）を防ぐため、**単一の環境変数 `STOCKTOOL_ENV=sandbox` を使用することを強く推奨します。**
 > 個別のレガシー変数を使う場合は `STOCKTOOL_DB_PATH` と `STOCKTOOL_USER_DB_PATH` を**必ずセットで**指定すること。安全弁はこの誤設定に対する最終防衛線であり、頼る前提で運用しないこと。
 
+### 5.1.2 構造ピボット API (`GET /chart/{symbol_id}/structure_pivot`)
+
+チャート描画用に **LL-HL 構造ピボット**（TradingView 公開スクリプト
+`Structure Pivot (LL-HL / HH-LH)` のロング側）をリクエスト時に計算して返す。
+
+| 項目 | 内容 |
+| :--- | :--- |
+| **実体** | `indicators/structure_pivot.py`（pandas 非依存の純 numpy 関数） |
+| **ルータ** | `api/chart_router.py::build_structure_pivot_response()` ＋ 同名の薄いルータ |
+| **クエリ** | `full_range`（既定 false。true で Parquet マスターの全期間）／`min_len`（既定2）／`max_len`（既定10） |
+| **レスポンス** | `metadata` ＋ `structures`（履歴）＋ `current`（生存中の構造 or null） |
+
+**T3 (`indicators`) にはカラムを持たない。** 1銘柄あたり最大2,000本程度で
+計算コストが無視できるため事前計算しない。スクリーナー／バックテストにも
+結線していない（実測の結果、採用を見送った。根拠は
+`doc/completed/structure_pivot_chart_plan.md` §1）。
+
+#### 検出ロジックと2つの落とし穴
+
+1. **確定遅延（先読み防止）**: `ta.pivotlow(low, L, L)` は左右 L 本を見る中心窓なので、
+   ある足がピボットだと確定するのは **L 本先**。本実装は
+   `confirmed_index = hl_index + length` 以降にしか構造を返さない。
+   Pine はチャート上で過去バーの位置に描くため「その時点で分かっていた」ように
+   見えるが実際には分かっていない。**将来スクリーナーへ転用する場合、ここを崩すと
+   黙って成績が良くなる**（型1バックテストは検出数と質を最適化するため気付けない）。
+2. **`Query()` 既定値の truthy 問題**: FastAPI のルータ関数を
+   テストから直接呼ぶと `Query(False)` が Query オブジェクトのまま渡り、
+   **truthy なので `if full_range:` が常に真になる**。実装中、テストが
+   ユニット DB ではなく本番 Parquet を読んでいた。ロジックは素の引数を取る
+   純関数側（`build_structure_pivot_response`）に置き、ルータは委譲だけにする。
+
+`Structure` の項目: `length` / `ll_date` / `ll_price` / `hl_date` / `hl_price`（＝損切り候補）/
+`pivot_date` / `pivot_price`（＝ブレイクアウト・トリガー）/ `confirmed_date` / `end_date` /
+`invalidated` / `is_current` / `broken_at_confirmation`。
+
+> [!NOTE]
+> `broken_at_confirmation` は「構造が確定した時点で既に終値がピボットを超えていた」ケース。
+> 本番 Parquet 5年の実測で **27〜28%**（長さ帯によらずほぼ一定）が該当する。
+> 確定遅延の実害を示す指標として残している。
+
 ### 5.2 ウォッチリスト API
 
 | Method | Path | 説明 |

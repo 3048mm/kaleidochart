@@ -392,3 +392,29 @@ export interface WatchlistResponse {
     active: WatchlistItem[];
     removed: WatchlistItem[];
 }
+
+/** 構造ピボット (LL-HL) — GET /api/chart/{symbol_id}/structure_pivot */
+export interface StructurePivot {
+    length: number
+    ll_date: string
+    ll_price: number
+    hl_date: string
+    hl_price: number
+    /** LL と HL の間の最高値。ブレイクアウト・トリガー */
+    pivot_date: string
+    pivot_price: number
+    /** 構造が確定した日。HL の日付ではない（ピボットは length 本遅れて確定する） */
+    confirmed_date: string
+    /** 構造が生きていた最後の日 */
+    end_date: string
+    invalidated: boolean
+    is_current: boolean
+    /** 確定した時点で既に終値がピボットを超えていたか */
+    broken_at_confirmation: boolean
+}
+
+export interface StructurePivotResponse {
+    metadata: { ticker: string; min_len: number; max_len: number; bars: number }
+    structures: StructurePivot[]
+    current: StructurePivot | null
+}

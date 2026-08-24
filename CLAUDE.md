@@ -151,7 +151,7 @@ Each phase catches up independently by comparing max dates between source and ta
 
 ### Frontend layout (`frontend/src/`)
 - `pages/` — one file per route (Dashboard, Chart, Group, Screener + ScreenerResult, Watchlist, TotalPortfolio, PortfolioDetail, Backtest + RegimeComparison)
-- `components/` — shared UI (Sparkline, EtfFeaturePanel, SummaryTable, RrgChart, RsLineChart, ChartWidget, WatchlistButton, etc.)
+- `components/` — shared UI (Sparkline, EtfFeaturePanel, SummaryTable, RrgChart, RsLineChart, WatchlistButton, etc.). Note: the chart on `ChartPage` is built inline in the page itself, not via a shared component.
 - `api/` — HTTP client calls to the backend
 - `hooks/` — data hooks (e.g. `useWatchlist`)
 - Dev server proxies `/api` to `http://127.0.0.1:8000` (see `vite.config.ts`); backend must be started on port 8000 (or update the proxy) for the frontend to work locally.
