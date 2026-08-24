@@ -230,3 +230,112 @@ def find_affected_virtual_themes(
         & theme_constituents["theme_id"].isin(virtual_ids)
     ]
     return sorted(set(hit["theme_id"]))
+
+
+# 仮想テーマ指数の基準値。`orchestrator.build_virtual_index_prices` と同じ。
+VIRTUAL_INDEX_BASE = 1000.0
+
+# 合成 volume のスケール。指数に実出来高は無いので「売買代金の急増倍率 × これ」を入れる。
+VIRTUAL_INDEX_VOLUME_SCALE = 1_000_000.0
+
+# 売買代金の移動平均窓。`orchestrator` 側と一致させること。
+VIRTUAL_INDEX_SURGE_WINDOW = 21
+
+
+def rebuild_virtual_index_prices(
+    theme_ids: list[int],
+    prices: pd.DataFrame,
+    theme_constituents: pd.DataFrame,
+) -> pd.DataFrame:
+    """仮想テーマ指数を **Parquet 上で** 全期間再合成する。
+
+    ## なぜ必要か
+
+    合成ロジックは `pipeline/orchestrator.build_virtual_index_prices` にしか無く、
+    SQLAlchemy セッションを要求する。ところが SQLite は直近730日しか持たないため、
+    **構成銘柄の価格を過去まで補正しても SQLite 経由では再合成が過去に届かない**。
+    Parquet を直接読み書きする経路には、同じ式の DB 非依存版が要る。
+
+    実例（2026-08-25）: `BYND` の 1:30 併合が未調整だったため、所属する仮想テーマ3本
+    （`_CNSM0A_` `_GRCL29_` `_NTRTFC_`）の指数が 2026-08-13 に ×3.44〜×5.87 で飛んだ。
+
+    > [!IMPORTANT]
+    > **アルゴリズムは `orchestrator` 版と一字一句同じにすること。** ここが食い違うと
+    > 「再合成した過去」と「翌日以降に日次が積む未来」で式が変わり、継ぎ目に段差が出る。
+    > 同値性は `test_parquet_recompute.py` の
+    > `test_rebuild_virtual_index_matches_the_orm_implementation` で固定してある。
+
+    Args:
+        theme_ids: 再合成する仮想テーマの symbol_id
+        prices: `symbol_id` / `date` / `close` / `volume` を持つ DataFrame（全銘柄分）
+        theme_constituents: `theme_id` / `symbol_id` を持つ DataFrame
+
+    Returns:
+        `symbol_id` / `date` / `open` / `high` / `low` / `close` / `volume` の DataFrame。
+        構成銘柄が無いテーマは黙って飛ばす。
+
+    Note:
+        **初日は指数に載らない**（リターンが計算できないため）。`orchestrator` 版と同じ挙動。
+    """
+    out = []
+    for theme_id in theme_ids:
+        c_ids = theme_constituents.loc[
+            theme_constituents["theme_id"] == theme_id, "symbol_id"
+        ].tolist()
+        if not c_ids:
+            continue
+
+        # close が 0 / 負 / NULL の行は使わない（`orchestrator` 側の `p.close > 0` と同じ）
+        df = prices[prices["symbol_id"].isin(c_ids)][
+            ["symbol_id", "date", "close", "volume"]
+        ].copy()
+        df = df[df["close"].notna() & (df["close"] > 0)]
+        if df.empty:
+            continue
+        df = df.sort_values("date")
+
+        # --- 指数値: 構成銘柄の日次平均リターンを基準値から連鎖させる ---
+        df["ret"] = df.groupby("symbol_id")["close"].pct_change()
+        daily_avg_ret = (
+            df.dropna(subset=["ret"]).groupby("date")["ret"].mean()
+            .reset_index().sort_values("date")
+        )
+        if daily_avg_ret.empty:
+            continue
+
+        # --- 合成 volume: 売買代金の21日平均に対する当日比（surge）の日次平均 ---
+        df["dollar_volume"] = df["close"] * df["volume"].fillna(0)
+        df["dollar_volume_ma21"] = df.groupby("symbol_id")["dollar_volume"].transform(
+            lambda x: x.rolling(window=VIRTUAL_INDEX_SURGE_WINDOW, min_periods=1).mean()
+        )
+        df["surge"] = np.where(
+            df["dollar_volume_ma21"] == 0,
+            1.0,
+            df["dollar_volume"] / df["dollar_volume_ma21"],
+        )
+        df["surge"] = df["surge"].fillna(1.0)
+        daily_avg_surge = df.groupby("date")["surge"].mean().reset_index()
+
+        # cumprod ではなく逐次乗算にしてある（`orchestrator` 版と浮動小数の丸めまで揃える）
+        current_val = VIRTUAL_INDEX_BASE
+        synth_closes = []
+        for r in daily_avg_ret["ret"]:
+            current_val *= (1 + r)
+            synth_closes.append(current_val)
+
+        idx = daily_avg_ret[["date"]].copy()
+        idx["close"] = synth_closes
+        idx["open"] = idx["high"] = idx["low"] = idx["close"]
+        idx = idx.merge(daily_avg_surge, on="date", how="left")
+        idx["volume"] = (
+            idx["surge"].fillna(1.0) * VIRTUAL_INDEX_VOLUME_SCALE
+        ).astype(float)
+        idx = idx.drop(columns=["surge"])
+        idx.insert(0, "symbol_id", theme_id)
+        out.append(idx[["symbol_id", "date", "open", "high", "low", "close", "volume"]])
+
+    if not out:
+        return pd.DataFrame(
+            columns=["symbol_id", "date", "open", "high", "low", "close", "volume"]
+        )
+    return pd.concat(out, ignore_index=True)

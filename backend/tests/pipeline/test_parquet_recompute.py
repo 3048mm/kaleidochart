@@ -18,6 +18,7 @@ Parquet 上で直接再計算すれば全期間を約4分で作れる。
 """
 
 import os
+from datetime import datetime
 import sys
 
 import numpy as np
@@ -290,3 +291,192 @@ def test_empty_input_returns_empty_frame():
     out = recompute_indicators([], px, ["ema_21"], spy_id=1)
     assert out.empty
 
+
+
+# ---------------------------------------------------------------------------
+# rebuild_virtual_index_prices — 仮想テーマ指数の Parquet 版再合成
+#
+# ## なぜ必要か
+#
+# 仮想テーマ指数の合成は `pipeline/orchestrator.build_virtual_index_prices` にしか無く、
+# SQLAlchemy セッションを要求する。構成銘柄の価格を Parquet 上で補正したときに
+# **Parquet 経路から再合成できない**（SQLite は直近730日しか持たないので SQLite 経由では
+# 過去に届かない）。同じ式の Parquet 版が要る。
+#
+# 実例: BYND の 1:30 併合が未調整だったため、所属する仮想テーマ3本
+# （`_CNSM0A_` `_GRCL29_` `_NTRTFC_`）の指数が 2026-08-13 に ×3.44〜×5.87 で飛んだ。
+# ---------------------------------------------------------------------------
+def _virtual_price_frame():
+    """構成銘柄2本 × 6営業日。ORM 版と Parquet 版の両方に同じ値を流す。"""
+    rows = []
+    closes = {
+        10: [100.0, 101.0, 99.0, 103.0, 102.0, 105.0],
+        11: [50.0, 51.5, 51.0, 50.0, 52.0, 53.0],
+    }
+    vols = {
+        10: [1000, 1200, 800, 3000, 900, 1100],
+        11: [2000, 2100, 1900, 2500, 2200, 2000],
+    }
+    dates = ["2026-05-01", "2026-05-04", "2026-05-05",
+             "2026-05-06", "2026-05-07", "2026-05-08"]
+    for sid in (10, 11):
+        for d, c, v in zip(dates, closes[sid], vols[sid]):
+            rows.append({"symbol_id": sid, "date": d, "open": c, "high": c,
+                         "low": c, "close": c, "volume": float(v)})
+    return pd.DataFrame(rows)
+
+
+def _tc_frame():
+    return pd.DataFrame([{"theme_id": 101, "symbol_id": 10},
+                         {"theme_id": 101, "symbol_id": 11}])
+
+
+def test_rebuild_virtual_index_matches_the_orm_implementation():
+    """`orchestrator.build_virtual_index_prices` と**同じ値**を返すこと。
+
+    アルゴリズムを書き換えるのではなく DB 依存を外すだけの移植なので、
+    数値が一致しなければ移植に失敗している。
+    """
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from db.models import Base, DailyPrice, Symbol, ThemeConstituent
+    from pipeline.orchestrator import build_virtual_index_prices
+    from pipeline.parquet_recompute import rebuild_virtual_index_prices
+
+    px = _virtual_price_frame()
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    session = sessionmaker(bind=engine)()
+    session.add_all([
+        Symbol(id=10, ticker="AAA", exchange="NASDAQ", category="個別", active=1),
+        Symbol(id=11, ticker="BBB", exchange="NASDAQ", category="個別", active=1),
+        Symbol(id=101, ticker="_THEME_", exchange="VIRTUAL", category="テーマ",
+               theme_type="virtual", active=1),
+        ThemeConstituent(theme_id=101, symbol_id=10),
+        ThemeConstituent(theme_id=101, symbol_id=11),
+    ])
+    # ORM の Date 列は `datetime.date` しか受け付けない。Parquet 側は文字列で持つので
+    # ここで型を変換して同じ値を両方に流す。
+    for _, r in px.iterrows():
+        session.add(DailyPrice(symbol_id=int(r["symbol_id"]),
+                               date=datetime.strptime(r["date"], "%Y-%m-%d").date(),
+                               open=r["open"], high=r["high"], low=r["low"],
+                               close=r["close"], volume=r["volume"]))
+    session.commit()
+
+    expected = build_virtual_index_prices(session, 101).sort_values("date").reset_index(drop=True)
+    actual = rebuild_virtual_index_prices([101], px, _tc_frame())
+    actual = actual.sort_values("date").reset_index(drop=True)
+
+    assert list(actual["date"]) == [d.strftime("%Y-%m-%d") for d in expected["date"]]
+    for col in ("close", "open", "high", "low", "volume"):
+        pd.testing.assert_series_equal(
+            actual[col].astype(float), expected[col].astype(float),
+            check_names=False, rtol=1e-9,
+            obj=f"{col} が ORM 版と一致しない",
+        )
+
+
+def test_index_ohlc_are_all_equal_to_close():
+    """合成指数に日中値は無いので OHLC はすべて close と同値。"""
+    from pipeline.parquet_recompute import rebuild_virtual_index_prices
+
+    out = rebuild_virtual_index_prices([101], _virtual_price_frame(), _tc_frame())
+    for col in ("open", "high", "low"):
+        assert (out[col] == out["close"]).all(), f"{col} が close と違う"
+
+
+def test_first_date_has_no_index_row():
+    """初日はリターンが計算できないので指数に載らない（ORM 版と同じ挙動）。"""
+    from pipeline.parquet_recompute import rebuild_virtual_index_prices
+
+    out = rebuild_virtual_index_prices([101], _virtual_price_frame(), _tc_frame())
+    assert out["date"].min() == "2026-05-04", "初日が指数に含まれている"
+
+
+def test_scaling_a_constituent_uniformly_does_not_move_the_index():
+    """構成銘柄の価格を**全期間**一律スケールしても指数は動かない。
+
+    指数はリターンの連鎖なのでスケール不変。この性質が成り立たないなら
+    合成式が価格の絶対水準を拾ってしまっている。
+    """
+    from pipeline.parquet_recompute import rebuild_virtual_index_prices
+
+    px = _virtual_price_frame()
+    base = rebuild_virtual_index_prices([101], px, _tc_frame())
+
+    scaled = px.copy()
+    m = scaled["symbol_id"] == 10
+    for col in ("open", "high", "low", "close"):
+        scaled.loc[m, col] *= 30.0
+    scaled.loc[m, "volume"] /= 30.0
+    after = rebuild_virtual_index_prices([101], scaled, _tc_frame())
+
+    pd.testing.assert_frame_equal(
+        base.reset_index(drop=True), after.reset_index(drop=True), rtol=1e-9)
+
+
+def test_backadjusting_only_pre_split_rows_changes_only_the_seam():
+    """**本件の核心**: 併合前だけを ×30 すると、変わるのは接合日の1本だけ。
+
+    未調整のまま（＝いまの本番データ）は接合日に +2900% のリターンが入り、
+    そこから先の指数水準が丸ごとずれる。補正後は接合日のリターンが正常化し、
+    **接合日より前の指数は完全に一致する**。
+    """
+    from pipeline.parquet_recompute import rebuild_virtual_index_prices
+
+    seam = "2026-05-06"
+    broken = _virtual_price_frame()
+    m = (broken["symbol_id"] == 10) & (broken["date"] < seam)
+    for col in ("open", "high", "low", "close"):
+        broken.loc[m, col] /= 30.0          # 併合前が未調整（低いスケール）の状態
+    broken.loc[m, "volume"] *= 30.0
+
+    fixed = _virtual_price_frame()          # 全期間が単一スケール＝補正後の姿
+
+    idx_broken = rebuild_virtual_index_prices([101], broken, _tc_frame()).set_index("date")
+    idx_fixed = rebuild_virtual_index_prices([101], fixed, _tc_frame()).set_index("date")
+
+    before = idx_broken.index[idx_broken.index < seam]
+    pd.testing.assert_series_equal(
+        idx_broken.loc[before, "close"], idx_fixed.loc[before, "close"], rtol=1e-9,
+        obj="接合日より前の指数まで変わっている")
+
+    assert idx_broken.loc[seam, "close"] > idx_fixed.loc[seam, "close"] * 5, \
+        "未調整データで接合日が跳ねていない（テストの前提が壊れている）"
+
+
+def test_multiple_themes_are_rebuilt_in_one_call():
+    from pipeline.parquet_recompute import rebuild_virtual_index_prices
+
+    tc = pd.DataFrame([{"theme_id": 101, "symbol_id": 10},
+                       {"theme_id": 101, "symbol_id": 11},
+                       {"theme_id": 102, "symbol_id": 11}])
+    out = rebuild_virtual_index_prices([101, 102], _virtual_price_frame(), tc)
+    assert set(out["symbol_id"]) == {101, 102}
+
+
+def test_theme_without_constituents_is_skipped():
+    from pipeline.parquet_recompute import rebuild_virtual_index_prices
+
+    out = rebuild_virtual_index_prices([999], _virtual_price_frame(), _tc_frame())
+    assert out.empty
+
+
+def test_non_positive_closes_are_excluded():
+    """close が 0 / 負 / NULL の行は合成に使わない（ORM 版の `p.close > 0` と同じ）。"""
+    from pipeline.parquet_recompute import rebuild_virtual_index_prices
+
+    px = _virtual_price_frame()
+    px.loc[(px["symbol_id"] == 11) & (px["date"] == "2026-05-05"), "close"] = 0.0
+    out = rebuild_virtual_index_prices([101], px, _tc_frame())
+
+    only10 = rebuild_virtual_index_prices(
+        [101], _virtual_price_frame(),
+        pd.DataFrame([{"theme_id": 101, "symbol_id": 10}]))
+    # 05-05 は BBB が落ちるので AAA 単独のリターンになる
+    assert out.set_index("date").loc["2026-05-05", "close"] != \
+        pytest.approx(0.0), "0 の close が混入して指数が壊れている"
+    assert len(out) == len(only10)
