@@ -527,6 +527,7 @@ def objective(trial: optuna.Trial, strategy_name: str, config, config_app, exit_
         expectancy_sum = 0.0
         expectancy_lcb_sum = 0.0
         avg_gain_sum = 0.0
+        geo_mean_gain_sum = 0.0
         avg_spy_gain_sum = 0.0
         avg_holding_days_sum = 0.0
         avg_slots_sum = 0.0
@@ -573,6 +574,7 @@ def objective(trial: optuna.Trial, strategy_name: str, config, config_app, exit_
                     expectancy_sum += metrics.get('expectancy', 0.0)
                     expectancy_lcb_sum += metrics.get('expectancy_lcb', 0.0)
                     avg_gain_sum += metrics.get('avg_gain', 0.0)
+                    geo_mean_gain_sum += metrics.get('geo_mean_gain', 0.0)
                     avg_spy_gain_sum += metrics.get('avg_spy_gain', 0.0)
                     avg_holding_days_sum += metrics.get('avg_holding_days', 0.0)
                     avg_slots_sum += metrics.get('avg_slots', 1.0)
@@ -593,6 +595,12 @@ def objective(trial: optuna.Trial, strategy_name: str, config, config_app, exit_
         if periods_with_trades > 0:
             avg_expectancy = expectancy_sum / periods_with_trades
             avg_gain = avg_gain_sum / periods_with_trades
+            # 2026-08-25: スコアの主軸そのものを記録する。これが無いと
+            # 「何を最大化した結果なのか」を DB から事後検証できない（実際、幾何平均へ
+            # 切り替えた後も分析は avg_gain=相加平均を代理に見ていた）。
+            # 集計方法はスコアと同じ「期間ごとの値の相加平均」に揃えてあるので、
+            # lcb ゲートが掛からなければ score とほぼ一致する。
+            trial.set_user_attr("geo_mean_gain", round(geo_mean_gain_sum / periods_with_trades, 3))
             avg_spy = avg_spy_gain_sum / periods_with_trades
             trial.set_user_attr("expectancy", round(avg_expectancy, 3))
             trial.set_user_attr("expectancy_lcb", round(expectancy_lcb_sum / periods_with_trades, 3))
@@ -605,6 +613,7 @@ def objective(trial: optuna.Trial, strategy_name: str, config, config_app, exit_
             trial.set_user_attr("expectancy", 0.0)
             trial.set_user_attr("expectancy_lcb", 0.0)
             trial.set_user_attr("avg_gain", 0.0)
+            trial.set_user_attr("geo_mean_gain", 0.0)
             trial.set_user_attr("avg_spy_gain", 0.0)
             trial.set_user_attr("alpha", 0.0)
             trial.set_user_attr("avg_holding_days", 0.0)

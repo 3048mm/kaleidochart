@@ -417,6 +417,7 @@ def get_scenario_summary(name: str):
             net_pnls = []
             profit_factors_y = []
             avg_pnl_pcts = []
+            geo_pnl_pcts = []
             
             for s in run_summaries:
                 yp = s.get("yearly_performance", {})
@@ -427,6 +428,7 @@ def get_scenario_summary(name: str):
                     net_pnls.append(y_item.get("net_pnl", 0.0))
                     profit_factors_y.append(y_item.get("profit_factor", 0.0))
                     avg_pnl_pcts.append(y_item.get("avg_pnl_pct", 0.0))
+                    geo_pnl_pcts.append(y_item.get("geo_pnl_pct", 0.0))
                     
             if trades_list:
                 yearly_performance[year] = {
@@ -435,6 +437,7 @@ def get_scenario_summary(name: str):
                     "net_pnl": float(np.mean(net_pnls)),
                     "profit_factor": float(np.mean(profit_factors_y)),
                     "avg_pnl_pct": float(np.mean(avg_pnl_pcts)),
+                    "geo_pnl_pct": float(np.mean(geo_pnl_pcts)) if geo_pnl_pcts else 0.0,
                     "spy_return_pct": first_yp[year].get("spy_return_pct", 0.0),
                     "return_pct": avg_yearly_returns.get(year, 0.0)
                 }
