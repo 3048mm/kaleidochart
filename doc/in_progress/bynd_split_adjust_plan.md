@@ -175,7 +175,7 @@ DB 依存を外すだけで、アルゴリズムは変えない:
 - 実行コマンド（Sandbox）:
   ```powershell
   $env:PYTHONPATH="backend"
-  .env\Scripts\python.exe backend\scriptsdjust_symbol_split.py `
+  .\venv\Scripts\python.exe backend\scripts\adjust_symbol_split.py `
       --ticker BYND --before 2026-08-13 --factor 30 `
       --reason "1:30 併合 (2026-08-14 ET)" --db-path <sandbox.db> --dry-run
   ```
