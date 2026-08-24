@@ -3,7 +3,7 @@
 - **ステータス**: 🚧 進行中
 - **実施者**: AI エージェント (Claude Opus 5)
 - **開始日**: 2026-08-25 / **完了日**: —
-- **作業ブランチ**: worktree-objective-quality-first（本体チェックアウト）
+- **作業ブランチ**: worktree-backtest-card-unification（`.claude/worktrees/backtest-card-unification`）
 - **対象 issue / 関連ドキュメント**: `doc/frontend_specification.md`
 
 ## 1. 背景と目的
@@ -106,22 +106,23 @@ PERIOD / TRADING DAYS / INITIAL CAP / TAX RATE が両タブで
 
 ## 5. 実装順序と進捗チェックリスト
 
-- [ ] 5-1. バックエンド: `BacktestScenarioSummary` スキーマ拡張
-- [ ] 5-2. バックエンド: `get_scenario_summary` の両分岐で Run Info 項目を埋める
-- [ ] 5-3. バックエンド: `scenario_runner.run_params` に `consider_tax` を記録
-- [ ] 5-4. バックエンド: `backend/tests/api/test_backtest_api.py` に Run Info 項目のテストを追加
-- [ ] 5-5. フロント: `BacktestStrategyCard.tsx` 新設
-- [ ] 5-6. フロント: `BacktestRunInfo.tsx` 新設
-- [ ] 5-7. フロント: `EtfSingleBacktestPage` を移行（ミニグラフ新設含む）
-- [ ] 5-8. フロント: `RegimeComparisonPage` を移行（ラベル英語化含む）
-- [ ] 5-9. フロント: `ScenarioDetailView` の Cash 線を別色に
-- [ ] 5-10. 既存テスト更新（`RegimeComparisonPage.test.tsx` は `1取引平均` を直接参照している）
-- [ ] 5-11. 全体検証（pytest / vitest / tsc build）
-- [ ] 5-12. `doc/frontend_specification.md` の該当節を更新し、本計画書を `doc/completed/` へ移動
+- [x] 5-1. バックエンド: `BacktestScenarioSummary` スキーマ拡張
+- [x] 5-2. バックエンド: `get_scenario_summary` の両分岐で Run Info 項目を埋める
+- [x] 5-3. バックエンド: `scenario_runner.run_params` に `consider_tax` を記録
+- [x] 5-4. バックエンド: `backend/tests/api/test_backtest_api.py` に Run Info 項目のテストを追加
+- [x] 5-5. フロント: `BacktestStrategyCard.tsx` 新設
+- [x] 5-6. フロント: `BacktestRunInfo.tsx` 新設
+- [x] 5-7. フロント: `EtfSingleBacktestPage` を移行（ミニグラフ新設含む）
+- [x] 5-8. フロント: `RegimeComparisonPage` を移行（ラベル英語化含む）
+- [x] 5-9. フロント: `ScenarioDetailView` の Cash 線を別色に
+- [x] 5-10. 既存テスト更新（`RegimeComparisonPage.test.tsx` は `1取引平均` を直接参照していた）
+- [x] 5-11. 全体検証（pytest / vitest / tsc build）
+- [x] 5-12. `doc/frontend_specification.md` の該当節を更新
+- [ ] 5-13. ブラウザで目視確認（ユーザー）→ 本計画書を `doc/completed/` へ移動
 
 ### 作業中メモ
 
-（着手前）
+残るのはユーザーによる目視確認のみ。
 
 ## 6. 検証プラン / 結果
 
@@ -139,13 +140,54 @@ npm run build
 両タブのカードが同一骨格で並ぶこと・Run Info がデフォルト閉で開閉すること・
 詳細分析チャートで Cash と SPY が区別できることを確認する。
 
-結果: （未実施）
+結果:
+
+| 検証 | 結果 |
+| :--- | :--- |
+| pytest（backend 全体） | 1045 passed / **1 failed** — 失敗は `test_scenario_comparison.py::test_run_comparison_generates_outputs` で、`data/parquet_master` が無いことによる `FileNotFoundError`。`agent_execution_rules.md` §10.3「ワークツリーの `data/` はほぼ空」の通りの環境要因で、本変更とは無関係 |
+| vitest（frontend 全体） | 28 passed / 7 files passed |
+| `tsc -b` | エラーなし |
+| `npm run build` | 成功（783 modules） |
+
+目視確認（未実施・ユーザー）: `run/run_server.bat` + `npm run dev` で `/backtest` を開き、
+両タブのカードが同一骨格で並ぶこと・Run Info がデフォルト閉で開閉すること・
+詳細分析チャートで Cash と SPY が区別できることを確認する。
 
 ## 7. 途中発生した課題
 
-（なし）
+### 7.1 本体チェックアウト（main）で作業を始めてしまった
+
+着手時にワークツリーを切らず、本体チェックアウトの `main` 上で編集を進めた
+（`CLAUDE.md`「本体でのコミットは禁止」「main への直接コミット禁止」に違反する状態）。
+コミット前に気付いたため、以下で是正した:
+
+1. `git worktree add .claude/worktrees/backtest-card-unification -b worktree-backtest-card-unification HEAD`
+2. 変更・新規の 14 ファイルをワークツリーへコピーし、`cmp` で全件バイト一致を確認
+3. 本体を `git checkout --` / `rm` で復元（`frontend/tsconfig.tsbuildinfo` も戻した）
+4. 本体の `git status` が空であることを確認してからワークツリーへ移動
+
+**教訓**: 開発アイテムの着手時は、計画書を書く前にワークツリーを切る。
+
+### 7.2 main が 17 コミット進んでいたのでマージした
+
+作業中に別セッションが main を進めていた（`c19ea44` → `32e07a4`）。
+自ブランチへコミットしてから `git merge main` を実行し、**コンフリクトなし**で取り込んだ。
+
+変更が重なったのは `backend/api/backtest_router.py` の1ファイルのみで、
+main 側の変更は `yearly_performance` 集計への `geo_pnl_pct` 追加。
+本変更（Run Info フィールド追加・`_count_trading_days` / `_resolve_consider_tax` の新設）とは
+別リージョンのため、機械的にも意味的にも衝突しない。マージ後の backend テストも
+上記の環境要因1件を除いて全通過。
 
 ## 8. スコープ外・残作業
 
 - `ScenarioDetailView` 上部の大きい KPI カード群の日本語ラベル（`CAGR (年平均成長率)` 等）は今回対象外
 - `RegimeComparisonPage` の `STRATEGIES` 定数ハードコードは別 issue（`doc/issue_list.md` 起票済み）
+
+### 作業中に見つけて直したもの（スコープ外・ついで）
+
+- `frontend/src/components/__tests__/RsLineChart.test.tsx` の `createChart` モックに
+  `addHistogramSeries` / `priceScale` が無く、2件が失敗していた。`RsLineChart.tsx` が
+  コミット `3ef3b93`（DataView インジケータ追加）で RS 相対出来高のヒストグラムを
+  描き始めたのにモックが追随していなかったもので、本変更とは無関係の既存不具合。
+  「コミット前に全テスト通過」を満たすため、モックの穴だけ埋めた（テストのみの変更）。

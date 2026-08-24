@@ -11,6 +11,14 @@ vi.mock('lightweight-charts', () => {
                 setData: vi.fn(),
                 applyOptions: vi.fn(),
             })),
+            // RS 相対出来高のヒストグラム（専用の価格スケール 'rs_vol' に載せる）
+            addHistogramSeries: vi.fn(() => ({
+                setData: vi.fn(),
+                applyOptions: vi.fn(),
+            })),
+            priceScale: vi.fn(() => ({
+                applyOptions: vi.fn(),
+            })),
             subscribeCrosshairMove: vi.fn(),
             unsubscribeCrosshairMove: vi.fn(),
             timeScale: vi.fn(() => ({
