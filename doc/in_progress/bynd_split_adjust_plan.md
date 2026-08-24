@@ -154,23 +154,31 @@ DB 依存を外すだけで、アルゴリズムは変えない:
 ## 5. 実装順序と進捗チェックリスト
 
 - [ ] Sandbox 準備（`data/sandbox/parquet_master/` に本番 Parquet をコピー、環境変数2つを絶対パスで設定）
-- [ ] テスト先行: `rebuild_virtual_index_prices` の同値性テスト（SQLAlchemy 版との一致）
-- [ ] `rebuild_virtual_index_prices` を `parquet_recompute.py` に実装
-- [ ] テスト先行: `adjust_symbol_split` の接合部検算・スケーリング・market_cap 非スケールのテスト
-- [ ] `backend/scripts/adjust_symbol_split.py` を実装
+- [x] テスト先行: `rebuild_virtual_index_prices` の同値性テスト（SQLAlchemy 版との一致）
+- [x] `rebuild_virtual_index_prices` を `parquet_recompute.py` に実装
+- [x] テスト先行: `adjust_symbol_split` の接合部検算・スケーリング・market_cap 非スケールのテスト
+- [x] `backend/scripts/adjust_symbol_split.py` を実装
 - [ ] Sandbox で `--dry-run` → `--apply`、SQL で値を直接検証
 - [ ] `tools/db_health_check.py --all --check-nulls` / `scan_price_anomalies.py` で確認
 - [ ] pytest 全件パス
 - [ ] フロントエンドで BYND チャートと汚染テーマ3本を目視確認（オレンジバッジ＝Sandbox である確認込み）
 - [ ] ユーザーレビュー → main へマージ
 - [ ] 本番昇格（日次パイプライン・API 停止 → 適用 → health check → 再開）
-- [ ] ドキュメント更新（§2.1 の 4, 5）
+- [x] ドキュメント更新（§2.1 の 4, 5）
 - [ ] 本計画書を `doc/completed/` へ移動
 
 ### 作業中メモ
 
-- 2026-08-25 時点で**日次パイプラインが実行中**（07:00 開始、1080/3051）。本番データへの適用は完了後。
+- **次にやること**: 日次パイプライン完了 → Sandbox 作成 → `--dry-run` → `--apply` → 検証。
+- 2026-08-25 08:20 時点で日次パイプラインが実行中（07:00 開始、約2,100/3,051）。本番適用は完了後。
 - BYND の SQLite 側は 495 行（2024-08-21 〜 2026-08-12）、Parquet 側は 1,830 行（2019-05-02 〜）が補正対象。
+- 実行コマンド（Sandbox）:
+  ```powershell
+  $env:PYTHONPATH="backend"
+  .env\Scripts\python.exe backend\scriptsdjust_symbol_split.py `
+      --ticker BYND --before 2026-08-13 --factor 30 `
+      --reason "1:30 併合 (2026-08-14 ET)" --db-path <sandbox.db> --dry-run
+  ```
 
 ## 6. 検証プラン / 結果
 
