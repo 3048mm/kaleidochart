@@ -44,54 +44,40 @@ def get_cached_data(config_app, start_date, end_date):
     print("Data preload complete.", flush=True)
     return res
 
-def detect_adequacy(avg_hits_per_day: float, detect_band: tuple = (1.0, 12.0, 0.4)) -> float:
-    """検出件数の「実用帯」係数（0〜1）を返す。多すぎず少なすぎずを緩やかに選好する。
-
-    最適化バックテストは無限資金だが、そのスクリーンは個別銘柄シナリオテスト（有限資産）で使われる。日に多数ヒットしても
-    有限資産では取り切れず、逆に枯れると枠が遊ぶ。そこで avg件/日 を実用帯に収めるための
-    ソフトな選好係数を CAGR スコアに掛ける。ハードな門番は prune 境界（min/max_avg_hits_per_day）
-    が担うため、ここは帯外でも floor 未満には割り引かない（優秀なスクリーンを件数だけで抹殺しない）。
-
-    detect_band = (lo, hi, floor):
-      - lo <= x <= hi : 1.0（減点なし）
-      - x < lo        : max(floor, x/lo)（過少。線形に減衰、floor が下限）
-      - x > hi        : max(floor, hi/x)（過多。反比例で減衰、floor が下限）
-    """
-    lo, hi, floor = detect_band
-    if lo <= avg_hits_per_day <= hi:
-        return 1.0
-    if avg_hits_per_day < lo:
-        return max(floor, avg_hits_per_day / lo) if lo > 0 else 1.0
-    return max(floor, hi / avg_hits_per_day) if avg_hits_per_day > 0 else floor
-
-
 def calculate_custom_score(metrics, total_trading_days,
                            quality_gate: tuple = (0.3, 12.0),
                            lcb_gate_penalty: float = 0.5):
-    """最適化スコアを計算する（高いほど良い）。2026-08-24 改訂（幾何平均 / 検出数ゲート型）。
+    """最適化スコアを計算する（高いほど良い）。
 
-    score = geo_mean_gain     （検出件数が quality_gate=[lo, hi] の内側の場合のみ）
+    score = geo_mean_gain（1トレードあたりの**幾何平均**リターン%）
+            ただし検出件数が quality_gate=(lo, hi) の内側の場合のみ。
 
-    旧版（2026-07-06）は `period_CAGR / dd_penalty × detect_adequacy(hits/day) × lcb_gate` で、
-    検出件数を detect_adequacy で**掛け算**して実用帯へ寄せていたが、「量を増やしてもスコアが
-    伸びる」経路を残していた（型1と型3実運用CAGRの実測検証。doc/in_progress/objective_quality_first_plan.md §1）。
-    再設計では検出件数を**ゲート**（帯の内側なら影響なし・外側なら失格）にし、
-    質（1トレード平均リターン% = avg_gain）を直接スコアの主軸にする。
+    **型1（最適化バックテスト）が測るのは「1トレードの質」だけ**である。
+    資産成長（CAGR）とドローダウンは型3（個別銘柄シナリオ・有限資産）の責務であり、
+    枠を埋めるのは**個々の戦略ではなく組み合わせの仕事**という役割分担に基づく（§6.1）。
 
-    **DD 項は 2026-08-23 に削除した。** dd_est（|DD| × √avg_slots / 9.1）の換算式自体は
-    正しく、型3 DD の予測を +0.533 → +0.896 に改善していた。しかし型1 DD は型3 **CAGR** と
-    +0.770 の正相関を持つ（DD が大きい戦略ほど CAGR が高い）ため、これで減点すると
-    良い戦略ほど罰せられる。実測（39観測）でも DD 項ありは型3 CAGR との相関が
-    +0.722 → +0.375 と半減した。**DD の管理は型3（有限資産・実運用相当）の責務**とし、
-    型1 は質の選別に専念する。avg_slots は将来の分析のため trial 属性に記録し続ける。
+    構成:
+      1. トレード5件未満 → 勾配ゲート（統計的に無意味）
+      2. 検出件数が帯の外 → 失格。**帯の内側ではスコアに一切影響しない**
+         （「量を増やして点を稼ぐ」経路を断つため、掛け算ではなくゲートにしている）
+      3. 幾何平均が0以下 → その値をそのまま返す（**掛け算の経路に入れない**。下記の罠を参照）
+      4. それ以外 → score = 幾何平均。`expectancy_lcb <= 0` なら lcb_gate_penalty で割引
 
-    ゲート/ペナルティ:
-    - トレード5件未満（統計的に無意味）: 勾配ゲート
-    - 検出件数（avg_trades_per_day）が quality_gate=[lo, hi] の外: 失格（大きな負値・勾配あり。
-      calculate_prune_penalty と同じ傾斜の流儀に合わせる）
-    - expectancy_lcb<=0（1トレード単価で勝てていない=生存者バイアス疑い）: lcb_gate_penalty で割引
-      （質を主軸にした後も、単価エッジの下限が無いスクリーンをソフトに減点する意味は残る。
-       metrics に expectancy_lcb が無ければスキップ=後方互換）
+    **なぜ幾何平均なのか**: 算術平均（`avg_gain`）は分散に無関心で、
+    「95%が負けで上位5%が全部稼ぐ」構成と「安定して勝つ」構成を同じ点数にする。
+    幾何平均は積なので大きな負けを強く罰し、**勝率を内在的に要求する**
+    （勝率を明示的に掛ける必要がない＝二重計上の回避。`avg_gain` は既に勝率を内包している）。
+    CAGR（`strat_multiplier`）も積＝幾何平均であり、旧 CAGR 主軸が結果として
+    1取引%と勝率を両立させていたのはこの性質による。本指標は CAGR から
+    `avg_slots` 正規化と年率化を外し、**取引数の寄与を含まない純粋な質**にしたもの。
+
+    **罠: 掛け算のペナルティは、スコアが負のとき「罰」ではなく「ご褒美」になる。**
+    負の値に係数（<1）を掛けるとゼロに近づく＝改善してしまう。スコアは複数の学習期間の
+    平均なので、これを放置すると「片方で大勝ち・片方で赤字かつ罰あり」の構成が
+    最適解として選ばれる。ステップ3のガードはこれを防ぐためにある。**削除しないこと。**
+
+    設計の経緯と、捨てた案（DD 項・√勝率の掛け算）を捨てた理由:
+    `doc/completed/objective_quality_first_plan.md`
     """
     if not metrics:
         return -1000.0
@@ -102,7 +88,7 @@ def calculate_custom_score(metrics, total_trading_days,
         return -100.0 + (trades_count * 20.0)
     avg_trades_per_day = trades_count / total_trading_days
 
-    # --- 検出件数ゲート（帯の外は失格。帯の内側はスコアに一切影響させない） ---
+    # --- 1. 検出件数ゲート（帯の外は失格。帯の内側はスコアに一切影響させない） ---
     gate_lo, gate_hi = quality_gate
     if avg_trades_per_day < gate_lo:
         # 過少。calculate_prune_penalty の「過少」と同じ傾斜（-100 - 不足分×2000）
@@ -111,59 +97,23 @@ def calculate_custom_score(metrics, total_trading_days,
         # 過多。calculate_prune_penalty の「過多」と同じ傾斜（-100 - 超過分×50）
         return -100.0 - ((avg_trades_per_day - gate_hi) * 50.0)
 
-    # --- 主指標: 1トレードあたりの幾何平均リターン%（2026-08-24 改訂） ---
-    # 旧: avg_gain（算術平均）× √勝率。算術平均は分散に無関心で「95%が負けで上位5%が
-    # 全部稼ぐ」構成を高く評価してしまい、実際に質主軸の最適化はその歪みへ収束した
-    # （型3で上位5%の寄与が105%＝利益の全部以上を上位5%が稼ぐ状態）。
-    # √勝率を掛けて補正しようとしたが、avg_gain は既に勝率を内包しており二重計上になる。
-    #
-    # 幾何平均は積なので大きな負けを強く罰し、**勝率を内在的に要求する**（掛ける必要がない）。
-    # 実測（型3の39観測）: 勝率との整合 算術+0.333 → 幾何+0.498 /
-    #                     分散との結びつき 算術+0.907 → 幾何+0.719
-    # CAGR（strat_multiplier）も積＝幾何平均であり、CAGR 主軸が結果として1取引%と勝率を
-    # 両立させていたのはこの性質による。本指標は CAGR から avg_slots 正規化と年率化を外し、
-    # **取引数の寄与を含まない純粋な「1トレードの質」**にしたもの。
-    avg_gain = metrics.get('geo_mean_gain')
-    if avg_gain is None:
-        # 後方互換（古い metrics には geo_mean_gain が無い）
-        avg_gain = metrics.get('avg_gain', 0.0)
+    # --- 2. 主指標: 1トレードあたりの幾何平均リターン% ---
+    quality = metrics.get('geo_mean_gain')
+    if quality is None:
+        # 後方互換: 古い metrics には geo_mean_gain が無い
+        quality = metrics.get('avg_gain', 0.0)
 
-    # --- 赤字期間のガード（2026-08-23 追加・重要） ---
-    # **掛け算のペナルティは、スコアが負のとき「罰」ではなく「ご褒美」になる。**
-    # 例: -3.9 の赤字期間に lcb ゲート(0.2倍)が掛かると -1.95 → -0.39 とゼロに近づき、
-    # 罰を受けた方が良い点数になる。スコアは2つの学習期間の平均なので、
-    # 「片方で大勝ち・片方で赤字かつ罰あり」の構成が最適解として選ばれてしまっていた。
-    # 旧 CAGR 主軸には同等のガードがあったが、質主軸への再設計時に引き継がれなかった。
-    if avg_gain <= 0:
-        return avg_gain
+    # --- 3. 赤字のガード（掛け算の符号反転を防ぐ。docstring の「罠」を参照） ---
+    if quality <= 0:
+        return quality
 
-    score = avg_gain
-
-    # --- expectancy_lcb ソフトゲート（単価エッジの下限が無いスクリーンを減点） ---
-    # metrics に expectancy_lcb が無い場合はスキップ（後方互換）。
+    # --- 4. expectancy_lcb ソフトゲート（単価エッジの下限が無いスクリーンを減点） ---
+    score = quality
     lcb = metrics.get('expectancy_lcb')
     if lcb is not None and lcb <= 0.0:
         score *= lcb_gate_penalty
 
     return score
-
-def resolve_detect_band(strat_base: dict, prune_conf: dict, min_avg: float, max_avg: float) -> tuple:
-    """detect_band=(lo, hi, floor) を解決する（2026-07-21 追加）。
-
-    以前は detect_lo/hi がハードプルーニング境界（min/max_avg_hits_per_day）とは無関係な
-    独立のグローバル既定値（1.0, 12.0）を持っていたため、ハード側だけ戦略ごとに緩めても
-    ソフト側の「実用帯」は一律のグローバル値のまま割り引く不整合があった。
-    detect_lo/hi の既定値を、既に戦略ごとに校正済みのハード境界（min_avg/max_avg）に
-    連動させることでこれを解消する。
-
-    解決順序: 戦略側（strat_base の detect_lo/hi/floor）
-            > [optimization_pruning] のグローバル指定（prune_conf）
-            > ハードプルーニング境界（min_avg/max_avg。floor はコード既定 0.4）
-    """
-    band_lo = strat_base.get('detect_lo', prune_conf.get('detect_lo', min_avg))
-    band_hi = strat_base.get('detect_hi', prune_conf.get('detect_hi', max_avg))
-    band_floor = strat_base.get('detect_floor', prune_conf.get('detect_floor', 0.4))
-    return (float(band_lo), float(band_hi), float(band_floor))
 
 
 def resolve_prune_floor(strat_base: dict, prune_conf: dict, min_avg: float) -> float:
@@ -179,8 +129,10 @@ def resolve_prune_floor(strat_base: dict, prune_conf: dict, min_avg: float) -> f
         Bear が僅かに薄い（0.91）だけでスコアが -323 に確定していた（B5 の実例）
 
     そこで発火点を `prune_floor_hits_per_day`（既定 0.2 件/日 ≒ 251営業日で50件未満の
-    「明らかに死んでいる」領域）まで下げ、`prune_floor`〜`min_avg` の範囲は
-    `detect_adequacy` の連続的な減衰（`x/lo`、下限 `detect_floor`）に委ねる。
+    「明らかに死んでいる」領域）まで下げる。
+    （2026-08-25: `prune_floor`〜`min_avg` の範囲は当時 `detect_adequacy` の連続減衰に
+    委ねていたが、目的関数のゲート化に伴い `detect_adequacy` は廃止した。
+    現在この範囲はスコアに影響せず、`quality_gate` の下限のみが門番として働く。）
 
     **戦略側が既に `min_avg_hits_per_day` を `prune_floor` より低く設定している場合は
     その値を尊重する**（E2 の 0.02、E1 の 0.05 等。引き締めになってはいけない）。

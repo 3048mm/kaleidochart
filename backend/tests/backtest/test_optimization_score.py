@@ -7,7 +7,7 @@ test_optimization_score.py — 最適化バックテストの目的関数（再�
     算術平均（avg_gain）は分散に無関心で「95%が負けで上位5%が全部稼ぐ」構成を
     高く評価してしまうため、大負けを罰する幾何平均へ差し替えた。
     幾何平均は勝率を内在的に要求するので、勝率を明示的に掛ける必要がない（二重計上の回避）。
-  - 検出件数は掛け算（detect_adequacy）ではなくゲート（帯の外は失格・帯の内はスコアに無関係）
+  - 検出件数は掛け算ではなくゲート（帯の外は失格・帯の内はスコアに無関係）
   - **DD 項は削除**。型1 DD は型3 CAGR と +0.770 の正相関を持つため、減点すると
     良い戦略ほど罰せられる（実測39観測で相関 +0.722→+0.375 と半減）。DD の管理は型3 の責務。
   - 実測（型3の39観測）: 勝率との整合 算術+0.333 → 幾何+0.498 /
@@ -15,40 +15,8 @@ test_optimization_score.py — 最適化バックテストの目的関数（再�
 """
 import pytest
 
-from optimization_runner import (calculate_custom_score, detect_adequacy, resolve_detect_band,
-                                 resolve_prune_floor, calculate_prune_penalty)
-
-
-# =============================================================
-# detect_adequacy 単体
-# =============================================================
-
-BAND = (1.0, 12.0, 0.4)  # lo, hi, floor
-
-
-def test_detect_adequacy_inside_band_is_one():
-    # 帯の内側（境界含む）は減点なし = 1.0
-    assert detect_adequacy(1.0, BAND) == 1.0
-    assert detect_adequacy(3.0, BAND) == 1.0
-    assert detect_adequacy(12.0, BAND) == 1.0
-
-
-def test_detect_adequacy_too_few_decays_linearly_to_floor():
-    # lo 未満は x/lo で線形に減衰、ただし floor が下限
-    assert detect_adequacy(0.5, BAND) == pytest.approx(0.5)   # max(0.4, 0.5)
-    assert detect_adequacy(0.2, BAND) == pytest.approx(0.4)   # floor が効く
-
-
-def test_detect_adequacy_too_many_decays_to_floor():
-    # hi 超は hi/x で減衰、floor が下限
-    assert detect_adequacy(24.0, BAND) == pytest.approx(0.5)  # max(0.4, 12/24=0.5)
-    assert detect_adequacy(100.0, BAND) == pytest.approx(0.4)  # 12/100=0.12 < floor
-
-
-def test_detect_adequacy_peaks_inside_band():
-    # 帯内が帯外より必ず高い（多すぎず少なすぎずが最大）
-    assert detect_adequacy(3.0, BAND) > detect_adequacy(0.5, BAND)
-    assert detect_adequacy(3.0, BAND) > detect_adequacy(20.0, BAND)
+from optimization_runner import (calculate_custom_score, resolve_prune_floor,
+                                 calculate_prune_penalty)
 
 
 # =============================================================
@@ -281,33 +249,8 @@ def test_lcb_gate_penalty_is_configurable():
 # 解決順序は従来通り: 戦略側 > [optimization_pruning] > ハード境界(min_avg/max_avg)。
 # =============================================================
 
-def test_resolve_detect_band_defaults_to_hard_prune_bounds():
-    # detect_lo/hi/floorが戦略側にもグローバル設定にも無い場合、
-    # ソフト帯はハードプルーニングのmin_avg/max_avgにそのまま追従する
-    band = resolve_detect_band(strat_base={}, prune_conf={}, min_avg=0.05, max_avg=3.0)
-    assert band == (0.05, 3.0, 0.4)
 
 
-def test_resolve_detect_band_strategy_override_wins():
-    # 戦略側で明示指定すればハード境界より優先される
-    strat_base = {'detect_lo': 2.0, 'detect_hi': 8.0, 'detect_floor': 0.3}
-    band = resolve_detect_band(strat_base=strat_base, prune_conf={}, min_avg=0.05, max_avg=3.0)
-    assert band == (2.0, 8.0, 0.3)
-
-
-def test_resolve_detect_band_global_override_wins_over_hard_bounds():
-    # [optimization_pruning] のグローバル指定は、戦略側指定が無ければハード境界より優先される
-    prune_conf = {'detect_lo': 1.0, 'detect_hi': 12.0}
-    band = resolve_detect_band(strat_base={}, prune_conf=prune_conf, min_avg=0.05, max_avg=3.0)
-    assert band == (1.0, 12.0, 0.4)
-
-
-def test_resolve_detect_band_strategy_override_wins_over_global():
-    # 戦略側指定はグローバル指定よりも優先される（解決順序: 戦略 > グローバル > ハード境界）
-    strat_base = {'detect_lo': 2.0}
-    prune_conf = {'detect_lo': 1.0, 'detect_hi': 12.0}
-    band = resolve_detect_band(strat_base=strat_base, prune_conf=prune_conf, min_avg=0.05, max_avg=3.0)
-    assert band == (2.0, 12.0, 0.4)
 
 
 # =============================================================
@@ -362,16 +305,3 @@ def test_penalty_still_fires_below_prune_floor():
     bounds = (0.2, 5.0, 5.0)
     penalty = calculate_prune_penalty(0.05, hit_rate_pct=50.0, bounds=bounds)
     assert penalty is not None and penalty < 0
-
-
-def test_detect_adequacy_gives_gradient_below_practical_band():
-    """0.2〜1.0 は detect_adequacy が連続的に割り引くこと（崖ではなく傾斜）。"""
-    band = (1.0, 5.0, 0.4)   # (lo, hi, floor)
-    assert detect_adequacy(1.0, band) == 1.0
-    # lo 未満は x/lo で線形に減衰し、floor が下限
-    assert detect_adequacy(0.91, band) == pytest.approx(0.91)
-    assert detect_adequacy(0.65, band) == pytest.approx(0.65)
-    assert detect_adequacy(0.2, band) == pytest.approx(0.4)   # floor で下げ止まる
-    # 単調非増加であること（崖が無い）
-    vals = [detect_adequacy(x / 100, band) for x in range(20, 101)]
-    assert all(a <= b + 1e-9 for a, b in zip(vals, vals[1:]))
