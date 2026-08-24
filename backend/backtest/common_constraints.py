@@ -78,7 +78,7 @@ def load_tax_rate(config: Optional[Mapping[str, Any]] = None, for_optimization: 
     バックテスト経路専用。既定 0.0 = 税なし）。False（既定）の場合は従来どおり
     `consider_tax` を読む（型2・型3: 実運用シミュレーション経路。既定 0.2 のまま）。
     型1が税込みで最適化すると取引数の減少がCAGR改善を上回り型3の成績を悪化させる
-    実測があったため経路を分離した（doc/in_progress/objective_quality_first_plan.md §3.2）。
+    実測があったため経路を分離した（doc/completed/objective_quality_first_plan.md §3.2）。
     単位検証（`> 1.0` でエラー）はどちらの経路にも同じく適用する。
 
     config を渡した場合はそれを使う（既にロード済みの呼び出し側用）。

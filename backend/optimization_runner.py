@@ -453,7 +453,7 @@ def objective(trial: optuna.Trial, strategy_name: str, config, config_app, exit_
         # 検出件数ゲート quality_gate=(lo, hi)（2026-08-22 再設計）。
         # 下限は既存の min_avg_hits_per_day とは別の新設定キー（既定 0.3件/日）。
         # min_avg_hits_per_day をそのままゲート下限に流用すると、B1/B2/B3/B5/B6 等の
-        # 上位戦略がほぼ全滅する（doc/in_progress/objective_quality_first_plan.md §2.3 Q3）。
+        # 上位戦略がほぼ全滅する（doc/completed/objective_quality_first_plan.md §2.3 Q3）。
         # 上限は既存のハードプルーニング上限 max_avg をそのまま流用する。
         # 2026-08-24: 戦略が min_avg_hits_per_day で**自分より低い**検出下限を宣言している場合は
         # そちらを尊重する（resolve_prune_floor と同じ「引き締めにならない」流儀）。

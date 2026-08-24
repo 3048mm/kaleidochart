@@ -383,7 +383,7 @@
     - 目的関数は**プロジェクトの価値観の表明**であってチューニング対象ではない
     - 上記1〜2が入っていれば、後から `--objective` を足しても study 名に識別子が入るので
       混ざらない。**順序として、記録と検出を先に固める**
-  - 関連: `doc/in_progress/objective_quality_first_plan.md`、
+  - 関連: `doc/completed/objective_quality_first_plan.md`、
     `doc/in_progress/merge_checklist_objective_quality.md`
 
 - [ ] **`architecture.md` に「目的関数を変更するときの手順」を新設する**（2026-08-24 起票）

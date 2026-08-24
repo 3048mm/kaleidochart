@@ -125,7 +125,7 @@ class TestLoadTaxRate:
 
 
 class TestLoadTaxRateForOptimization:
-    """税の経路分離（doc/in_progress/objective_quality_first_plan.md §3.2）。
+    """税の経路分離（doc/completed/objective_quality_first_plan.md §3.2）。
 
     型1（最適化バックテスト）は `consider_tax_optimization` を、
     型2・型3（実運用シミュレーション）は従来どおり `consider_tax` を読む。

@@ -1,7 +1,7 @@
 """
 test_optimization_score.py — 最適化バックテストの目的関数（再設計後）の純関数テスト。
 
-2026-08-24 改訂（doc/in_progress/objective_quality_first_plan.md）:
+2026-08-24 改訂（doc/completed/objective_quality_first_plan.md）:
   score = geo_mean_gain  （検出件数が quality_gate=[lo, hi] の内側の場合のみ）
   - 主指標は geo_mean_gain（1トレードあたりの**幾何平均**リターン%）。
     算術平均（avg_gain）は分散に無関心で「95%が負けで上位5%が全部稼ぐ」構成を
@@ -22,7 +22,7 @@ from optimization_runner import (calculate_custom_score, resolve_prune_floor,
 # =============================================================
 # calculate_custom_score（2026-08-22 再設計: 質 × DDペナルティ、検出件数はゲート）
 #
-# 背景（doc/in_progress/objective_quality_first_plan.md §2.3/§2.4）:
+# 背景（doc/completed/objective_quality_first_plan.md §2.3/§2.4）:
 #   旧: score = period_CAGR / dd_penalty × detect_adequacy(hits/day) × lcb_gate
 #   新: 検出件数が quality_gate=[lo, hi] の外 → 失格
 #       検出件数が quality_gate=[lo, hi] の内 → score = geo_mean_gain
