@@ -503,8 +503,14 @@ def objective(trial: optuna.Trial, strategy_name: str, config, config_app, exit_
         # min_avg_hits_per_day をそのままゲート下限に流用すると、B1/B2/B3/B5/B6 等の
         # 上位戦略がほぼ全滅する（doc/in_progress/objective_quality_first_plan.md §2.3 Q3）。
         # 上限は既存のハードプルーニング上限 max_avg をそのまま流用する。
+        # 2026-08-24: 戦略が min_avg_hits_per_day で**自分より低い**検出下限を宣言している場合は
+        # そちらを尊重する（resolve_prune_floor と同じ「引き締めにならない」流儀）。
+        # E1(0.05) / E2(0.02) は VCP ブレイクアウトで検出が稀なのが仕様だが、
+        # 一律 0.3 のゲートを課すと条件を緩めるしかなくなり、実測で 1取引% が
+        # +1.44 → -0.29 とマイナスに転落した（戦略の性格が別物に変質した）。
+        _gate_default = float(prune_conf.get('quality_gate_min_hits_per_day', 0.3))
         quality_gate_lo = float(strat_base.get('quality_gate_min_hits_per_day',
-                                                prune_conf.get('quality_gate_min_hits_per_day', 0.3)))
+                                               min(_gate_default, float(min_avg))))
         quality_gate = (quality_gate_lo, max_avg)
 
         # dd_est 換算係数（型1DD → 型3相当）。実測13点からの経験値のためハードコードせず設定化する
