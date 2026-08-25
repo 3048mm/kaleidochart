@@ -63,12 +63,9 @@ Usage:
 """
 
 import argparse
-import json
 import os
-import shutil
 import sqlite3
 import sys
-from datetime import datetime
 
 import pandas as pd
 import pyarrow.parquet as pq
@@ -85,7 +82,6 @@ from pipeline.parquet_cache_manager import (  # noqa: E402
     get_latest_master_files,
     get_parquet_master_dir,
     get_pointer_file_path,
-    update_pointer_with_retry,
 )
 from pipeline.parquet_recompute import (  # noqa: E402
     find_affected_virtual_themes,
@@ -93,13 +89,21 @@ from pipeline.parquet_recompute import (  # noqa: E402
     recompute_indicators,
     recompute_ranks,
 )
-
-# マージで SQLite → Parquet に戻る階層。**ここを漏らすと補正が翌日で無効化される。**
-# `daily_prices` はスケール、残り2つは再計算値で差し替える（指標は ×factor しても
-# 意味が通らない — 比率・偏差・フラグが混在しているため）。
-MERGED_TABLES = ("daily_prices", "indicators", "relative_ranks")
+# 補修スクリプト共通の部品。ここを各スクリプトに複製すると必ず片方だけ直され、
+# 「Parquet は直ったが SQLite は古いまま」のような半端な状態を生む。
+from pipeline.parquet_maintenance import (  # noqa: E402,F401
+    MERGED_TABLES,
+    assert_ticker as _assert_ticker,
+    connect_hot_cache as _connect,
+    drop_virtual_theme_hashes,
+    replace_sqlite_rows,
+    resolve_db_path,
+    write_master_generation,
+)
 
 # 価格として扱う列。volume だけ逆方向にスケールする。
+# `daily_prices` はスケール、`indicators` / `relative_ranks` は再計算値で差し替える
+# （指標は ×factor しても意味が通らない — 比率・偏差・フラグが混在しているため）。
 _PRICE_COLUMNS = ("open", "high", "low", "close")
 
 # 接合部の比率が factor からどれだけ外れてよいか。実データは当日の値動きが乗るので
@@ -108,29 +112,6 @@ DEFAULT_SEAM_TOLERANCE = 0.05
 
 # 仮想テーマの再合成判定に使うハッシュの保存先（プロジェクトルートからの相対）
 VIRTUAL_THEME_HASH_FILE = os.path.join("data", "virtual_theme_hashes.json")
-
-
-def resolve_db_path(config: dict, explicit: str | None = None) -> str:
-    """書き込み先の SQLite を決める。**環境変数を無視しないこと。**
-
-    環境変数の解釈は `db.database.init_db()` の中にしか無いため、それを import
-    しないスクリプト（`truncate_symbol_history.py` など）は
-    **`STOCKTOOL_DB_PATH` を設定しても本番 DB を掴む**。Sandbox で検証したつもりが
-    本番を書き換える事故になるので、ここで明示的に解決する。
-
-    優先順位は `init_db()` と揃えること（ズレると API が見ている DB と
-    スクリプトが書く DB が食い違う）:
-
-        --db-path > STOCKTOOL_ENV=sandbox|test > STOCKTOOL_DB_PATH > config.toml
-    """
-    if explicit:
-        return explicit
-    env_name = os.getenv("STOCKTOOL_ENV")
-    if env_name == "sandbox":
-        return "data/sandbox/stocktool.db"
-    if env_name == "test":
-        return "data/test/stocktool.db"
-    return os.getenv("STOCKTOOL_DB_PATH") or config["system"]["db_path"]
 
 
 class SeamCheckError(RuntimeError):
@@ -226,32 +207,6 @@ def interpolate_market_cap(prices: pd.DataFrame, symbol_id: int,
     return out
 
 
-def _connect(db_path: str) -> sqlite3.Connection:
-    con = sqlite3.connect(db_path, timeout=30)
-    con.execute("PRAGMA journal_mode=WAL")
-    con.execute("PRAGMA busy_timeout=30000")
-    con.execute("PRAGMA synchronous=NORMAL")
-    return con
-
-
-def _assert_ticker(con: sqlite3.Connection, symbol_id: int, expect_ticker: str | None):
-    """`symbol_id` が期待どおりのティッカーを指していることを確認する。
-
-    **全期間再構築は `symbols.id` を再採番する**（2026-08-06 に 2,378件が変化）。
-    Parquet で解決した id を照合せずに SQLite へ流すと**別銘柄を壊す**。
-    """
-    if not expect_ticker:
-        return
-    row = con.execute("SELECT ticker FROM symbols WHERE id = ?", (symbol_id,)).fetchone()
-    actual = row[0] if row else None
-    if actual != expect_ticker:
-        raise ValueError(
-            f"symbol_id={symbol_id} は SQLite では {actual!r} を指しており "
-            f"{expect_ticker!r} と一致しません。Parquet と SQLite で id 体系が"
-            f"ずれている可能性があります（全期間再構築の直後など）。"
-        )
-
-
 def scale_sqlite_history(db_path: str, symbol_id: int, before: str, factor: float,
                          dry_run: bool, expect_ticker: str | None = None
                          ) -> dict[str, int | None]:
@@ -285,75 +240,6 @@ def scale_sqlite_history(db_path: str, symbol_id: int, before: str, factor: floa
         return {"daily_prices": n}
     finally:
         con.close()
-
-
-def replace_sqlite_rows(db_path: str, table: str, symbol_ids: list[int],
-                        rows: pd.DataFrame, dry_run: bool) -> int | None:
-    """`indicators` / `relative_ranks` を再計算値で**差し替える**（スケールしない）。
-
-    指標は比率・偏差・フラグが混在しており、`×factor` して意味が通るのは価格系の
-    一部だけ。価格を補正したら再計算した値で丸ごと置き換えるのが唯一正しい。
-
-    SQLite に無い列は黙って捨てる（指標列は増え続けているため）。
-    """
-    con = _connect(db_path)
-    try:
-        try:
-            cols = [r[1] for r in con.execute(f"PRAGMA table_info({table})").fetchall()]
-        except sqlite3.OperationalError:
-            return None
-        if not cols:
-            return None
-        if dry_run:
-            return len(rows)
-
-        use = [c for c in rows.columns if c in cols and c != "id"]
-        payload = rows[use].where(pd.notna(rows[use]), None)
-
-        # **`itertuples()` を使ってはいけない。** ID 列は Parquet の規約で `Int64`
-        # （pandas nullable）なので、`itertuples()` は `numpy.int64` を返す。
-        # numpy スカラはバッファプロトコルを持つため **sqlite3 が BLOB として束縛し**、
-        # 挿入は成功して件数も合うのに `WHERE symbol_id = ?` が1件も返らなくなる。
-        #
-        # 2026-08-25 に Sandbox で発生（仮想テーマ3本の価格が丸ごと参照不能になった）:
-        #     (b'=\x01\x00\x00\x00\x00\x00\x00', 2110, '2018-04-03', '2026-08-24')
-        #
-        # `to_numpy()` は Python の int / float に落とすので安全。
-        # `restore_sqlite_cache_from_parquet` も同じ形にしてある。
-        records = [tuple(x) for x in payload.to_numpy()]
-
-        con.execute("BEGIN IMMEDIATE")
-        for i in range(0, len(symbol_ids), 900):
-            chunk = symbol_ids[i:i + 900]
-            marks = ",".join("?" * len(chunk))
-            con.execute(f"DELETE FROM {table} WHERE symbol_id IN ({marks})", chunk)
-        if records:
-            marks = ",".join("?" * len(use))
-            con.executemany(
-                f"INSERT INTO {table} ({','.join(use)}) VALUES ({marks})", records)
-        con.commit()
-        return len(records)
-    finally:
-        con.close()
-
-
-def drop_virtual_theme_hashes(hash_path: str, theme_ids: list[int], dry_run: bool) -> int:
-    """再合成させたいテーマのハッシュを落とす。
-
-    再合成判定は**構成銘柄集合のハッシュ**なので、構成銘柄の価格が変わっても
-    ハッシュは変わらず差分モードのままになる。落としておくと次回 T2 が全期間を作り直す。
-    """
-    if not os.path.exists(hash_path):
-        return 0
-    with open(hash_path, "r", encoding="utf-8") as f:
-        saved = json.load(f)
-    hit = [str(t) for t in theme_ids if str(t) in saved]
-    if not dry_run and hit:
-        for k in hit:
-            saved.pop(k, None)
-        with open(hash_path, "w", encoding="utf-8") as f:
-            json.dump(saved, f, ensure_ascii=False, indent=2)
-    return len(hit)
 
 
 def run(ticker: str, before: str, factor: float, reason: str, dry_run: bool,
@@ -470,35 +356,14 @@ def run(ticker: str, before: str, factor: float, reason: str, dry_run: bool,
 
     # --- [8] 新世代の書き出し ---
     print("\n[5] 新世代の書き出し...")
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    name_map = {"symbols": "symbols", "prices": "prices", "indicators": "indicators",
-                "ranks": "ranks", "tc": "theme_constituents",
-                "signals": "market_signals", "fx": "fx_rates"}
-    files = {}
-    for key, base in name_map.items():
-        dst = os.path.join(parquet_dir, f"{base}_{ts}.parquet")
-        if key == "prices":
-            new_px.to_parquet(dst, index=False)
-        elif key == "indicators":
-            merged_ind.to_parquet(dst, index=False)
-        elif key == "ranks":
-            new_ranks.to_parquet(dst, index=False)
-        else:
-            shutil.copy2(cur[key], dst)
-        files[key] = dst
-        print(f"    {base:<20} {os.path.getsize(dst) / 1e6:>9,.1f} MB")
-
-    with open(os.path.join(parquet_dir, f"data_version_{ts}.json"), "w",
-              encoding="utf-8") as f:
-        json.dump(files, f, ensure_ascii=False, indent=2)
-
-    import logging
-    logging.basicConfig(level=logging.INFO, format="    %(message)s")
-    if not update_pointer_with_retry(pointer_file, files, logging.getLogger("adjust_split")):
-        print(f"[ERROR] pointer の更新に失敗。data_version_{ts}.json を手動で反映してください。")
+    try:
+        write_master_generation(
+            parquet_dir, pointer_file, cur,
+            {"prices": new_px, "indicators": merged_ind, "ranks": new_ranks},
+            label="adjust_split")
+    except RuntimeError as e:
+        print(f"[ERROR] {e}")
         sys.exit(1)
-    print(f"\n    pointer を data_version_{ts} に更新しました")
-    print("    ※ 旧世代は prune していません（検証合格までバックアップを兼ねる）")
 
     # --- [9] ホットキャッシュの同期（これを忘れると翌日のマージで戻る） ---
     print("\n[6] SQLite ホットキャッシュの同期...")
