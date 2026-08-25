@@ -202,11 +202,11 @@ DB 依存を外すだけで、アルゴリズムは変えない:
 ### 6.2 検証コマンド
 
 ```powershell
-.env\Scripts\python.exe tmpeset_bynd_sandbox.py          # Sandbox を本番の現世代から作り直す
+.\venv\Scripts\python.exe tmp\reset_bynd_sandbox.py          # Sandbox を本番の現世代から作り直す
 $env:PYTHONPATH="backend"; $env:STOCKTOOL_DB_PATH="<sandbox.db>"
-.env\Scripts\python.exe backend\scriptsdjust_symbol_split.py --ticker BYND --before 2026-08-13 --factor 30 --apply
-.env\Scripts\python.exe backend\scriptsebuild_virtual_indexes.py --all --apply
-.env\Scripts\python.exe tmperify_bynd_adjust.py <sandbox parquet_master> <sandbox.db>
+.\venv\Scripts\python.exe backend\scripts\adjust_symbol_split.py --ticker BYND --before 2026-08-13 --factor 30 --apply
+.\venv\Scripts\python.exe backend\scripts\rebuild_virtual_indexes.py --all --apply
+.\venv\Scripts\python.exe tmp\verify_bynd_adjust.py <sandbox parquet_master> <sandbox.db>
 ```
 
 > [!IMPORTANT]
