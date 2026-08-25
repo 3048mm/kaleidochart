@@ -271,6 +271,15 @@ def run(ticker: str, before: str, factor: float, reason: str, dry_run: bool,
     sid = int(hit["id"].iloc[0])
     spy_id = int(sym[sym["ticker"] == "SPY"]["id"].iloc[0])
 
+    # **書き込む前に id 体系の一致を確認する。** 全期間再構築は `symbols.id` を
+    # 再採番するため（2026-08-06 に 2,378件が変化）、Parquet で解決した id を
+    # 照合せずに SQLite へ流すと**別銘柄を壊す**。
+    con = _connect(db_path)
+    try:
+        _assert_ticker(con, sid, ticker)
+    finally:
+        con.close()
+
     px = pd.read_parquet(cur["prices"])
     px["date"] = pd.to_datetime(px["date"], errors="coerce").dt.strftime("%Y-%m-%d")
 
@@ -319,12 +328,15 @@ def run(ticker: str, before: str, factor: float, reason: str, dry_run: bool,
         theme_ids=theme_ids,
         hash_path=os.path.join(_project_root, VIRTUAL_THEME_HASH_FILE))
 
-    # 価格は「差し替え」ではなくスケーリングなので、対象銘柄だけ別途あてる。
-    # （recompute_and_publish の差し替えで new_px の値が入るため実質二重だが、
-    #   ticker 照合つきの経路を通しておくと id ずれの事故で必ず止まる）
-    scaled = scale_sqlite_history(db_path, sid, before, factor,
-                                  dry_run=False, expect_ticker=ticker)
-    print(f"\n[+] daily_prices のスケール確認: {scaled['daily_prices']:,}行")
+    # > [!CAUTION]
+    # > **ここで `scale_sqlite_history` を呼んではいけない。**
+    # > `recompute_and_publish` が既に補正済みの価格を SQLite へ書き戻しているので、
+    # > 追加でスケールをかけると **二重適用**になる（2026-08-25 のリファクタで実際に
+    # > 作り込み、Sandbox 検証で `BYND` の 2026-08-12 が 12.42 ではなく 372.69 に
+    # > なっているのを検出した）。
+    # >
+    # > `scale_sqlite_history` は Parquet を経由せず SQLite だけを直したい場合の
+    # > 部品として残してある。
 
 
 if __name__ == "__main__":

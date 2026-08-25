@@ -144,6 +144,28 @@ def assert_ticker(con: sqlite3.Connection, symbol_id: int, expect_ticker: str | 
         )
 
 
+def get_hot_cache_floor(db_path: str) -> str | None:
+    """ホットキャッシュが現在保持している最古日を返す。
+
+    SQLite は**直近730日しか持たない**設計（日次の purge が古い行を落とす）。
+    補修スクリプトが Parquet の全期間をそのまま流し込むと窓が壊れる
+    （2026-08-25 に `BYND` が 500行 → 1,838行 に膨れた）。
+    差し戻す行はこの下限で切ること。
+
+    Returns:
+        `YYYY-MM-DD`。テーブルが無い / 空なら ``None``（窓を決められない）。
+    """
+    con = connect_hot_cache(db_path)
+    try:
+        try:
+            row = con.execute("SELECT MIN(date) FROM daily_prices").fetchone()
+        except sqlite3.OperationalError:
+            return None
+        return row[0] if row and row[0] else None
+    finally:
+        con.close()
+
+
 def replace_sqlite_rows(db_path: str, table: str, symbol_ids: list[int],
                         rows: pd.DataFrame, dry_run: bool) -> int | None:
     """指定銘柄の行を再計算値で**差し替える**（delete → insert）。
@@ -295,17 +317,21 @@ def recompute_and_publish(cur: dict, parquet_dir: str, pointer_file: str,
     def _n(v, unit):
         return "テーブルなし" if v is None else f"{v:,}行 {unit}"
 
+    # ホットキャッシュは直近730日だけを持つ設計。全期間を流し込むと窓が壊れる
+    # （2026-08-25 に `BYND` が 500行 → 1,838行 に膨れた）。既存の下限で切る。
+    floor = get_hot_cache_floor(db_path)
+    def _window(df):
+        sel = df[df["symbol_id"].isin(recompute_ids)]
+        return sel if floor is None else sel[sel["date"] >= floor]
+
     n_px = replace_sqlite_rows(db_path, "daily_prices", recompute_ids,
-                               new_px[new_px["symbol_id"].isin(recompute_ids)],
-                               dry_run=False)
-    print(f"    daily_prices     {_n(n_px, '差し替え')}")
+                               _window(new_px), dry_run=False)
+    print(f"    daily_prices     {_n(n_px, '差し替え')}  (>= {floor})")
     n_ind = replace_sqlite_rows(db_path, "indicators", recompute_ids,
-                                merged_ind[merged_ind["symbol_id"].isin(recompute_ids)],
-                                dry_run=False)
+                                _window(merged_ind), dry_run=False)
     print(f"    indicators       {_n(n_ind, '差し替え')}")
     n_rk = replace_sqlite_rows(db_path, "relative_ranks", recompute_ids,
-                               new_ranks[new_ranks["symbol_id"].isin(recompute_ids)],
-                               dry_run=False)
+                               _window(new_ranks), dry_run=False)
     print(f"    relative_ranks   {_n(n_rk, '差し替え')}")
 
     if theme_ids and hash_path:

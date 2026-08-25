@@ -136,3 +136,43 @@ def test_row_count_drops_by_exactly_the_number_given():
     px = _avb_frame()
     out = drop_rows(px, 606, ["2026-08-17", "2026-08-18", "2026-08-19"])
     assert len(out) == len(px) - 3
+
+
+# ---------------------------------------------------------------------------
+# ホットキャッシュの窓
+#
+# SQLite は直近730日しか持たない設計。補修スクリプトが Parquet の全期間を
+# そのまま流し込むと窓が壊れる（`BYND` で 500行 → 1,838行 に膨れた）。
+# ---------------------------------------------------------------------------
+def test_hot_cache_window_is_detected_from_existing_rows():
+    """既存のホットキャッシュの下限日を求められること。"""
+    import sqlite3
+    import tempfile
+
+    from pipeline.parquet_maintenance import get_hot_cache_floor
+
+    with tempfile.TemporaryDirectory() as td:
+        path = os.path.join(td, "hot.db")
+        con = sqlite3.connect(path)
+        con.execute("CREATE TABLE daily_prices (symbol_id INTEGER, date TEXT)")
+        con.executemany("INSERT INTO daily_prices VALUES (?,?)",
+                        [(1, "2024-08-26"), (1, "2026-08-24"), (2, "2024-09-02")])
+        con.commit()
+        con.close()
+        assert get_hot_cache_floor(path) == "2024-08-26"
+
+
+def test_hot_cache_floor_is_none_when_empty():
+    """空の DB では窓を決められない → None（全期間を入れる）。"""
+    import sqlite3
+    import tempfile
+
+    from pipeline.parquet_maintenance import get_hot_cache_floor
+
+    with tempfile.TemporaryDirectory() as td:
+        path = os.path.join(td, "empty.db")
+        con = sqlite3.connect(path)
+        con.execute("CREATE TABLE daily_prices (symbol_id INTEGER, date TEXT)")
+        con.commit()
+        con.close()
+        assert get_hot_cache_floor(path) is None
