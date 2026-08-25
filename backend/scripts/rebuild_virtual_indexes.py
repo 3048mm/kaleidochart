@@ -56,6 +56,7 @@ if _backend_dir not in sys.path:
 
 import tomli  # noqa: E402
 from pipeline.pipeline_lock import pipeline_lock  # noqa: E402
+from scripts.scan_price_anomalies import use_utf8_stdout  # noqa: E402
 from pipeline.parquet_cache_manager import (  # noqa: E402
     get_latest_master_files,
     get_parquet_master_dir,
@@ -243,6 +244,7 @@ def run(tickers: list[str] | None, dry_run: bool, db_path: str | None = None,
 
 
 if __name__ == "__main__":
+    use_utf8_stdout()
     p = argparse.ArgumentParser(
         description="仮想テーマ指数を Parquet 全期間から作り直す")
     g = p.add_mutually_exclusive_group(required=True)

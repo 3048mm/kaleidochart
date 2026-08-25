@@ -60,6 +60,33 @@ CLASS_LABEL = {
 }
 
 
+def use_utf8_stdout() -> None:
+    """コンソール出力を UTF-8 にする。**`__main__` からだけ呼ぶこと。**
+
+    Windows のコンソールは既定が cp932 で、`—`(U+2014) のような文字を出せない。
+    日本語レポートを PowerShell から直接実行すると途中で落ちる:
+
+        UnicodeEncodeError: 'cp932' codec can't encode character '\\u2014'
+
+    `run/*.bat` は `PYTHONIOENCODING=utf-8` を立てているが、手で実行する経路には無い。
+
+    > [!CAUTION]
+    > **モジュールの import 時に実行してはいけない。** リポジトリ内の既存スクリプト
+    > （`daily_sync_job.py` / `theme_report.py`）は
+    > `sys.stdout = codecs.getwriter('utf-8')(sys.stdout.detach())` を先頭で呼ぶが、
+    > この形はテストがモジュールを import した瞬間に **pytest の stdout を
+    > detach してしまう**:
+    >
+    >     ValueError: underlying buffer has been detached
+    >
+    > `reconfigure()` は既存のラッパを壊さないので、こちらを使う。
+    """
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")      # type: ignore[attr-defined]
+    except (AttributeError, ValueError):
+        pass      # reconfigure できない相手（pytest の capture 等）には何もしない
+
+
 def find_anomalies(prices: pd.DataFrame, symbols: pd.DataFrame) -> pd.DataFrame:
     """全期間の段差を抽出し、分類に必要な特徴量を付ける。"""
     px = prices[prices["close"].notna() & (prices["close"] > 0)]
@@ -81,12 +108,16 @@ def find_anomalies(prices: pd.DataFrame, symbols: pd.DataFrame) -> pd.DataFrame:
     a["dv_ratio"] = np.where(prev_dv > 0, a["dv"] / prev_dv, np.nan)
     # 前日が取引停止だと代金比が取れない。直前21日平均との比で代替する
     a["dv_vs_adv"] = np.where(a["adv21"] > 0, a["dv"] / a["adv21"], np.nan)
-    # 仮想テーマは数えない（犯人が自分の作った波及に隠れる）
-    a["same_day_count"] = count_real_symbols_per_day(a)
-
+    # ticker を先に付ける。**同日件数の算出には ticker が要る**（下のコメント参照）
     a = a.merge(symbols[["id", "ticker", "category", "active"]],
                 left_on="symbol_id", right_on="id", how="left")
-    return a[a["active"] == 1]
+    a = a[a["active"] == 1].copy()
+
+    # 仮想テーマは数えない（犯人が自分の作った波及に隠れる）。
+    # 母集団は active のみ — `weekly_maintenance.py` 側の SQL が
+    # `Symbol.active == 1` で絞っているので、そちらと数を揃える。
+    a["same_day_count"] = count_real_symbols_per_day(a)
+    return a
 
 
 def classify(anomalies: pd.DataFrame) -> pd.DataFrame:
@@ -185,6 +216,7 @@ def run(out_dir: str | None):
 
 
 if __name__ == "__main__":
+    use_utf8_stdout()
     p = argparse.ArgumentParser(description="Parquet 全期間の価格アノマリーを分類する")
     p.add_argument("--out", type=str, default=None, help="レポートの出力先ディレクトリ")
     a = p.parse_args()

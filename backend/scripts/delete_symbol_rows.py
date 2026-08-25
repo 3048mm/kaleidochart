@@ -56,6 +56,7 @@ if _backend_dir not in sys.path:
 
 import tomli  # noqa: E402
 from pipeline.pipeline_lock import pipeline_lock  # noqa: E402
+from scripts.scan_price_anomalies import use_utf8_stdout  # noqa: E402
 from pipeline.parquet_cache_manager import (  # noqa: E402
     get_latest_master_files,
     get_parquet_master_dir,
@@ -239,6 +240,7 @@ def run(ticker: str, dates: list[str] | None, auto: bool, date_from: str | None,
 
 
 if __name__ == "__main__":
+    use_utf8_stdout()
     p = argparse.ArgumentParser(
         description="ffill で捏造された行（OHLC 全同値・出来高0）を削除する")
     p.add_argument("--ticker", required=True, help="対象ティッカー")

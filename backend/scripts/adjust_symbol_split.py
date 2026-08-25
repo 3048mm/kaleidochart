@@ -78,6 +78,7 @@ if _backend_dir not in sys.path:
 
 import tomli  # noqa: E402
 from pipeline.pipeline_lock import pipeline_lock  # noqa: E402
+from scripts.scan_price_anomalies import use_utf8_stdout  # noqa: E402
 from pipeline.parquet_cache_manager import (  # noqa: E402
     get_latest_master_files,
     get_parquet_master_dir,
@@ -340,6 +341,7 @@ def run(ticker: str, before: str, factor: float, reason: str, dry_run: bool,
 
 
 if __name__ == "__main__":
+    use_utf8_stdout()
     p = argparse.ArgumentParser(
         description="上流が調整しなかった株式分割・併合を手元で遡及補正する")
     p.add_argument("--ticker", required=True, help="対象ティッカー")
