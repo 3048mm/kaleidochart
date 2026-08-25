@@ -187,7 +187,9 @@ def run(ticker: str, dates: list[str] | None, auto: bool, date_from: str | None,
 
     if not dates:
         print("\n削除対象がありません。終了します。")
-        return
+        # 呼び出し元（`reapply_corrections.py`）が「適用した」と誤って数えないよう、
+        # 何もしなかったことを戻り値で伝える
+        return "noop"
 
     target = px[px["symbol_id"] == sid].sort_values("date")
     print(f"\n[2] 対象: {ticker} (symbol_id={sid})")
@@ -196,7 +198,6 @@ def run(ticker: str, dates: list[str] | None, auto: bool, date_from: str | None,
 
     # 削除後の接合部を見せる（削除しても段差が残るなら別途の判断が要る）
     left = target[~target["date"].isin(dates)]
-    around = left[(left["date"] >= min(dates)) | (left["date"] <= max(dates))]
     prev = left[left["date"] < min(dates)]
     nxt = left[left["date"] > max(dates)]
     if not prev.empty and not nxt.empty:

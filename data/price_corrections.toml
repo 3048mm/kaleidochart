@@ -1,0 +1,53 @@
+# 手で適用した価格補正の台帳
+#
+# ## 何のためのファイルか
+#
+# 上流(Yahoo)が調整しなかった分割や、`ffill` が捏造した行の補正は**人が判断して適用する**。
+# ところが全期間再構築（`run/tool/refresh_All.bat`）は Yahoo から取り直すため、
+# **適用した補正はすべて巻き戻る**。
+#
+# ここに記録しておけば `backend/scripts/reapply_corrections.py` で再生できる。
+#
+#     $env:PYTHONPATH="backend"
+#     .\venv\Scripts\python.exe backend\scripts\reapply_corrections.py --dry-run
+#     .\venv\Scripts\python.exe backend\scripts\reapply_corrections.py --apply
+#
+# ## 書くときの約束
+#
+#   - **`reason` は必須。** 数ヶ月後に判断を再現できないと台帳の意味がない
+#   - **適用順は記載順。** 並べ替えないので、依存関係があるなら順番で表現する
+#   - `kind = "split"`           → `adjust_symbol_split.py`（`before` より前を `×factor`）
+#   - `kind = "fabricated_rows"` → `delete_symbol_rows.py --auto-fabricated`
+#     （`from`〜`to` の範囲で「OHLC 全同値かつ出来高0」の行を探して消す。
+#       日付を明示しないのは、再構築後に欠損の位置が変わりうるため）
+#
+# ## 補正して直るものと、直らないもの
+#
+# ここに書くのは「手元で直せると確認できたもの」だけ。
+# 上流の系列そのものが壊れている場合（`AVB` の chart 系列が実勢価格と桁違い、
+# `2.793:1` という実在しない分割記録が付いている等）は**推定値で埋めない**。
+# 判断手順: `.claude/skills/upstream-data-diagnosis/SKILL.md`
+
+[[correction]]
+ticker  = "BYND"
+kind    = "split"
+before  = "2026-08-13"
+factor  = 30.0
+reason  = "1:30 併合 (2026-08-14 09:30 ET)。Yahoo の全期間 1,838 行のうち 7 営業日だけが ×30 調整済みという歯抜け状態で、取り直すと悪化する（query1/query2 × 3周で決定論的に再現）"
+applied = "2026-08-25"
+
+[[correction]]
+ticker  = "MNST"
+kind    = "split"
+before  = "2026-08-10"
+factor  = 0.5
+reason  = "2:1 分割 (2026-08-11)。BYND と同型の歯抜け調整（08-05=94.46 生値 / 08-06=47.08 調整済 / 08-07=90.36 生値）"
+applied = "2026-08-25"
+
+[[correction]]
+ticker  = "AVB"
+kind    = "fabricated_rows"
+from    = "2026-08-15"
+to      = "2026-08-23"
+reason  = "上流が欠損を返した 5 営業日を fetch_daily_data の df.ffill() が前日値で埋めていた（OHLC 全同値・出来高0）。upstream-data-diagnosis SKILL 限界I。なお AVB は上流の系列自体も壊れており、この削除では段差は残る"
+applied = "2026-08-25"
