@@ -252,7 +252,7 @@ def find_affected_virtual_themes(
     return sorted(set(hit["theme_id"]))
 
 
-# 仮想テーマ指数の基準値。`orchestrator.build_virtual_index_prices` と同じ。
+# 仮想テーマ指数の基準値。`orchestrator.build_all_virtual_indexes_prices` と同じ。
 VIRTUAL_INDEX_BASE = 1000.0
 
 # 合成 volume のスケール。指数に実出来高は無いので「売買代金の急増倍率 × これ」を入れる。
@@ -271,19 +271,27 @@ def rebuild_virtual_index_prices(
 
     ## なぜ必要か
 
-    合成ロジックは `pipeline/orchestrator.build_virtual_index_prices` にしか無く、
-    SQLAlchemy セッションを要求する。ところが SQLite は直近730日しか持たないため、
-    **構成銘柄の価格を過去まで補正しても SQLite 経由では再合成が過去に届かない**。
-    Parquet を直接読み書きする経路には、同じ式の DB 非依存版が要る。
+    合成ロジックは `pipeline/orchestrator.build_all_virtual_indexes_prices` にしか無く、
+    SQLAlchemy セッションと `DailyPrice` への書き込みを要求する。ところが SQLite は
+    直近730日しか持たないため、**構成銘柄の価格を過去まで補正しても SQLite 経由では
+    再合成が過去に届かない**。Parquet を直接読み書きする経路には DB 非依存版が要る。
 
-    実例（2026-08-25）: `BYND` の 1:30 併合が未調整だったため、所属する仮想テーマ3本
-    （`_CNSM0A_` `_GRCL29_` `_NTRTFC_`）の指数が 2026-08-13 に ×3.44〜×5.87 で飛んだ。
+    実例（2026-08-25）:
+      - `BYND` の 1:30 併合が未調整だったため、所属する仮想テーマ3本
+        （`_CNSM0A_` `_GRCL29_` `_NTRTFC_`）の指数が 2026-08-13 に ×3.44〜×5.87 で飛んだ。
+      - さらに 2026-08-07 の全170テーマ再合成が SQLite の730日窓だけで走ったため、
+        **165本が 2024-08-06 に基準値1000へ振り直され**、古い履歴との継ぎ目に
+        最大 −98% の偽の段差ができていた。
 
     > [!IMPORTANT]
-    > **アルゴリズムは `orchestrator` 版と一字一句同じにすること。** ここが食い違うと
-    > 「再合成した過去」と「翌日以降に日次が積む未来」で式が変わり、継ぎ目に段差が出る。
-    > 同値性は `test_parquet_recompute.py` の
-    > `test_rebuild_virtual_index_matches_the_orm_implementation` で固定してある。
+    > **アルゴリズムは `build_all_virtual_indexes_prices` と一字一句同じにすること。**
+    > 食い違うと「再合成した過去」と「翌日以降に日次が積む未来」で式が変わり、
+    > 継ぎ目に段差が出る。同値性は `test_parquet_recompute.py` の
+    > `test_rebuild_virtual_index_matches_the_batch_implementation` で固定してある。
+    >
+    > **`build_virtual_index_prices`（単数形）と取り違えないこと。** あちらは
+    > テストからしか呼ばれておらず、OHLC をすべて close と同値にする簡易版。
+    > 本番のテーマ指数は 100% の行で `open != close`。
 
     Args:
         theme_ids: 再合成する仮想テーマの symbol_id
