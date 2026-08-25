@@ -218,6 +218,25 @@ cd frontend; npm test; npm run build
 | `test_scenario_comparison.py::test_run_comparison_generates_outputs` | **ワークツリーに本番データが無い**（`data/` は gitignore のため Parquet マスターが存在せず、`FileNotFoundError: Parquet master cache files not found`）。本タスクは `backend/backtest/` を一切変更していない | `git diff --stat main..HEAD` で変更ファイルを確認。**merge 前に本体チェックアウトで再実行して確認すること** |
 | `RsLineChart.test.tsx` の2件 | `chart.addHistogramSeries is not a function`。lightweight-charts のモック不足 | 変更を `git stash` して実行し、**着手前から失敗していることを確認済み** |
 
+### main マージ後の再検証（2026-08-26 / `636f7aa`）
+
+main を取り込み（49コミット・競合なし）、全テストを再実行した。
+
+| | 結果 |
+| :--- | :--- |
+| バックエンド `pytest backend/tests/` | **1,123件 green / 1件 fail**（下記） |
+| フロントエンド `npm test` | **8ファイル 33件すべて green** |
+| `npm run build`（`tsc -b` 込み） | 成功 |
+
+- **`RsLineChart.test.tsx` の失敗2件は解消済み。** main 側の `489c007`
+  「RsLineChart テストのモック漏れを修正」で直っていた
+- **`test_scenario_comparison.py::test_run_comparison_generates_outputs` は引き続き失敗**するが、
+  原因は変わらず**このワークツリーに本番データが無いこと**。
+  `data/parquet_master/` が空で、`backtest_runner.py:92` が
+  `FileNotFoundError: Parquet master cache files not found` を投げる。
+  **戦略ロジックに到達する前に落ちており、本ブランチが触ったコードは1行も実行されない。**
+  本体チェックアウト（Parquet マスターあり）では走る想定。
+
 ### 残: TradingView との目視突合（ユーザー確認）
 
 同じ銘柄・同じ設定（Min 2 / Max 10 / Tightest）で TradingView のインジケータを表示し、
