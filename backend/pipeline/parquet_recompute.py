@@ -305,25 +305,19 @@ def rebuild_virtual_index_prices(
         if not c_ids:
             continue
 
-        # close が 0 / 負 / NULL の行は使わない（`orchestrator` 側の `p.close > 0` と同じ）
+        # close が 0 / 負 / NULL の行は使わない
+        # （`orchestrator` 側の SQL `close IS NOT NULL AND close > 0` と同じ）
         df = prices[prices["symbol_id"].isin(c_ids)][
-            ["symbol_id", "date", "close", "volume"]
+            ["symbol_id", "date", "open", "high", "low", "close", "volume"]
         ].copy()
         df = df[df["close"].notna() & (df["close"] > 0)]
         if df.empty:
             continue
-        df = df.sort_values("date")
+        df = df.sort_values(["symbol_id", "date"])
+        df["close_prev"] = df.groupby("symbol_id")["close"].shift(1)
 
-        # --- 指数値: 構成銘柄の日次平均リターンを基準値から連鎖させる ---
-        df["ret"] = df.groupby("symbol_id")["close"].pct_change()
-        daily_avg_ret = (
-            df.dropna(subset=["ret"]).groupby("date")["ret"].mean()
-            .reset_index().sort_values("date")
-        )
-        if daily_avg_ret.empty:
-            continue
-
-        # --- 合成 volume: 売買代金の21日平均に対する当日比（surge）の日次平均 ---
+        # --- 合成 volume 用の surge は「初日を含む df 全体」で計算する ---
+        # （`orchestrator` のコメントどおり。dropna より前に出すこと）
         df["dollar_volume"] = df["close"] * df["volume"].fillna(0)
         df["dollar_volume_ma21"] = df.groupby("symbol_id")["dollar_volume"].transform(
             lambda x: x.rolling(window=VIRTUAL_INDEX_SURGE_WINDOW, min_periods=1).mean()
@@ -334,25 +328,45 @@ def rebuild_virtual_index_prices(
             df["dollar_volume"] / df["dollar_volume_ma21"],
         )
         df["surge"] = df["surge"].fillna(1.0)
-        daily_avg_surge = df.groupby("date")["surge"].mean().reset_index()
+
+        clean = df.dropna(subset=["close_prev"]).copy()
+        if clean.empty:
+            continue
+
+        # 日中値は「前日終値に対する比」の平均として持ち回る。
+        # close だけを連鎖させて OHLC を同値にすると板のような系列になる。
+        clean["ret"] = clean["close"] / clean["close_prev"] - 1
+        clean["open_ratio"] = clean["open"] / clean["close_prev"]
+        clean["high_ratio"] = clean["high"] / clean["close_prev"]
+        clean["low_ratio"] = clean["low"] / clean["close_prev"]
+
+        daily_avg = clean.groupby("date").agg({
+            "ret": "mean", "open_ratio": "mean", "high_ratio": "mean",
+            "low_ratio": "mean", "surge": "mean",
+        }).reset_index().sort_values("date")
+        if daily_avg.empty:
+            continue
 
         # cumprod ではなく逐次乗算にしてある（`orchestrator` 版と浮動小数の丸めまで揃える）
         current_val = VIRTUAL_INDEX_BASE
-        synth_closes = []
-        for r in daily_avg_ret["ret"]:
-            current_val *= (1 + r)
-            synth_closes.append(current_val)
+        recs = []
+        for r in daily_avg.itertuples(index=False):
+            prev_val = current_val
+            current_val *= (1 + r.ret)
 
-        idx = daily_avg_ret[["date"]].copy()
-        idx["close"] = synth_closes
-        idx["open"] = idx["high"] = idx["low"] = idx["close"]
-        idx = idx.merge(daily_avg_surge, on="date", how="left")
-        idx["volume"] = (
-            idx["surge"].fillna(1.0) * VIRTUAL_INDEX_VOLUME_SCALE
-        ).astype(float)
-        idx = idx.drop(columns=["surge"])
-        idx.insert(0, "symbol_id", theme_id)
-        out.append(idx[["symbol_id", "date", "open", "high", "low", "close", "volume"]])
+            o_val = prev_val * r.open_ratio
+            h_val = prev_val * r.high_ratio
+            l_val = prev_val * r.low_ratio
+            c_val = current_val
+            recs.append({
+                "symbol_id": theme_id, "date": r.date, "open": o_val,
+                # 平均を取ると高値/安値が寄り引けを内包しないことがあるので挟み直す
+                "high": max(o_val, h_val, l_val, c_val),
+                "low": min(o_val, h_val, l_val, c_val),
+                "close": c_val,
+                "volume": float(r.surge * VIRTUAL_INDEX_VOLUME_SCALE),
+            })
+        out.append(pd.DataFrame(recs))
 
     if not out:
         return pd.DataFrame(

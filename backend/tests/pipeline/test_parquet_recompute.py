@@ -307,7 +307,12 @@ def test_empty_input_returns_empty_frame():
 # （`_CNSM0A_` `_GRCL29_` `_NTRTFC_`）の指数が 2026-08-13 に ×3.44〜×5.87 で飛んだ。
 # ---------------------------------------------------------------------------
 def _virtual_price_frame():
-    """構成銘柄2本 × 6営業日。ORM 版と Parquet 版の両方に同じ値を流す。"""
+    """構成銘柄2本 × 6営業日。バッチ版と Parquet 版の両方に同じ値を流す。
+
+    **OHLC は互いに違う値にすること。** 全部 close と同値にすると、
+    日中値の合成が壊れていても同値性テストが素通りしてしまう
+    （2026-08-25 に実際にすり抜けた）。
+    """
     rows = []
     closes = {
         10: [100.0, 101.0, 99.0, 103.0, 102.0, 105.0],
@@ -317,12 +322,17 @@ def _virtual_price_frame():
         10: [1000, 1200, 800, 3000, 900, 1100],
         11: [2000, 2100, 1900, 2500, 2200, 2000],
     }
+    # close に対する寄り・高値・安値の比。日ごとに変えて非対称にする
+    o_r = [0.993, 1.006, 0.998, 1.011, 0.995, 1.004]
+    h_r = [1.014, 1.021, 1.009, 1.026, 1.017, 1.012]
+    l_r = [0.982, 0.991, 0.973, 0.988, 0.979, 0.986]
     dates = ["2026-05-01", "2026-05-04", "2026-05-05",
              "2026-05-06", "2026-05-07", "2026-05-08"]
     for sid in (10, 11):
-        for d, c, v in zip(dates, closes[sid], vols[sid]):
-            rows.append({"symbol_id": sid, "date": d, "open": c, "high": c,
-                         "low": c, "close": c, "volume": float(v)})
+        for i, (d, c, v) in enumerate(zip(dates, closes[sid], vols[sid])):
+            rows.append({"symbol_id": sid, "date": d,
+                         "open": c * o_r[i], "high": c * h_r[i],
+                         "low": c * l_r[i], "close": c, "volume": float(v)})
     return pd.DataFrame(rows)
 
 
@@ -331,17 +341,24 @@ def _tc_frame():
                          {"theme_id": 101, "symbol_id": 11}])
 
 
-def test_rebuild_virtual_index_matches_the_orm_implementation():
-    """`orchestrator.build_virtual_index_prices` と**同じ値**を返すこと。
+def test_rebuild_virtual_index_matches_the_batch_implementation():
+    """**本番データを作っている `build_all_virtual_indexes_prices` と同じ値を返すこと。**
 
-    アルゴリズムを書き換えるのではなく DB 依存を外すだけの移植なので、
-    数値が一致しなければ移植に失敗している。
+    紛らわしいが、仮想指数の合成関数は2つある:
+
+      - `build_virtual_index_prices`   … 単体版。**テストからしか呼ばれていない**。
+                                          OHLC をすべて close と同値にする簡易版
+      - `build_all_virtual_indexes_prices` … T2 が実際に使う。close_prev に対する
+                                          open/high/low の比を平均して日中値を作る
+
+    移植先を単体版と取り違えると、`open == close` の板のような系列が
+    本番に入る（本番テーマは 100% の行で `open != close`）。
     """
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
     from db.models import Base, DailyPrice, Symbol, ThemeConstituent
-    from pipeline.orchestrator import build_virtual_index_prices
+    from pipeline.orchestrator import build_all_virtual_indexes_prices
     from pipeline.parquet_recompute import rebuild_virtual_index_prices
 
     px = _virtual_price_frame()
@@ -357,8 +374,6 @@ def test_rebuild_virtual_index_matches_the_orm_implementation():
         ThemeConstituent(theme_id=101, symbol_id=10),
         ThemeConstituent(theme_id=101, symbol_id=11),
     ])
-    # ORM の Date 列は `datetime.date` しか受け付けない。Parquet 側は文字列で持つので
-    # ここで型を変換して同じ値を両方に流す。
     for _, r in px.iterrows():
         session.add(DailyPrice(symbol_id=int(r["symbol_id"]),
                                date=datetime.strptime(r["date"], "%Y-%m-%d").date(),
@@ -366,26 +381,48 @@ def test_rebuild_virtual_index_matches_the_orm_implementation():
                                close=r["close"], volume=r["volume"]))
     session.commit()
 
-    expected = build_virtual_index_prices(session, 101).sort_values("date").reset_index(drop=True)
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        # ハッシュファイルが無い状態＝必ず 'rebuild' モードになる
+        build_all_virtual_indexes_prices(
+            session,
+            [{"ticker": "_THEME_", "exchange": "VIRTUAL"}],
+            {("_THEME_", "VIRTUAL"): 101},
+            hash_file_path=os.path.join(td, "hashes.json"),
+        )
+    session.commit()
+
+    rows = (session.query(DailyPrice)
+            .filter(DailyPrice.symbol_id == 101)
+            .order_by(DailyPrice.date).all())
+    assert rows, "バッチ版が1行も作っていない（テストの前提が壊れている）"
+    expected = pd.DataFrame([{"date": r.date.strftime("%Y-%m-%d"), "open": r.open,
+                              "high": r.high, "low": r.low, "close": r.close,
+                              "volume": r.volume} for r in rows])
+
     actual = rebuild_virtual_index_prices([101], px, _tc_frame())
     actual = actual.sort_values("date").reset_index(drop=True)
 
-    assert list(actual["date"]) == [d.strftime("%Y-%m-%d") for d in expected["date"]]
-    for col in ("close", "open", "high", "low", "volume"):
+    assert list(actual["date"]) == list(expected["date"])
+    for col in ("open", "high", "low", "close", "volume"):
         pd.testing.assert_series_equal(
             actual[col].astype(float), expected[col].astype(float),
             check_names=False, rtol=1e-9,
-            obj=f"{col} が ORM 版と一致しない",
+            obj=f"{col} がバッチ版と一致しない",
         )
 
 
-def test_index_ohlc_are_all_equal_to_close():
-    """合成指数に日中値は無いので OHLC はすべて close と同値。"""
+def test_index_has_real_intraday_range():
+    """OHLC は close と同値ではない。**単体版の簡易実装に退行していないかの歯止め。**
+
+    本番の仮想テーマは 2,110行すべてで `open != close`。
+    """
     from pipeline.parquet_recompute import rebuild_virtual_index_prices
 
     out = rebuild_virtual_index_prices([101], _virtual_price_frame(), _tc_frame())
-    for col in ("open", "high", "low"):
-        assert (out[col] == out["close"]).all(), f"{col} が close と違う"
+    assert (out["open"] != out["close"]).any(), "open がすべて close と同値（簡易版に退行）"
+    assert (out["high"] >= out[["open", "close", "low"]].max(axis=1) - 1e-9).all(),         "high が最大値になっていない"
+    assert (out["low"] <= out[["open", "close", "high"]].min(axis=1) + 1e-9).all(),         "low が最小値になっていない"
 
 
 def test_first_date_has_no_index_row():
