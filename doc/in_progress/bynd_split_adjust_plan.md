@@ -153,12 +153,12 @@ DB 依存を外すだけで、アルゴリズムは変えない:
 
 ## 5. 実装順序と進捗チェックリスト
 
-- [ ] Sandbox 準備（`data/sandbox/parquet_master/` に本番 Parquet をコピー、環境変数2つを絶対パスで設定）
+- [x] Sandbox 準備（`tmp/reset_bynd_sandbox.py` で本番の現世代から作り直す）
 - [x] テスト先行: `rebuild_virtual_index_prices` の同値性テスト（SQLAlchemy 版との一致）
 - [x] `rebuild_virtual_index_prices` を `parquet_recompute.py` に実装
 - [x] テスト先行: `adjust_symbol_split` の接合部検算・スケーリング・market_cap 非スケールのテスト
 - [x] `backend/scripts/adjust_symbol_split.py` を実装
-- [ ] Sandbox で `--dry-run` → `--apply`、SQL で値を直接検証
+- [x] Sandbox で `--dry-run` → `--apply`、SQL で値を直接検証（§6.1）
 - [ ] `tools/db_health_check.py --all --check-nulls` / `scan_price_anomalies.py` で確認
 - [ ] pytest 全件パス
 - [ ] フロントエンドで BYND チャートと汚染テーマ3本を目視確認（オレンジバッジ＝Sandbox である確認込み）
@@ -181,6 +181,40 @@ DB 依存を外すだけで、アルゴリズムは変えない:
   ```
 
 ## 6. 検証プラン / 結果
+
+### 6.1 Sandbox 検証結果（2026-08-25 / 世代 20260825_145931 を元に実施）
+
+| 検証 | 期待 | 結果 |
+| :--- | :--- | :--- |
+| BYND の 08-12 → 08-13 の比率 | 1.0 近傍 | **1.0034**（補正前 30.10）✅ |
+| BYND の日次リターンが変わった日 | 接合日のみ | **1,837日中 2026-08-13 の1日だけ** ✅ |
+| BYND 全期間が単一スケール | 最小終値 ≥ 1.0 | 11.63 ✅ |
+| market_cap の接合日スパイク | 前後から補間 | 6.43e9 → **2.226e8** ✅ |
+| 売買代金の連続性 | 接合部で連続 | 比 0.713 ✅ |
+| SQLite と Parquet の一致 | 全行一致 | BYND / テーマ3本とも一致 ✅ |
+| 2024-08-06 の再ベース是正 | 段差の解消 | **169テーマが是正**（`_CNSM0A_` −53.2%→+0.2% / `_BLCK3F_` −92.5%→+3.3% / `_GRCL29_` +209.9%→−0.7%）✅ |
+| 日中値の保持 | `open != close` | `open==close` 0.25%（本番 0.26%）✅ |
+| 変更範囲 | 最小限 | テーマ 356,625行中 **3,386行**のみ変化（大半が 2024-08-06）✅ |
+
+残存: `|日次リターン| > 40%` が 89行 / 15テーマ（`_DRON_` 38 / `_QNTMDD_` 26 ほか）。
+**2018〜2020年に集中しており本番にも存在する**構成銘柄側の古いデータ起因。本プランの対象外（§8）。
+
+### 6.2 検証コマンド
+
+```powershell
+.env\Scripts\python.exe tmpeset_bynd_sandbox.py          # Sandbox を本番の現世代から作り直す
+$env:PYTHONPATH="backend"; $env:STOCKTOOL_DB_PATH="<sandbox.db>"
+.env\Scripts\python.exe backend\scriptsdjust_symbol_split.py --ticker BYND --before 2026-08-13 --factor 30 --apply
+.env\Scripts\python.exe backend\scriptsebuild_virtual_indexes.py --all --apply
+.env\Scripts\python.exe tmperify_bynd_adjust.py <sandbox parquet_master> <sandbox.db>
+```
+
+> [!IMPORTANT]
+> **本番のポインタは動く。** 日次が 07:00 と 13:00 に走るので、Sandbox を作るときは
+> 毎回ポインタを読み直して足りないファイルをコピーすること。「前回と同じ世代だろう」と
+> 仮定して差分だけ消すと Sandbox を壊す（2026-08-25 に実際にやった）。
+
+### 6.3 当初の検証項目
 
 | 検証 | 期待 |
 | :--- | :--- |
