@@ -71,6 +71,7 @@ import sys
 from datetime import datetime
 
 import pandas as pd
+import pyarrow.parquet as pq
 
 _this_dir = os.path.dirname(os.path.abspath(__file__))
 _backend_dir = os.path.dirname(_this_dir)
@@ -426,15 +427,36 @@ def run(ticker: str, before: str, factor: float, reason: str, dry_run: bool,
     next_id = int(pd.to_numeric(ind["id"], errors="coerce").max()) + 1
     new_ind_rows = new_ind_rows.copy()
     new_ind_rows["id"] = range(next_id, next_id + len(new_ind_rows))
-    new_ind_rows["symbol_id"] = new_ind_rows["symbol_id"].astype(ind["symbol_id"].dtype)
+
+    # **concat の前に dtype を既存へ揃える。** 1列でも object が混じると
+    # 600万行 × 63列がまるごと object に巻き上げられ、sort のコピーで OOM する
+    # （2026-08-25 に Sandbox で実際に落ちた）。
+    for col in ind.columns:
+        want = ind[col].dtype
+        if col in new_ind_rows.columns and new_ind_rows[col].dtype != want:
+            try:
+                new_ind_rows[col] = new_ind_rows[col].astype(want)
+            except (TypeError, ValueError):
+                # 整数列に NaN が来た場合など。nullable 化して object 化は避ける
+                new_ind_rows[col] = pd.to_numeric(new_ind_rows[col], errors="coerce")
+
     merged_ind = pd.concat([keep_ind, new_ind_rows[ind.columns]], ignore_index=True)
-    merged_ind = merged_ind.sort_values(["symbol_id", "date"]).reset_index(drop=True)
+    del keep_ind, new_ind_rows
+    objs = [c for c in merged_ind.columns
+            if c != "date" and merged_ind[c].dtype == object]
+    if objs:
+        print(f"    [WARN] object 列が残っています（メモリが膨らみます）: {objs[:5]}")
+    # reset_index(drop=True) を別に呼ぶとフレーム全体をもう一度コピーする
+    merged_ind.sort_values(["symbol_id", "date"], inplace=True, ignore_index=True)
     print(f"    indicators {len(ind):,} → {len(merged_ind):,}行")
+    del ind
 
     # --- [7] T4 は横断的なので全期間を作り直す ---
-    new_ranks = recompute_ranks(merged_ind, sym).reset_index(drop=True)
+    # 旧行数は表示用。941MB のフレームを読み込まずメタデータから取る
+    old_rank_rows = pq.ParquetFile(cur["ranks"]).metadata.num_rows
+    new_ranks = recompute_ranks(merged_ind, sym)
     new_ranks.insert(0, "id", range(1, len(new_ranks) + 1))
-    print(f"    ranks {len(pd.read_parquet(cur['ranks'])):,} → {len(new_ranks):,}行")
+    print(f"    ranks {old_rank_rows:,} → {len(new_ranks):,}行")
 
     # --- [8] 新世代の書き出し ---
     print("\n[5] 新世代の書き出し...")

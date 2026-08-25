@@ -480,3 +480,35 @@ def test_non_positive_closes_are_excluded():
     assert out.set_index("date").loc["2026-05-05", "close"] != \
         pytest.approx(0.0), "0 の close が混入して指数が壊れている"
     assert len(out) == len(only10)
+
+
+def test_recomputed_indicators_are_numeric_not_object():
+    """指標列は数値 dtype で返すこと。**object のままだとメモリが数倍に膨れる。**
+
+    `calculate_indicators` は素の Python float を object 列に入れて返すため、
+    そのまま concat すると既存の float64 列まで object に巻き上げられる。
+    実測（2026-08-25 / Sandbox）: 6,057,722行 × 63列の indicators で
+    28列が object 化し、`sort_values` のコピーで OOM した。
+
+    ```
+    numpy.core._exceptions._ArrayMemoryError: Unable to allocate 1.26 GiB
+    for an array with shape (28, 6057722) and data type object
+    ```
+
+    ディスク上は pyarrow が double に落として書くため Parquet は汚染されないが、
+    **メモリ上でだけ膨らむ**ので気付きにくい。
+    """
+    px = _price_frame()
+    out = recompute_indicators([2], px, ["ema_21", "sma_5", "rs_value"], spy_id=1)
+
+    objs = [c for c in out.columns if out[c].dtype == object and c != "date"]
+    assert not objs, f"object 列が残っている: {objs}"
+    assert out["date"].dtype == object, "date は文字列のままにする"
+
+
+def test_recomputed_indicators_keep_all_null_columns_numeric():
+    """全 NULL の列（SPY の RS 系など）も object にしない。"""
+    px = _price_frame()
+    out = recompute_indicators([1], px, ["rs_value", "ema_21"], spy_id=1)
+    assert out["rs_value"].isna().all()
+    assert out["rs_value"].dtype != object, "全 NULL 列が object になっている"

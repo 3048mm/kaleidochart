@@ -192,7 +192,27 @@ def recompute_indicators(
         df.insert(0, "symbol_id", sid)
         out.append(df)
 
-    return pd.concat(out, ignore_index=True) if out else pd.DataFrame()
+    if not out:
+        return pd.DataFrame()
+    res = pd.concat(out, ignore_index=True)
+
+    # `calculate_indicators` は素の Python float を **object 列**に入れて返す。
+    # そのまま呼び出し元で既存の indicators と concat すると float64 の列まで
+    # object に巻き上げられ、メモリが数倍に膨れる。
+    #
+    # 実測（2026-08-25 / Sandbox）: 6,057,722行 × 63列のうち 28列が object 化し、
+    # `sort_values` のコピーで確保に失敗した。
+    #
+    #     numpy.core._exceptions._ArrayMemoryError: Unable to allocate 1.26 GiB
+    #     for an array with shape (28, 6057722) and data type object
+    #
+    # ディスク上は pyarrow が double に落として書くので **Parquet は汚染されない**。
+    # メモリ上でだけ膨らむため気付きにくい。ここで数値に落としておく。
+    for col in res.columns:
+        if col == "date" or res[col].dtype != object:
+            continue
+        res[col] = pd.to_numeric(res[col], errors="coerce")
+    return res
 
 
 def find_affected_virtual_themes(
