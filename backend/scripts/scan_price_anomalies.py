@@ -37,6 +37,7 @@ import tomli  # noqa: E402
 from indicators.price_anomaly import (  # noqa: E402
     MARKET_WIDE_MIN_SYMBOLS,
     classify_price_jump,
+    count_real_symbols_per_day,
     is_anomalous_ratio,
 )
 from pipeline.parquet_cache_manager import (  # noqa: E402
@@ -80,7 +81,8 @@ def find_anomalies(prices: pd.DataFrame, symbols: pd.DataFrame) -> pd.DataFrame:
     a["dv_ratio"] = np.where(prev_dv > 0, a["dv"] / prev_dv, np.nan)
     # 前日が取引停止だと代金比が取れない。直前21日平均との比で代替する
     a["dv_vs_adv"] = np.where(a["adv21"] > 0, a["dv"] / a["adv21"], np.nan)
-    a["same_day_count"] = a["date"].map(a.groupby("date").size())
+    # 仮想テーマは数えない（犯人が自分の作った波及に隠れる）
+    a["same_day_count"] = count_real_symbols_per_day(a)
 
     a = a.merge(symbols[["id", "ticker", "category", "active"]],
                 left_on="symbol_id", right_on="id", how="left")

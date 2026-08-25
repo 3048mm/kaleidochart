@@ -18,6 +18,8 @@
 """
 
 import os
+
+import pandas as pd
 import sys
 
 import pytest
@@ -229,3 +231,57 @@ def test_classification_priority_order():
     r = _jump(ticker="PENNY", ratio=0.5, prev_close=1.0,
               adv21=100.0, same_day_count=30)
     assert classify_price_jump(r) == "market_wide"
+
+
+# ---------------------------------------------------------------------------
+# same_day_count に仮想テーマを数えてはいけない
+#
+# 2026-08-25 に発覚。`BYND` の 1:30 併合（比率 30.10）が **market_wide** に
+# 誤分類され、週次監査の報告から漏れていた。
+#
+#     2026-08-13 の同日アノマリー 4件（MARKET_WIDE_MIN_SYMBOLS = 4）
+#       _GRCL29_   5.83  virtual      ← BYND が汚染したテーマ
+#       _CNSM0A_   3.44  virtual      ← 同上
+#       _NTRTFC_   5.87  virtual      ← 同上
+#       BYND      30.10  market_wide  ← 犯人が「市場イベント」に化けた
+#
+# 仮想指数は構成銘柄から合成されるので、**1銘柄が壊れると所属テーマの数だけ
+# 同日件数が水増しされる**（1銘柄が最大5テーマに所属する）。
+# 犯人が自分の作った波及に隠れる構造だった。
+# ---------------------------------------------------------------------------
+def test_market_wide_count_excludes_virtual_themes():
+    """市場イベントの判定は**実在銘柄の数**で行うこと。"""
+    from indicators.price_anomaly import count_real_symbols_per_day
+
+    rows = pd.DataFrame([
+        {"ticker": "_GRCL29_", "date": "2026-08-13"},
+        {"ticker": "_CNSM0A_", "date": "2026-08-13"},
+        {"ticker": "_NTRTFC_", "date": "2026-08-13"},
+        {"ticker": "BYND", "date": "2026-08-13"},
+    ])
+    counts = count_real_symbols_per_day(rows)
+    assert list(counts) == [1, 1, 1, 1], "仮想テーマまで数えている"
+
+
+def test_market_wide_count_still_sees_real_market_events():
+    """実在銘柄が並んだ日はちゃんと数える（COVID の急落日など）。"""
+    from indicators.price_anomaly import count_real_symbols_per_day
+
+    rows = pd.DataFrame([{"ticker": t, "date": "2020-03-09"}
+                         for t in ("AAPL", "MSFT", "GOOG", "AMZN", "META")])
+    counts = count_real_symbols_per_day(rows)
+    assert list(counts) == [5] * 5
+
+
+def test_bynd_is_classified_as_split_suspect_not_market_wide():
+    """**本件の回帰テスト。** 実データそのままで `split_suspect` になること。"""
+    cls = classify_price_jump({
+        "ticker": "BYND",
+        "ratio": 30.101426,
+        "prev_close": 0.4141,
+        "adv21": 2.015160e07,
+        "dv_ratio": 0.713435,
+        "dv_vs_adv": None,
+        "same_day_count": 1,      # 仮想テーマを除いた実数
+    })
+    assert cls == "split_suspect", f"BYND が {cls} に分類されている"
