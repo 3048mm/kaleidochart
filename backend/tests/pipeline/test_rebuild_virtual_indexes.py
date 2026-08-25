@@ -115,18 +115,38 @@ def test_initial_base_value_is_not_flagged():
     assert out.empty
 
 
-def test_detects_a_mid_series_restart():
-    """途中で 1000 に戻るのは「窓の左端でリセット」の指紋。
+def test_warmup_drift_near_the_base_is_not_flagged():
+    """**立ち上がり直後は自然に 1000 近傍にいる。** ここを拾ってはいけない。
 
-    2026-08-07 の事故では 170本中165本が 2024-08-06 に ~1000 になっていた。
+    実データ（170テーマ・2018-04-03 開始）で 21,235 行が該当し、
+    2018-04-04〜04-10 に 146〜160 テーマが集中した。全部ただのウォームアップ。
+
+    事故の指紋は「**跳んで** 1000 に戻る」ことなので、
+    基準値近傍であることに加えて**大きなリターンを伴う**ことを要求する。
+    """
+    out = check_no_base_value_restart(
+        _index([1000, 1002, 998, 1010, 1005, 1030]), _symbols())
+    assert out.empty
+
+
+def test_detects_a_mid_series_restart():
+    """途中で跳んで 1000 に戻るのは「窓の左端でリセット」の指紋。
+
+    2026-08-07 の事故では 170本中165本が 2024-08-06 に ~1000 になっていた:
+        _HLTHCB_  close=1019.65  当日リターン -98.2%   ← 直前は ~55,700
     """
     out = check_no_base_value_restart(
         _index([1000, 5000, 20000, 1002, 1010]), _symbols())
-    # リセット後は基準値の近くをしばらく漂うので、複数行が挙がるのが正常
     assert set(out["ticker"]) == {"_THEME_A_"}
-    assert out["date"].min() == "2024-08-06", "リセット日を捉えていない"
-    assert (out["close"].between(*BASE_VALUE_BAND)).all()
-    assert "2024-08-01" not in set(out["date"]), "初日の 1000 まで拾っている"
+    assert list(out["date"]) == ["2024-08-06"], "跳んだ当日だけを挙げること"
+    assert out.iloc[0]["ret"] < -0.9
+
+
+def test_slow_decline_to_the_base_is_not_flagged():
+    """じりじり下げて 1000 を通過するのは正常な値動き。"""
+    out = check_no_base_value_restart(
+        _index([1400, 1300, 1200, 1100, 1020, 990]), _symbols())
+    assert out.empty
 
 
 def test_multiple_themes_restarting_on_the_same_date_are_all_reported():
@@ -138,5 +158,5 @@ def test_multiple_themes_restarting_on_the_same_date_are_all_reported():
 
 
 def test_values_far_from_the_base_are_not_flagged():
-    out = check_no_base_value_restart(_index([1000, 1200, 900, 1500]), _symbols())
-    assert out.empty, "900 は基準値バンド外（誤検知）"
+    out = check_no_base_value_restart(_index([1000, 5000, 1500]), _symbols())
+    assert out.empty, "1500 は基準値バンド外（誤検知）"

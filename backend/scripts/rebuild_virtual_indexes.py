@@ -81,8 +81,12 @@ VIRTUAL_THEME_HASH_FILE = os.path.join("data", "virtual_theme_hashes.json")
 # ±40% を超えるのは合成の失敗か、構成銘柄側に未処理の段差が残っているサイン。
 SANITY_RETURN_LIMIT = 0.40
 
-# 基準値 1000 の近傍とみなす幅。ここに初日以外の終値が居たら「窓の左端でリセット」の指紋。
+# 基準値 1000 の近傍とみなす幅。
 BASE_VALUE_BAND = (950.0, 1060.0)
+
+# 基準値へ「跳んで」戻ったとみなす日次リターンの大きさ。
+# 近傍にいるだけでは判定できない（立ち上がり直後は自然に 1000 付近にいる）。
+BASE_RESTART_JUMP = 0.50
 
 
 def find_virtual_theme_ids(symbols: pd.DataFrame,
@@ -124,23 +128,37 @@ def check_index_sanity(index_rows: pd.DataFrame, symbols: pd.DataFrame,
     return bad[["symbol_id", "ticker", "date", "close", "ret"]]
 
 
-def check_no_base_value_restart(index_rows: pd.DataFrame,
-                                symbols: pd.DataFrame) -> pd.DataFrame:
-    """初日以外に基準値 1000 近傍の終値が無いことを確かめる。
+def check_no_base_value_restart(index_rows: pd.DataFrame, symbols: pd.DataFrame,
+                                jump: float = BASE_RESTART_JUMP) -> pd.DataFrame:
+    """途中で**跳んで**基準値 1000 に戻っている行を洗い出す。
 
-    2026-08-07 の事故の指紋がこれ（165/170 本がホットキャッシュ境界日に ~1000）。
-    偶然 1000 付近を通ることはあるので、**同じ日に多数のテーマが該当したら**疑う。
+    2026-08-07 の事故の指紋がこれ（165/170 本がホットキャッシュ境界日に ~1000）:
+
+        _HLTHCB_  2024-08-06  close=1019.65  当日リターン -98.2%  ← 直前は ~55,700
+
+    > [!IMPORTANT]
+    > **「基準値の近く」だけで判定してはいけない。** 指数は初日に 1000 から始まるので
+    > 立ち上がり直後は自然にその近傍にいる。実データ（170テーマ・2018-04-03 開始）で
+    > 21,235行が該当し、2018-04-04〜04-10 に 146〜160 テーマが集中した — 全部ただの
+    > ウォームアップだった。じりじり下げて 1000 を通過するのも正常な値動き。
+    >
+    > リセットは**不連続**なので、基準値近傍であることに加えて
+    > **大きなリターンを伴う**ことを要求する。
+
+    Returns:
+        `symbol_id` / `ticker` / `date` / `close` / `ret` の DataFrame（空なら健全）。
     """
-    df = index_rows.sort_values(["symbol_id", "date"])
-    first = df.groupby("symbol_id")["date"].transform("min")
-    later = df[df["date"] > first]
+    df = index_rows.sort_values(["symbol_id", "date"]).copy()
+    df["ret"] = df.groupby("symbol_id")["close"].pct_change()
     lo, hi = BASE_VALUE_BAND
-    hit = later[(later["close"] > lo) & (later["close"] < hi)].copy()
+    hit = df[
+        (df["close"] > lo) & (df["close"] < hi) & (df["ret"].abs() > jump)
+    ].dropna(subset=["ret"]).copy()
     if hit.empty:
         return hit
     name = symbols.set_index("id")["ticker"]
     hit["ticker"] = hit["symbol_id"].map(name)
-    return hit[["symbol_id", "ticker", "date", "close"]]
+    return hit[["symbol_id", "ticker", "date", "close", "ret"]]
 
 
 def run(tickers: list[str] | None, dry_run: bool, db_path: str | None = None,
@@ -192,7 +210,7 @@ def run(tickers: list[str] | None, dry_run: bool, db_path: str | None = None,
     print(f"    |日次リターン| > {sanity_limit:.0%} の行: {len(bad)}")
     if not bad.empty:
         print(bad.head(15).to_string(index=False))
-    print(f"    初日以外で基準値1000近傍の行: {len(restart)}")
+    print(f"    跳んで基準値1000に戻っている行: {len(restart)}")
     if not restart.empty:
         by_date = restart.groupby("date")["symbol_id"].nunique().sort_values(ascending=False)
         print(f"    日付別（上位5）:\n{by_date.head(5).to_string()}")
