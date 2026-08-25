@@ -176,8 +176,14 @@
 *   **タブ切り替え構造**:
 *   **📈 ETF Backtest**: 単一のETF商品に対するバックテストレポート。
 *   **⚖️ Scenario Test (`RegimeComparisonPage`)**: 複数モデル（レジーム）およびモンテカルロ試行を伴うドリルダウン型統合ダッシュボード。
+*   **戦略カードの共通骨格（両タブ共通・`components/BacktestStrategyCard.tsx`）**: タブ間で視線の置き場が変わらないよう、四角枠の構成を固定する。上から **ミニグラフ → 主結果（CAGR / Max DD）→ 2行目 → 3行目 → 末尾（Final Capital + 総ゲイン）**。行の中身だけをタブごとに差し替える。
+    *   ETF タブ: 2行目 `Sharpe / Time in Market`、3行目 `Rebalances / Regime Changes`
+    *   シナリオタブ: 2行目 `Avg Trade / Win Rate`、3行目 `Trades / Profit Factor`
+    *   カードに渡す数値の単位は **% 表記の実数**（0.182 ではなく 18.2）に統一する。シナリオ側 API は率で返すため、呼び出し側で 100 倍して渡す。
+    *   ミニグラフのグレー点線は**ベンチマーク**専用。ETF タブは Buy & Hold（SPY 固定にすると TQQQ/SOXL 等でスケール差により線が潰れる）、シナリオタブは SPY。この記法と衝突しないよう、詳細分析チャートの Cash は点線ではなく低 opacity の実線で描く。
+*   **実行条件バー（両タブ共通・`components/BacktestRunInfo.tsx`）**: `Period` / `Trading Days` / `Initial Cap` / `Tax Rate` を表示する。毎回参照する値ではないため **デフォルトは折りたたみ**、ヘッダのタップで展開する。値はすべて API 由来（画面へのベタ書き禁止）。シナリオ側は `/api/backtest/scenario/{name}/summary` がこれらを返す（`consider_tax` は `run_params` → 無ければ `backtest_config.toml` フォールバック、`trading_days` は equity CSV の行数）。
 *   **シナリオテスト画面の主要レイアウト**:
-    *   **モデル選択カード**: `Full Position`, `MTS Raw`, `MTS L1`, `MTS L2`, `MTS L3` の5つのモデル成績（CAGR, Win Rate, DD等）を上段に表示し、選択されたモデルのバックテストデータを即座に下段詳細に同期。
+    *   **モデル選択カード**: `Full Position`, `MTS Raw`, `MTS L1`, `MTS L2`, `MTS L3` の5つのモデル成績を上段に表示し、選択されたモデルのバックテストデータを即座に下段詳細に同期。
     *   **試行ドロップダウン**: モンテカルロ試行に対応する「全統計（all）」および「個別の試行（Run 0 〜 Run 9）」を切り替えるドロップダウン。
     *   **資産曲線チャート**: 折れ線グラフでポートフォリオ評価額、SPY（Lump Sum, DCA, Timing）、QQQ/TQQQ/SOXLベンチマークの累積推移を描画し、下部にCash比率の推移を面グラフで表示。
     *   **年度成績テーブル**: 年度ごとのパフォーマンスとSPYに対する対比成績を表示。

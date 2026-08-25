@@ -32,6 +32,13 @@ export interface BacktestScenarioSummary {
   final_capital_min?: number;
   avg_trade_pnl_pct?: number;
   avg_trade_pnl_pct_avg?: number;
+  // Run Info（折りたたみ Run Info バー用。ETF 側 EtfSingleSummary と項目を揃えている）
+  start_date?: string;
+  end_date?: string;
+  initial_capital?: number;
+  trading_days?: number;
+  consider_tax?: number;
+  total_return_pct?: number;
   yearly_performance?: { [year: string]: YearlyPerformanceItem };
   exit_reasons?: {
     [reason: string]: {

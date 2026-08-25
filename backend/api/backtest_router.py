@@ -210,6 +210,39 @@ def _resolve_avg_trade_pnl_pct(run_path: str, summary_data: dict) -> Optional[fl
     return _avg_trade_pnl_pct_from_logs(run_path)
 
 
+def _count_trading_days(run_path: str) -> Optional[int]:
+    """run の equity カーブ CSV の行数（= 営業日数）を数える。"""
+    equity_file = os.path.join(run_path, "scenario_equity_curve.csv")
+    if not os.path.exists(equity_file):
+        return None
+    try:
+        with open(equity_file, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            return sum(1 for _ in reader)
+    except Exception:
+        return None
+
+
+def _resolve_consider_tax(summary_data: dict) -> Optional[float]:
+    """
+    run に適用された税率（率。0.2=20%）を解決する。
+
+    scenario_summary.json の run_params に consider_tax があればそれを使う。
+    2026-08 以前の run は記録が無いため、backtest_config.toml [general]
+    consider_tax（型2・型3 の実運用シミュレーション用）にフォールバックする。
+    """
+    run_params = summary_data.get("run_params")
+    if isinstance(run_params, dict):
+        val = run_params.get("consider_tax")
+        if val is not None:
+            return float(val)
+    try:
+        from backtest.common_constraints import load_tax_rate
+        return float(load_tax_rate())
+    except Exception:
+        return None
+
+
 @router.get("/backtest/scenarios", response_model=List[str])
 def get_scenarios():
     """
@@ -507,9 +540,22 @@ def get_scenario_summary(name: str):
             avg_trade_pnl_pct_avg=avg_trade_pnl_pct_avg
         )
 
+        # --- Run Info（PERIOD / TRADING DAYS / INITIAL CAP / TAX RATE） ---
+        # MC グループは全 run が同一条件で回るため、先頭 run の設定を代表値とする。
+        run_initial_capital = first_sum.get("initial_capital")
+        run_total_return_pct = None
+        if run_initial_capital:
+            run_total_return_pct = (final_capital_avg / run_initial_capital - 1.0) * 100.0
+
         summary_obj.__dict__.update({
             "is_monte_carlo": True,
             "runs_count": len(run_summaries),
+            "start_date": start_date_str,
+            "end_date": end_date_str,
+            "initial_capital": run_initial_capital,
+            "trading_days": _count_trading_days(run_paths[0]),
+            "consider_tax": _resolve_consider_tax(first_sum),
+            "total_return_pct": run_total_return_pct,
             "cagr_avg": cagr_avg,
             "cagr_max": cagr_max,
             "cagr_min": cagr_min,
@@ -627,16 +673,29 @@ def get_scenario_summary(name: str):
         # 4. 1取引あたり平均リターン（JSON に無ければトレードログ CSV からフォールバック算出）
         avg_trade_pnl_pct = _resolve_avg_trade_pnl_pct(scenario_path, raw_data)
 
+        # 5. Run Info（PERIOD / TRADING DAYS / INITIAL CAP / TAX RATE）
+        run_initial_capital = raw_data.get("initial_capital")
+        run_final_capital = raw_data.get("final_capital")
+        total_return_pct = raw_data.get("total_return_pct")
+        if total_return_pct is None and run_initial_capital and run_final_capital is not None:
+            total_return_pct = (run_final_capital / run_initial_capital - 1.0) * 100.0
+
         return BacktestScenarioSummary(
             cagr=cagr,
             profit_factor=profit_factor,
             max_drawdown=max_drawdown,
             win_rate=win_rate,
             total_trades=total_trades,
-            final_capital=raw_data.get("final_capital"),
+            final_capital=run_final_capital,
             yearly_performance=yearly_performance,
             exit_reasons=raw_data.get("exit_reasons", {}),
-            avg_trade_pnl_pct=avg_trade_pnl_pct
+            avg_trade_pnl_pct=avg_trade_pnl_pct,
+            start_date=raw_data.get("start_date"),
+            end_date=raw_data.get("end_date"),
+            initial_capital=run_initial_capital,
+            trading_days=_count_trading_days(scenario_path),
+            consider_tax=_resolve_consider_tax(raw_data),
+            total_return_pct=total_return_pct,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read/parse summary JSON: {str(e)}")

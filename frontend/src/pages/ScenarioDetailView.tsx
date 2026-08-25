@@ -666,8 +666,9 @@ export const ScenarioDetailView: React.FC<ScenarioDetailViewProps> = ({ strategy
                         name="Cash (手元余力キャッシュ)"
                         type="monotone"
                         dataKey="cash"
-                        stroke="rgba(255, 255, 255, 0.35)"
-                        strokeDasharray="4 4"
+                        // 点線はベンチマーク（SPY/QQQ/TQQQ/SOXL）専用の記法に統一したので、
+                        // Cash は低 opacity の実線にして意味の衝突を避ける
+                        stroke="rgba(255, 255, 255, 0.30)"
                         strokeWidth={1.5}
                         dot={false}
                       />
