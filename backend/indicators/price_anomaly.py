@@ -65,6 +65,38 @@ def is_virtual_ticker(ticker: str) -> bool:
     return bool(ticker) and ticker.startswith("_") and ticker.endswith("_")
 
 
+def count_real_symbols_per_day(rows):
+    """同日に段差を起こした**実在銘柄**の数を、行ごとに返す。
+
+    `classify_price_jump` の `same_day_count`（市場イベント判定）にはこの値を使う。
+
+    > [!IMPORTANT]
+    > **仮想テーマ指数を数に入れてはいけない。** 仮想指数は構成銘柄から合成されるので、
+    > **1銘柄が壊れると所属テーマの数だけ同日件数が水増しされる**（1銘柄が最大5テーマに
+    > 所属する）。結果として**犯人が自分の作った波及に隠れる**。
+    >
+    > 2026-08-25 に発覚。`BYND` の 1:30 併合（比率 30.10）がこれで `market_wide` に
+    > 誤分類され、週次監査の報告から漏れていた:
+    >
+    > ```
+    > 2026-08-13 の同日アノマリー 4件（MARKET_WIDE_MIN_SYMBOLS = 4）
+    >   _GRCL29_   5.83  virtual      ← BYND が汚染したテーマ
+    >   _CNSM0A_   3.44  virtual      ← 同上
+    >   _NTRTFC_   5.87  virtual      ← 同上
+    >   BYND      30.10  market_wide  ← 犯人が「市場イベント」に化けた
+    > ```
+
+    Args:
+        rows: `ticker` / `date` 列を持つ DataFrame
+
+    Returns:
+        `rows` と同じ index の Series（各行の日付における実在銘柄の件数）。
+    """
+    real = rows[~rows["ticker"].map(is_virtual_ticker)]
+    per_day = real.groupby("date").size()
+    return rows["date"].map(per_day).fillna(0).astype(int)
+
+
 def classify_price_jump(
     row: dict,
     *,

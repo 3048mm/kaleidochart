@@ -484,11 +484,12 @@ def run_backtest(config: dict, strategy_filter: str = None, refresh_cache: bool 
     all_results = {}
     all_trades = {}
 
-    consider_tax = load_tax_rate(config)
+    # 型1（screening backtest）経路: consider_tax_optimization を読む（型2/型3の consider_tax とは分離）
+    consider_tax = load_tax_rate(config, for_optimization=True)
     if consider_tax > 0.0:
-        print(f"  [Tax] 適用税率: {consider_tax * 100:.1f}% (consider_tax={consider_tax})")
+        print(f"  [Tax] 適用税率: {consider_tax * 100:.1f}% (consider_tax_optimization={consider_tax})")
     else:
-        print("  [Tax] 税なし (consider_tax=0.0)")
+        print("  [Tax] 税なし (consider_tax_optimization=0.0)")
     entry_mode = config.get('general', {}).get('entry_mode', 'close')
     # 流動性ハード制約（最適化対象外・全戦略共通。戦略側の明示指定があればそちらを優先）
     liquidity_floor = load_min_avg_dollar_volume_21(config)

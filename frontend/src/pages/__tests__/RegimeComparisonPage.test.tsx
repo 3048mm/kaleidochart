@@ -69,7 +69,7 @@ describe('RegimeComparisonPage Component', () => {
     expect(detailView.getAttribute('data-model')).toBe('mts_raw');
   });
 
-  it('should render the 1取引平均 metric with a value when avg_trade_pnl_pct_avg is present', async () => {
+  it('should render the Avg Trade metric with a value when avg_trade_pnl_pct_avg is present', async () => {
     globalThis.fetch = vi.fn().mockImplementation((url) => {
       if (typeof url === 'string' && url.includes('/equity')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
@@ -101,7 +101,7 @@ describe('RegimeComparisonPage Component', () => {
     });
   });
 
-  it('should render — for the 1取引平均 metric when avg_trade_pnl_pct is missing (falls back gracefully)', async () => {
+  it('should render — for the Avg Trade metric when avg_trade_pnl_pct is missing (falls back gracefully)', async () => {
     // beforeEach で設定済みの mockGroupComparison (avg_trade_pnl_pct 系フィールドを含まない) を使用
     render(
       <BrowserRouter>
@@ -110,7 +110,7 @@ describe('RegimeComparisonPage Component', () => {
     );
 
     await waitFor(() => {
-      expect(screen.queryAllByText('1取引平均').length).toBeGreaterThan(0);
+      expect(screen.queryAllByText('Avg Trade').length).toBeGreaterThan(0);
     });
     // undefined でも落ちずに — が表示されること
     expect(screen.queryAllByText('—').length).toBeGreaterThan(0);

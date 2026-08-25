@@ -324,3 +324,55 @@ def test_get_scenario_summary_monte_carlo_uses_b_case_average(client, mc_scenari
     # A案（全トレード合算）だと (0.10 - 0.10*3) / 4 * 100 = -5.0 になり、B案とは異なる値になるはず
     a_case_value = ((0.10 - 0.10 - 0.10 - 0.10) / 4) * 100
     assert data["avg_trade_pnl_pct_avg"] != pytest.approx(a_case_value)
+
+# ============================================================
+# Run Info（PERIOD / TRADING DAYS / INITIAL CAP / TAX RATE）
+# フロントの折りたたみ Run Info バーが両タブで同じ項目を出せることを担保する
+# ============================================================
+
+from api.backtest_router import _count_trading_days, _resolve_consider_tax
+from backtest.common_constraints import load_tax_rate
+
+
+def test_scenario_summary_exposes_run_info(client, mock_output_dir):
+    """単発 run の summary が Run Info 4項目 + 総リターンを返すこと。"""
+    resp = client.get("/api/backtest/scenario/scenario_alpha/summary")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert data["start_date"] == "2026-05-01"
+    assert data["end_date"] == "2026-05-20"
+    assert data["initial_capital"] == 10000.0
+    # scenario_equity_curve.csv のデータ行数（ヘッダを除く2行）
+    assert data["trading_days"] == 2
+    # run_params に consider_tax が無い旧 run は backtest_config.toml へフォールバックする
+    assert data["consider_tax"] == pytest.approx(load_tax_rate())
+    # (10255 / 10000 - 1) * 100
+    assert data["total_return_pct"] == pytest.approx(2.55)
+
+
+def test_monte_carlo_summary_exposes_run_info(client, mc_scenario_dir):
+    """MC グループの集約 summary も Run Info を返すこと（先頭 run の設定が代表値）。"""
+    resp = client.get("/api/backtest/scenario/A__full_position/summary")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert data["is_monte_carlo"] is True
+    assert data["start_date"] == "2026-01-01"
+    assert data["end_date"] == "2026-12-31"
+    assert data["initial_capital"] == 100000.0
+    assert data["consider_tax"] == pytest.approx(load_tax_rate())
+    # 総リターンは final_capital の平均 (110000 + 90000) / 2 = 100000 に対して 0%
+    assert data["total_return_pct"] == pytest.approx(0.0)
+
+
+def test_resolve_consider_tax_prefers_run_params(monkeypatch):
+    """run_params に consider_tax があれば config より優先する（実行時の値が正）。"""
+    assert _resolve_consider_tax({"run_params": {"consider_tax": 0.35}}) == pytest.approx(0.35)
+    # 0.0（税なし）も「記録された値」として尊重し、config にフォールバックしない
+    assert _resolve_consider_tax({"run_params": {"consider_tax": 0.0}}) == pytest.approx(0.0)
+
+
+def test_count_trading_days_missing_csv_returns_none(tmp_path):
+    """equity CSV が無い run では例外を出さず None を返す。"""
+    assert _count_trading_days(str(tmp_path)) is None

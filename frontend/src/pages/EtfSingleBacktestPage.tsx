@@ -9,6 +9,8 @@ import {
   ResponsiveContainer,
   ComposedChart,
 } from 'recharts';
+import { BacktestStrategyCard, CardChartPoint } from '../components/BacktestStrategyCard';
+import { BacktestRunInfo } from '../components/BacktestRunInfo';
 import {
   fetchEtfSingleSummary,
   fetchEtfSingleEquity,
@@ -57,58 +59,17 @@ const fmtDollar = (n: number) => `$${n.toLocaleString(undefined, { minimumFracti
 // Sub-Components
 // ============================================================
 
-/** Single Strategy Card */
-const StrategyCard: React.FC<{
-  name: string;
-  label: string;
-  color: string;
-  result: EtfStrategyResult;
-  isBest: boolean;
-}> = ({ label, color, result, isBest }) => (
-  <div style={{
-    flex: 1,
-    background: isBest ? `linear-gradient(135deg, ${color}12, ${color}05)` : 'rgba(15, 23, 42, 0.5)',
-    border: `1px solid ${isBest ? color + '55' : 'rgba(99, 120, 180, 0.18)'}`,
-    borderRadius: 12,
-    padding: '20px 22px',
-    position: 'relative',
-    transition: 'all 0.3s',
-  }}>
-    {isBest && (
-      <span style={{
-        position: 'absolute', top: 8, right: 10,
-        fontSize: 9, fontWeight: 700, letterSpacing: '0.06em',
-        background: color, color: '#000', borderRadius: 4, padding: '2px 7px',
-      }}>BEST CAGR</span>
-    )}
-    <div style={{ fontSize: 11, fontWeight: 600, color: color, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12 }}>{label}</div>
-    <div style={{ fontSize: 26, fontWeight: 700, color: '#e8edf7', marginBottom: 4 }}>{fmtDollar(result.final_capital)}</div>
-    <div style={{ fontSize: 12, color: result.total_return_pct >= 0 ? '#22d3a0' : '#f43f5e', fontWeight: 600, marginBottom: 16 }}>
-      {fmtPct(result.total_return_pct)}
-    </div>
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px' }}>
-      <MetricRow label="CAGR" value={fmtPct(result.cagr)} positive={result.cagr >= 0} />
-      <MetricRow label="Max DD" value={fmtPct(result.max_drawdown_pct)} positive={false} />
-      <MetricRow label="Sharpe" value={fmt(result.sharpe_ratio)} positive={result.sharpe_ratio >= 1} />
-      {result.time_in_market_pct != null && (
-        <MetricRow label="Time in Market" value={`${fmt(result.time_in_market_pct, 1)}%`} positive />
-      )}
-      {result.regime_changes != null && (
-        <MetricRow label="Regime Changes" value={String(result.regime_changes)} positive />
-      )}
-      {result.rebalance_count != null && (
-        <MetricRow label="Rebalances" value={String(result.rebalance_count)} positive />
-      )}
-    </div>
-  </div>
-);
-
-const MetricRow: React.FC<{ label: string; value: string; positive?: boolean }> = ({ label, value, positive }) => (
-  <div>
-    <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#475685', marginBottom: 2 }}>{label}</div>
-    <div style={{ fontSize: 13, fontWeight: 600, fontVariantNumeric: 'tabular-nums', color: positive === false ? '#f43f5e' : '#e8edf7' }}>{value}</div>
-  </div>
-);
+/** ETF 戦略カードの 2行目・3行目 */
+const etfMetricRows = (result: EtfStrategyResult) => [
+  [
+    { label: 'Sharpe', value: fmt(result.sharpe_ratio), tone: result.sharpe_ratio >= 1 ? ('good' as const) : undefined },
+    { label: 'Time in Market', value: result.time_in_market_pct != null ? `${fmt(result.time_in_market_pct, 1)}%` : '—' },
+  ],
+  [
+    { label: 'Rebalances', value: result.rebalance_count != null ? String(result.rebalance_count) : '—' },
+    { label: 'Regime Changes', value: result.regime_changes != null ? String(result.regime_changes) : '—' },
+  ],
+];
 
 
 /** Custom Tooltip for Equity Chart */
@@ -221,6 +182,35 @@ export const EtfSingleBacktestPage: React.FC<{ hideHeader?: boolean }> = ({ hide
     return equityData.filter((_, i) => i % step === 0 || i === equityData.length - 1);
   }, [equityData]);
 
+  // カードに並べる戦略の定義（equityKey は equity curve 上の系列名）
+  const strategyConfigs = useMemo(() => {
+    if (!summary) return [];
+    return [
+      { key: 'buy_and_hold' as const, label: 'Buy & Hold', color: COLORS.buyhold, equityKey: 'buyhold_equity' },
+      { key: 'dca' as const, label: 'DCA', color: COLORS.dca, equityKey: 'dca_equity' },
+      ...(summary.strategies.based_sma200 ? [{ key: 'based_sma200' as const, label: 'ETF from SMA200', color: COLORS.based_sma200, equityKey: 'based_sma200_equity' }] : []),
+      ...(summary.strategies.based_sma63 ? [{ key: 'based_sma63' as const, label: 'ETF from SMA63', color: COLORS.based_sma63, equityKey: 'based_sma63_equity' }] : []),
+      { key: 'vxv_vix_ema' as const, label: 'VXV ratio ema', color: COLORS.vxv, equityKey: 'vxv_equity' },
+      ...(summary.strategies.mts_v3_raw ? [{ key: 'mts_v3_raw' as const, label: 'MTS raw', color: COLORS.mts, equityKey: 'mts_v3_raw_equity' }] : []),
+    ];
+  }, [summary]);
+
+  // カードのミニグラフ用データ。ベンチマーク（グレー点線）は Buy & Hold。
+  // ETF タブは SPY 以外（TQQQ/SOXL/UGL 等）も選べるため、SPY 固定だとスケール差で
+  // ベンチマーク線が潰れて読めなくなる。B&H カード自身にはベンチマーク線を引かない。
+  const cardChartData = useMemo(() => {
+    const result: Record<string, CardChartPoint[]> = {};
+    if (chartEquity.length === 0) return result;
+    strategyConfigs.forEach(s => {
+      result[s.key] = chartEquity.map(pt => ({
+        date: pt.date,
+        strategy: pt[s.equityKey] ?? null,
+        benchmark: s.key === 'buy_and_hold' ? null : (pt.buyhold_equity ?? null),
+      }));
+    });
+    return result;
+  }, [chartEquity, strategyConfigs]);
+
   // ============================================================
   // Render
   // ============================================================
@@ -295,45 +285,35 @@ export const EtfSingleBacktestPage: React.FC<{ hideHeader?: boolean }> = ({ hide
 
       {!loading && summary && (
         <>
-          {/* Period Info */}
-          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 20 }}>
-            {[
-              { label: 'Period', value: `${summary.start_date} → ${summary.end_date}` },
-              { label: 'Trading Days', value: summary.trading_days.toLocaleString() },
-              { label: 'Initial Capital', value: fmtDollar(summary.initial_capital) },
-              { label: 'Tax Rate', value: `${(summary.consider_tax * 100).toFixed(0)}%` },
-            ].map(item => (
-              <div key={item.label} style={{
-                background: 'rgba(15, 23, 42, 0.4)', borderRadius: 8, padding: '8px 14px',
-                border: '1px solid rgba(99, 120, 180, 0.12)',
-              }}>
-                <div style={{ fontSize: 9, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#475685' }}>{item.label}</div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: '#e8edf7', fontVariantNumeric: 'tabular-nums' }}>{item.value}</div>
-              </div>
-            ))}
-          </div>
+          {/* Run Info（デフォルト非表示・タップで展開） */}
+          <BacktestRunInfo items={[
+            { label: 'Period', value: `${summary.start_date} → ${summary.end_date}` },
+            { label: 'Trading Days', value: summary.trading_days.toLocaleString() },
+            { label: 'Initial Cap', value: fmtDollar(summary.initial_capital) },
+            { label: 'Tax Rate', value: `${(summary.consider_tax * 100).toFixed(0)}%` },
+          ]} />
 
           {/* Strategy Comparison Cards */}
           <div style={sectionTitle}>Strategy Comparison</div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
             {(() => {
-              const strategyConfigs = [
-                { key: 'buy_and_hold' as const, label: 'Buy & Hold', color: COLORS.buyhold },
-                { key: 'dca' as const, label: 'DCA', color: COLORS.dca },
-                ...(summary.strategies.based_sma200 ? [{ key: 'based_sma200' as const, label: 'ETF from SMA200', color: COLORS.based_sma200 }] : []),
-                ...(summary.strategies.based_sma63 ? [{ key: 'based_sma63' as const, label: 'ETF from SMA63', color: COLORS.based_sma63 }] : []),
-                { key: 'vxv_vix_ema' as const, label: 'VXV ratio ema', color: COLORS.vxv },
-                ...(summary.strategies.mts_v3_raw ? [{ key: 'mts_v3_raw' as const, label: 'MTS raw', color: COLORS.mts }] : []),
-              ];
               const bestCagr = Math.max(...strategyConfigs.map(s => summary.strategies[s.key]?.cagr || 0));
               return strategyConfigs.map(s => {
                 const result = summary.strategies[s.key];
                 if (!result) return null;
                 return (
-                  <StrategyCard
-                    key={s.key} name={s.key} label={s.label}
-                    color={s.color} result={result}
-                    isBest={result.cagr === bestCagr}
+                  <BacktestStrategyCard
+                    key={s.key}
+                    cardId={`etf-${s.key}`}
+                    label={s.label}
+                    color={s.color}
+                    chartData={cardChartData[s.key]}
+                    cagrPct={result.cagr}
+                    maxDrawdownPct={result.max_drawdown_pct}
+                    rows={etfMetricRows(result)}
+                    finalCapital={result.final_capital}
+                    totalReturnPct={result.total_return_pct}
+                    badge={result.cagr === bestCagr ? 'BEST CAGR' : undefined}
                   />
                 );
               });

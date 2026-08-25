@@ -91,3 +91,6 @@ config.local.toml
 
 # 実行時に生成する統合 CA バンドル（certifi + Windows 証明書ストア）
 data/_ca_bundle_generated.pem
+
+# ワークツリー内の使い捨て Sandbox（本体の data/ とは別物・昇格の元ネタにしない）
+data/sandbox/

@@ -259,7 +259,8 @@ def audit_and_fix_weekly(db, dry_run: bool) -> dict:
     import pandas as pd
     from indicators.calculate import calculate_indicators
     from indicators.fx_calendar import is_fx_trading_day
-    from indicators.price_anomaly import classify_price_jump, is_anomalous_ratio
+    from indicators.price_anomaly import (classify_price_jump, count_real_symbols_per_day,
+                                          is_anomalous_ratio)
     
     report = {
         "stale_symbols": [],       # 退役候補 = delisted + no_history（後方互換のティッカー列）
@@ -480,7 +481,8 @@ def audit_and_fix_weekly(db, dry_run: bool) -> dict:
                 a["dv_ratio"] = (a["dv"] / prev_dv).where(prev_dv > 0)
                 # 前日が取引停止だと代金比が取れない。21日平均との比で代替する
                 a["dv_vs_adv"] = (a["dv"] / a["adv21"]).where(a["adv21"] > 0)
-                a["same_day_count"] = a["date"].map(a.groupby("date").size())
+                # 仮想テーマは数えない（犯人が自分の作った波及に隠れる）
+                a["same_day_count"] = count_real_symbols_per_day(a)
 
                 for r in a.itertuples():
                     cls = classify_price_jump({

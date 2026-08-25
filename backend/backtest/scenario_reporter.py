@@ -1,3 +1,4 @@
+import math
 import pandas as pd
 import datetime
 from typing import List, Dict, Any, Optional
@@ -96,11 +97,22 @@ class ScenarioReporter:
                 yr_losses = abs(sum(p for p in group['pnl_amount'] if p < 0))
                 yr_pf = round(yr_gains / yr_losses, 2) if yr_losses > 0 else 0.0
                 
+                # 1トレードあたりの幾何平均リターン%（2026-08-25 追加）。
+                # avg_pnl_pct（相加平均）は分散に無関心で、「少数の大勝ちが平均を押し上げた年」と
+                # 「安定して勝った年」を同じ数字にする。複利で積み上がる量なので幾何平均が実態に近い。
+                # 最適化の目的関数も 2026-08-24 に同じ理由で幾何平均へ切り替えた。
+                # **avg_pnl_pct は表示互換のため残す**（フロントの Avg P&L% 列が参照している）。
+                yr_geo_pnl_pct = 0.0
+                if 'pnl_pct' in group.columns and len(group) > 0:
+                    _logs = [math.log(max(1e-6, 1.0 + float(x))) for x in group['pnl_pct']]
+                    yr_geo_pnl_pct = (math.exp(sum(_logs) / len(_logs)) - 1.0) * 100.0
+
                 yearly_stats[year_int] = {
                     'total_trades': len(group),
                     'win_rate': round(win_count / len(group), 4) if len(group) > 0 else 0.0,
                     'net_pnl': round(float(group['pnl_amount'].sum()), 2),
                     'avg_pnl_pct': round(float(group['pnl_pct'].mean() * 100), 2) if 'pnl_pct' in group.columns else 0.0,
+                    'geo_pnl_pct': round(yr_geo_pnl_pct, 2),
                     'profit_factor': yr_pf,
                     'spy_return_pct': spy_yearly_returns.get(year_int, 0.0),
                 }

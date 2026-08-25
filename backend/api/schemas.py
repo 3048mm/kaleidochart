@@ -595,6 +595,13 @@ class BacktestScenarioSummary(BaseModel):
     final_capital_min: Optional[float] = None
     avg_trade_pnl_pct: Optional[float] = None
     avg_trade_pnl_pct_avg: Optional[float] = None
+    # Run Info（フロントの折りたたみ Run Info バー用。ETF 側 EtfSingleSummary と項目を揃える）
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    initial_capital: Optional[float] = None
+    trading_days: Optional[int] = None
+    consider_tax: Optional[float] = None
+    total_return_pct: Optional[float] = None
     # Allow extra fields for safety
     model_config = {
         "extra": "allow"
