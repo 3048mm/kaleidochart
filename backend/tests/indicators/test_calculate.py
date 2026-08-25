@@ -178,3 +178,60 @@ def test_calculate_indicators_protection():
         actual = latest[col]
         assert is_close(actual, expected), f"{col} expected {expected}, got {actual}"
 
+
+def test_structure_pivot_columns_are_present_in_t3():
+    """T3 の出力に sp_pivot / sp_hl が含まれること（カラム欠落の検出）。
+
+    単調上昇の系列ではピボット安値が成立しない（押し目が無いので安値が
+    切り上がり続ける）ため、値は NULL になるのが正しい。
+    「カラムが無い」と「構造が無いので NULL」を取り違えないよう、
+    存在と NULL を分けて検査する。
+    """
+    import pandas as pd
+    from indicators.calculate import calculate_indicators
+
+    dates = pd.date_range('2025-01-01', periods=120, freq='D')
+    prices = [100.0 + i * 0.5 for i in range(120)]          # 単調上昇
+    df = pd.DataFrame({
+        'date': dates, 'close': prices,
+        'open': [p - 0.5 for p in prices],
+        'high': [p + 1.0 for p in prices],
+        'low': [p - 1.0 for p in prices],
+        'volume': [1_000_000] * 120,
+    })
+
+    res = calculate_indicators(df, None)
+
+    assert 'sp_pivot' in res.columns
+    assert 'sp_hl' in res.columns
+    assert res['sp_pivot'].isna().all(), '単調上昇では構造が成立しないはず'
+
+
+def test_structure_pivot_columns_populated_on_pullback():
+    """押し目（安値の切り上げ）がある系列では値が入ること。"""
+    import numpy as np
+    import pandas as pd
+    from indicators.calculate import calculate_indicators
+
+    # 下降 -> 戻り -> より高い安値 -> 上昇
+    lows = ([120.0 - i for i in range(30)]          # 120 -> 91
+            + [92.0 + i for i in range(15)]         # 戻り高値を作る
+            + [105.0 - i for i in range(10)]        # 押し目（95 まで。前回安値 91 より上）
+            # 96.0 で始めると押し目の底(96)と同値になり、厳密比較のピボットが成立しない
+            + [96.5 + i * 0.5 for i in range(65)])  # 上昇
+    dates = pd.date_range('2025-01-01', periods=len(lows), freq='D')
+    df = pd.DataFrame({
+        'date': dates, 'low': lows,
+        'high': [v + 3.0 for v in lows],
+        'close': [v + 1.5 for v in lows],
+        'open': [v + 1.0 for v in lows],
+        'volume': [1_000_000] * len(lows),
+    })
+
+    res = calculate_indicators(df, None)
+    defined = res['sp_pivot'].notna()
+
+    assert defined.any(), '押し目のある系列では構造が成立するはず'
+    # 定義されている行では HL < ピボット
+    ok = res.loc[defined]
+    assert (ok['sp_hl'].astype(float) < ok['sp_pivot'].astype(float)).all()

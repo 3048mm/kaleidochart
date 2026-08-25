@@ -41,9 +41,11 @@ def _min_bars_required(min_len: int) -> int:
     """
     return 2 * min_len + 3
 
-#: 長さ帯の既定値（TV 版の Min Length / Max Length の既定と同じ）
+#: 長さ帯の既定値。改良版 Advanced Structure Pivot の既定に合わせて 2-5。
+#: チャート表示とスクリーナーで同じ水準を見るため、両者でこの値を共有する
+#: （doc/in_progress/structure_pivot_screener_plan.md §2.2）。
 DEFAULT_MIN_LEN = 2
-DEFAULT_MAX_LEN = 10
+DEFAULT_MAX_LEN = 5
 
 
 @dataclass(frozen=True)
@@ -259,3 +261,51 @@ def find_structures(
 
     structures.sort(key=lambda s: (s.confirmed_index, s.length))
     return structures
+
+
+def structure_pivot_series(
+    high: np.ndarray,
+    low: np.ndarray,
+    close: np.ndarray,
+    min_len: int = DEFAULT_MIN_LEN,
+    max_len: int = DEFAULT_MAX_LEN,
+) -> tuple:
+    """各バーの `(sp_pivot, sp_hl)` を返す。T3 インジケータ用。
+
+    描画用の `find_structures()` が「構造のリスト」を返すのに対し、こちらは
+    **1バー1値の配列**を返す。両者は同じ `_scan_for_length()` を使うので
+    検出ロジックは1つのまま（勝者選択も Tightest で同一）。
+
+    構造が生きていないバーは `NaN`。**確定前のバーも `NaN`** であり、
+    ピボットが `L` 本先まで確定しない性質はここでも保たれる。
+
+    Returns
+    -------
+    sp_pivot : ブレイクアウト水準（LL と HL の間の最高値）
+    sp_hl    : HL の価格（そのまま損切り候補になる）
+    """
+    high = np.asarray(high, dtype=np.float64)
+    low = np.asarray(low, dtype=np.float64)
+    close = np.asarray(close, dtype=np.float64)
+
+    n = low.shape[0]
+    sp_pivot = np.full(n, np.nan)
+    sp_hl = np.full(n, np.nan)
+    if n == 0:
+        return sp_pivot, sp_hl
+    if high.shape[0] != n or close.shape[0] != n:
+        raise ValueError('high / low / close の長さが一致していません')
+    if max_len < min_len or min_len < 1 or n < _min_bars_required(min_len):
+        return sp_pivot, sp_hl
+
+    strength = pivot_strength_low(low)
+    for length in range(min_len, max_len + 1):
+        setup, hl_idx, _ll_idx, _pv_idx, pv_val = _scan_for_length(high, low, strength, length)
+        # Tightest: ピボット価格が小さい方を採る。未設定（NaN）なら無条件に採る
+        better = setup & (np.isnan(sp_pivot) | (pv_val < sp_pivot))
+        if not better.any():
+            continue
+        sp_pivot[better] = pv_val[better]
+        sp_hl[better] = low[hl_idx[better]]
+
+    return sp_pivot, sp_hl

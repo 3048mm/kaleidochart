@@ -169,6 +169,11 @@ class Indicator(Base):
 
     # --- Trend Quality ---
     is_trend_template  = Column(SmallInteger)  # 1 if all Minervini Trend Template conditions met
+
+    # --- Structure Pivot (LL-HL) ---
+    # 構造が生きていないバーは NULL。確定遅延を保つため、HL 確定バー以前も NULL
+    sp_pivot           = Column(Float)        # ブレイクアウト水準（LL と HL の間の最高値）
+    sp_hl              = Column(Float)        # HL の価格（そのまま損切り候補）
     
     __table_args__ = (
         UniqueConstraint('symbol_id', 'date', name='uq_indicators_symbol_date'),
