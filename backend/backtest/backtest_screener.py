@@ -178,6 +178,14 @@ def apply_filters_to_df(
             (merged['close'] - merged['ema_21']) / merged['ema_21'] * 100,
             0.0
         )
+    # 構造ピボット (LL-HL)。sp_pivot / sp_hl が NaN の行（構造が生きていない・
+    # 確定前）は NaN のまま残し、比較で自然に落ちるようにする。0.0 で埋めない
+    if 'sp_pivot' in merged.columns and 'close' in merged.columns:
+        merged['sp_dist_pivot_pct'] = (merged['sp_pivot'] - merged['close']) / merged['close'] * 100
+    if 'sp_pivot' in merged.columns and 'sp_hl' in merged.columns and 'close' in merged.columns:
+        merged['sp_range_pct'] = (merged['sp_pivot'] - merged['sp_hl']) / merged['close'] * 100
+    if 'sp_hl' in merged.columns and 'close' in merged.columns:
+        merged['sp_risk_pct'] = (merged['close'] - merged['sp_hl']) / merged['close'] * 100
 
     # --- レジストリで必要カラムを解決する（doc/completed/screener_filter_unification_plan.md §3.1.4） ---
     from backend.db.models import RelativeRank

@@ -115,6 +115,11 @@ def _stock_today_overrides(t: int) -> dict:
         # 全戦略共通の流動性ハード制約を邪魔しないよう、十分大きい値にしておく
         # （床自体は test_liquidity_floor_excludes_illiquid_symbol_on_both_routes で別途検証）
         "avg_dollar_volume_21": 5e6,
+        # 構造ピボット。close=100 固定なので、そのまま % として読める値にしておく。
+        #   hi : dist +1.0% / range 5.0% / risk 4.0%
+        #   lo : dist +8.0% / range 20.0% / risk 12.0%
+        "sp_pivot": 101.0 if hi else 108.0,
+        "sp_hl": 96.0 if hi else 88.0,
     }
 
 
@@ -366,6 +371,13 @@ PARITY_CASES: dict = {
     "min_vol_accum_days_5": 2,
     "min_vol_surge_21": 1.0,
     "min_vol_surge_rel_spy_21": 1.05,
+    # --- 構造ピボット由来の仮想カラム（hi=1.0/5.0/4.0, lo=8.0/20.0/12.0 を分ける値） ---
+    "max_sp_dist_pivot_pct": 2.0,
+    "min_sp_dist_pivot_pct": 2.0,
+    "max_sp_range_pct": 10.0,
+    "min_sp_range_pct": 10.0,
+    "max_sp_risk_pct": 8.0,
+    "min_sp_risk_pct": 8.0,
     # --- rank ---
     "min_rs_ratio_rank_e14": 0.35,
     "min_rs_ratio_rank_e21": 0.35,

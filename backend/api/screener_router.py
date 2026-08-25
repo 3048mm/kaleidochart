@@ -77,6 +77,11 @@ _VIRTUAL_COLUMNS = {
     "dist_ema21_pct": lambda: (DailyPrice.close - Indicator.ema_21) / Indicator.ema_21 * 100,
     "dist_21ema_pct": lambda: (DailyPrice.close - Indicator.ema_21) / Indicator.ema_21 * 100,
     "dist_sma50_pct": lambda: (DailyPrice.close - Indicator.sma_50) / Indicator.sma_50 * 100,
+    # 構造ピボット (LL-HL)。sp_pivot / sp_hl が NULL の行は式全体が NULL になり、
+    # 比較が偽になるため「構造が無い銘柄は自然に落ちる」
+    "sp_dist_pivot_pct": lambda: (Indicator.sp_pivot - DailyPrice.close) / DailyPrice.close * 100,
+    "sp_range_pct":      lambda: (Indicator.sp_pivot - Indicator.sp_hl) / DailyPrice.close * 100,
+    "sp_risk_pct":       lambda: (DailyPrice.close - Indicator.sp_hl) / DailyPrice.close * 100,
 }
 
 # --- レジストリ fail-loud 判定用: 既知カラム集合 / ランクカラム集合 ---
