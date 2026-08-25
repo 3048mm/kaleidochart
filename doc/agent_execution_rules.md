@@ -140,6 +140,90 @@ Windows のデフォルトエンコーディング (Shift-JIS / CP932) と、Pyt
 
 ---
 
+## 6. `.bat` にマルチバイト文字を書かない / `schtasks` は成功を報告しても信用しない
+
+### 6.1 `.bat` の日本語コメントは「次の行」を壊す
+
+cmd はバッチファイルをバイトオフセットで追いながら1行ずつ実行する。UTF-8 の
+マルチバイト行があるとこの位置管理がずれ、**次の行が飛ばされる／行の途中から
+コマンドとして解釈される**。`chcp 65001` があると起きやすいが、無くても起きる。
+
+2026-08-24 に実測で再現した。`REM` の日本語コメント1行を置いただけで:
+
+```
+'前回の確認は同一行で' is not recognized as an internal or external command,
+operable program or batch file.
+```
+
+過去には日次パイプラインがこれで取得ゼロのまま完走している（2026-08-07）。
+**コメントが無視されるだけ**なら実害は無いが、飛ばされるのは**次の実行行**なので危険。
+
+**ルール**: `.bat` は ASCII のみで書く。日本語の説明が要るなら `REM` に英語で書くか、
+`.md` 側に書く。既存 `.bat` を編集したら以下で検査する。
+
+```bash
+grep -nP '[^\x00-\x7F]' run/*.bat        # 何も出なければ OK
+```
+
+### 6.2 `schtasks /create` は空のコマンドでも SUCCESS を返す
+
+`/tr` に渡す変数が空だと、**実行コマンドが空文字列のタスクが黙って作られる**。
+
+```
+SUCCESS: The scheduled task "..." has successfully been created.
+```
+
+しかし登録内容は `<Command>""</Command>` で、実行時にこうなる:
+
+```
+Last Result: 2147942487   (0x80070057 = ERROR_INVALID_PARAMETER)
+```
+
+`schtasks /query` は同じ値を符号付きで出すので、検索キーとしては両方を覚えておく。
+
+```
+Last Result:                          -2147024809
+```
+
+タスクは「起動して即死」を毎回繰り返すだけなので、**ログにも何も残らない**。
+2026-08-01 に週次メンテナンスがこの状態で登録され、**3週間（08-09 / 08-16 / 08-23）
+誰にも気付かれずに実行されなかった**。
+
+**ルール**: タスクを登録したら**必ず読み戻して検証する**。`schtasks /create` の
+終了コードは根拠にならない。
+
+```bat
+schtasks /query /tn "%TASK_NAME%" /fo LIST /v | findstr /i /c:"target_script.bat" >nul
+if errorlevel 1 goto :err_verify
+```
+
+`/fo TABLE` はパスを途中で切るので **`/fo LIST` を使う**。判定はローカライズされる
+ラベル（`Task To Run` / `実行するタスク`）ではなく**スクリプト名**に当てる。
+
+登録側の `%SCRIPT_PATH%` も、使う前に `if not exist` で存在確認する。
+実装例: `run/register_weekly_maintenance.bat`
+
+> [!CAUTION]
+> `%~dp0` と `%SCRIPT_PATH%` は **cmd の中でしか展開されない**。`.bat` の中身を
+> PowerShell や Git Bash に貼って実行すると、空文字列や未展開の文字列がそのまま
+> タスクに登録される。**`.bat` はファイルとして実行する**（`cmd /c "<path>"`）。
+
+### 6.3 同一行での `%errorlevel%` 展開は常に古い値になる
+
+cmd は行全体を実行前に一度で解析するため、`&` や `|` で繋いだ後段の `%errorlevel%`
+には**前の行の値**が入る。パイプの結果を判定したつもりが常に 0 を見ることになる。
+
+```bat
+REM NG: 常に実行前の値
+cmd /c 'foo | findstr bar >nul & echo %errorlevel%'
+
+REM OK: 次の行で if errorlevel を使う
+foo | findstr bar >nul
+if errorlevel 1 goto :fail
+```
+
+---
+
 ## 7. Git 操作時の合意形成ルール
 
 ### 問題
@@ -247,3 +331,4 @@ merge 直後に本体で `tools/deploy_after_merge.ps1` を実行する（1コ�
 - 2026-07-09: §10 を新設 — データの3分類・変更の4種別・ワークツリーでのデータアクセス・merge 前バックテスト評価・昇格手順（deploy_after_merge.ps1）・git add の明示パス限定
 - 2026-07-16: §10.5 昇格項目に API サーバー再起動ルールを追記。
 - 2026-08-20: §4.1「ノウハウ照会・追記フロー」を新設 — 3回打ち切り時の 照会→適用→追記 の手順、追記先の振り分け表、エラー原文（検索キー）の必須化、サブエージェントの扱い。§8 に検索キー必須とトリガー2種を反映
+- 2026-08-24: §6 を新設（欠番だった） — `.bat` にマルチバイト文字を書かない（次の行が飛ぶ）、`schtasks /create` は空コマンドでも SUCCESS を返すので読み戻して検証する、同一行での `%errorlevel%` 展開。週次メンテナンスが3週間実行されていなかった件の再発防止
