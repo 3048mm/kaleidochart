@@ -135,7 +135,54 @@ def build_virtual_index_prices(db, virtual_id: int):
     daily_avg_ret['symbol_id'] = virtual_id
     return daily_avg_ret
 
-def build_all_virtual_indexes_prices(db, virtual_items: list[dict], symbol_id_map: dict, hash_file_path: str = "data/virtual_theme_hashes.json"):
+def _load_full_history_prices(db_path: str, constituent_ids: list[int], logger=None):
+    """再合成用に、構成銘柄の価格を **Parquet マスター（全期間）**から読む。
+
+    ## なぜ SQLite ではいけないか
+
+    SQLite はホットキャッシュで**直近730日しか持たない**。そこから再合成すると
+    指数が窓の左端で基準値 1000 に振り直され、Parquet に残る古い履歴との継ぎ目に
+    偽の段差ができる。
+
+    2026-08-07 07:49 に構成銘柄の変更をきっかけに全170テーマが再合成され、
+    当時の最古日 2024-08-06 で 165本が 1000 にリセットされた（152本が同日に段差）:
+
+        _HLTHCB_  2024-08-06  close=1019.65  当日リターン -98.2%  ← 直前は ~55,700
+
+    T4 の「SQLite に存在する日付しか計算できない」問題と同じ根本原因
+    （`pipeline/parquet_recompute.py` のモジュール docstring 参照）。
+
+    Returns:
+        `symbol_id` / `date`(str) / OHLCV を持つ DataFrame。
+        Parquet を解決できなければ ``None``（呼び出し元が SQLite にフォールバックする）。
+    """
+    try:
+        from pipeline.parquet_cache_manager import (
+            get_latest_master_files, get_parquet_master_dir, get_pointer_file_path,
+        )
+        files = get_latest_master_files(
+            get_pointer_file_path(get_parquet_master_dir(db_path)))
+        if not files or "prices" not in files:
+            return None
+        df = pd.read_parquet(
+            files["prices"],
+            columns=["symbol_id", "date", "open", "high", "low", "close", "volume"],
+            filters=[("symbol_id", "in", list(constituent_ids))],
+        )
+    except Exception as e:                     # noqa: BLE001
+        if logger:
+            logger.warning(f"Parquet からの全期間読み込みに失敗（SQLite にフォールバック）: {e}")
+        return None
+
+    if df.empty:
+        return None
+    df = df[df["close"].notna() & (df["close"] > 0)]
+    # SQLite 経路と型を揃える（あちらは `pd.to_datetime(...).dt.date`）
+    df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
+    return df.sort_values(["symbol_id", "date"])
+
+
+def build_all_virtual_indexes_prices(db, virtual_items: list[dict], symbol_id_map: dict, hash_file_path: str = "data/virtual_theme_hashes.json", db_path: str | None = None):
     if not virtual_items:
         return
         
@@ -226,6 +273,22 @@ def build_all_virtual_indexes_prices(db, virtual_items: list[dict], symbol_id_ma
     all_prices_df['date'] = pd.to_datetime(all_prices_df['date']).dt.date
     all_prices_df = all_prices_df.sort_values(['symbol_id', 'date'])
 
+    # `rebuild` は指数を基準値 1000 から作り直すので、**SQLite の730日窓で走らせては
+    # いけない**（窓の左端でリセットされ、Parquet の古い履歴との継ぎ目に偽の段差が出る。
+    # 2026-08-07 に全170テーマ中165本がこれで壊れた）。全期間は Parquet から読む。
+    # `incremental` は直前の指数値を種に継ぎ足すだけなので SQLite で足りる。
+    rebuild_prices_df = None
+    if db_path and any(m[0] == 'rebuild' for m in theme_modes.values()):
+        rebuild_prices_df = _load_full_history_prices(db_path, c_ids_list, logger)
+        if rebuild_prices_df is None:
+            logger.warning(
+                "Parquet の全期間価格を解決できないため、再合成を SQLite の範囲で行います。"
+                " 指数がホットキャッシュ境界でリセットされる可能性があります。")
+        else:
+            logger.info(
+                f"Virtual Index rebuild: Parquet から全期間 {len(rebuild_prices_df):,}行 を読み込みました"
+                f"（SQLite は {len(all_prices_df):,}行）")
+
     to_delete_vids = []
     to_delete_indicators = []
     objects_to_insert = []
@@ -241,11 +304,15 @@ def build_all_virtual_indexes_prices(db, virtual_items: list[dict], symbol_id_ma
             logger.info(f"Virtual Index Progress: {index}/{total_modes} - Processing {ticker} ({mode})")
             
         c_syms = theme_to_symbols.get(v_id, [])
-        
-        theme_prices_df = all_prices_df[all_prices_df['symbol_id'].isin(c_syms)]
+
+        # 再合成のときだけ Parquet 全期間を使う（上の rebuild_prices_df のコメント参照）
+        source_df = (rebuild_prices_df
+                     if mode == 'rebuild' and rebuild_prices_df is not None
+                     else all_prices_df)
+        theme_prices_df = source_df[source_df['symbol_id'].isin(c_syms)]
         if theme_prices_df.empty:
             continue
-            
+
         if mode == 'rebuild':
             to_delete_vids.append(v_id)
             to_delete_indicators.append(v_id)
@@ -315,8 +382,17 @@ def build_all_virtual_indexes_prices(db, virtual_items: list[dict], symbol_id_ma
                          .filter(DailyPrice.symbol_id == v_id, DailyPrice.date < last_date)\
                          .order_by(DailyPrice.date.desc()).first()
             if not prev_row:
+                # 種になる前値が無い＝実質 rebuild。ここも Parquet 全期間で作らないと
+                # ホットキャッシュ境界でリセットされる（上の rebuild と同じ理由）
                 to_delete_vids.append(v_id)
                 to_delete_indicators.append(v_id)
+                if rebuild_prices_df is None and db_path:
+                    rebuild_prices_df = _load_full_history_prices(db_path, c_ids_list, logger)
+                if rebuild_prices_df is not None:
+                    theme_prices_df = rebuild_prices_df[
+                        rebuild_prices_df['symbol_id'].isin(c_syms)]
+                    if theme_prices_df.empty:
+                        continue
                 df = theme_prices_df.copy()
                 df['close_prev'] = df.groupby('symbol_id')['close'].shift(1)
                 
@@ -821,7 +897,7 @@ def run_pipeline(config, db_path, logger: logging.Logger, rebuild_from: Optional
             if virtual_items:
                 logger.info(f"Starting Virtual Index Build for {len(virtual_items)} items...")
                 t_start = time.time()
-                build_all_virtual_indexes_prices(db, virtual_items, symbol_id_map)
+                build_all_virtual_indexes_prices(db, virtual_items, symbol_id_map, db_path=db_path)
                 logger.info(f"Virtual Index Build completed in {time.time() - t_start:.2f}s")
             
             safe_wal_checkpoint(db, logger)
