@@ -61,6 +61,8 @@ ADV 項を抜いたアブレーション:
 ### 2.1 変更すること
 
 - `indicators/structure_pivot.py` に**時系列を返す関数**を追加（描画用の `find_structures` とは別）
+- チャート画面の DATA VIEW（`SymbolDataTable`）に `sp_pivot` / `sp_hl` 列を追加
+  （**RS MACD Hist の右**。ユーザー要望 2026-08-26）
 - `indicators/calculate.py`（T3）で `sp_pivot` / `sp_hl` を算出
 - `db/models.py` の `Indicator` に2カラム追加
 - 派生カラム3種を仮想カラムとして3箇所（レジストリ／SQL／pandas）に登録
@@ -215,6 +217,9 @@ min_up_down_vol_ratio_50 = 1.5
 - [ ] `backend/tests/api/test_screener_parity.py` の `PARITY_CASES` に境界値を追加
       （**全通過でも全落ちでもない**値にすること）
 - [ ] `backtest_config.toml` に `H1_structure_pivot_ready` を追加
+- [ ] `frontend/src/types.ts` の `ChartDataPoint` に `sp_pivot` / `sp_hl` を追加し、
+      `SymbolDataTable` の **RS MACD Hist（`rs_macd_hist_21`）の右**に2列を表示する
+      （ヘッダ行とデータ行の両方。`formatN` の桁は価格なので 2 桁）
 - [ ] バックエンド全体 pytest 全件パス
 - [ ] **Sandbox 検証**（`.claude/skills/sandbox-workflow`）:
       本番 Parquet を `data/sandbox/` へコピー → `STOCKTOOL_DB_PATH` と
