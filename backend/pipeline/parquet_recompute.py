@@ -192,7 +192,27 @@ def recompute_indicators(
         df.insert(0, "symbol_id", sid)
         out.append(df)
 
-    return pd.concat(out, ignore_index=True) if out else pd.DataFrame()
+    if not out:
+        return pd.DataFrame()
+    res = pd.concat(out, ignore_index=True)
+
+    # `calculate_indicators` は素の Python float を **object 列**に入れて返す。
+    # そのまま呼び出し元で既存の indicators と concat すると float64 の列まで
+    # object に巻き上げられ、メモリが数倍に膨れる。
+    #
+    # 実測（2026-08-25 / Sandbox）: 6,057,722行 × 63列のうち 28列が object 化し、
+    # `sort_values` のコピーで確保に失敗した。
+    #
+    #     numpy.core._exceptions._ArrayMemoryError: Unable to allocate 1.26 GiB
+    #     for an array with shape (28, 6057722) and data type object
+    #
+    # ディスク上は pyarrow が double に落として書くので **Parquet は汚染されない**。
+    # メモリ上でだけ膨らむため気付きにくい。ここで数値に落としておく。
+    for col in res.columns:
+        if col == "date" or res[col].dtype != object:
+            continue
+        res[col] = pd.to_numeric(res[col], errors="coerce")
+    return res
 
 
 def find_affected_virtual_themes(
@@ -230,3 +250,134 @@ def find_affected_virtual_themes(
         & theme_constituents["theme_id"].isin(virtual_ids)
     ]
     return sorted(set(hit["theme_id"]))
+
+
+# 仮想テーマ指数の基準値。`orchestrator.build_all_virtual_indexes_prices` と同じ。
+VIRTUAL_INDEX_BASE = 1000.0
+
+# 合成 volume のスケール。指数に実出来高は無いので「売買代金の急増倍率 × これ」を入れる。
+VIRTUAL_INDEX_VOLUME_SCALE = 1_000_000.0
+
+# 売買代金の移動平均窓。`orchestrator` 側と一致させること。
+VIRTUAL_INDEX_SURGE_WINDOW = 21
+
+
+def rebuild_virtual_index_prices(
+    theme_ids: list[int],
+    prices: pd.DataFrame,
+    theme_constituents: pd.DataFrame,
+) -> pd.DataFrame:
+    """仮想テーマ指数を **Parquet 上で** 全期間再合成する。
+
+    ## なぜ必要か
+
+    合成ロジックは `pipeline/orchestrator.build_all_virtual_indexes_prices` にしか無く、
+    SQLAlchemy セッションと `DailyPrice` への書き込みを要求する。ところが SQLite は
+    直近730日しか持たないため、**構成銘柄の価格を過去まで補正しても SQLite 経由では
+    再合成が過去に届かない**。Parquet を直接読み書きする経路には DB 非依存版が要る。
+
+    実例（2026-08-25）:
+      - `BYND` の 1:30 併合が未調整だったため、所属する仮想テーマ3本
+        （`_CNSM0A_` `_GRCL29_` `_NTRTFC_`）の指数が 2026-08-13 に ×3.44〜×5.87 で飛んだ。
+      - さらに 2026-08-07 の全170テーマ再合成が SQLite の730日窓だけで走ったため、
+        **165本が 2024-08-06 に基準値1000へ振り直され**、古い履歴との継ぎ目に
+        最大 −98% の偽の段差ができていた。
+
+    > [!IMPORTANT]
+    > **アルゴリズムは `build_all_virtual_indexes_prices` と一字一句同じにすること。**
+    > 食い違うと「再合成した過去」と「翌日以降に日次が積む未来」で式が変わり、
+    > 継ぎ目に段差が出る。同値性は `test_parquet_recompute.py` の
+    > `test_rebuild_virtual_index_matches_the_batch_implementation` で固定してある。
+    >
+    > **`build_virtual_index_prices`（単数形）と取り違えないこと。** あちらは
+    > テストからしか呼ばれておらず、OHLC をすべて close と同値にする簡易版。
+    > 本番のテーマ指数は 100% の行で `open != close`。
+
+    Args:
+        theme_ids: 再合成する仮想テーマの symbol_id
+        prices: `symbol_id` / `date` / `close` / `volume` を持つ DataFrame（全銘柄分）
+        theme_constituents: `theme_id` / `symbol_id` を持つ DataFrame
+
+    Returns:
+        `symbol_id` / `date` / `open` / `high` / `low` / `close` / `volume` の DataFrame。
+        構成銘柄が無いテーマは黙って飛ばす。
+
+    Note:
+        **初日は指数に載らない**（リターンが計算できないため）。`orchestrator` 版と同じ挙動。
+    """
+    out = []
+    for theme_id in theme_ids:
+        c_ids = theme_constituents.loc[
+            theme_constituents["theme_id"] == theme_id, "symbol_id"
+        ].tolist()
+        if not c_ids:
+            continue
+
+        # close が 0 / 負 / NULL の行は使わない
+        # （`orchestrator` 側の SQL `close IS NOT NULL AND close > 0` と同じ）
+        df = prices[prices["symbol_id"].isin(c_ids)][
+            ["symbol_id", "date", "open", "high", "low", "close", "volume"]
+        ].copy()
+        df = df[df["close"].notna() & (df["close"] > 0)]
+        if df.empty:
+            continue
+        df = df.sort_values(["symbol_id", "date"])
+        df["close_prev"] = df.groupby("symbol_id")["close"].shift(1)
+
+        # --- 合成 volume 用の surge は「初日を含む df 全体」で計算する ---
+        # （`orchestrator` のコメントどおり。dropna より前に出すこと）
+        df["dollar_volume"] = df["close"] * df["volume"].fillna(0)
+        df["dollar_volume_ma21"] = df.groupby("symbol_id")["dollar_volume"].transform(
+            lambda x: x.rolling(window=VIRTUAL_INDEX_SURGE_WINDOW, min_periods=1).mean()
+        )
+        df["surge"] = np.where(
+            df["dollar_volume_ma21"] == 0,
+            1.0,
+            df["dollar_volume"] / df["dollar_volume_ma21"],
+        )
+        df["surge"] = df["surge"].fillna(1.0)
+
+        clean = df.dropna(subset=["close_prev"]).copy()
+        if clean.empty:
+            continue
+
+        # 日中値は「前日終値に対する比」の平均として持ち回る。
+        # close だけを連鎖させて OHLC を同値にすると板のような系列になる。
+        clean["ret"] = clean["close"] / clean["close_prev"] - 1
+        clean["open_ratio"] = clean["open"] / clean["close_prev"]
+        clean["high_ratio"] = clean["high"] / clean["close_prev"]
+        clean["low_ratio"] = clean["low"] / clean["close_prev"]
+
+        daily_avg = clean.groupby("date").agg({
+            "ret": "mean", "open_ratio": "mean", "high_ratio": "mean",
+            "low_ratio": "mean", "surge": "mean",
+        }).reset_index().sort_values("date")
+        if daily_avg.empty:
+            continue
+
+        # cumprod ではなく逐次乗算にしてある（`orchestrator` 版と浮動小数の丸めまで揃える）
+        current_val = VIRTUAL_INDEX_BASE
+        recs = []
+        for r in daily_avg.itertuples(index=False):
+            prev_val = current_val
+            current_val *= (1 + r.ret)
+
+            o_val = prev_val * r.open_ratio
+            h_val = prev_val * r.high_ratio
+            l_val = prev_val * r.low_ratio
+            c_val = current_val
+            recs.append({
+                "symbol_id": theme_id, "date": r.date, "open": o_val,
+                # 平均を取ると高値/安値が寄り引けを内包しないことがあるので挟み直す
+                "high": max(o_val, h_val, l_val, c_val),
+                "low": min(o_val, h_val, l_val, c_val),
+                "close": c_val,
+                "volume": float(r.surge * VIRTUAL_INDEX_VOLUME_SCALE),
+            })
+        out.append(pd.DataFrame(recs))
+
+    if not out:
+        return pd.DataFrame(
+            columns=["symbol_id", "date", "open", "high", "low", "close", "volume"]
+        )
+    return pd.concat(out, ignore_index=True)
