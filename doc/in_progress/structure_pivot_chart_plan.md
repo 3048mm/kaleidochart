@@ -230,12 +230,15 @@ main を取り込み（49コミット・競合なし）、全テストを再実�
 
 - **`RsLineChart.test.tsx` の失敗2件は解消済み。** main 側の `489c007`
   「RsLineChart テストのモック漏れを修正」で直っていた
-- **`test_scenario_comparison.py::test_run_comparison_generates_outputs` は引き続き失敗**するが、
-  原因は変わらず**このワークツリーに本番データが無いこと**。
+- **`test_scenario_comparison.py::test_run_comparison_generates_outputs`** は
+  ワークツリーでは失敗するが、原因は**このワークツリーに本番データが無いこと**。
   `data/parquet_master/` が空で、`backtest_runner.py:92` が
   `FileNotFoundError: Parquet master cache files not found` を投げる。
-  **戦略ロジックに到達する前に落ちており、本ブランチが触ったコードは1行も実行されない。**
-  本体チェックアウト（Parquet マスターあり）では走る想定。
+  戦略ロジックに到達する前に落ちており、本ブランチが触ったコードは1行も実行されない。
+
+  > **本体チェックアウト（`main` / 本ブランチ取り込み済み）で確認済み: 1 passed / 31.04s**（2026-08-26）。
+  > `data/` は gitignore なので、**新規ワークツリーではこのテストは常に失敗する**。
+  > 本テストの検収は本体チェックアウトで行うこと。
 
 ### 残: TradingView との目視突合（ユーザー確認）
 
