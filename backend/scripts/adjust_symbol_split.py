@@ -96,6 +96,7 @@ from pipeline.parquet_maintenance import (  # noqa: E402,F401
     assert_ticker as _assert_ticker,
     connect_hot_cache as _connect,
     drop_virtual_theme_hashes,
+    recompute_and_publish,
     replace_sqlite_rows,
     resolve_db_path,
     write_master_generation,
@@ -312,88 +313,18 @@ def run(ticker: str, before: str, factor: float, reason: str, dry_run: bool,
         new_px = new_px.sort_values(["symbol_id", "date"]).reset_index(drop=True)
         print(f"    仮想テーマ {len(theme_ids)}件を再合成 → {len(rebuilt):,}行")
 
-    # --- [6] T3 を対象銘柄＋テーマで再計算 ---
-    ind = pd.read_parquet(cur["indicators"])
-    ind["date"] = pd.to_datetime(ind["date"], errors="coerce").dt.strftime("%Y-%m-%d")
-    ind_cols = [c for c in ind.columns if c not in ("id", "symbol_id", "date")]
-    recompute_ids = [sid] + theme_ids
+    recompute_and_publish(
+        cur, parquet_dir, pointer_file, db_path, new_px, sym,
+        recompute_ids=[sid] + theme_ids, spy_id=spy_id, label="adjust_split",
+        theme_ids=theme_ids,
+        hash_path=os.path.join(_project_root, VIRTUAL_THEME_HASH_FILE))
 
-    keep_ind = ind[~ind["symbol_id"].isin(recompute_ids)]
-    new_ind_rows = recompute_indicators(recompute_ids, new_px, ind_cols, spy_id)
-    next_id = int(pd.to_numeric(ind["id"], errors="coerce").max()) + 1
-    new_ind_rows = new_ind_rows.copy()
-    new_ind_rows["id"] = range(next_id, next_id + len(new_ind_rows))
-
-    # **concat の前に dtype を既存へ揃える。** 1列でも object が混じると
-    # 600万行 × 63列がまるごと object に巻き上げられ、sort のコピーで OOM する
-    # （2026-08-25 に Sandbox で実際に落ちた）。
-    for col in ind.columns:
-        want = ind[col].dtype
-        if col in new_ind_rows.columns and new_ind_rows[col].dtype != want:
-            try:
-                new_ind_rows[col] = new_ind_rows[col].astype(want)
-            except (TypeError, ValueError):
-                # 整数列に NaN が来た場合など。nullable 化して object 化は避ける
-                new_ind_rows[col] = pd.to_numeric(new_ind_rows[col], errors="coerce")
-
-    merged_ind = pd.concat([keep_ind, new_ind_rows[ind.columns]], ignore_index=True)
-    del keep_ind, new_ind_rows
-    objs = [c for c in merged_ind.columns
-            if c != "date" and merged_ind[c].dtype == object]
-    if objs:
-        print(f"    [WARN] object 列が残っています（メモリが膨らみます）: {objs[:5]}")
-    # reset_index(drop=True) を別に呼ぶとフレーム全体をもう一度コピーする
-    merged_ind.sort_values(["symbol_id", "date"], inplace=True, ignore_index=True)
-    print(f"    indicators {len(ind):,} → {len(merged_ind):,}行")
-    del ind
-
-    # --- [7] T4 は横断的なので全期間を作り直す ---
-    # 旧行数は表示用。941MB のフレームを読み込まずメタデータから取る
-    old_rank_rows = pq.ParquetFile(cur["ranks"]).metadata.num_rows
-    new_ranks = recompute_ranks(merged_ind, sym)
-    new_ranks.insert(0, "id", range(1, len(new_ranks) + 1))
-    print(f"    ranks {old_rank_rows:,} → {len(new_ranks):,}行")
-
-    # --- [8] 新世代の書き出し ---
-    print("\n[5] 新世代の書き出し...")
-    try:
-        write_master_generation(
-            parquet_dir, pointer_file, cur,
-            {"prices": new_px, "indicators": merged_ind, "ranks": new_ranks},
-            label="adjust_split")
-    except RuntimeError as e:
-        print(f"[ERROR] {e}")
-        sys.exit(1)
-
-    # --- [9] ホットキャッシュの同期（これを忘れると翌日のマージで戻る） ---
-    print("\n[6] SQLite ホットキャッシュの同期...")
-    def _n(v: int | None, unit: str) -> str:
-        return "テーブルなし" if v is None else f"{v:,}行 {unit}"
-
+    # 価格は「差し替え」ではなくスケーリングなので、対象銘柄だけ別途あてる。
+    # （recompute_and_publish の差し替えで new_px の値が入るため実質二重だが、
+    #   ticker 照合つきの経路を通しておくと id ずれの事故で必ず止まる）
     scaled = scale_sqlite_history(db_path, sid, before, factor,
                                   dry_run=False, expect_ticker=ticker)
-    print(f"    daily_prices         {_n(scaled['daily_prices'], 'スケール')}")
-
-    n_ind = replace_sqlite_rows(db_path, "indicators", recompute_ids,
-                                merged_ind[merged_ind["symbol_id"].isin(recompute_ids)],
-                                dry_run=False)
-    print(f"    indicators           {_n(n_ind, '差し替え')}")
-
-    rk = new_ranks[new_ranks["symbol_id"].isin(recompute_ids)]
-    n_rk = replace_sqlite_rows(db_path, "relative_ranks", recompute_ids, rk, dry_run=False)
-    print(f"    relative_ranks       {_n(n_rk, '差し替え')}")
-
-    # 仮想テーマ指数そのものの価格は「スケール」ではなく再合成値で差し替える
-    # （指数はリターンの連鎖なので、構成銘柄と同じ倍率で動くわけではない）
-    if theme_ids:
-        tpx = new_px[new_px["symbol_id"].isin(theme_ids)]
-        n_tp = replace_sqlite_rows(db_path, "daily_prices", theme_ids, tpx, dry_run=False)
-        print(f"    daily_prices(テーマ) {_n(n_tp, '差し替え')}")
-
-    # --- [10] 次回 T2 に再合成させる ---
-    n_hash = drop_virtual_theme_hashes(
-        os.path.join(_project_root, VIRTUAL_THEME_HASH_FILE), theme_ids, dry_run=False)
-    print(f"\n[7] virtual_theme_hashes.json から {n_hash}件を削除（次回 T2 で再合成）")
+    print(f"\n[+] daily_prices のスケール確認: {scaled['daily_prices']:,}行")
 
 
 if __name__ == "__main__":

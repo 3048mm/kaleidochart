@@ -216,3 +216,98 @@ def drop_virtual_theme_hashes(hash_path: str, theme_ids: list[int],
         with open(hash_path, "w", encoding="utf-8") as f:
             json.dump(saved, f, ensure_ascii=False, indent=2)
     return len(hit)
+
+
+def recompute_and_publish(cur: dict, parquet_dir: str, pointer_file: str,
+                          db_path: str, new_px: pd.DataFrame, symbols: pd.DataFrame,
+                          recompute_ids: list[int], spy_id: int, label: str,
+                          theme_ids: list[int] | None = None,
+                          hash_path: str | None = None) -> None:
+    """価格を差し替えた後の共通の後半処理。
+
+    補修スクリプト（分割補正・仮想指数の再合成・捏造行の削除）はどれも
+    「価格を直す → T3 を作り直す → T4 を作り直す → 世代を公開する →
+    SQLite にも反映する」で終わる。**ここを各スクリプトに複製すると必ず片方だけ
+    直され、「Parquet は直ったが SQLite は古いまま」という半端な状態を生む。**
+
+    Args:
+        cur: 現行世代のファイル辞書（`get_latest_master_files()` の戻り）
+        new_px: 差し替え後の全銘柄の価格
+        recompute_ids: T3 を作り直す symbol_id（対象銘柄＋再合成した仮想テーマ）
+        theme_ids: 再合成した仮想テーマ。ハッシュ削除の対象
+        hash_path: `virtual_theme_hashes.json` のパス（None なら削除しない）
+    """
+    import pyarrow.parquet as pq
+
+    from pipeline.parquet_recompute import recompute_indicators, recompute_ranks
+
+    print("\n[+] 指標と順位の再計算...")
+    ind = pd.read_parquet(cur["indicators"])
+    ind["date"] = pd.to_datetime(ind["date"], errors="coerce").dt.strftime("%Y-%m-%d")
+    ind_cols = [c for c in ind.columns if c not in ("id", "symbol_id", "date")]
+
+    keep_ind = ind[~ind["symbol_id"].isin(recompute_ids)]
+    new_rows = recompute_indicators(recompute_ids, new_px, ind_cols, spy_id).copy()
+    next_id = int(pd.to_numeric(ind["id"], errors="coerce").max()) + 1
+    new_rows["id"] = range(next_id, next_id + len(new_rows))
+
+    # **concat の前に dtype を既存へ揃える。** 1列でも object が混じると
+    # 600万行 × 63列がまるごと object に巻き上げられ、sort のコピーで OOM する
+    # （2026-08-25 に Sandbox で実際に落ちた）。
+    for col in ind.columns:
+        want = ind[col].dtype
+        if col in new_rows.columns and new_rows[col].dtype != want:
+            try:
+                new_rows[col] = new_rows[col].astype(want)
+            except (TypeError, ValueError):
+                new_rows[col] = pd.to_numeric(new_rows[col], errors="coerce")
+
+    merged_ind = pd.concat([keep_ind, new_rows[ind.columns]], ignore_index=True)
+    del keep_ind, new_rows
+    objs = [c for c in merged_ind.columns
+            if c != "date" and merged_ind[c].dtype == object]
+    if objs:
+        print(f"    [WARN] object 列が残っています（メモリが膨らみます）: {objs[:5]}")
+    # reset_index(drop=True) を別に呼ぶとフレーム全体をもう一度コピーする
+    merged_ind.sort_values(["symbol_id", "date"], inplace=True, ignore_index=True)
+    print(f"    indicators {len(ind):,} → {len(merged_ind):,}行")
+    del ind
+
+    # 旧行数は表示用。941MB のフレームを読み込まずメタデータから取る
+    old_rank_rows = pq.ParquetFile(cur["ranks"]).metadata.num_rows
+    # T4 は横断的なので全期間を作り直す（母集団が変わった日付は全銘柄が影響を受ける）
+    new_ranks = recompute_ranks(merged_ind, symbols)
+    new_ranks.insert(0, "id", range(1, len(new_ranks) + 1))
+    print(f"    ranks {old_rank_rows:,} → {len(new_ranks):,}行")
+
+    print("\n[+] 新世代の書き出し...")
+    try:
+        write_master_generation(
+            parquet_dir, pointer_file, cur,
+            {"prices": new_px, "indicators": merged_ind, "ranks": new_ranks},
+            label=label)
+    except RuntimeError as e:
+        print(f"[ERROR] {e}")
+        raise SystemExit(1)
+
+    print("\n[+] SQLite ホットキャッシュの同期...")
+
+    def _n(v, unit):
+        return "テーブルなし" if v is None else f"{v:,}行 {unit}"
+
+    n_px = replace_sqlite_rows(db_path, "daily_prices", recompute_ids,
+                               new_px[new_px["symbol_id"].isin(recompute_ids)],
+                               dry_run=False)
+    print(f"    daily_prices     {_n(n_px, '差し替え')}")
+    n_ind = replace_sqlite_rows(db_path, "indicators", recompute_ids,
+                                merged_ind[merged_ind["symbol_id"].isin(recompute_ids)],
+                                dry_run=False)
+    print(f"    indicators       {_n(n_ind, '差し替え')}")
+    n_rk = replace_sqlite_rows(db_path, "relative_ranks", recompute_ids,
+                               new_ranks[new_ranks["symbol_id"].isin(recompute_ids)],
+                               dry_run=False)
+    print(f"    relative_ranks   {_n(n_rk, '差し替え')}")
+
+    if theme_ids and hash_path:
+        n_hash = drop_virtual_theme_hashes(hash_path, theme_ids, dry_run=False)
+        print(f"\n[+] virtual_theme_hashes.json から {n_hash}件を削除（次回 T2 で再合成）")

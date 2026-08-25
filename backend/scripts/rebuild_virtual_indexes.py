@@ -47,7 +47,6 @@ import os
 import sys
 
 import pandas as pd
-import pyarrow.parquet as pq
 
 _this_dir = os.path.dirname(os.path.abspath(__file__))
 _backend_dir = os.path.dirname(_this_dir)
@@ -63,15 +62,11 @@ from pipeline.parquet_cache_manager import (  # noqa: E402
     get_pointer_file_path,
 )
 from pipeline.parquet_maintenance import (  # noqa: E402
-    drop_virtual_theme_hashes,
-    replace_sqlite_rows,
+    recompute_and_publish,
     resolve_db_path,
-    write_master_generation,
 )
 from pipeline.parquet_recompute import (  # noqa: E402
     rebuild_virtual_index_prices,
-    recompute_indicators,
-    recompute_ranks,
 )
 
 VIRTUAL_THEME_HASH_FILE = os.path.join("data", "virtual_theme_hashes.json")
@@ -240,69 +235,11 @@ def run(tickers: list[str] | None, dry_run: bool, db_path: str | None = None,
     new_px.sort_values(["symbol_id", "date"], inplace=True, ignore_index=True)
     del keep_px
 
-    ind = pd.read_parquet(cur["indicators"])
-    ind["date"] = pd.to_datetime(ind["date"], errors="coerce").dt.strftime("%Y-%m-%d")
-    ind_cols = [c for c in ind.columns if c not in ("id", "symbol_id", "date")]
-
-    keep_ind = ind[~ind["symbol_id"].isin(theme_ids)]
-    new_rows = recompute_indicators(theme_ids, new_px, ind_cols, spy_id)
-    next_id = int(pd.to_numeric(ind["id"], errors="coerce").max()) + 1
-    new_rows = new_rows.copy()
-    new_rows["id"] = range(next_id, next_id + len(new_rows))
-    # **concat の前に dtype を既存へ揃える**（1列でも object が混じると600万行が
-    # object に巻き上げられ、sort のコピーで OOM する）
-    for col in ind.columns:
-        want = ind[col].dtype
-        if col in new_rows.columns and new_rows[col].dtype != want:
-            try:
-                new_rows[col] = new_rows[col].astype(want)
-            except (TypeError, ValueError):
-                new_rows[col] = pd.to_numeric(new_rows[col], errors="coerce")
-
-    merged_ind = pd.concat([keep_ind, new_rows[ind.columns]], ignore_index=True)
-    del keep_ind, new_rows
-    merged_ind.sort_values(["symbol_id", "date"], inplace=True, ignore_index=True)
-    print(f"    indicators {len(ind):,} → {len(merged_ind):,}行")
-    del ind
-
-    old_rank_rows = pq.ParquetFile(cur["ranks"]).metadata.num_rows
-    new_ranks = recompute_ranks(merged_ind, sym)
-    new_ranks.insert(0, "id", range(1, len(new_ranks) + 1))
-    print(f"    ranks {old_rank_rows:,} → {len(new_ranks):,}行")
-
-    # --- [5] 新世代 ---
-    print("\n[5] 新世代の書き出し...")
-    try:
-        write_master_generation(
-            parquet_dir, pointer_file, cur,
-            {"prices": new_px, "indicators": merged_ind, "ranks": new_ranks},
-            label="rebuild_virtual_indexes")
-    except RuntimeError as e:
-        print(f"[ERROR] {e}")
-        sys.exit(1)
-
-    # --- [6] ホットキャッシュ（省くと翌日のマージで戻る） ---
-    print("\n[6] SQLite ホットキャッシュの同期...")
-
-    def _n(v, unit):
-        return "テーブルなし" if v is None else f"{v:,}行 {unit}"
-
-    n_px = replace_sqlite_rows(db_path, "daily_prices", theme_ids,
-                               new_px[new_px["symbol_id"].isin(theme_ids)], dry_run=False)
-    print(f"    daily_prices     {_n(n_px, '差し替え')}")
-    n_ind = replace_sqlite_rows(db_path, "indicators", theme_ids,
-                                merged_ind[merged_ind["symbol_id"].isin(theme_ids)],
-                                dry_run=False)
-    print(f"    indicators       {_n(n_ind, '差し替え')}")
-    n_rk = replace_sqlite_rows(db_path, "relative_ranks", theme_ids,
-                               new_ranks[new_ranks["symbol_id"].isin(theme_ids)],
-                               dry_run=False)
-    print(f"    relative_ranks   {_n(n_rk, '差し替え')}")
-
-    # --- [7] 次回 T2 に再合成させる ---
-    n_hash = drop_virtual_theme_hashes(
-        os.path.join(_project_root, VIRTUAL_THEME_HASH_FILE), theme_ids, dry_run=False)
-    print(f"\n[7] virtual_theme_hashes.json から {n_hash}件を削除（次回 T2 で再合成）")
+    recompute_and_publish(
+        cur, parquet_dir, pointer_file, db_path, new_px, sym,
+        recompute_ids=theme_ids, spy_id=spy_id, label="rebuild_virtual_indexes",
+        theme_ids=theme_ids,
+        hash_path=os.path.join(_project_root, VIRTUAL_THEME_HASH_FILE))
 
 
 if __name__ == "__main__":
