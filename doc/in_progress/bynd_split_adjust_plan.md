@@ -1,4 +1,4 @@
-# BYND 併合(1:30)の価格補正と、汚染された仮想テーマ指数の再合成 計画書
+# BYND 併合(1:30)の価格補正と、仮想テーマ指数の再合成 計画書
 
 - **ステータス**: 🚧 進行中（計画はユーザーレビュー済み 2026-08-25）
 - **実施者**: AI エージェント (Claude Opus 5)
@@ -194,7 +194,57 @@ DB 依存を外すだけで、アルゴリズムは変えない:
 
 ## 7. 途中発生した課題
 
-（作業中に追記）
+### 7.1 Sandbox 検証で見つけた3つのバグ（いずれも例外が出ない）
+
+| 事象 | 症状 | 対応 |
+| :--- | :--- | :--- |
+| `recompute_indicators` が object dtype を返す | 既存 indicators と concat すると600万行×63列がまるごと object に巻き上げられ、`sort_values` のコピーで OOM。**ディスク上は pyarrow が double に落とすので Parquet は汚染されず、メモリ上でだけ膨らむ** | 返す前に数値 dtype へ落とす。`truncate_symbol_history` / `restore_truncated_symbol_history` にも効く |
+| `symbol_id` が BLOB で INSERT される | ID 列は Parquet 規約で `Int64` なので `itertuples()` が `numpy.int64` を返す。numpy スカラはバッファプロトコルを持つため sqlite3 が BLOB として束縛し、**挿入は成功して件数も合うのに `WHERE symbol_id = ?` が1件も返らない** | `[tuple(x) for x in df.to_numpy()]` に変更（`restore_sqlite_cache_from_parquet` と同じ形） |
+| 仮想指数の移植先違い | 合成関数が2つあり、テスト専用の簡易版 `build_virtual_index_prices`（OHLC を全部 close と同値にする）を移植していた。本番テーマは 100% の行で `open != close` | `build_all_virtual_indexes_prices` に合わせ直す。テスト用の構成銘柄データにも日中値を持たせた（全部同値だと欠陥が素通りする） |
+
+```
+numpy.core._exceptions._ArrayMemoryError: Unable to allocate 1.26 GiB
+for an array with shape (28, 6057722) and data type object
+```
+```
+(b'=      ', 2110, '2018-04-03', '2026-08-24')
+```
+
+### 7.2 仮想テーマ170本の再ベース事故（**当初スコープ外・拡大して対応**）
+
+BYND のテーマ3本を再合成したところ、本番との差分が **2026-08-13（今回の対象）と
+2024-08-06 の2日だけ**だった。2024-08-06 を調べたところ、全170本中165本が
+その日に終値 ~1000 を持ち、152本が大きな段差を持っていた。
+
+原因はログに残っていた:
+
+```
+2026-08-07 07:49:34  Virtual Index Progress: 80/170 - Processing _SFTW10_ (rebuild)
+2026-08-07 07:49:38  Virtual Index Progress: 170/170 - Processing _NTRTCE_ (rebuild)
+```
+
+構成銘柄の変更をきっかけに全170テーマが `rebuild` モードで再合成されたが、
+`build_all_virtual_indexes_prices` は **SQLite（直近730日）**から読むため、
+当時の最古日 2024-08-06 で指数が基準値1000から振り直され、Parquet の古い履歴の上に
+マージされた。T4 の「SQLite に存在する日付しか計算できない」問題と同じ根本原因。
+
+```
+_HLTHCB_  2024-08-06  close=1019.65  当日リターン -98.2%   ← 直前は ~55,700
+_BLCK3F_  2024-08-06  close=1033.16  当日リターン -92.5%
+_BLOK_    2024-08-06  close=1015.56  当日リターン -91.5%
+```
+
+皮肉なことに 2026-08-07 は**週次メンテナンスが最後に走った日**で、以降3週間
+止まっていたため誰も気付かなかった。
+
+ユーザー判断（2026-08-25）で **170本すべての再合成と T2 本体の修正を本プランに含める**。
+
+### 7.3 補修スクリプトの共通部品を切り出した
+
+`adjust_symbol_split` と `rebuild_virtual_indexes` で「世代書き出し → ポインタ差し替え
+→ SQLite 同期」が同型になるため、`pipeline/parquet_maintenance.py` に集約した。
+ここを複製すると必ず片方だけ直され、「Parquet は直ったが SQLite は古いまま」という
+半端な状態を生む。
 
 ## 8. スコープ外・残作業
 
