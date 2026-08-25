@@ -418,3 +418,54 @@ def test_explicit_argument_wins_over_everything(monkeypatch):
     monkeypatch.setenv("STOCKTOOL_ENV", "sandbox")
     monkeypatch.setenv("STOCKTOOL_DB_PATH", "data/other.db")
     assert resolve_db_path(_cfg(), explicit="data/x.db") == "data/x.db"
+
+
+def test_replace_stores_symbol_id_as_integer_not_blob(tmp_path):
+    """**Int64（pandas nullable）の symbol_id を BLOB で書かないこと。**
+
+    Parquet の ID 列はリポジトリの規約で `Int64` に統一されている
+    （parquet-data-quality SKILL §3）。この列を `itertuples()` で取り出すと
+    `numpy.int64` が出てくるが、**numpy スカラはバッファプロトコルを持つため
+    sqlite3 が BLOB として束縛する**。
+
+    2026-08-25 に Sandbox で実際に起きた。挿入は成功し件数も合っているのに、
+    `WHERE symbol_id = 317` が 1 件も返らなくなる:
+
+        (b'=\x01\x00\x00\x00\x00\x00\x00', 2110, '2018-04-03', '2026-08-24')
+
+    仮想テーマ3本の価格が丸ごと参照不能になり、UI からもバックテストからも
+    消えた状態になっていた。**例外は出ないので気付けない。**
+
+    既存の `restore_sqlite_cache_from_parquet` が使う
+    `[tuple(x) for x in df.to_numpy()]` は Python int に落ちるので安全。
+    """
+    path = str(tmp_path / "int64.db")
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE symbols (id INTEGER PRIMARY KEY, ticker TEXT)")
+    con.execute("""CREATE TABLE daily_prices (
+        id INTEGER PRIMARY KEY, symbol_id INTEGER, date TEXT,
+        close REAL, market_cap REAL)""")
+    con.execute("INSERT INTO symbols (id, ticker) VALUES (317, '_CNSM0A_')")
+    con.commit()
+    con.close()
+
+    rows = pd.DataFrame({
+        "symbol_id": pd.array([317, 317], dtype="Int64"),   # Parquet と同じ型
+        "date": ["2026-08-12", "2026-08-13"],
+        "close": [972.23, 985.10],
+        "market_cap": [float("nan"), float("nan")],         # テーマは常に NULL
+    })
+    n = replace_sqlite_rows(path, "daily_prices", [317], rows, dry_run=False)
+
+    con = sqlite3.connect(path)
+    types = con.execute("SELECT typeof(symbol_id) FROM daily_prices").fetchall()
+    reachable = con.execute(
+        "SELECT COUNT(*) FROM daily_prices WHERE symbol_id = 317").fetchone()[0]
+    mc = con.execute(
+        "SELECT typeof(market_cap) FROM daily_prices LIMIT 1").fetchone()[0]
+    con.close()
+
+    assert n == 2
+    assert {t[0] for t in types} == {"integer"}, f"symbol_id が integer でない: {types}"
+    assert reachable == 2, "symbol_id で引けない（BLOB として入っている）"
+    assert mc == "null", "NaN が NULL になっていない"

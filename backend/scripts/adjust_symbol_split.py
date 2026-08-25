@@ -310,19 +310,29 @@ def replace_sqlite_rows(db_path: str, table: str, symbol_ids: list[int],
         use = [c for c in rows.columns if c in cols and c != "id"]
         payload = rows[use].where(pd.notna(rows[use]), None)
 
+        # **`itertuples()` を使ってはいけない。** ID 列は Parquet の規約で `Int64`
+        # （pandas nullable）なので、`itertuples()` は `numpy.int64` を返す。
+        # numpy スカラはバッファプロトコルを持つため **sqlite3 が BLOB として束縛し**、
+        # 挿入は成功して件数も合うのに `WHERE symbol_id = ?` が1件も返らなくなる。
+        #
+        # 2026-08-25 に Sandbox で発生（仮想テーマ3本の価格が丸ごと参照不能になった）:
+        #     (b'=\x01\x00\x00\x00\x00\x00\x00', 2110, '2018-04-03', '2026-08-24')
+        #
+        # `to_numpy()` は Python の int / float に落とすので安全。
+        # `restore_sqlite_cache_from_parquet` も同じ形にしてある。
+        records = [tuple(x) for x in payload.to_numpy()]
+
         con.execute("BEGIN IMMEDIATE")
         for i in range(0, len(symbol_ids), 900):
             chunk = symbol_ids[i:i + 900]
             marks = ",".join("?" * len(chunk))
             con.execute(f"DELETE FROM {table} WHERE symbol_id IN ({marks})", chunk)
-        if len(payload):
+        if records:
             marks = ",".join("?" * len(use))
             con.executemany(
-                f"INSERT INTO {table} ({','.join(use)}) VALUES ({marks})",
-                list(payload.itertuples(index=False, name=None)),
-            )
+                f"INSERT INTO {table} ({','.join(use)}) VALUES ({marks})", records)
         con.commit()
-        return len(payload)
+        return len(records)
     finally:
         con.close()
 
