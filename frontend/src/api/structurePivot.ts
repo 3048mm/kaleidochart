@@ -73,16 +73,16 @@ export function buildStructureSegments(
         if (times.has(seg.from) && times.has(seg.to)) segments.push(seg)
     }
 
-    // 履歴のピボット水準は**右端まで延長する**（TradingView 版と同じ挙動）。
-    // 死んだバーで打ち切ると、帯 2-5 では構造の寿命が中央値14本＝画面幅の約3%しかなく、
-    // 点線が短すぎて視認できない（2026-08-27 の実測で判明）。
-    // 「過去にピボットだった価格帯が今どこにあるか」が読めることがこの表示の実用価値。
+    // 履歴のピボット水準は**構造が死んだバーで打ち切る**（TradingView 版は右端まで
+    // 延長するが、あえて変えている）。現在の構造に 1st / 2nd / TP1 / TP2 の4本を
+    // 右端まで引くようになったため、履歴30本まで延長すると線が多すぎて読めない
+    // （2026-08-27 にユーザー判断で延長を取りやめ）。
     structures
         .filter(s => !s.is_current)
         .slice(-historyLimit)
         .forEach(s => push({
             from: s.pivot_date, fromValue: s.pivot_price,
-            to: lastDate, toValue: s.pivot_price,
+            to: s.end_date, toValue: s.pivot_price,
             color: HISTORY_COLOR, width: 1, style: DOTTED, role: 'history-pivot',
         }))
 

@@ -48,13 +48,15 @@ describe('buildStructureSegments', () => {
         expect(segments[0].role).toBe('history-pivot')
     })
 
-    it('履歴のピボット線は右端まで延長する', () => {
-        // 死んだバー（end_date）で打ち切ると短すぎて見えないため、TV 版と同じく延長する
+    it('履歴のピボット線は構造が死んだバーで打ち切る', () => {
+        // 現在の構造の4本（1st/2nd/TP1/TP2）を右端まで引くため、履歴まで延長すると
+        // 線が多すぎて読めない。履歴は「いつどこにあったか」が分かれば十分とする。
         const segments = buildStructureSegments(
             [make({ is_current: false, end_date: '2026-04-13' })], ALL_DATES)
 
-        expect(segments[0].to).toBe(LAST_DATE)
-        expect(segments[0].from).toBe('2026-04-05')   // ピボット足の位置は動かさない
+        expect(segments[0].to).toBe('2026-04-13')
+        expect(segments[0].to).not.toBe(LAST_DATE)
+        expect(segments[0].from).toBe('2026-04-05')   // ピボット足の位置が起点
     })
 
     it('両端の日付がチャートに無い線分は捨てる', () => {
