@@ -203,6 +203,27 @@ T2の価格データを元に算出される各種テクニカル・モメンタ
 | `is_rs_red_dot` | SMALLINT | RS新安値先行フラグ（1:点灯, 0:非点灯）。RSが株価に先行して52週新安値を更新した場合に点灯。 | `(rs_value <= min(RS, 252)) AND (close > min(close, 252))` |
 | `vcr` | FLOAT | Volatility Contraction Ratio。VCP（ベース形成）のスクイーズ度合いを定量化。0.5未満＝極度の収縮。 | `ATR(10) / ATR(50)` （True Rangeの単純移動平均として算出） |
 | `is_trend_template` | SMALLINT | ミネルヴィニのトレンドテンプレート適合フラグ（1:適合, 0:不適合）。 | 右記5条件: ①close>sma50, ②sma50>sma150, ③sma150>sma200, ④sma200上昇中(20日前比), ⑤52週高値から30%以内 |
+| `sp_pivot` | FLOAT | **構造ピボット (LL-HL) のブレイクアウト水準。** 押し目構造が生きているバーのみ値を持ち、それ以外は NULL。 | LL と HL の**間**の最高値（両端の足は含まない）。`indicators/structure_pivot.py::structure_pivot_series()` |
+| `sp_hl` | FLOAT | **構造ピボットの HL（切り上げた安値）価格。そのまま損切り候補になる。** 同上、構造が無いバーは NULL。 | 直前のピボット安値より高いピボット安値。当日安値が割った時点で構造は消える |
+
+> [!IMPORTANT]
+> **`sp_pivot` / `sp_hl` には確定遅延がある。** ピボットは `ta.pivotlow(low, L, L)` 相当の
+> 中心窓で検出するため、ある足がピボットだと確定するのは **L 本先**。両カラムは
+> `hl_index + length` 以降のバーにしか値を入れない。**ここを崩すと先読みバイアスが入り、
+> 型1バックテストは検出数と質を最適化するので成績が良くなるだけで気付けない。**
+> 回帰テスト: `backend/tests/indicators/test_structure_pivot.py`。
+>
+> 長さ帯は **2〜5 固定**（`DEFAULT_MIN_LEN` / `DEFAULT_MAX_LEN`）。各バーで
+> Tightest（ピボット価格が最小＝最も近い抵抗）の構造を勝者として採る。
+> **チャート表示（§5.1.2）と同じ値**を見るため、片方だけ変えてはいけない
+> （既定値は `test_default_length_band_is_2_to_5` で固定している）。
+>
+> T4（相対ランク）には**追加しない**。銘柄内の絶対水準であり横断パーセンタイルに
+> 意味がないため。したがって T3 へこの2列を足しても T4/T5 の再計算は不要
+> （既存カラムは1つも変わらない）。
+>
+> **スクリーン条件としては不採用**（実測で Alpha ≒ 0）。DATA VIEW 表示とチャート描画、
+> および手動でのエントリー/損切り判断に使う。経緯: `doc/completed/structure_pivot_screener_plan.md`
 
 ### 3.5 T4: 相対評価データ (`relative_ranks`)
 
@@ -525,7 +546,7 @@ D-2（2026-07-04）で特殊ブールフィルタの実体は `indicators/screen
 | `METADATA_KEYS` / `ATTACHED_PARAM_KEYS` / `is_non_filter_key()` | フィルタではない制御キー（`sort_column` 等）と特殊フィルタの随伴パラメータ（`pivot_tol` 等）。**除外集合もフィルタ集合と同じく1箇所に集約する** |
 | `RANK_FRAME_ALIASES` / `to_frame_column()` | 正準名（`rs_ratio_rank_e21`）↔ フレーム内名（`rs21_rank`）の対応 |
 | `OUTPUT_EXCLUDED_CATEGORIES` | 最終出力から常に除外するカテゴリ（`テーマ`）。**フィルタ処理中は保持し出力直前でだけ落とす**（リーディングテーマ判定と構成銘柄への波及に必要なため） |
-| `VIRTUAL_COLUMNS` | 仮想（計算）カラム名。SQL 式は `screener_router`、pandas の導出は `apply_filters_to_df` にあり、レジストリは名前だけを持つ |
+| `VIRTUAL_COLUMNS` | 仮想（計算）カラム名。SQL 式は `screener_router`、pandas の導出は `apply_filters_to_df` にあり、レジストリは名前だけを持つ。構造ピボット由来の3種（`sp_dist_pivot_pct` / `sp_range_pct` / `sp_risk_pct`）を含む（下記） |
 
 #### fail-loud の契約
 
@@ -564,6 +585,30 @@ D-2（2026-07-04）で特殊ブールフィルタの実体は `indicators/screen
 **ランクは全経路で wide 形式**（`rs_ratio_rank_e21` 等が列名）。
 `indicator_name` / `percent_rank` という long 形式は Phase 3d で廃止された。
 正準名とフレーム内名の対応は `screener_registry.to_frame_column()` が一手に担う。
+
+#### 構造ピボット由来の仮想カラム
+
+実カラムは `sp_pivot` / `sp_hl` の2つだけで、距離・幅は `close` で正規化して導く。
+**T3 のカラム数を増やさずにフィルタ軸を増やすための構成**であり、
+`screener_registry.VIRTUAL_COLUMNS` / `screener_router._VIRTUAL_COLUMNS` /
+`backtest_screener.apply_filters_to_df` の3箇所に登録する（§7.2 の必須手順）。
+
+| 名前 | 式 | 用途 |
+| :--- | :--- | :--- |
+| `sp_dist_pivot_pct` | `(sp_pivot - close) / close * 100` | ブレイクまであと何%。負値は上抜け済み |
+| `sp_range_pct` | `(sp_pivot - sp_hl) / close * 100` | 構造の高さ。小さい＝タイトな保ち合い |
+| `sp_risk_pct` | `(close - sp_hl) / close * 100` | 損切り候補までの距離。**固定 -8% ストップとの整合を見る** |
+
+`sp_pivot` / `sp_hl` が NULL の行は式全体が NULL / NaN になり、比較で自然に落ちる。
+**0.0 で埋めない**（埋めると構造が無い銘柄が通過してしまう）。
+
+「ブレイク直前」は `min_sp_dist_pivot_pct = 0.0` ＋ `max_sp_dist_pivot_pct = 2.0` の
+2キーで表現でき、特殊フィルタは要らない（上抜け済みは負値になるので下限で除外）。
+
+なお `is_structure_1st_break`（fib 0.618 の当日上抜け。改良版 Advanced Structure Pivot
+準拠）は**イベント判定なので特殊フィルタ**として `screener_filters.py` に実装している。
+随伴パラメータ `structure_fib_1st` は `FilterSpec.params` に宣言すること
+（宣言しないと `is_non_filter_key()` が除外できず、実行時に未知キーで停止する）。
 
 #### 全経路共通のルール
 
