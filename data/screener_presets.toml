@@ -46,12 +46,12 @@ group = "Check"
 use_hysteresis = false
 [rise.filters]
 min_change_1d_pct = 6.0 
-min_vol_surge_21 = 2.7 
+min_vol_surge_21 = 1.9000000000000001 
 min_adr_pct_21 = 6.0 
-max_sma50_atr_mult = 4.5 
-min_market_cap = 1e7 
+max_sma50_atr_mult = 2.5 
+min_market_cap = 5e7 
 is_theme_rs_ratio_rank_e21_gt_e63 = true 
-min_rs_ratio_rank_e21 = 0.4 
+min_rs_ratio_rank_e21 = 0.6000000000000001 
 is_close_gt_ema63 = true
 # [backtest results]
 # alpha 3.993
@@ -77,12 +77,12 @@ subname = "Theme Leader"
 group = "Check"
 use_hysteresis = false
 [rise.filters]
-min_change_1d_pct = 8.0 
+min_change_1d_pct = 3.0 
 min_vol_surge_21 = 2.4 
-min_adr_pct_21 = 6.0 
-max_sma50_atr_mult = 6.0 
-min_market_cap = 1e7 
-min_theme_rs_ratio_rank_e21 = 0.75 
+min_adr_pct_21 = 5.0 
+max_sma50_atr_mult = 2.0 
+min_market_cap = 1e8 
+min_theme_rs_ratio_rank_e21 = 0.8 
 is_close_gt_ema63 = true
 # [backtest results]
 # alpha 3.925
@@ -110,12 +110,12 @@ group = "Check"
 use_hysteresis = false
 [rise.filters]
 min_change_1d_pct = 9.0 
-min_dist_21ema_pct = 3.0 
-min_vol_surge_21 = 1.8 
+min_dist_21ema_pct = 15.0 
+min_vol_surge_21 = 2.6 
 min_adr_pct_21 = 6.0 
-max_sma50_atr_mult = 7.5 
+max_sma50_atr_mult = 4.5 
 min_market_cap = 1e7 
-min_rs_trend_rank_s21 = 0.9 
+min_rs_trend_rank_s21 = 0.7000000000000001 
 min_rs_macd_hist_21 = 0.0 
 min_theme_rs_trend_s21 = 0.9 
 is_theme_rs_trend_rank_s14_gt_s21 = true 
@@ -146,8 +146,8 @@ subname = "RS Trend with Theme"
 group = "Check"
 use_hysteresis = false
 [rise.filters]
-min_change_1d_pct = 2.0 
-min_dist_21ema_pct = -1.0 
+min_change_1d_pct = 5.0 
+min_dist_21ema_pct = 0.0 
 min_vol_surge_21 = 2.0 
 min_adr_pct_21 = 6.0 
 max_sma50_atr_mult = 5.0 
