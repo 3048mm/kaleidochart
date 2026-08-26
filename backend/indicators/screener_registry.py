@@ -405,7 +405,11 @@ def resolve_required_columns(strategy: Mapping, known_columns: AbstractSet,
             optional.add(col)
 
     for key in strategy:
-        if key in METADATA_KEYS:
+        # 随伴パラメータ（pivot_tol / structure_fib_1st 等）も除外する。
+        # METADATA_KEYS だけを引くと、特殊フィルタの閾値が「未知のキー」と
+        # 判定され fail-loud で戦略全体が停止する（2026-08-27 に H2 で発生）。
+        # is_non_filter_key() が唯一の除外判定であることを、この関数自身も守る。
+        if is_non_filter_key(key):
             continue
 
         spec = resolve_filter_spec(key, known_columns, rank_columns)
