@@ -19,6 +19,7 @@ from indicators.screener_filters import SPECIAL_FILTER_KEYS
 
 from indicators import screener_registry
 from indicators.screener_registry import (
+    is_non_filter_key,
     resolve_filter_spec,
     resolve_required_columns,
     UnknownFilterKeyError,
@@ -384,9 +385,13 @@ class TestBacktestConfigResolvesAgainstRealSchema:
         for name, raw_strategy in _load_backtest_strategies():
             strategy = normalize_strategy_keys(raw_strategy)
             opt = strategy.get("optimization", {})
-            filter_keys = set(strategy.keys()) - METADATA_KEYS
+            # 特殊フィルタの随伴パラメータ（pivot_tol / structure_fib_1st 等）は
+            # フィルタキーではないので除外する。METADATA_KEYS だけを引くと
+            # 随伴パラメータが「未知のキー」と誤判定される。
+            # 除外集合はレジストリの is_non_filter_key() を唯一の判定元にする。
+            filter_keys = {k for k in strategy.keys() if not is_non_filter_key(k)}
             if isinstance(opt, dict):
-                filter_keys |= set(opt.keys())
+                filter_keys |= {k for k in opt.keys() if not is_non_filter_key(k)}
             for key in filter_keys:
                 try:
                     resolve_filter_spec(key, known_columns=known, rank_columns=ranks)

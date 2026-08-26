@@ -450,6 +450,51 @@ def filter_vcp_breakout(
     return mask.fillna(False)
 
 
+def filter_structure_1st_break(
+    merged: pd.DataFrame,
+    fib_1st: float = 0.618,
+) -> pd.Series:
+    """LL-HL 構造の 1st Pivot（fib 0.618 戻し）を当日上抜けたイベントを通過させる。
+
+    改良版 Advanced Structure Pivot の `rt_1st_break` の移植。原文の定義:
+
+        fib_range     = pivot - hl
+        fib_1st_price = hl + fib_range * 0.618
+        rt_1st_break  = is_setup and close[1] <= fib_1st_price and close > fib_1st_price
+                        and (na(break_val) or close <= break_val)
+
+    作者は「LL-HL 構造における Fib 0.618 ブレイクであり、**教科書的な押し目買い
+    ポイント**に相当」と説明している。本ピボット（2nd）未達であることも条件で、
+    2nd を既に抜けていれば `rt_2nd_break` 側の管轄になる（排他）。
+
+    **前日終値は `change_1d_pct` から復元する。** `prev_close` は ScreenerFrame に
+    供給されていないため（`filter_vcp_breakout` と同じ手法）:
+        prev_close = close / (1 + change_1d_pct / 100)
+
+    比較に使う 1st 水準は Pine と同じく**当日の構造から算出した値**を前日側にも使う
+    （Pine の `d_long.fib_1st_price` は描画オブジェクトの現在値であり、前日の値では
+    ないため）。
+
+    構造が生きていない行（`sp_pivot` が NULL）は自然に False になる。
+    必要カラムが無い場合は **全 False**（deny-by-default）。イベントは前日比較が
+    本質であり、前日情報が無いのに全通過させると危険な過剰包含になるため。
+    """
+    required = ('sp_pivot', 'sp_hl', 'close', 'change_1d_pct')
+    if any(c not in merged.columns for c in required):
+        return pd.Series(False, index=merged.index)
+
+    fib_range = merged['sp_pivot'] - merged['sp_hl']
+    level = merged['sp_hl'] + fib_range * fib_1st
+    prev_close = merged['close'] / (1 + merged['change_1d_pct'] / 100)
+
+    mask = (
+        (prev_close <= level)                    # 前日は 1st 以下
+        & (merged['close'] > level)              # 当日に上抜け
+        & (merged['close'] <= merged['sp_pivot'])  # 2nd（本ピボット）は未達
+    )
+    return mask.fillna(False)
+
+
 # ============================================================
 # 特殊ブールフィルタキーのレジストリ
 # ============================================================

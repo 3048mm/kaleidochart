@@ -705,3 +705,31 @@ min_avg_hits_per_day = 0.3
 min_dist_52w_high_pct    = { type = "float", min = -15.0, max = -2.5, step = 2.5 }
 max_vcr                  = { type = "float", min = 0.5, max = 0.9, step = 0.05 }
 min_up_down_vol_ratio_50 = { type = "float", min = 1.0, max = 2.5, step = 0.25 }
+
+
+# --- オリジナル準拠版 ---
+# note.com の記事本文にある使い方をそのまま写したもの:
+#   「フィルタに『1st Pivot Break = True』『Relative Strength > 80』などを組み合わせ、
+#     当日ブレイク中の高 RS 銘柄だけが抽出」
+# 作者は 1st Pivot Break を「教科書的な押し目買いポイント」と説明している。
+#
+# H1 系（構造ピボットまで2%以内の**状態**）とは別物である点に注意:
+#   H1  = まだ抜けていない銘柄を待ち構える（私の組み合わせ探索から出たもの）
+#   H2  = 1st Pivot を**当日上抜けた**銘柄を拾う（オリジナルのエントリー定義）
+# 出口はプロジェクト固定（-8%ストップ / EMA21 2日連続割れ等）であり、
+# オリジナルの3段階ストップ・TP1/TP2 段階利確は**採っていない**。
+# したがって本戦略は「エントリー定義だけ」をオリジナルに合わせた比較用である。
+[[strategy]]
+name = "H2_original_1st_break"
+description = "オリジナル準拠: 1st Pivot(fib 0.618) 当日上抜け × RS上位20%"
+max_hits_per_day = 10
+sort_column = "rs_ratio_rank_e21"
+sort_ascending = false
+is_structure_1st_break = true
+min_rs_ratio_rank_e21 = 0.8    # 記事の「Relative Strength > 80」に対応
+max_allowed_dd = 35.0
+min_avg_hits_per_day = 0.3
+
+[strategy.optimization]
+structure_fib_1st     = { type = "float", min = 0.382, max = 0.786, step = 0.068 }
+min_rs_ratio_rank_e21 = { type = "float", min = 0.6, max = 0.9, step = 0.05 }
