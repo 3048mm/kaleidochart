@@ -161,7 +161,7 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
     const [showBB, setShowBB] = useState(true);
     const [showRsDots, setShowRsDots] = useState(true);
     const [showSma50Atr, setShowSma50Atr] = useState(false);
-    const [showStructurePivot, setShowStructurePivot] = useState(false);
+    const [showStructurePivot, setShowStructurePivot] = useState(true);
     const [structures, setStructures] = useState<StructurePivot[]>([]);
 
     const chartRef = useRef<IChartApi | null>(null);
@@ -1038,7 +1038,7 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
                                     <button className={`toggle-btn ${showBB ? 'active' : ''}`} onClick={() => setShowBB(!showBB)}>BB</button>
                                     <button className={`toggle-btn ${showRsDots ? 'active' : ''}`} onClick={() => setShowRsDots(!showRsDots)}>RS.</button>
                                     <button className={`toggle-btn ${showSma50Atr ? 'active' : ''}`} onClick={() => setShowSma50Atr(!showSma50Atr)}>50/ATR</button>
-                                    <button className={`toggle-btn ${showStructurePivot ? 'active' : ''}`} onClick={() => setShowStructurePivot(!showStructurePivot)} title="LL-HL 構造ピボット">構造</button>
+                                    <button className={`toggle-btn ${showStructurePivot ? 'active' : ''}`} onClick={() => setShowStructurePivot(!showStructurePivot)} title="LL-HL 構造ピボット">Pivot</button>
 
                                     <div style={{ borderLeft: '1px solid #333', margin: '0 10px', height: '24px', alignSelf: 'center' }}></div>
 
@@ -1148,6 +1148,8 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
                         overflowY: 'auto',
                         display: 'flex',
                         flexDirection: 'column',
+                        // flex column の子で overflowY を効かせるのに必要（無いと縮まず末尾が切れる）
+                        minHeight: 0,
                         gap: '16px',
                         boxShadow: '0 -10px 30px rgba(0,0,0,0.5)'
                     }} onClick={e => e.stopPropagation()}>
@@ -1209,12 +1211,12 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
                         <div>
                             <span style={{ fontSize: '10px', color: '#687fa1', textTransform: 'uppercase', display: 'block', marginBottom: '6px', fontWeight: '600', letterSpacing: '0.05em' }}>その他表示</span>
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+                                <button className={`toggle-btn ${showStructurePivot ? 'active' : ''}`} style={{ padding: '8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer', gridColumn: 'span 2' }} onClick={() => setShowStructurePivot(!showStructurePivot)}>Pivot (LL-HL 構造ピボット)</button>
                                 <button className={`toggle-btn ${showVolume ? 'active' : ''}`} style={{ padding: '8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }} onClick={() => setShowVolume(!showVolume)}>出来高 (Volume)</button>
                                 <button className={`toggle-btn ${showTd9 ? 'active' : ''}`} style={{ padding: '8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }} onClick={() => setShowTd9(!showTd9)}>TD9 シーケンシャル</button>
                                 <button className={`toggle-btn ${showBB ? 'active' : ''}`} style={{ padding: '8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }} onClick={() => setShowBB(!showBB)}>ボリンジャーバンド</button>
                                 <button className={`toggle-btn ${showRsDots ? 'active' : ''}`} style={{ padding: '8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }} onClick={() => setShowRsDots(!showRsDots)}>RSシグナルドット</button>
                                 <button className={`toggle-btn ${showSma50Atr ? 'active' : ''}`} style={{ padding: '8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer', gridColumn: 'span 2' }} onClick={() => setShowSma50Atr(!showSma50Atr)}>50SMA/ATR% 乖離</button>
-                                <button className={`toggle-btn ${showStructurePivot ? 'active' : ''}`} style={{ padding: '8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer', gridColumn: 'span 2' }} onClick={() => setShowStructurePivot(!showStructurePivot)}>構造ピボット (LL-HL)</button>
                             </div>
                         </div>
 

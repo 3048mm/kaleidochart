@@ -255,6 +255,9 @@ EXPLICIT_SPECS: dict = {**_SPECIAL_SPECS, **_build_close_gt_specs()}
 VIRTUAL_COLUMNS: frozenset = frozenset({
     'change_oc_pct', 'change_intraday_pct',
     'dist_ema21_pct', 'dist_21ema_pct', 'dist_sma50_pct',
+    # 構造ピボット (LL-HL)。実カラムは sp_pivot / sp_hl の2つだけで、
+    # 距離・幅はここから close で正規化して導く
+    'sp_dist_pivot_pct', 'sp_range_pct', 'sp_risk_pct',
 })
 
 

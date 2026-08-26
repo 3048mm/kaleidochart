@@ -123,7 +123,7 @@ numba は使わない（`moving_averages.py` / `volatility.py` は使ってい�
 
 | 項目 | 内容 |
 | :--- | :--- |
-| クエリ | `min_len`（既定2）/ `max_len`（既定10）/ `full_range`（既定 false。`/chart` と揃える） |
+| クエリ | `min_len`（既定2）/ `max_len`（**既定5**。2026-08-26 に 10 から変更）/ `full_range`（既定 false。`/chart` と揃える） |
 | データ源 | `daily_prices`（T2）の `high` / `low` / `close`。`/chart` と同じ期間 |
 | レスポンス | `{"structures": [Structure...], "current": Structure \| null}` — `date` は ISO 文字列に変換して返す（フロントは index を持たない） |
 | 異常系 | 銘柄が存在しない → 404。データ不足（30本未満）→ `{"structures": [], "current": null}` |
@@ -162,7 +162,7 @@ numba は使わない（`moving_averages.py` / `volatility.py` は使ってい�
 | # | 確認事項 | 判断 |
 | :--- | :--- | :--- |
 | 1 | 過去の構造も描くか | **過去も描く**（最新は色付き・過去はグレー）。TV 版の既定と同じ |
-| 2 | 長さ帯 | **2〜10 固定**。UI からの変更は v1 では出さない |
+| 2 | 長さ帯 | **2〜5 固定**（当初 2〜10。2026-08-26 にスクリーナー側と揃えて変更。`structure_pivot_screener_plan.md` §2.2）。UI からの変更は v1 では出さない |
 | 3 | 作業ブランチ | **専用ワークツリー** `worktree-structure-pivot-chart`。進行中4タスクのコミットを引き継がないよう **main を基点**にした |
 
 ## 5. 実装順序と進捗チェックリスト

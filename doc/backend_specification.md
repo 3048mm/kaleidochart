@@ -645,7 +645,7 @@ ticker を永続キーにする設計は「DB を作り直しても追随でき�
 | :--- | :--- |
 | **実体** | `indicators/structure_pivot.py`（pandas 非依存の純 numpy 関数） |
 | **ルータ** | `api/chart_router.py::build_structure_pivot_response()` ＋ 同名の薄いルータ |
-| **クエリ** | `full_range`（既定 false。true で Parquet マスターの全期間）／`min_len`（既定2）／`max_len`（既定10） |
+| **クエリ** | `full_range`（既定 false。true で Parquet マスターの全期間）／`min_len`（既定2）／`max_len`（既定5） |
 | **レスポンス** | `metadata` ＋ `structures`（履歴）＋ `current`（生存中の構造 or null） |
 
 **T3 (`indicators`) にはカラムを持たない。** 1銘柄あたり最大2,000本程度で

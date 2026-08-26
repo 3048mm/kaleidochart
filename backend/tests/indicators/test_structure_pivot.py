@@ -213,3 +213,91 @@ def test_returns_structure_dataclass(base_series):
                   'pivot_index', 'pivot_price', 'confirmed_index', 'end_index',
                   'invalidated', 'is_current'):
         assert getattr(s, field) is not None
+
+
+# ============================================================
+# 既定の長さ帯（設計判断の固定）
+# ============================================================
+
+def test_default_length_band_is_2_to_5():
+    """既定帯は 2-5。チャート表示と T3（スクリーナー）で同じ水準を見るための約束。
+
+    片方だけ変えると「画面で見えている水準」と「スクリーニングされる水準」が
+    食い違う。変更するときは両方の仕様書も直すこと
+    （doc/in_progress/structure_pivot_screener_plan.md §2.2）。
+    """
+    from indicators.structure_pivot import DEFAULT_MAX_LEN, DEFAULT_MIN_LEN
+
+    assert (DEFAULT_MIN_LEN, DEFAULT_MAX_LEN) == (2, 5)
+
+
+# ============================================================
+# structure_pivot_series — T3 用の時系列 API
+# ============================================================
+
+def test_series_returns_nan_where_no_structure(base_series):
+    """構造が生きていないバーは NaN。確定前も NaN でなければならない。"""
+    from indicators.structure_pivot import structure_pivot_series
+
+    high, low, close = base_series
+    sp_pivot, sp_hl = structure_pivot_series(high, low, close)
+
+    assert sp_pivot.shape == low.shape
+    assert sp_hl.shape == low.shape
+    # idx22 で確定するので、それ以前は全て NaN（= 先読みが無い）
+    assert np.isnan(sp_pivot[:22]).all()
+    assert np.isnan(sp_hl[:22]).all()
+
+
+def test_series_matches_find_structures(base_series):
+    """時系列 API と描画用 API が同じ構造を指すこと。
+
+    両者は同じ `_scan_for_length` を使うので、食い違うとしたら勝者選択のズレ。
+    """
+    from indicators.structure_pivot import find_structures, structure_pivot_series
+
+    high, low, close = base_series
+    sp_pivot, sp_hl = structure_pivot_series(high, low, close)
+    structures = find_structures(high, low, close)
+
+    assert len(structures) == 1
+    s = structures[0]
+    for t in range(s.confirmed_index, s.end_index + 1):
+        assert sp_pivot[t] == pytest.approx(s.pivot_price)
+        assert sp_hl[t] == pytest.approx(s.hl_price)
+
+
+def test_series_clears_after_invalidation(broken_series):
+    """HL 割れ以降は NaN に戻る。"""
+    from indicators.structure_pivot import structure_pivot_series
+
+    high, low, close = broken_series
+    sp_pivot, sp_hl = structure_pivot_series(high, low, close)
+
+    assert not np.isnan(sp_pivot[25])      # 生存最終バー
+    assert np.isnan(sp_pivot[26:]).all()   # idx26 で HL 割れ
+    assert np.isnan(sp_hl[26:]).all()
+
+
+def test_series_hl_is_below_pivot_where_defined(base_series):
+    """定義されているバーでは必ず HL < ピボット（構造の前提）。"""
+    from indicators.structure_pivot import structure_pivot_series
+
+    high, low, close = base_series
+    sp_pivot, sp_hl = structure_pivot_series(high, low, close)
+    defined = ~np.isnan(sp_pivot)
+
+    assert defined.any()
+    assert (sp_hl[defined] < sp_pivot[defined]).all()
+
+
+@pytest.mark.parametrize('n', [0, 1, 10])
+def test_series_short_input_is_all_nan(n):
+    low = np.linspace(100, 90, n) if n else np.array([], dtype=np.float64)
+    from indicators.structure_pivot import structure_pivot_series
+
+    sp_pivot, sp_hl = structure_pivot_series(low + 1, low, low + 0.5)
+
+    assert sp_pivot.shape == (n,)
+    assert np.isnan(sp_pivot).all()
+    assert np.isnan(sp_hl).all()

@@ -73,6 +73,9 @@ export interface ChartDataPoint {
     is_rs_blue_dot?: number | null
     is_rs_red_dot?: number | null
     vcr?: number | null
+    /** 構造ピボット (LL-HL)。構造が生きていないバー・確定前は null */
+    sp_pivot?: number | null
+    sp_hl?: number | null
 
     // Bollinger Bands (Calculated on the fly)
     bb_upper?: number | null

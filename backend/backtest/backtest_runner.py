@@ -39,6 +39,51 @@ def load_config(config_path: str) -> dict:
         return tomli.load(f)
 
 
+def resolve_backtest_db_path(active_db_path, logger=None) -> str:
+    """バックテストが読む Parquet マスターの位置を決める DB パスを解決する。
+
+    優先順位: `STOCKTOOL_DB_PATH` > `init_db()` が設定した値 > `config.toml` > 既定。
+
+    **環境変数を最優先にする理由**（2026-08-26 に実際に事故った）:
+    `get_active_db_path()` は `init_db()` が設定するモジュールグローバルを返す。
+    本モジュールは `backend.db.database` を import しているが、
+    `optimization_runner` は `db.database`（PYTHONPATH=backend 形式）で `init_db` する。
+    **Python はこの2つを別モジュール実体として扱う**ため、ここでは None のままになり、
+    環境変数を無視して `config.toml` の本番 DB へフォールバックしていた
+    ＝ Sandbox を指定しても本番 Parquet を読んでいた。
+    import 形式の混在は既存の規約（CLAUDE.md）なので解消せず、**この関数を
+    唯一の解決経路にして環境変数を勝たせる**ことで塞ぐ。
+
+    さらに、`init_db()` 済みの値が環境変数と食い違う場合は**警告を出す**。
+    「初期化はしたが別の DB を指していた」も同じく隔離が破れている状態のため。
+    """
+    import os
+    import pathlib
+    import logging
+
+    log = logger or logging.getLogger(__name__)
+    env_path = os.environ.get("STOCKTOOL_DB_PATH")
+
+    if env_path:
+        if active_db_path and os.path.abspath(active_db_path) != os.path.abspath(env_path):
+            log.warning(
+                "STOCKTOOL_DB_PATH (%s) と初期化済み DB (%s) が食い違っています。"
+                "環境変数を優先します（Sandbox 隔離を守るため）。", env_path, active_db_path)
+        return env_path
+
+    if active_db_path:
+        return active_db_path
+
+    try:
+        import tomllib
+        config_path = pathlib.Path(__file__).parents[2] / "config.toml"
+        with open(config_path, "rb") as f:
+            config = tomllib.load(f)
+            return config.get("system", {}).get("db_path", "data/stocktool.db")
+    except Exception:
+        return "data/stocktool.db"
+
+
 def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = False):
     """
     Preload all required data into pandas DataFrames.
@@ -61,17 +106,7 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
     t0 = time.time()
     
     # 1. Determine active DB path & Parquet master directory
-    db_path = get_active_db_path()
-    if not db_path:
-        # Fallback to loading from config.toml
-        try:
-            import tomllib
-            config_path = pathlib.Path(__file__).parents[2] / "config.toml"
-            with open(config_path, "rb") as f:
-                config = tomllib.load(f)
-                db_path = config.get("system", {}).get("db_path", "data/stocktool.db")
-        except Exception:
-            db_path = "data/stocktool.db"
+    db_path = resolve_backtest_db_path(get_active_db_path())
             
     parquet_dir = get_parquet_master_dir(db_path)
     pointer_file = get_pointer_file_path(parquet_dir)

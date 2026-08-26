@@ -17,6 +17,7 @@ import tomli
 from db.models import Indicator, RelativeRank
 from indicators.screener_filters import SPECIAL_FILTER_KEYS
 
+from indicators import screener_registry
 from indicators.screener_registry import (
     resolve_filter_spec,
     resolve_required_columns,
@@ -32,11 +33,11 @@ from indicators.screener_registry import (
 # テスト用ヘルパー: 実カラム集合の構築（§3.1.2 「known_columns の供給元」に準拠）
 # ============================================================
 
-# screener_router.py の _VIRTUAL_COLUMNS と同じ5種（データベース実カラムではなく計算列）
-_VIRTUAL_COLUMNS = {
-    "change_oc_pct", "change_intraday_pct",
-    "dist_ema21_pct", "dist_21ema_pct", "dist_sma50_pct",
-}
+# 仮想カラム（データベース実カラムではなく計算列）。
+# **レジストリを唯一の定義場所として参照する。** ここに一覧を複製すると、
+# 仮想カラムを追加したときにテストだけが古い集合を見て偽陰性/偽陽性になる
+# （実際 sp_dist_pivot_pct 追加時にこのテストだけが落ちた）。
+_VIRTUAL_COLUMNS = set(screener_registry.VIRTUAL_COLUMNS)
 
 
 def _real_known_columns() -> set:

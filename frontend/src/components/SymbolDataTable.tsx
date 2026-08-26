@@ -148,6 +148,10 @@ export const SymbolDataTable: React.FC<SymbolDataTableProps> = ({ data }) => {
                         <th style={{ width: '60px', padding: '8px', textAlign: 'center', borderLeft: '1px solid #333' }}>RS MACD<br />Line</th>
                         <th style={{ width: '60px', padding: '8px', textAlign: 'center' }}>RS MACD<br />Signal</th>
                         <th style={{ width: '60px', padding: '8px', textAlign: 'center' }}>RS MACD<br />Hist</th>
+
+                        {/* Structure Pivot (LL-HL) */}
+                        <th style={{ width: '65px', padding: '8px', textAlign: 'center', borderLeft: '1px solid #333', color: '#00bcd4' }}>Pivot</th>
+                        <th style={{ width: '65px', padding: '8px', textAlign: 'center', color: '#00bcd4' }}>Pivot<br />HL</th>
  
                         {/* Volume Analysis */}
                         <th style={{ width: '65px', padding: '8px', textAlign: 'center', borderLeft: '1px solid #333' }}>Vol<br />Surge<br />SMA21</th>
@@ -272,6 +276,10 @@ export const SymbolDataTable: React.FC<SymbolDataTableProps> = ({ data }) => {
                                 <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: '#888' }}>{formatN(d.rs_macd_line_21, 4)}</td>
                                 <td style={{ padding: '6px 8px', textAlign: 'right', color: '#888' }}>{formatN(d.rs_macd_signal_21, 4)}</td>
                                 <td style={{ padding: '6px 8px', textAlign: 'right', color: getChgColor(d.rs_macd_hist_21) }}>{formatN(d.rs_macd_hist_21, 4)}</td>
+
+                                {/* Structure Pivot: 構造が生きていないバーは NULL */}
+                                <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: '#00bcd4' }}>{formatN(d.sp_pivot, 2)}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', color: '#00bcd4' }}>{formatN(d.sp_hl, 2)}</td>
  
                                 {/* Volume */}
                                 <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: (d.vol_surge_21 || 0) > 2 ? appConfig.colors.good : 'inherit' }}>{formatN(d.vol_surge_21, 2)}</td>
