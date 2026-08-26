@@ -403,9 +403,13 @@ export interface StructurePivot {
     ll_price: number
     hl_date: string
     hl_price: number
-    /** LL と HL の間の最高値。ブレイクアウト・トリガー */
+    /** LL と HL の間の最高値。ブレイクアウト・トリガー（オリジナル版の "2nd"） */
     pivot_date: string
     pivot_price: number
+    /** HL を起点に (pivot - hl) を伸ばした fib 水準。オリジナル版の 1st / TP1 / TP2 */
+    fib_1st_price: number
+    tp1_price: number
+    tp2_price: number
     /** 構造が確定した日。HL の日付ではない（ピボットは length 本遅れて確定する） */
     confirmed_date: string
     /** 構造が生きていた最後の日 */

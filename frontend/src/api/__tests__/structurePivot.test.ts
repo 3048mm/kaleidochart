@@ -7,6 +7,8 @@ const make = (over: Partial<StructurePivot>): StructurePivot => ({
     ll_date: '2026-04-01', ll_price: 100,
     hl_date: '2026-04-10', hl_price: 105,
     pivot_date: '2026-04-05', pivot_price: 120,
+    // HL=105 / pivot=120 -> range=15。1st=105+15*0.618, TP1=105+15*1.764, TP2=105+15*2.618
+    fib_1st_price: 114.27, tp1_price: 131.46, tp2_price: 144.27,
     confirmed_date: '2026-04-13', end_date: '2026-04-20',
     invalidated: false, is_current: false, broken_at_confirmation: false,
     ...over,
@@ -18,12 +20,25 @@ const ALL_DATES = [
 const LAST_DATE = ALL_DATES[ALL_DATES.length - 1]
 
 describe('buildStructureSegments', () => {
-    it('現在の構造は LL→HL とピボット水準の2本になる', () => {
+    it('現在の構造は LL→HL・2nd・1st・TP1・TP2 の5本になる', () => {
         const segments = buildStructureSegments([make({ is_current: true })], ALL_DATES)
 
-        expect(segments.map(s => s.role)).toEqual(['current-structure', 'current-pivot'])
+        expect(segments.map(s => s.role)).toEqual(
+            ['current-structure', 'current-pivot', 'current-1st', 'current-tp1', 'current-tp2'])
         expect(segments[0]).toMatchObject({ from: '2026-04-01', fromValue: 100, to: '2026-04-10', toValue: 105 })
         expect(segments[1]).toMatchObject({ from: '2026-04-05', fromValue: 120, to: '2026-04-20', toValue: 120 })
+    })
+
+    it('1st / TP1 / TP2 は HL から右端まで水平に引く', () => {
+        const [, , first, tp1, tp2] = buildStructureSegments([make({ is_current: true })], ALL_DATES)
+
+        for (const seg of [first, tp1, tp2]) {
+            expect(seg.from).toBe('2026-04-10')      // HL の位置が起点
+            expect(seg.to).toBe(LAST_DATE)
+            expect(seg.fromValue).toBe(seg.toValue)  // 水平
+        }
+        expect(first.fromValue).toBeLessThan(tp1.fromValue)
+        expect(tp1.fromValue).toBeLessThan(tp2.fromValue)
     })
 
     it('履歴はピボット水準だけを残す（構造線は引かない）', () => {
@@ -47,7 +62,9 @@ describe('buildStructureSegments', () => {
         const segments = buildStructureSegments(
             [make({ is_current: true, end_date: '2099-01-01' })], ALL_DATES)
 
-        expect(segments.map(s => s.role)).toEqual(['current-structure'])
+        // 2nd は end_date が期間外なので落ちるが、1st / TP は右端まで引くので残る
+        expect(segments.map(s => s.role)).toEqual(
+            ['current-structure', 'current-1st', 'current-tp1', 'current-tp2'])
     })
 
     it('履歴は上限本数まで、新しい方から残す', () => {

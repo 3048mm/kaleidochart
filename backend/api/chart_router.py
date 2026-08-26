@@ -888,8 +888,21 @@ def _load_ohlc_for_structure(symbol_id: int, db: Session, full_range: bool):
     return dates, high, low, close
 
 
-def _structure_to_dict(s, dates: List[str]) -> Dict[str, Any]:
-    """インデックスを日付文字列へ置き換えてフロントへ返す形にする。"""
+#: fib 比率の既定値（改良版 Advanced Structure Pivot と同じ）
+#: 1st = 早いエントリー候補 / TP1・TP2 = 利確目標。いずれも HL とピボットから導かれる
+DEFAULT_FIB_1ST = 0.618
+DEFAULT_FIB_TP1 = 1.764
+DEFAULT_FIB_TP2 = 2.618
+
+
+def _structure_to_dict(s, dates: List[str], fib_1st: float = DEFAULT_FIB_1ST,
+                       tp1: float = DEFAULT_FIB_TP1, tp2: float = DEFAULT_FIB_TP2) -> Dict[str, Any]:
+    """インデックスを日付文字列へ置き換えてフロントへ返す形にする。
+
+    fib 水準は HL を起点、`pivot - hl` をレンジとした拡張。
+    構造そのものは変わらないので、比率はレスポンス生成時に掛けるだけでよい。
+    """
+    fib_range = s.pivot_price - s.hl_price
     return {
         "length": s.length,
         "ll_date": dates[s.ll_index],
@@ -898,6 +911,10 @@ def _structure_to_dict(s, dates: List[str]) -> Dict[str, Any]:
         "hl_price": s.hl_price,
         "pivot_date": dates[s.pivot_index],
         "pivot_price": s.pivot_price,
+        # 改良版 Advanced Structure Pivot と同じ呼び方: 本ピボット = 2nd
+        "fib_1st_price": s.hl_price + fib_range * fib_1st,
+        "tp1_price": s.hl_price + fib_range * tp1,
+        "tp2_price": s.hl_price + fib_range * tp2,
         "confirmed_date": dates[s.confirmed_index],
         "end_date": dates[s.end_index],
         "invalidated": s.invalidated,
@@ -912,6 +929,9 @@ def build_structure_pivot_response(
     full_range: bool = False,
     min_len: int = DEFAULT_MIN_LEN,
     max_len: int = DEFAULT_MAX_LEN,
+    fib_1st: float = DEFAULT_FIB_1ST,
+    fib_tp1: float = DEFAULT_FIB_TP1,
+    fib_tp2: float = DEFAULT_FIB_TP2,
 ) -> Dict[str, Any]:
     """LL-HL 構造ピボットをオンザフライで計算して返す（チャート描画用）。
 
@@ -930,13 +950,16 @@ def build_structure_pivot_response(
 
     dates, high, low, close = _load_ohlc_for_structure(symbol_id, db, full_range)
     structures = find_structures(high, low, close, min_len=min_len, max_len=max_len)
-    items = [_structure_to_dict(s, dates) for s in structures]
+    items = [_structure_to_dict(s, dates, fib_1st, fib_tp1, fib_tp2) for s in structures]
 
     return {
         "metadata": {
             "ticker": symbol.ticker,
             "min_len": min_len,
             "max_len": max_len,
+            "fib_1st": fib_1st,
+            "fib_tp1": fib_tp1,
+            "fib_tp2": fib_tp2,
             "bars": len(dates),
         },
         "structures": items,
@@ -951,6 +974,9 @@ def get_structure_pivot_data(
     full_range: bool = Query(False),
     min_len: int = Query(DEFAULT_MIN_LEN, ge=1, le=50),
     max_len: int = Query(DEFAULT_MAX_LEN, ge=1, le=50),
+    fib_1st: float = Query(DEFAULT_FIB_1ST, gt=0.0, le=1.0),
+    fib_tp1: float = Query(DEFAULT_FIB_TP1, gt=1.0, le=5.0),
+    fib_tp2: float = Query(DEFAULT_FIB_TP2, gt=1.0, le=5.0),
 ):
     """`build_structure_pivot_response` の薄いラッパ。
 
@@ -958,4 +984,5 @@ def get_structure_pivot_data(
     Query オブジェクトのまま渡り（かつ truthy）、条件分岐を静かに壊すため、
     実処理は素の引数を取る純関数側に置く。
     """
-    return build_structure_pivot_response(symbol_id, db, full_range, min_len, max_len)
+    return build_structure_pivot_response(symbol_id, db, full_range, min_len, max_len,
+                                         fib_1st, fib_tp1, fib_tp2)
