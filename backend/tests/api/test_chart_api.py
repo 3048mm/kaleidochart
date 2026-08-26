@@ -144,3 +144,18 @@ def test_structure_pivot_unknown_symbol_returns_404(db_session):
         build_structure_pivot_response(symbol_id=999, db=db_session)
 
     assert exc.value.status_code == 404
+
+
+def test_chart_data_exposes_structure_pivot_columns(seed_chart_data):
+    """/chart のレスポンスに sp_pivot / sp_hl が含まれること。
+
+    DATA VIEW の Pivot / Pivot HL 列はここから値を読む。T3 に列を足し、
+    フロント側に表示を足しても、**この供給経路を配線し忘れると列は常に空になる**
+    （2026-08-26 に実際に発生。本番昇格後の動作確認で発覚した）。
+    """
+    resp = get_chart_data(symbol_id=1, db=seed_chart_data)
+    data = json.loads(resp.body)["data"]
+
+    assert data, "チャートデータが空"
+    assert "sp_pivot" in data[-1], "chart API が sp_pivot を返していない"
+    assert "sp_hl" in data[-1], "chart API が sp_hl を返していない"
