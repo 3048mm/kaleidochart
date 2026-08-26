@@ -408,7 +408,7 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
         });
         // --- Structure Pivot: 現在生きている構造の LL / HL ---
         if (showStructurePivot) {
-            buildStructureMarkers(structures, new Set(data.map(d => d.time))).forEach(m => {
+            buildStructureMarkers(structures, data.map(d => d.time)).forEach(m => {
                 markers.push({
                     time: m.time as any,
                     position: 'belowBar',
@@ -480,7 +480,7 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
         structureSeriesRef.current = [];
 
         if (showStructurePivot && structures.length > 0) {
-            const segments = buildStructureSegments(structures, new Set(data.map(d => d.time)));
+            const segments = buildStructureSegments(structures, data.map(d => d.time));
             segments.forEach(seg => {
                 const series = chart.addLineSeries({
                     color: seg.color, lineWidth: seg.width, lineStyle: seg.style,

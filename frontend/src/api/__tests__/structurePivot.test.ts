@@ -12,10 +12,10 @@ const make = (over: Partial<StructurePivot>): StructurePivot => ({
     ...over,
 })
 
-const timesOf = (...dates: string[]) => new Set(dates)
-
-const ALL_DATES = timesOf(
-    '2026-04-01', '2026-04-05', '2026-04-10', '2026-04-13', '2026-04-20', '2026-04-25')
+/** 順序付きの日付配列。右端（最後の要素）が履歴線の終点になる */
+const ALL_DATES = [
+    '2026-04-01', '2026-04-05', '2026-04-10', '2026-04-13', '2026-04-20', '2026-04-25']
+const LAST_DATE = ALL_DATES[ALL_DATES.length - 1]
 
 describe('buildStructureSegments', () => {
     it('現在の構造は LL→HL とピボット水準の2本になる', () => {
@@ -31,6 +31,15 @@ describe('buildStructureSegments', () => {
 
         expect(segments).toHaveLength(1)
         expect(segments[0].role).toBe('history-pivot')
+    })
+
+    it('履歴のピボット線は右端まで延長する', () => {
+        // 死んだバー（end_date）で打ち切ると短すぎて見えないため、TV 版と同じく延長する
+        const segments = buildStructureSegments(
+            [make({ is_current: false, end_date: '2026-04-13' })], ALL_DATES)
+
+        expect(segments[0].to).toBe(LAST_DATE)
+        expect(segments[0].from).toBe('2026-04-05')   // ピボット足の位置は動かさない
     })
 
     it('両端の日付がチャートに無い線分は捨てる', () => {

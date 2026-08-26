@@ -53,20 +53,26 @@ export async function fetchStructurePivot(
  */
 export function buildStructureSegments(
     structures: StructurePivot[],
-    times: Set<string>,
+    dates: string[],
     historyLimit: number = STRUCTURE_HISTORY_LIMIT,
 ): StructureSegment[] {
+    const times = new Set(dates)
+    const lastDate = dates[dates.length - 1]
     const segments: StructureSegment[] = []
     const push = (seg: StructureSegment) => {
         if (times.has(seg.from) && times.has(seg.to)) segments.push(seg)
     }
 
+    // 履歴のピボット水準は**右端まで延長する**（TradingView 版と同じ挙動）。
+    // 死んだバーで打ち切ると、帯 2-5 では構造の寿命が中央値14本＝画面幅の約3%しかなく、
+    // 点線が短すぎて視認できない（2026-08-27 の実測で判明）。
+    // 「過去にピボットだった価格帯が今どこにあるか」が読めることがこの表示の実用価値。
     structures
         .filter(s => !s.is_current)
         .slice(-historyLimit)
         .forEach(s => push({
             from: s.pivot_date, fromValue: s.pivot_price,
-            to: s.end_date, toValue: s.pivot_price,
+            to: lastDate, toValue: s.pivot_price,
             color: HISTORY_COLOR, width: 1, style: DOTTED, role: 'history-pivot',
         }))
 
@@ -89,8 +95,9 @@ export function buildStructureSegments(
 /** 現在生きている構造の LL / HL にだけマーカーを付ける（履歴まで付けると読めなくなる）。 */
 export function buildStructureMarkers(
     structures: StructurePivot[],
-    times: Set<string>,
+    dates: string[],
 ): StructureMarker[] {
+    const times = new Set(dates)
     const markers: StructureMarker[] = []
     structures.filter(s => s.is_current).forEach(s => {
         if (times.has(s.ll_date)) markers.push({ time: s.ll_date, text: 'LL', color: CURRENT_COLOR })
