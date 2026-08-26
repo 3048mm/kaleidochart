@@ -63,6 +63,17 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
     # 1. Determine active DB path & Parquet master directory
     db_path = get_active_db_path()
     if not db_path:
+        # STOCKTOOL_DB_PATH を config.toml より先に見る。
+        # get_active_db_path() は init_db() が設定するモジュールグローバルを返すが、
+        # 本モジュールは `backend.db.database` を import しており、
+        # `db.database`（PYTHONPATH=backend 形式）で init_db した呼び出し元とは
+        # **別のモジュール実体**になる（CLAUDE.md「import 規約」の混在問題）。
+        # optimization_runner はこの経路で初期化するためここが None になり、
+        # 環境変数を無視して config.toml の本番 DB へフォールバックしていた
+        # ＝ Sandbox を指定しても本番 Parquet を読む（2026-08-26 に実際に発生）。
+        import os as _os
+        db_path = _os.environ.get("STOCKTOOL_DB_PATH")
+    if not db_path:
         # Fallback to loading from config.toml
         try:
             import tomllib

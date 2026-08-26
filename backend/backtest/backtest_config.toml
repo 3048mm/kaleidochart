@@ -679,3 +679,25 @@ max_sp_dist_pivot_pct    = { type = "float", min = 1.0, max = 5.0, step = 0.5 }
 min_dist_52w_high_pct    = { type = "float", min = -15.0, max = -2.5, step = 2.5 }
 max_vcr                  = { type = "float", min = 0.5, max = 0.9, step = 0.05 }
 min_up_down_vol_ratio_50 = { type = "float", min = 1.0, max = 2.5, step = 0.25 }
+
+
+# 対照群: H1 から構造ピボットの2キーだけを抜いたもの。
+# それ以外の条件・探索レンジ・検出件数ゲートは H1 と完全に揃える。
+# 「構造ピボットがその席に見合う寄与をしているか」を、**両者を最適化した上で**比較するため。
+# （2026-08-26: 素のアブレーションは検出件数が 360 vs 4,805 と桁違いになり比較が成立しなかった）
+[[strategy]]
+name = "H1c_no_pivot_control"
+description = "対照: H1 から構造ピボットを抜き、残りの条件だけを同じレンジで最適化する"
+max_hits_per_day = 10
+sort_column = "rs_ratio_rank_e21"
+sort_ascending = false
+min_dist_52w_high_pct = -10.0
+max_vcr = 0.7
+min_up_down_vol_ratio_50 = 1.5
+max_allowed_dd = 30.0
+min_avg_hits_per_day = 0.3
+
+[strategy.optimization]
+min_dist_52w_high_pct    = { type = "float", min = -15.0, max = -2.5, step = 2.5 }
+max_vcr                  = { type = "float", min = 0.5, max = 0.9, step = 0.05 }
+min_up_down_vol_ratio_50 = { type = "float", min = 1.0, max = 2.5, step = 0.25 }
