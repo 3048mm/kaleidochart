@@ -186,9 +186,18 @@ $env:STOCKTOOL_DB_PATH = "data/stocktool_restoring.db"
 | 2 | `restore_fx_from_generation.py --from <退避先>` | **`fx_rates` が直近30日だけになる**（7,717→23行）。§8 と同じ事故の3度目 |
 | 3 | `recompute_parquet_ranks.py --apply` | 1 で履歴が増えると横断的な T4 が変わる。**`--rebuild-from T4` は使わない**（730日窓しか埋まらない） |
 | 4 | `truncate_symbol_history.py` を再適用 | 逆さ合併の切り詰めは再取得で戻る（`JBIO` 318→1280行） |
-| 5 | `run_production_restore.py` | SQLite を Parquet から作り直す |
-| 6 | `remap_user_data_symbol_ids.py --apply` | **`symbols.id` が再採番される**（後述） |
-| 7 | `scan_price_anomalies.py` / `tools/db_health_check.py` | 検収 |
+| 5 | **`reapply_corrections.py --apply`**（または `run/tool/reapply_corrections.bat`） | **手で当てた価格補正が全部巻き戻る。** 未調整の分割（`BYND` 1:30 / `MNST` 2:1）と `ffill` の捏造行（`AVB`）が該当。台帳は `data/price_corrections.toml` |
+| 6 | `run_production_restore.py` | SQLite を Parquet から作り直す |
+| 7 | `remap_user_data_symbol_ids.py --apply` | **`symbols.id` が再採番される**（後述） |
+| 8 | `scan_price_anomalies.py` / `tools/db_health_check.py` | 検収 |
+
+> [!NOTE]
+> **4 と 5 は同じ性質の作業**（人が判断して当てた修正の再生）。5 は台帳を持つので
+> **`--dry-run` で「何が再適用されるか」を先に見せる**。既に正しいものは接合部の検算で
+> 弾かれて「適用不要」と報告されるため、**全件を通しで走らせてよい**。
+> 台帳は推定値を作らない — 人が書いた比率をそのまま再生するだけ
+> （自動で補正値を割り出す案は 2026-08-06 に見送っている。
+>  `doc/completed/split_anomaly_noise_reduction_plan.md` §8）。
 
 ### 落とし穴1: `symbols.id` が再採番される
 
