@@ -17,6 +17,18 @@ from api import schemas
 from api.deps import get_api_db
 from api.screener_cross_section import load_cross_section
 from indicators.screener_filters import SPECIAL_FILTER_KEYS
+
+#: 特殊ブールフィルタの表示名。未定義のキーはキー名から自動生成されるので、
+#: ここへの追加は必須ではない（入れ忘れても画面には出る）。
+_SPECIAL_FILTER_LABELS = {
+    "is_rs_ratio_rank_e21_gt_e63": "RS Ratio Rank 21 > 63",
+    "is_theme_rs_ratio_e21_gt_e63": "Theme RS21 > RS63",
+    "rrg_leading_in": "RRG Leading In",
+    "rrg_lagging_in": "RRG Lagging In",
+    "rrg_improving_in": "RRG Improving In",
+    "is_vcp_breakout": "VCP Breakout",
+    "is_structure_1st_break": "Structure 1st Pivot Break",
+}
 from indicators import screener_registry
 
 logger = logging.getLogger(__name__)
@@ -235,6 +247,19 @@ def get_screener_meta(db: Session = Depends(get_api_db)):
         label = _COLUMN_LABELS.get(vc_name, vc_name.replace("_", " ").title())
         virtual.append(schemas.ScreenerColumnMeta(name=vc_name, label=label, category=cat, type="float", step=0.1))
 
+    # 特殊ブールフィルタ。唯一の定義場所（SPECIAL_FILTER_KEYS）から導出する。
+    # フロントでハードコードすると、フィルタを足すたびに入れ忘れる（実際に起きた）。
+    special = [
+        schemas.ScreenerColumnMeta(
+            name=key,
+            label=_SPECIAL_FILTER_LABELS.get(key, key.replace("_", " ").title()),
+            category="Special",
+            type="bool",
+            step=1.0,
+        )
+        for key in sorted(SPECIAL_FILTER_KEYS)
+    ]
+
     # T4 rank indicator names (relative_ranks テーブル of ランクカラム名)
     rank_names = [
         'rs_value_rank',
@@ -248,6 +273,7 @@ def get_screener_meta(db: Session = Depends(get_api_db)):
         columns=columns, 
         rank_indicators=rank_names, 
         virtual_columns=virtual,
+        special_filters=special,
         labels=_COLUMN_LABELS
     )
 

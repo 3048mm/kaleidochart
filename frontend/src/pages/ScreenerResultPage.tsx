@@ -22,21 +22,15 @@ interface MetaResponse {
     columns: ColumnMeta[];
     rank_indicators: string[];
     virtual_columns: ColumnMeta[];
+    /** 特殊ブールフィルタ。詳細スクリーン条件のトグルはこれから生成する */
+    special_filters?: ColumnMeta[];
     labels?: Record<string, string>;
 }
 
-// Hard-wired boolean filters that cannot be expressed as simple min/max
-const BOOLEAN_FILTERS = [
-    { id: 'is_rs_ratio_rank_e21_gt_e63', label: 'RS Ratio Rank 21 > 63', param: 'is_rs_ratio_rank_e21_gt_e63' },
-    { id: 'is_theme_rs_ratio_e21_gt_e63', label: 'Theme RS21 > RS63', param: 'is_theme_rs_ratio_e21_gt_e63' },
-    { id: 'rrg_leading_in', label: 'RRG Leading In', param: 'rrg_leading_in' },
-    { id: 'rrg_lagging_in', label: 'RRG Lagging In', param: 'rrg_lagging_in' },
-    { id: 'rrg_improving_in', label: 'RRG Improving In', param: 'rrg_improving_in' },
-    // 構造ピボット (LL-HL) の 1st Pivot(fib 0.618) 当日上抜け。
-    // 「LL-HL 構造を持つこと」は sp_pivot / sp_hl が NULL の行が比較で落ちることで
-    // 暗黙に担保されるため、別途の条件は要らない。
-    { id: 'is_structure_1st_break', label: 'Structure 1st Pivot Break', param: 'is_structure_1st_break' },
-];
+// 特殊ブールフィルタ（min/max では表現できない条件）の一覧は **API から取得する**。
+// 以前はここにハードコードしており、バックエンドに16件あるのに画面には5件しか
+// 出ていなかった（特殊フィルタを足すたびに入れ忘れる構造だった）。
+// 唯一の定義場所は backend の screener_filters.SPECIAL_FILTER_KEYS。
 
 // --- Dynamic Filter Row ---
 const DynFilterRow: React.FC<{
@@ -482,9 +476,9 @@ export const ScreenerResultPage: React.FC = () => {
                             <div style={{ fontSize: '11px', color: appConfig.colors.accent, textTransform: 'uppercase', marginBottom: '8px', letterSpacing: '0.5px' }}>
                                 Special Conditions
                             </div>
-                            {BOOLEAN_FILTERS.map(bf => {
-                                const dynamicLabel = meta?.labels?.[bf.param] || bf.label;
-                                return <BoolFilterRow key={bf.id} label={dynamicLabel} param={bf.param} searchParams={queryParams} onChange={handleFilterChange} />;
+                            {(meta?.special_filters ?? []).map(bf => {
+                                const dynamicLabel = meta?.labels?.[bf.name] || bf.label;
+                                return <BoolFilterRow key={bf.name} label={dynamicLabel} param={bf.name} searchParams={queryParams} onChange={handleFilterChange} />;
                             })}
                         </div>
                     </div>

@@ -454,6 +454,10 @@ class ScreenerMetaResponse(BaseModel):
     columns: List[ScreenerColumnMeta]
     rank_indicators: List[str]
     virtual_columns: List[ScreenerColumnMeta]
+    #: 特殊ブールフィルタ（min/max では表現できない条件）。
+    #: フロントの詳細スクリーン条件はこの一覧からトグルを生成する。
+    #: 以前はフロント側のハードコードで、特殊フィルタ追加時の入れ忘れが常態化していた。
+    special_filters: List[ScreenerColumnMeta] = []
     labels: Optional[Dict[str, str]] = None
 
 class AvailableDatesResponse(BaseModel):
