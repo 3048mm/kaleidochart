@@ -6,13 +6,23 @@ export const STRUCTURE_HISTORY_LIMIT = 30
 
 const CURRENT_COLOR = '#00bcd4'
 const HISTORY_COLOR = 'rgba(255, 255, 255, 0.28)'
+// オリジナル版（Advanced Structure Pivot）の配色に寄せる:
+//   1st = 黄（早いエントリー） / 2nd = 水色（本ピボット） / TP = 灰（利確目標）
+const FIB_1ST_COLOR = '#e0b000'
+const TP_COLOR = 'rgba(200, 200, 200, 0.75)'
 
 /** lightweight-charts の lineStyle（既存コードに合わせて数値で持つ） */
 const SOLID = 0
 const DOTTED = 1
 const DASHED = 2
 
-export type StructureSegmentRole = 'history-pivot' | 'current-structure' | 'current-pivot'
+export type StructureSegmentRole =
+    | 'history-pivot'
+    | 'current-structure'
+    | 'current-pivot'      // オリジナル版の "2nd"
+    | 'current-1st'
+    | 'current-tp1'
+    | 'current-tp2'
 
 export interface StructureSegment {
     from: string
@@ -82,10 +92,26 @@ export function buildStructureSegments(
             to: s.hl_date, toValue: s.hl_price,
             color: CURRENT_COLOR, width: 1, style: DASHED, role: 'current-structure',
         })
+        // 2nd（本ピボット）: 太い実線
         push({
             from: s.pivot_date, fromValue: s.pivot_price,
             to: s.end_date, toValue: s.pivot_price,
             color: CURRENT_COLOR, width: 2, style: SOLID, role: 'current-pivot',
+        })
+        // 1st（fib 0.618 の早いエントリー候補）と TP1 / TP2。
+        // いずれも HL から右端まで引く（水準として読むものなので構造の終端で切らない）
+        const levels: [number, string, string, StructureSegmentRole][] = [
+            [s.fib_1st_price, FIB_1ST_COLOR, 'dashed', 'current-1st'],
+            [s.tp1_price, TP_COLOR, 'dashed', 'current-tp1'],
+            [s.tp2_price, TP_COLOR, 'dashed', 'current-tp2'],
+        ]
+        levels.forEach(([value, color, _style, role]) => {
+            if (!Number.isFinite(value)) return
+            push({
+                from: s.hl_date, fromValue: value,
+                to: lastDate, toValue: value,
+                color, width: 1, style: DASHED, role,
+            })
         })
     })
 
