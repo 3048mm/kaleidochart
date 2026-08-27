@@ -30,6 +30,7 @@ try:
         filter_theme_rs_trend_rank_s14_gt_s21,
         filter_theme_rs_trend_rank_s21_gt_s63,
         filter_structure_1st_break,
+        filter_structure_2nd_break,
         filter_vcp_breakout,
     )
     from indicators import screener_registry
@@ -50,6 +51,7 @@ except ModuleNotFoundError:
         filter_theme_rs_trend_rank_s14_gt_s21,
         filter_theme_rs_trend_rank_s21_gt_s63,
         filter_structure_1st_break,
+        filter_structure_2nd_break,
         filter_vcp_breakout,
     )
     from backend.indicators import screener_registry
@@ -481,6 +483,10 @@ def apply_filters_to_df(
         mask &= filter_rrg_lagging_in(merged)
     if strategy.get('rrg_improving_in') and 'prev_rs_ratio_e21' in merged.columns:
         mask &= filter_rrg_improving_in(merged, intensity_threshold)
+
+    # 構造ピボットの 2nd Pivot（本ピボット）上抜けイベント
+    if strategy.get('is_structure_2nd_break'):
+        mask &= filter_structure_2nd_break(merged)
 
     # 構造ピボットの 1st Pivot（fib 0.618）上抜けイベント
     if strategy.get('is_structure_1st_break'):

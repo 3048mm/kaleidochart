@@ -226,6 +226,12 @@ _SPECIAL_SPECS = {
     # （§3.1.4 (e) の「不足があれば宣言漏れとしてレジストリ側を直す」方針）。
     # 改良版 Advanced Structure Pivot の rt_1st_break。前日終値は change_1d_pct から
     # 復元するため prev_requires は不要（filter_vcp_breakout と同じ手法）。
+    'is_structure_2nd_break': FilterSpec(
+        key='is_structure_2nd_break', kind='special', column=None, op=None,
+        requires=('sp_pivot', 'change_1d_pct'),
+        prev_requires=(),
+        params=(),
+    ),
     'is_structure_1st_break': FilterSpec(
         key='is_structure_1st_break', kind='special', column=None, op=None,
         requires=('sp_pivot', 'sp_hl', 'change_1d_pct'),

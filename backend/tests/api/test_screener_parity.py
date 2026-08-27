@@ -118,8 +118,13 @@ def _stock_today_overrides(t: int) -> dict:
         # 構造ピボット。close=100 固定なので、そのまま % として読める値にしておく。
         #   hi : dist +1.0% / range 5.0% / risk 4.0%
         #   lo : dist +8.0% / range 20.0% / risk 12.0%
-        "sp_pivot": 101.0 if hi else 108.0,
-        "sp_hl": 96.0 if hi else 88.0,
+        # 1st / 2nd の**両方**を非退化にするため hi の中でさらに分ける。
+        # 前日終値は change_1d_pct から復元され hi=95.24 / lo=101.01 になる。
+        #   t=4,5 : pivot 99  -> 2nd Break 成立（95.24 <= 99 < 100）
+        #   t=6   : pivot 101 -> 1st Break 成立（fib1=96.8 を上抜け・pivot 未達）
+        #   lo    : pivot 108 -> どちらも不成立
+        "sp_pivot": (99.0 if t <= 5 else 101.0) if hi else 108.0,
+        "sp_hl": (96.0 if t <= 5 else 90.0) if hi else 88.0,
     }
 
 
