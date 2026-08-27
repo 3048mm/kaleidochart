@@ -495,6 +495,30 @@ def filter_structure_1st_break(
     return mask.fillna(False)
 
 
+def filter_structure_2nd_break(merged: pd.DataFrame) -> pd.Series:
+    """LL-HL 構造の 2nd Pivot（本ピボット）を当日上抜けたイベント。
+
+    作者は「2nd pivot が本来のエントリーポイント」と説明している。
+
+        rt_2nd_break = is_setup and close[1] <= break_val and close > break_val
+
+    **TP1 上限は付けない。** Pine の原文には `close <= tp1_price` の排他があるが、
+    作者が公開しているスクリーナー出力と突き合わせたところ、TP1 を超えた銘柄も
+    2nd のリストに含まれていた（2026-08-25 の BEAM: close 31.03 / pivot 28.47）。
+    上限を外すと3日分・27銘柄すべてが一致する（2026-08-27 検証）。
+
+    前日終値は `change_1d_pct` から復元する（`filter_structure_1st_break` と同じ）。
+    構造が生きていない行は `sp_pivot` が NULL なので自然に False になる。
+    """
+    required = ('sp_pivot', 'close', 'change_1d_pct')
+    if any(c not in merged.columns for c in required):
+        return pd.Series(False, index=merged.index)
+
+    prev_close = merged['close'] / (1 + merged['change_1d_pct'] / 100)
+    mask = (prev_close <= merged['sp_pivot']) & (merged['close'] > merged['sp_pivot'])
+    return mask.fillna(False)
+
+
 # ============================================================
 # 特殊ブールフィルタキーのレジストリ
 # ============================================================
