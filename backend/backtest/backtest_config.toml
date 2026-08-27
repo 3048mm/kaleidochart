@@ -733,3 +733,44 @@ min_avg_hits_per_day = 0.3
 [strategy.optimization]
 structure_fib_1st     = { type = "float", min = 0.382, max = 0.786, step = 0.068 }
 min_rs_ratio_rank_e21 = { type = "float", min = 0.6, max = 0.9, step = 0.05 }
+
+
+# --- 構造ピボット 2nd Break を軸にしたスクリーン ---
+# 作者が公開したスクリーナー出力（2026-08-19 / 08-20 / 08-25 / 08-26 の4日・26銘柄）と
+# 突き合わせて条件を決めた。1st / 2nd の検出自体は27/27で一致しており、
+# ここで足しているのは「作者がその後どう絞っているか」の推定。
+#
+# 4日実測（母集団は 2nd Break の生件数 187/55/101/67 件）:
+#   ベース条件のみ            残存 25/26  母集団 42/11/29/13
+#   ＋ 時価総額 >= $10億       残存 24/26  母集団 40/10/26/10
+#   ＋ 50SMA/ATR <= 6         残存 24/26  母集団 40/11/28/11
+# 作者の実数は 4/2/15/5 なのでまだ数倍多い。通過率が日によって 2%〜15% と
+# 振れるため固定閾値では合わせきれず、**上位N件で切っている可能性が高い**
+# （max_hits_per_day = 10 がその役割を果たす）。
+#
+# 採用しなかった条件（4日で検証して落ちたもの）:
+#   vol_surge_21 >= 1.0        全日で残存80%を保てない
+#   50SMA/ATR 2〜8 の下限       作者26件中18件しか入らない（0.2 や 0.5 が含まれる）
+#   dist_ema21 >= 7% / 売買代金 >= $25M   8/26 だけで成立し 8/25 で崩れた
+[[strategy]]
+name = "H3_structure_2nd_break"
+description = "構造ピボットの本ピボット上抜け × 値動きの大きさ × RS"
+max_hits_per_day = 10
+sort_column = "rs_ratio_rank_e21"
+sort_ascending = false
+is_structure_2nd_break = true
+min_dist_21ema_pct = 2.0        # 21EMA の上にいる
+min_adr_pct_21 = 4.0            # 動く銘柄。母集団をほぼ半減させる最も効いた条件
+min_rs_trend_s21 = 1.0          # SPY より強い
+# 流動性床は [general] が全戦略へ実行時注入するため戦略側には書かない
+min_market_cap = 3e8            # 作者リストを1件も落とさない水準
+max_sma50_atr_mult = 8.0        # 上限6だと 8/26 の CNXC(6.11) が落ちるため 8 から
+max_allowed_dd = 35.0
+min_avg_hits_per_day = 0.3
+
+[strategy.optimization]
+min_dist_21ema_pct       = { type = "float", min = 0.0, max = 5.0, step = 0.5 }
+min_adr_pct_21           = { type = "float", min = 2.0, max = 7.0, step = 0.5 }
+min_rs_trend_s21         = { type = "float", min = 0.95, max = 1.15, step = 0.025 }
+max_sma50_atr_mult       = { type = "float", min = 6.0, max = 10.0, step = 0.5 }
+min_market_cap           = { type = "categorical", choices = [1e7, 5e7, 1e8, 3e8, 1e9, 3e9, 1e10] }
