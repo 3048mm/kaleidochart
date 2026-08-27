@@ -1,6 +1,6 @@
 # IPO 銘柄の追加候補リストアップ 計画書
 
-- **ステータス**: 🚧 計画レビュー中
+- **ステータス**: 🚧 進行中（A/B/C 完了 — 判定ロジック・モデル・マイグレーション）
 - **実施者**: AI エージェント (Claude Opus 5) — オーケストレーター + implementer / test-writer へ委譲
 - **開始日**: 2026-08-27 / **完了日**: —
 - **作業ブランチ**: `worktree-ipo-candidates`（`.claude/worktrees/` 配下に作成）
@@ -64,6 +64,7 @@
 | 複数クラスが別々に上場している CIK を候補に出すか | **出さない。CIK ごと除外** | 実測 231 件の中身は社債(`FG/FGN/FGSN`)・優先株(`PDCC/PDPA`)・ワラント(`HUBC/HUBCW/HUBCZ`)・when-issued(`ALUR/ALURD`)で、**GOOGL/GOOG 型の本物のデュアルクラスは1件も無い**。現代のデュアルクラス IPO は Class A だけを上場し Class B/C はティッカーを持たないため単一ティッカーとして扱われる。さらに `CRBD/CRBG` のように接頭辞ルールが社債側を誤選択する例があり、曖昧なら落とす方が精度が高い。取りこぼしても既存 Universe 画面から手動追加できる |
 | ティッカーが全て ADR/外国 OTC の CIK | **丸ごと除外** | 国内普通株が存在しない。実測 873 CIK。Yahoo プローブが 5,114 → 約 4,000 件に減る |
 | SPAC 兄弟ティッカーを「ベース＋U/W/R」の完全一致で判定するか | **しない。末尾1文字が U/W/R か で判定** | SPAC は4文字の語幹でユニット・ワラントを上場し、普通株だけ3文字に短縮する（`JAB/JABRR/JABRU/JABRW`、`NCO/NCOOR/NCOOU/NCOOW`、`CAQ/CAQUU/CAQUW`）。完全一致では**SPAC 262 件を「複数クラス」と誤検知した**（計画レビュー中に実測して修正） |
+| SPAC フラグをユニット・ワラント両方で立てるか | **ユニットがある場合だけ立てる** | **ユニットは合併成立時に分離・消滅する**。ワラントだけ残るのは de-SPAC 済み＝既に実業会社。両方で立てると `SCAG`(Scage Future) `INV`(Innventure) `HPAI`(Helport AI) `FOXX` `KWM` `GCL` `YDES` を SPAC 扱いで捨ててしまい、「de-SPAC で生まれた実業会社を取り逃がさない」という本計画の目的に反する。実装後の実測で spac フラグが 539 → 339 件に減った（200 件が de-SPAC 済みとして解放） |
 | IPO 銘柄の指標欠損・スクリーナー露出 | **本計画のスコープ外** | ユーザー判断: 後続タスクで IPO 用スクリーナーを別途検討する |
 
 ## 3. 変更内容
@@ -222,12 +223,12 @@ cik_floor = 0                  # 縮退用。Yahoo が絞ってきたら 1900000
 
 ## 5. 実装順序と進捗チェックリスト
 
-- [ ] **A. 判定ロジック（純粋関数）のテスト作成** — `backend/tests/data_collection/test_ipo_discovery.py`
+- [x] **A. 判定ロジック（純粋関数）のテスト作成** — `backend/tests/data_collection/test_ipo_discovery.py`
       普通株選抜 / SPAC 判定（社名・兄弟ティッカー両方）/ 取引所完全一致 / 除外集合。
       実測で判明した具体例（`SCAG/SCAGW`、`EURK/EURKU`、`CXII/CXIIU/CXIIW`、`KPET/KPET-UN`、
       `NYSEArca` 前方一致、`BAC/BACRP`、`LLYVA/LLYVB/LLYVK`）を**そのままテストケースにする**
-- [ ] **B. `ipo_discovery.py` 実装** — A を green にする
-- [ ] **C. `ipo_candidates` テーブルのマイグレーション** — `backend/scripts/migrate_universe_ipo_candidates.py`（冪等・バックアップ自動取得）
+- [x] **B. `ipo_discovery.py` 実装** — A を green にする（95 テスト green）
+- [x] **C. `ipo_candidates` テーブルのマイグレーション** — `migrate_universe_ipo_candidates.py` + `models_universe.IpoCandidate`（冪等・バックアップ自動取得・8テスト）
 - [ ] **D. `scan_ipo_candidates.py` 実装** — `--dry-run` / `--apply` / `--bootstrap` / `--limit`。Yahoo スロットル込み
 - [ ] **E. 初回ブートストラップ実行**（`--dry-run` → 件数確認 → `--apply`）。`run_in_background` で実行
 - [ ] **F. API エンドポイント + テスト** — `backend/tests/api/test_universe_candidates.py`
@@ -243,7 +244,28 @@ cik_floor = 0                  # 縮退用。Yahoo が絞ってきたら 1900000
 
 ### 作業中メモ
 
-まだ着手していない。計画レビュー待ち。
+**現在地**: A / B / C 完了。次は D（`scan_ipo_candidates.py`）。
+
+`init_universe_db()` の `create_all()` がモデル定義からテーブルを作るため、
+マイグレーションスクリプトの役割は**バックアップ取得と作成結果の検証**。
+なお `create_all` は**既存テーブルに列を足さない**ので、後から列を増やすときは
+`ALTER TABLE` が必要（スクリプトが不足を検出して例外を投げるようにしてある）。
+
+`backend/data_collection/ipo_discovery.py` は**通信を一切しない純粋関数のみ**にしてある。
+SEC / Yahoo への通信は D の `scan_ipo_candidates.py` 側に置くこと（テスタビリティのため）。
+
+**ワークツリー特有のハマりどころ（2件）**:
+
+1. `data/` は git 管理外なので**ワークツリーに Parquet マスタが無い**。
+   `backend/tests/backtest/test_scenario_comparison.py::test_run_comparison_generates_outputs`
+   が `FileNotFoundError: Parquet master cache files not found` で必ず落ちる。
+   **本体では通る**ので実装起因ではない。ワークツリーでの全テストは
+   この1件の失敗を織り込んで読むこと。
+2. `config.local.toml` は git 管理外なので
+**ワークツリーには存在しない**。`SecClient()` がそのままでは
+`ValueError: SEC への連絡先が未設定です` で落ちる。実データ検証時は
+`SecClient(project_root=r'd:/My Documents/Programing/stocktool')` と本体を指すか、
+環境変数 `STOCKTOOL_SEC_CONTACT` を設定する。
 
 ## 6. 検証プラン / 結果
 
@@ -259,12 +281,20 @@ $env:PYTHONPATH="backend"; .\venv\Scripts\python.exe -m pytest backend/tests/dat
 
 | 期待 | 銘柄 |
 | :--- | :--- |
-| **SPAC として除外**（21件・再現率 100% が目標） | ALPX IACQ FXAC OSPR JATT MZYX ACAA TVIV CTAA GLED IACO PECE BWIV MYX ARCL FTHA（社名）/ YICC CGCF CXII SHOT WENC KPET（兄弟ティッカー） |
+| **SPAC として除外**（23件・再現率 100%） | ALPX IACQ FXAC OSPR JATT MZYX ACAA TVIV CTAA GLED IACO PECE BWIV MYX ARCL FTHA（社名）/ YICC CGCF CXII SHOT WENC KPET **MTNE**（ユニット兄弟） |
 | **ETF・信託として除外** | MSBT（Morgan Stanley Bitcoin Trust）/ THYP（21Shares Hyperliquid ETF） |
-| **pending として通過**（誤除外ゼロが目標） | EROC / REA / STDN / **FDXF（FedEx Freight のスピンオフ）** / MTNE / FRBT / TPTS / PBLS |
+| **pending として通過**（誤除外ゼロ） | EROC / REA / STDN / **FDXF（FedEx Freight のスピンオフ）** / FRBT / TPTS / PBLS |
 
 `FDXF` が通ることが特に重要。スピンオフは最も価値の高い候補であり、
 SPAC 判定を強めすぎて落とすと本末転倒になる。
+
+> [!NOTE]
+> **`MTNE` は当初この表の「通過」側に置いていたが誤りだった。**
+> `MTNE-UN`（ユニット）を持つ現役 SPAC であり、除外が正しい。
+> 当初のリストは修正前のバグ入り判定の出力から作ったため、誤りを引き継いでいた。
+
+**実測結果（2026-08-27, 実装後）**: 30 件すべて期待どおり。NG 0 件。
+Yahoo プローブ対象 4,011 件（見積り約 4,000 と一致）、spac 339 / fund 50。
 
 ### 全体テスト
 
@@ -284,6 +314,17 @@ cd frontend; npm test; npm run build
 ## 7. 途中発生した課題
 
 （着手後に追記）
+
+### 実装中に判明した事象
+
+- **ユニットとワラントを区別しないと de-SPAC 済み企業を捨てる**（A/B 実装時）。
+  当初は「兄弟に U/W/R があれば SPAC」としていたが、実測で
+  `SCAG`(Scage Future) `INV`(Innventure) `HPAI` `FOXX` `KWM` `GCL` `YDES` が
+  巻き添えになった。いずれもワラントだけ残る de-SPAC 済みの実業会社。
+  **ユニットは合併時に消滅する**という性質で切り分けて解決（§2.2）。
+- **`MTNE` の誤フラグは実は正解だった**。§6 の期待値リストの方が誤りで、
+  修正前のバグ入り判定の出力から作ったため誤りを引き継いでいた。
+  **受け入れ基準そのものを疑う**という教訓。
 
 ### 着手前に判明している注意点
 
