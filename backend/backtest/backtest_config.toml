@@ -675,6 +675,7 @@ max_sp_dist_pivot_pct = 2.0    # ピボットまで 2% 以内
 min_dist_52w_high_pct = -10.0  # 52週高値から10%以内
 max_vcr = 0.7                  # 収縮している土台
 min_up_down_vol_ratio_50 = 1.5 # 買い集め傾向
+min_market_cap = 1e8
 max_allowed_dd = 30.0
 min_avg_hits_per_day = 0.3
 
@@ -683,6 +684,7 @@ max_sp_dist_pivot_pct    = { type = "float", min = 1.0, max = 5.0, step = 0.5 }
 min_dist_52w_high_pct    = { type = "float", min = -15.0, max = -2.5, step = 2.5 }
 max_vcr                  = { type = "float", min = 0.5, max = 0.9, step = 0.05 }
 min_up_down_vol_ratio_50 = { type = "float", min = 1.0, max = 2.5, step = 0.25 }
+min_market_cap           = { type = "categorical", choices = [1e6, 5e6, 1e7, 5e7, 1e8, 3e8, 1e9] }
 
 
 # 対照群: H1 から構造ピボットの2キーだけを抜いたもの。
@@ -698,6 +700,7 @@ sort_ascending = false
 min_dist_52w_high_pct = -10.0
 max_vcr = 0.7
 min_up_down_vol_ratio_50 = 1.5
+min_market_cap = 1e8
 max_allowed_dd = 30.0
 min_avg_hits_per_day = 0.3
 
@@ -705,6 +708,7 @@ min_avg_hits_per_day = 0.3
 min_dist_52w_high_pct    = { type = "float", min = -15.0, max = -2.5, step = 2.5 }
 max_vcr                  = { type = "float", min = 0.5, max = 0.9, step = 0.05 }
 min_up_down_vol_ratio_50 = { type = "float", min = 1.0, max = 2.5, step = 0.25 }
+min_market_cap           = { type = "categorical", choices = [1e6, 5e6, 1e7, 5e7, 1e8, 3e8, 1e9] }
 
 
 # --- オリジナル準拠版 ---
@@ -726,10 +730,12 @@ max_hits_per_day = 10
 sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
 is_structure_1st_break = true
-min_rs_ratio_rank_e21 = 0.8    # 記事の「Relative Strength > 80」に対応
+min_rs_trend_rank_s21 = 0.8    # 記事の「Relative Strength > 80」に対応
+min_market_cap = 1e8
 max_allowed_dd = 35.0
 min_avg_hits_per_day = 0.3
 
 [strategy.optimization]
 structure_fib_1st     = { type = "float", min = 0.382, max = 0.786, step = 0.068 }
-min_rs_ratio_rank_e21 = { type = "float", min = 0.6, max = 0.9, step = 0.05 }
+min_rs_trend_rank_s21 = { type = "float", min = 0.6, max = 0.9, step = 0.05 }
+min_market_cap        = { type = "categorical", choices = [1e6, 5e6, 1e7, 5e7, 1e8, 3e8, 1e9] }
