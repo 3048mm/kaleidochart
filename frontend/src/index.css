@@ -270,6 +270,18 @@ body {
     border-bottom: none !important;
   }
 
+  /* フィルタ一覧のスクロール領域。
+     .glass-panel の `overflow: hidden !important`（モバイル）が inline style の
+     overflowY を潰すため、CSS 側で明示する。inline は !important と戦えない。
+     これが「スマホでカスタムフィルタが上下にスクロールできない」原因だった。 */
+  .screener-filter-scroll {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+
   .screener-filter-sidebar.open {
     transform: translateX(0) !important;
   }

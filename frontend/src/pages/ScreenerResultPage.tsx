@@ -457,7 +457,7 @@ export const ScreenerResultPage: React.FC = () => {
                         </button>
                     </div>
                     
-                    <div style={{
+                    <div className="screener-filter-scroll" style={{
                         display: 'flex', flexDirection: 'column', gap: '15px',
                         // スクロールは外側ではなくここに持たせる。flex column の子で
                         // overflowY を効かせるには minHeight: 0 が要る（無いと縮まず、
