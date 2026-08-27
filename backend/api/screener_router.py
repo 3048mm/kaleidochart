@@ -18,17 +18,51 @@ from api.deps import get_api_db
 from api.screener_cross_section import load_cross_section
 from indicators.screener_filters import SPECIAL_FILTER_KEYS
 
-#: 特殊ブールフィルタの表示名。未定義のキーはキー名から自動生成されるので、
-#: ここへの追加は必須ではない（入れ忘れても画面には出る）。
-_SPECIAL_FILTER_LABELS = {
-    "is_rs_ratio_rank_e21_gt_e63": "RS Ratio Rank 21 > 63",
-    "is_theme_rs_ratio_e21_gt_e63": "Theme RS21 > RS63",
-    "rrg_leading_in": "RRG Leading In",
-    "rrg_lagging_in": "RRG Lagging In",
-    "rrg_improving_in": "RRG Improving In",
-    "is_vcp_breakout": "VCP Breakout",
-    "is_structure_1st_break": "Structure 1st Pivot Break",
-}
+import re
+
+#: 頭字語など、単純な capitalize では正しくならない語。
+_LABEL_TOKENS = {"rs": "RS", "rrg": "RRG", "macd": "MACD", "vcp": "VCP", "td9": "TD9",
+                 "ema": "EMA", "sma": "SMA", "atr": "ATR", "adr": "ADR", "vcr": "VCR"}
+
+
+def _label_words(body: str) -> str:
+    """`rs_ratio_rank_e21` -> `RS Ratio Rank e21`。
+
+    `e21` / `s63` のような期間サフィックスと `1st` のような序数は、
+    大文字化すると読めなくなる（`E21` / `1St`）ので原形のまま残す。
+    """
+    words = []
+    for token in body.split("_"):
+        if token in _LABEL_TOKENS:
+            words.append(_LABEL_TOKENS[token])
+        elif re.fullmatch(r"[es]\d+", token) or re.fullmatch(r"\d+\w*", token):
+            words.append(token)          # e21 / s63 / 21 / 1st
+        else:
+            words.append(token.capitalize())
+    return " ".join(words)
+
+
+def _humanize_special_filter(key: str) -> str:
+    """特殊フィルタのキーから表示ラベルを作る。
+
+    表記ルール（ユーザー合意 2026-08-27）:
+      - `_gt_` / `_lt_` を含む -> 比較記号で表し、`Is` は付けない
+            is_rs_ratio_rank_e21_gt_e63 -> "RS Ratio Rank e21 > e63"
+            is_rs_trend_s14_lt_s21      -> "RS Trend s14 < s21"
+      - 含まない場合 -> `is_` 接頭辞をそのまま `Is` として残す
+            is_vcp_breakout             -> "Is VCP Breakout"
+            rrg_leading_in              -> "RRG Leading In"
+
+    ハードコードの辞書を持たないので、特殊フィルタを追加しても表記が揃う。
+    """
+    has_is = key.startswith("is_")
+    body = key[3:] if has_is else key
+    for op, symbol in (("_gt_", " > "), ("_lt_", " < ")):
+        if op in body:
+            left, right = body.split(op, 1)
+            return f"{_label_words(left)}{symbol}{_label_words(right)}"
+    label = _label_words(body)
+    return f"Is {label}" if has_is else label
 from indicators import screener_registry
 
 logger = logging.getLogger(__name__)
@@ -241,8 +275,14 @@ def get_screener_meta(db: Session = Depends(get_api_db)):
         columns.append(schemas.ScreenerColumnMeta(name=col_name, label=label, category=cat, type=col_type, step=step))
 
     # Virtual columns
+    # 別名（change_oc_pct / dist_ema21_pct）は正準名と同じ式なので画面には出さない。
+    # 出すと「Dist 21EMA%」が2つ並ぶ（2026-08-27 にユーザー指摘）。
+    # 正準名の定義は backtest/strategy_normalizer._PARAM_ALIASES。
+    _VIRTUAL_ALIASES = {"change_oc_pct", "dist_ema21_pct"}
     virtual = []
     for vc_name in _VIRTUAL_COLUMNS.keys():
+        if vc_name in _VIRTUAL_ALIASES:
+            continue
         cat = _COL_TO_CATEGORY.get(vc_name, "Price & Trend")
         label = _COLUMN_LABELS.get(vc_name, vc_name.replace("_", " ").title())
         virtual.append(schemas.ScreenerColumnMeta(name=vc_name, label=label, category=cat, type="float", step=0.1))
@@ -252,13 +292,19 @@ def get_screener_meta(db: Session = Depends(get_api_db)):
     special = [
         schemas.ScreenerColumnMeta(
             name=key,
-            label=_SPECIAL_FILTER_LABELS.get(key, key.replace("_", " ").title()),
+            label=_humanize_special_filter(key),
             category="Special",
             type="bool",
             step=1.0,
         )
         for key in sorted(SPECIAL_FILTER_KEYS)
     ]
+
+    # close_gt 系（Close > 移動平均）は**一覧に出さない**。
+    # 仮想カラム dist_21ema_pct / dist_sma50_pct に `min_ = 0` を入れれば同じ条件になり、
+    # かつ「EMA21 より 3% 以上上」のような指定まで書けて表現力が上（ユーザー判断 2026-08-27）。
+    # 12本すべての MA を数値で書きたくなったら、close_gt を復活させるのではなく
+    # dist_*_pct 側の仮想カラムを増やすこと。
 
     # T4 rank indicator names (relative_ranks テーブル of ランクカラム名)
     rank_names = [
