@@ -61,6 +61,7 @@ from data_collection.ipo_discovery import (  # noqa: E402
 )
 from data_collection.sec_client import SecClient  # noqa: E402
 from db.database_universe import (  # noqa: E402
+    get_active_universe_db_path,
     get_universe_write_db,
     init_universe_db,
 )
@@ -276,6 +277,9 @@ def run(dry_run: bool, limit: int | None = None, cik_floor: int | None = None,
     print(f"    company_tickers {len(ct):,} / company_tickers_mf {len(mf):,}")
 
     init_universe_db(conf["universe_db_path"])
+    active = get_active_universe_db_path()
+    if active and os.path.abspath(active) != os.path.abspath(conf["universe_db_path"]):
+        print(f"    [!] 環境変数により DB が差し替わっています: {active}")
     with get_universe_write_db() as db:
         known_tickers, known_ciks, old_tickers = load_exclusion_sets(db)
     print(f"\n[2] 除外集合: ticker {len(known_tickers):,} / "
@@ -342,8 +346,11 @@ def run(dry_run: bool, limit: int | None = None, cik_floor: int | None = None,
             if i % 10 == 0 or i == len(targets):
                 print(f"    {i}/{len(targets)}")
 
-    # ユーザー資産なのでバックアップを取る
-    udb = conf["universe_db_path"]
+    # ユーザー資産なのでバックアップを取る。
+    # **config の値ではなく実際に開いている DB を見る** — `STOCKTOOL_ENV` や
+    # `STOCKTOOL_UNIVERSE_DB_PATH` で差し替えたとき、config の値を使うと
+    # 本番をバックアップしながらサンドボックスに書く、という食い違いが起きる
+    udb = get_active_universe_db_path() or conf["universe_db_path"]
     if os.path.exists(udb):
         bk = f"{udb}.bak_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         shutil.copy2(udb, bk)

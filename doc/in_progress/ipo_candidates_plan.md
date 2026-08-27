@@ -1,6 +1,6 @@
 # IPO 銘柄の追加候補リストアップ 計画書
 
-- **ステータス**: 🚧 進行中（A〜D 完了 — 判定ロジック・DB・スキャン CLI）
+- **ステータス**: 🚧 進行中（A〜D / F / G 完了 — バックエンド一式。残: E1/E2・H・フロント）
 - **実施者**: AI エージェント (Claude Opus 5) — オーケストレーター + implementer / test-writer へ委譲
 - **開始日**: 2026-08-27 / **完了日**: —
 - **作業ブランチ**: `worktree-ipo-candidates`（`.claude/worktrees/` 配下に作成）
@@ -230,9 +230,14 @@ cik_floor = 0                  # 縮退用。Yahoo が絞ってきたら 1900000
 - [x] **B. `ipo_discovery.py` 実装** — A を green にする（95 テスト green）
 - [x] **C. `ipo_candidates` テーブルのマイグレーション** — `migrate_universe_ipo_candidates.py` + `models_universe.IpoCandidate`（冪等・バックアップ自動取得・8テスト）
 - [x] **D. `scan_ipo_candidates.py` 実装** — `--dry-run` / `--apply` / `--limit` / `--cik-floor` / `--skip-profile`。Yahoo スロットル込み（19テスト）
-- [ ] **E. 初回ブートストラップ実行**（`--dry-run` → 件数確認 → `--apply`）。`run_in_background` で実行
-- [ ] **F. API エンドポイント + テスト** — `backend/tests/api/test_universe_candidates.py`
-- [ ] **G. `/system/health` に件数追加 + スキーマ更新**
+- [ ] **E1. 初回ブートストラップをワークツリーのサンドボックスで実行**（フルスケール検証）
+      `agent_execution_rules.md` §10.3 が**ワークツリーからの本番書き込みを禁止**しているため、
+      本番 `universe.db` を読み取り専用でコピーし `STOCKTOOL_UNIVERSE_DB_PATH` で差し替えて回す。
+      ここで確認するのは「4,000件規模で Yahoo に絞られないか」「pending 件数が見積り 50〜80 に入るか」
+- [ ] **E2. 本番へのブートストラップ（merge 後）** — 変更種別 **C: ユーザー資産 DB に触れる**。
+      バックアップ取得 → in-place。merge 前に本番へ書いてはいけない
+- [x] **F. API エンドポイント + テスト** — `backend/tests/api/test_universe_candidates.py`（17テスト）
+- [x] **G. `/system/health` に件数追加 + スキーマ更新** — `universe.ipo_candidates_pending`（既定値ありで後方互換）
 - [ ] **H. `weekly_maintenance.py` に週次ステップ追加 + テスト**
 - [ ] **H2. `classify_symbol_freshness()` の判定順を修正（§3.7）+ 回帰テスト**
       「行数10・データ最新」が `ok` になること、「行数10・データ30日前」が `no_history` のままであることを両方テストする
@@ -244,7 +249,9 @@ cik_floor = 0                  # 縮退用。Yahoo が絞ってきたら 1900000
 
 ### 作業中メモ
 
-**現在地**: A〜D 完了。次は E（初回ブートストラップ）だが **§10.3 の制約で分割が必要**（下記）。
+**現在地**: A〜D / F / G 完了（バックエンド一式）。残りは E1/E2・H・フロントエンド。
+
+E1（サンドボックスでのフルスケール検証）を実行中。
 
 小規模 dry-run（40件）で E2E 動作を確認済み:
 `通過 5 / 探索 40`、落ちた理由 `before_since:22 / exchange:11 / instrument_type:1 / no_first_trade_date:1`、
@@ -313,6 +320,7 @@ cd frontend; npm test; npm run build
    （大きく外れたら §3.1 のどの段で落ちすぎ/漏れすぎかを段ごとの件数で切り分ける）
 2. Universe 画面のタブに件数が出るか / ヘッダのバッジに反映されるか
 3. 1件 accept → `symbols_master` に入るか、`theme_type` が正しく導出されるか
+   （**サンドボックスで行う**。本番での確認は merge 後）
 4. 翌日の T1 同期 → T2 で価格が入るか（**`symbols.id` が振り直されていないことを必ず確認**）
 
 ## 7. 途中発生した課題
@@ -320,6 +328,15 @@ cd frontend; npm test; npm run build
 （着手後に追記）
 
 ### 実装中に判明した事象
+
+- **ブートストラップ（E）は本番に書けない**（D 完了時に判明）。
+  `agent_execution_rules.md` §10.3「本番データへは読み取りのみ。
+  ワークツリーからの本番書き込みは禁止」に該当する。E1（サンドボックス検証）と
+  E2（merge 後の本番反映）に分割した。E2 は変更種別 **C**。
+- **バックアップ対象が config 固定だったバグ**（E1 実行前に発見・修正）。
+  `STOCKTOOL_UNIVERSE_DB_PATH` で DB を差し替えると、**本番をバックアップしながら
+  サンドボックスに書く**という食い違いが起きていた。`get_active_universe_db_path()`
+  を見るように修正し、差し替え時は警告を出すようにした。
 
 - **ユニットとワラントを区別しないと de-SPAC 済み企業を捨てる**（A/B 実装時）。
   当初は「兄弟に U/W/R があれば SPAC」としていたが、実測で

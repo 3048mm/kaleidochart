@@ -176,12 +176,30 @@ def get_system_health(db: Session = Depends(get_api_db)):
         "warnings": warnings
     }
     
+    # 5. Universe（IPO 追加候補の未レビュー件数）
+    #
+    # universe.db は別系統の DB なので、`get_api_db` のセッションでは引けない。
+    # 小さなテーブルへの COUNT 1本なのでヘッダのポーリングに載せても軽い。
+    # **ここで失敗しても health 全体は落とさない** — 候補件数が出ないことより、
+    # 鮮度・整合性・パイプライン状態が見えなくなる方が困る。
+    ipo_pending = 0
+    try:
+        from db.database_universe import get_universe_db
+        from db.models_universe import IpoCandidate
+
+        with get_universe_db() as udb:
+            ipo_pending = (udb.query(func.count(IpoCandidate.id))
+                              .filter(IpoCandidate.status == "pending").scalar()) or 0
+    except Exception as e:  # noqa: BLE001 — universe.db 未初期化・テーブル未作成を許容
+        logger.debug(f"IPO 候補件数の取得に失敗しました（health は継続）: {e}")
+
     return {
         "overall_status": overall_status,
         "data_freshness": freshness,
         "data_integrity": integrity,
         "pipeline_status": pipeline_status,
-        "validation": validation
+        "validation": validation,
+        "universe": {"ipo_candidates_pending": ipo_pending},
     }
 
 
