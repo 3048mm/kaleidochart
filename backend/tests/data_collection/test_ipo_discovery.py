@@ -170,6 +170,67 @@ class TestClassifyCikGroup:
         assert r.excluded is True
 
 
+class TestFullScaleLeakage:
+    """E1（本番相当 4,009 件）で pending に混入した3件を潰す。
+
+    実測でしか出てこない形。ユニットテストの想像では拾えなかった。
+    """
+
+    def test_ダッシュ優先株は普通株にしない(self):
+        """`CFTR-PA` は優先株シリーズA。**兄弟が居なくても**普通株ではない。
+
+        その CIK に普通株が上場していないだけなので、CIK ごと落とすのが正しい。
+        """
+        r = classify_cik_group(["CFTR-PA"], "Cantor Fitzgerald Income Trust, Inc.")
+        assert r.excluded is True
+
+    @pytest.mark.parametrize("ticker", ["ABC-PA", "ABC-PB", "BAC-PK", "PSA-PF"])
+    def test_各種ダッシュ優先株(self, ticker):
+        assert classify_cik_group([ticker], "Some Corp").excluded is True
+
+    def test_社名のAmericanDepositaryでADRを弾く(self):
+        """`PHOS` は4文字なのでティッカー形からは ADR と分からない。
+
+        `First Phosphate Corp. American Depositary Shares` と社名に書いてある。
+        """
+        assert "adr" in name_flags(
+            "First Phosphate Corp. American Depositary Shares")
+
+    def test_社名のFundをファンドとみなす(self):
+        """`RVII`(Robinhood Ventures Fund II) はクローズドエンド型ファンド。
+
+        `ETF` は含まないので既存の regex では拾えなかった。
+        """
+        assert "fund" in name_flags("Robinhood Ventures Fund II")
+
+    @pytest.mark.parametrize("name", [
+        "Office Properties Income Trust",
+        "Terra Property Trust, Inc.",
+        "Cantor Fitzgerald Income Trust, Inc.",
+        "Blackstone Digital Infrastructure Trust Inc.",
+    ])
+    def test_Trustは除外しない(self, name):
+        """**REIT を巻き込まない。** 実測 4 件はいずれも不動産・インフラの REIT。
+
+        暗号資産信託は `MSBT`(NYSEArca) のように取引所判定で落ちるので、
+        社名の `Trust` で弾く必要がない。
+        """
+        assert name_flags(name) == set()
+
+    @pytest.mark.parametrize("name", [
+        "Jersey Mike's Subs Inc.",
+        "Reformation Inc.",
+        "QVC Group Inc.",
+        "ADI Global Distribution Inc",
+        "Apnimed, Inc.",
+        "Scribe Therapeutics Inc.",
+        "Standard Nuclear, Inc.",
+    ])
+    def test_実在のIPOにフラグを付けない(self, name):
+        """E1 で pending に入った実物。誤除外ゼロを回帰で守る。"""
+        assert name_flags(name) == set()
+
+
 # ---------------------------------------------------------------------------
 # is_non_common_line — 普通株でない銘柄行かどうか
 # ---------------------------------------------------------------------------

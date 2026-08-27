@@ -146,7 +146,9 @@ def decide_status(flags: set) -> tuple[str, str | None]:
     if "spac" in flags:
         return "auto_excluded", "SPAC（ユニット構造または社名から判定）"
     if "fund" in flags:
-        return "auto_excluded", "ETF・信託（社名から判定）"
+        return "auto_excluded", "ETF・ファンド（社名から判定）"
+    if "adr" in flags:
+        return "auto_excluded", "ADR（社名から判定）"
     return "pending", None
 
 

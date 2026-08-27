@@ -230,7 +230,7 @@ cik_floor = 0                  # 縮退用。Yahoo が絞ってきたら 1900000
 - [x] **B. `ipo_discovery.py` 実装** — A を green にする（95 テスト green）
 - [x] **C. `ipo_candidates` テーブルのマイグレーション** — `migrate_universe_ipo_candidates.py` + `models_universe.IpoCandidate`（冪等・バックアップ自動取得・8テスト）
 - [x] **D. `scan_ipo_candidates.py` 実装** — `--dry-run` / `--apply` / `--limit` / `--cik-floor` / `--skip-profile`。Yahoo スロットル込み（19テスト）
-- [ ] **E1. 初回ブートストラップをワークツリーのサンドボックスで実行**（フルスケール検証）
+- [x] **E1. 初回ブートストラップをワークツリーのサンドボックスで実行**（フルスケール検証・完了）
       `agent_execution_rules.md` §10.3 が**ワークツリーからの本番書き込みを禁止**しているため、
       本番 `universe.db` を読み取り専用でコピーし `STOCKTOOL_UNIVERSE_DB_PATH` で差し替えて回す。
       ここで確認するのは「4,000件規模で Yahoo に絞られないか」「pending 件数が見積り 50〜80 に入るか」
@@ -249,9 +249,25 @@ cik_floor = 0                  # 縮退用。Yahoo が絞ってきたら 1900000
 
 ### 作業中メモ
 
-**現在地**: A〜D / F / G 完了（バックエンド一式）。残りは E1/E2・H・フロントエンド。
+**現在地**: A〜G 完了（バックエンド一式 + フルスケール検証）。残りは E2（merge 後）・H・フロントエンド。
 
-E1（サンドボックスでのフルスケール検証）を実行中。
+**E1 の実測結果（2026-08-28、サンドボックス 4,009 件）**:
+
+```
+Yahoo 問い合わせ 4,009 件を完走（レート制限なし。所要 約17分）
+  通過 205 / 探索 4,009
+  落ちた理由: before_since 2,687 / exchange 836 / instrument_type 154
+              / no_quote 124 / no_first_trade_date 3
+  pending 114 → 混入3件の修正後 111 / auto_excluded 91
+```
+
+pending の中身は本物の IPO で埋まっていた（`JMKE` Jersey Mike's Subs /
+`REF` Reformation / `QVCG` QVC Group / `ADIG` ADI Global Distribution /
+バイオ各社 `BLSM` `LTGO` `ATTO` `APMD` `OBX` `SCTX`）。
+
+**当初見積り 50〜80 に対し 111 だった**が、これは見積りが保守的すぎたため。
+層別サンプルからの外挿（高CIK帯の非SPAC ≒93 + 低CIK帯 ≒0）とは整合しており、
+リストの中身を見ても過剰検出ではない。見積りの方を実測値に更新する。
 
 小規模 dry-run（40件）で E2E 動作を確認済み:
 `通過 5 / 探索 40`、落ちた理由 `before_since:22 / exchange:11 / instrument_type:1 / no_first_trade_date:1`、
@@ -316,7 +332,8 @@ cd frontend; npm test; npm run build
 
 ### 手動検証
 
-1. `scan_ipo_candidates.py --dry-run` の出力件数が 50〜80 件のレンジに入るか
+1. `scan_ipo_candidates.py --dry-run` の出力件数が **100〜130 件**のレンジに入るか
+   （E1 実測 111。当初見積り 50〜80 は保守的すぎた）
    （大きく外れたら §3.1 のどの段で落ちすぎ/漏れすぎかを段ごとの件数で切り分ける）
 2. Universe 画面のタブに件数が出るか / ヘッダのバッジに反映されるか
 3. 1件 accept → `symbols_master` に入るか、`theme_type` が正しく導出されるか
@@ -346,6 +363,16 @@ cd frontend; npm test; npm run build
 - **`MTNE` の誤フラグは実は正解だった**。§6 の期待値リストの方が誤りで、
   修正前のバグ入り判定の出力から作ったため誤りを引き継いでいた。
   **受け入れ基準そのものを疑う**という教訓。
+- **フルスケール実行（E1）でしか出ない混入が3件あった**。ユニットテストの想像では拾えず、
+  4,009 件を実際に流して初めて表面化した:
+  1. `CFTR-PA`（優先株シリーズA）— ダッシュ優先株は**兄弟が居なくても**普通株ではない。
+     その CIK に普通株が上場していないだけなので CIK ごと落とす
+  2. `PHOS`（First Phosphate Corp. American Depositary Shares）— 4文字ティッカーなので
+     `_ADR_RE` の形では判定できず、**社名**に書いてある ADR を見る必要があった
+  3. `RVII`（Robinhood Ventures **Fund** II）— クローズドエンド型で `ETF` を含まない
+  なお `Trust` を含む4件（`OPI` Office Properties / `TPTS` Terra Property /
+  `BXDC` / `CFTR-PA`）は**いずれも REIT なので除外しない**という当初の判断が正しかった。
+  暗号資産信託は `MSBT` のように NYSEArca なので取引所判定で落ちる。
 
 ### 着手前に判明している注意点
 

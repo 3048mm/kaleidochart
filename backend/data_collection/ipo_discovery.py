@@ -55,6 +55,11 @@ ALLOWED_EXCHANGES = frozenset({
 # 実測: `PITAF`/`PSTEY`（Poste Italiane）、`CYATY`/`CTATF`（CATL）など
 _ADR_RE = re.compile(r"^[A-Z]{4,5}[YF]$")
 
+# ダッシュ付きの優先株（`BAC-PK` `PSA-PF` `CFTR-PA`）。
+# **兄弟が居なくても普通株ではない。** その CIK に普通株が上場していないだけ。
+# E1（4,009件のフルスケール実行）で `CFTR-PA` が pending に混入して判明した。
+_PREFERRED_RE = re.compile(r"-P[A-Z]?$")
+
 # ユニット・ワラント・ライツ。
 # **末尾1文字で見る。**SPAC は4文字の語幹でこれらを上場し、普通株だけ短縮するため
 # 「ベース＋サフィックス」の完全一致では拾えない
@@ -83,8 +88,18 @@ _SPAC_NAME_RE = re.compile(r"\b(?:acquisition|acquisitions|merger)\b", re.I)
 
 # ETF は `company_tickers_mf.json` 側にあるはずだが、暗号資産・コモディティの信託は
 # 10-K を出す事業会社扱いで `company_tickers.json` に載る（実測 `THYP` 21Shares ETF）。
-# **`Trust` は入れない** — REIT の "Terra Property Trust" を巻き込むため
-_FUND_NAME_RE = re.compile(r"\bETF\b", re.I)
+#
+# `ETF` だけでは足りない。`RVII`（Robinhood Ventures **Fund** II）はクローズドエンド型で
+# `ETF` を含まず、E1（4,009件のフルスケール実行）で pending に混入した。
+#
+# **`Trust` は入れない。** 実測で該当した4件はいずれも REIT
+# （Office Properties Income Trust / Terra Property Trust など）で、除外すると
+# 正当な銘柄を落とす。暗号資産信託は `MSBT` のように NYSEArca なので取引所判定で落ちる。
+_FUND_NAME_RE = re.compile(r"\b(?:ETF|funds?)\b", re.I)
+
+# 社名に書かれた ADR。`PHOS`（First Phosphate Corp. American Depositary Shares）は
+# 4文字ティッカーなので `_ADR_RE` のティッカー形からは判定できない
+_ADR_NAME_RE = re.compile(r"american depositary", re.I)
 
 
 @dataclass
@@ -145,6 +160,8 @@ def name_flags(name: str | None) -> set[str]:
         out.add("spac")
     if _FUND_NAME_RE.search(n):
         out.add("fund")
+    if _ADR_NAME_RE.search(n):
+        out.add("adr")
     return out
 
 
@@ -152,7 +169,7 @@ def classify_cik_group(tickers, name: str | None) -> CikGroupResult:
     """1つの CIK 配下のティッカー群から普通株を1本選ぶ。
 
     手順（計画書 §3.1 [4]）:
-        a. ADR・外国 OTC を落とす
+        a. ADR・外国 OTC・ダッシュ優先株（`-PA` 等）を落とす
         b. 残りが空 → 国内普通株が無い ⇒ CIK ごと除外（実測 873 件）
         c. 最短（同長なら辞書順）をベースとする
         d. ベース以外が全てユニット・ワラント・ライツ ⇒ ベースを普通株として採用。
@@ -170,9 +187,13 @@ def classify_cik_group(tickers, name: str | None) -> CikGroupResult:
     if not uniq:
         return CikGroupResult(excluded=True, exclude_reason="empty")
 
-    core = [t for t in uniq if not _ADR_RE.match(t)]
+    core = [t for t in uniq
+            if not _ADR_RE.match(t) and not _PREFERRED_RE.search(t)]
     if not core:
-        return CikGroupResult(excluded=True, exclude_reason="adr_only")
+        # ADR しか無い / 優先株しか無い＝国内普通株が上場していない
+        reason = ("preferred_only"
+                  if all(_PREFERRED_RE.search(t) for t in uniq) else "adr_only")
+        return CikGroupResult(excluded=True, exclude_reason=reason)
 
     base = sorted(core, key=lambda x: (len(x), x))[0]
     others = [t for t in core if t != base]
