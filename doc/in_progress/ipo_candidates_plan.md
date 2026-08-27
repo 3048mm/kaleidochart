@@ -1,6 +1,6 @@
 # IPO 銘柄の追加候補リストアップ 計画書
 
-- **ステータス**: 🚧 進行中（A/B/C 完了 — 判定ロジック・モデル・マイグレーション）
+- **ステータス**: 🚧 進行中（A〜D 完了 — 判定ロジック・DB・スキャン CLI）
 - **実施者**: AI エージェント (Claude Opus 5) — オーケストレーター + implementer / test-writer へ委譲
 - **開始日**: 2026-08-27 / **完了日**: —
 - **作業ブランチ**: `worktree-ipo-candidates`（`.claude/worktrees/` 配下に作成）
@@ -229,7 +229,7 @@ cik_floor = 0                  # 縮退用。Yahoo が絞ってきたら 1900000
       `NYSEArca` 前方一致、`BAC/BACRP`、`LLYVA/LLYVB/LLYVK`）を**そのままテストケースにする**
 - [x] **B. `ipo_discovery.py` 実装** — A を green にする（95 テスト green）
 - [x] **C. `ipo_candidates` テーブルのマイグレーション** — `migrate_universe_ipo_candidates.py` + `models_universe.IpoCandidate`（冪等・バックアップ自動取得・8テスト）
-- [ ] **D. `scan_ipo_candidates.py` 実装** — `--dry-run` / `--apply` / `--bootstrap` / `--limit`。Yahoo スロットル込み
+- [x] **D. `scan_ipo_candidates.py` 実装** — `--dry-run` / `--apply` / `--limit` / `--cik-floor` / `--skip-profile`。Yahoo スロットル込み（19テスト）
 - [ ] **E. 初回ブートストラップ実行**（`--dry-run` → 件数確認 → `--apply`）。`run_in_background` で実行
 - [ ] **F. API エンドポイント + テスト** — `backend/tests/api/test_universe_candidates.py`
 - [ ] **G. `/system/health` に件数追加 + スキーマ更新**
@@ -244,7 +244,11 @@ cik_floor = 0                  # 縮退用。Yahoo が絞ってきたら 1900000
 
 ### 作業中メモ
 
-**現在地**: A / B / C 完了。次は D（`scan_ipo_candidates.py`）。
+**現在地**: A〜D 完了。次は E（初回ブートストラップ）だが **§10.3 の制約で分割が必要**（下記）。
+
+小規模 dry-run（40件）で E2E 動作を確認済み:
+`通過 5 / 探索 40`、落ちた理由 `before_since:22 / exchange:11 / instrument_type:1 / no_first_trade_date:1`、
+`AADX`(Applied Aerospace & Defense) が pending、SPAC 4件が auto_excluded。
 
 `init_universe_db()` の `create_all()` がモデル定義からテーブルを作るため、
 マイグレーションスクリプトの役割は**バックアップ取得と作成結果の検証**。

@@ -39,6 +39,7 @@ SPAC はユニットが先に上場して後から分離するため、日付の
 
 from __future__ import annotations
 
+import datetime as dt
 import re
 from dataclasses import dataclass, field
 
@@ -186,6 +187,39 @@ def classify_cik_group(tickers, name: str | None) -> CikGroupResult:
             flags.add("spac")
 
     return CikGroupResult(ticker=base, flags=flags)
+
+
+def parse_chart_meta(payload: dict | None) -> dict | None:
+    """Yahoo chart API の応答を候補判定に使える形へ正規化する。
+
+    `firstTradeDate` は**エポック秒**で返る。`since` は ISO 日付文字列なので、
+    そのまま比較すると型が合わず必ず False になる。ここで ISO に揃える。
+
+    Returns:
+        正規化した辞書。応答が空・エラーなら ``None``。
+    """
+    if not payload:
+        return None
+    result = ((payload.get("chart") or {}).get("result")) or []
+    if not result:
+        return None
+    meta = result[0].get("meta") or {}
+
+    ftd = meta.get("firstTradeDate")
+    first_trade_date = None
+    if ftd:
+        first_trade_date = dt.datetime.fromtimestamp(
+            ftd, dt.timezone.utc).date().isoformat()
+
+    return {
+        "instrumentType": meta.get("instrumentType"),
+        "fullExchangeName": meta.get("fullExchangeName"),
+        "first_trade_date": first_trade_date,
+        "last_price": meta.get("regularMarketPrice"),
+        "volume": meta.get("regularMarketVolume"),
+        "name": meta.get("longName") or meta.get("shortName"),
+        "currency": meta.get("currency"),
+    }
 
 
 def confirm_with_quote(quote: dict, since: str) -> tuple[bool, str | None]:
