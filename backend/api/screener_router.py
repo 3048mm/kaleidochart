@@ -18,17 +18,51 @@ from api.deps import get_api_db
 from api.screener_cross_section import load_cross_section
 from indicators.screener_filters import SPECIAL_FILTER_KEYS
 
-#: 特殊ブールフィルタの表示名。未定義のキーはキー名から自動生成されるので、
-#: ここへの追加は必須ではない（入れ忘れても画面には出る）。
-_SPECIAL_FILTER_LABELS = {
-    "is_rs_ratio_rank_e21_gt_e63": "RS Ratio Rank 21 > 63",
-    "is_theme_rs_ratio_e21_gt_e63": "Theme RS21 > RS63",
-    "rrg_leading_in": "RRG Leading In",
-    "rrg_lagging_in": "RRG Lagging In",
-    "rrg_improving_in": "RRG Improving In",
-    "is_vcp_breakout": "VCP Breakout",
-    "is_structure_1st_break": "Structure 1st Pivot Break",
-}
+import re
+
+#: 頭字語など、単純な capitalize では正しくならない語。
+_LABEL_TOKENS = {"rs": "RS", "rrg": "RRG", "macd": "MACD", "vcp": "VCP", "td9": "TD9",
+                 "ema": "EMA", "sma": "SMA", "atr": "ATR", "adr": "ADR", "vcr": "VCR"}
+
+
+def _label_words(body: str) -> str:
+    """`rs_ratio_rank_e21` -> `RS Ratio Rank e21`。
+
+    `e21` / `s63` のような期間サフィックスと `1st` のような序数は、
+    大文字化すると読めなくなる（`E21` / `1St`）ので原形のまま残す。
+    """
+    words = []
+    for token in body.split("_"):
+        if token in _LABEL_TOKENS:
+            words.append(_LABEL_TOKENS[token])
+        elif re.fullmatch(r"[es]\d+", token) or re.fullmatch(r"\d+\w*", token):
+            words.append(token)          # e21 / s63 / 21 / 1st
+        else:
+            words.append(token.capitalize())
+    return " ".join(words)
+
+
+def _humanize_special_filter(key: str) -> str:
+    """特殊フィルタのキーから表示ラベルを作る。
+
+    表記ルール（ユーザー合意 2026-08-27）:
+      - `_gt_` / `_lt_` を含む -> 比較記号で表し、`Is` は付けない
+            is_rs_ratio_rank_e21_gt_e63 -> "RS Ratio Rank e21 > e63"
+            is_rs_trend_s14_lt_s21      -> "RS Trend s14 < s21"
+      - 含まない場合 -> `is_` 接頭辞をそのまま `Is` として残す
+            is_vcp_breakout             -> "Is VCP Breakout"
+            rrg_leading_in              -> "RRG Leading In"
+
+    ハードコードの辞書を持たないので、特殊フィルタを追加しても表記が揃う。
+    """
+    has_is = key.startswith("is_")
+    body = key[3:] if has_is else key
+    for op, symbol in (("_gt_", " > "), ("_lt_", " < ")):
+        if op in body:
+            left, right = body.split(op, 1)
+            return f"{_label_words(left)}{symbol}{_label_words(right)}"
+    label = _label_words(body)
+    return f"Is {label}" if has_is else label
 from indicators import screener_registry
 
 logger = logging.getLogger(__name__)
@@ -252,13 +286,36 @@ def get_screener_meta(db: Session = Depends(get_api_db)):
     special = [
         schemas.ScreenerColumnMeta(
             name=key,
-            label=_SPECIAL_FILTER_LABELS.get(key, key.replace("_", " ").title()),
+            label=_humanize_special_filter(key),
             category="Special",
             type="bool",
             step=1.0,
         )
         for key in sorted(SPECIAL_FILTER_KEYS)
     ]
+
+    # close_gt 系（Close > 移動平均）も同じトグルとして出す。
+    # SPECIAL_FILTER_KEYS は kind='special' だけなので、これまで漏れていた。
+    # エイリアスが多い（close_gt_ema21 / close_gt_ema_21 / is_close_gt_ema21 …）ので
+    # **対象カラムごとに1つ**へ畳む。代表キーは is_ 付きを優先し、無ければ最短のものを採る。
+    _by_column: Dict[str, List[str]] = {}
+    for key, spec in screener_registry.EXPLICIT_SPECS.items():
+        # close_gt は column ではなく requires=("close", "<MA列>") に対象を持つ
+        if spec.kind == "close_gt":
+            target = next((c for c in spec.requires if c != "close"), None)
+            if target:
+                _by_column.setdefault(target, []).append(key)
+    for column in sorted(_by_column):
+        aliases = _by_column[column]
+        canonical = min(
+            aliases, key=lambda k: (not k.startswith("is_"), len(k), k))
+        special.append(schemas.ScreenerColumnMeta(
+            name=canonical,
+            label=f"Close > {_label_words(column).replace(' ', '')}",
+            category="Special",
+            type="bool",
+            step=1.0,
+        ))
 
     # T4 rank indicator names (relative_ranks テーブル of ランクカラム名)
     rank_names = [
