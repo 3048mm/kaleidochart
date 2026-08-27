@@ -275,8 +275,14 @@ def get_screener_meta(db: Session = Depends(get_api_db)):
         columns.append(schemas.ScreenerColumnMeta(name=col_name, label=label, category=cat, type=col_type, step=step))
 
     # Virtual columns
+    # 別名（change_oc_pct / dist_ema21_pct）は正準名と同じ式なので画面には出さない。
+    # 出すと「Dist 21EMA%」が2つ並ぶ（2026-08-27 にユーザー指摘）。
+    # 正準名の定義は backtest/strategy_normalizer._PARAM_ALIASES。
+    _VIRTUAL_ALIASES = {"change_oc_pct", "dist_ema21_pct"}
     virtual = []
     for vc_name in _VIRTUAL_COLUMNS.keys():
+        if vc_name in _VIRTUAL_ALIASES:
+            continue
         cat = _COL_TO_CATEGORY.get(vc_name, "Price & Trend")
         label = _COLUMN_LABELS.get(vc_name, vc_name.replace("_", " ").title())
         virtual.append(schemas.ScreenerColumnMeta(name=vc_name, label=label, category=cat, type="float", step=0.1))
@@ -294,28 +300,11 @@ def get_screener_meta(db: Session = Depends(get_api_db)):
         for key in sorted(SPECIAL_FILTER_KEYS)
     ]
 
-    # close_gt 系（Close > 移動平均）も同じトグルとして出す。
-    # SPECIAL_FILTER_KEYS は kind='special' だけなので、これまで漏れていた。
-    # エイリアスが多い（close_gt_ema21 / close_gt_ema_21 / is_close_gt_ema21 …）ので
-    # **対象カラムごとに1つ**へ畳む。代表キーは is_ 付きを優先し、無ければ最短のものを採る。
-    _by_column: Dict[str, List[str]] = {}
-    for key, spec in screener_registry.EXPLICIT_SPECS.items():
-        # close_gt は column ではなく requires=("close", "<MA列>") に対象を持つ
-        if spec.kind == "close_gt":
-            target = next((c for c in spec.requires if c != "close"), None)
-            if target:
-                _by_column.setdefault(target, []).append(key)
-    for column in sorted(_by_column):
-        aliases = _by_column[column]
-        canonical = min(
-            aliases, key=lambda k: (not k.startswith("is_"), len(k), k))
-        special.append(schemas.ScreenerColumnMeta(
-            name=canonical,
-            label=f"Close > {_label_words(column).replace(' ', '')}",
-            category="Special",
-            type="bool",
-            step=1.0,
-        ))
+    # close_gt 系（Close > 移動平均）は**一覧に出さない**。
+    # 仮想カラム dist_21ema_pct / dist_sma50_pct に `min_ = 0` を入れれば同じ条件になり、
+    # かつ「EMA21 より 3% 以上上」のような指定まで書けて表現力が上（ユーザー判断 2026-08-27）。
+    # 12本すべての MA を数値で書きたくなったら、close_gt を復活させるのではなく
+    # dist_*_pct 側の仮想カラムを増やすこと。
 
     # T4 rank indicator names (relative_ranks テーブル of ランクカラム名)
     rank_names = [
