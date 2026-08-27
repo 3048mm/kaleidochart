@@ -435,8 +435,8 @@ export const ScreenerResultPage: React.FC = () => {
 
             <div style={{ display: 'flex', gap: '20px', flex: 1, minHeight: 0 }}>
                 {/* Left Panel: Dynamic Filters */}
-                <div className={`screener-filter-sidebar glass-panel ${isFilterOpen ? 'open' : ''}`} style={{ width: '270px', padding: '15px', display: 'flex', flexDirection: 'column', flexShrink: 0, overflowY: 'auto' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '0 0 15px 0', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '10px' }}>
+                <div className={`screener-filter-sidebar glass-panel ${isFilterOpen ? 'open' : ''}`} style={{ width: '270px', padding: '15px', display: 'flex', flexDirection: 'column', flexShrink: 0, overflow: 'hidden' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '0 0 15px 0', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '10px', flexShrink: 0 }}>
                         <h3 style={{ fontSize: '14px', margin: 0 }}>
                             Custom Filters
                         </h3>
@@ -457,7 +457,14 @@ export const ScreenerResultPage: React.FC = () => {
                         </button>
                     </div>
                     
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                    <div style={{
+                        display: 'flex', flexDirection: 'column', gap: '15px',
+                        // スクロールは外側ではなくここに持たせる。flex column の子で
+                        // overflowY を効かせるには minHeight: 0 が要る（無いと縮まず、
+                        // スマホの固定サイドバーで上下スクロールできなくなる）。
+                        // 右の結果パネル（外側 overflow:hidden + 内側 flex:1/overflowY:auto）と同じ形。
+                        flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: '6px',
+                    }}>
                         {Object.entries(grouped).map(([categoryName, cols]) => (
                             <div key={categoryName}>
                                 <div style={{ fontSize: '11px', color: appConfig.colors.accent, textTransform: 'uppercase', marginBottom: '8px', letterSpacing: '0.5px' }}>
