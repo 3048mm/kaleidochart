@@ -282,6 +282,16 @@ body {
     overscroll-behavior: contain;
   }
 
+  /* チャート画面の本体。inline の overflowY:auto は .glass-panel の
+     `overflow: hidden !important` に負けるため、CSS 側で明示する。
+     デスクトップでは inline が .chart-area{overflow:hidden} に勝って
+     スクロールしていたが、モバイルだけ効かない状態だった。 */
+  .chart-area {
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    -webkit-overflow-scrolling: touch;
+  }
+
   .screener-filter-sidebar.open {
     transform: translateX(0) !important;
   }
