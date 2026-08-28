@@ -201,7 +201,27 @@ export default function App() {
                     <Link to="/watchlist" style={{ color: location.pathname === '/watchlist' ? '#00ff88' : '#d1d4dc', textDecoration: 'none' }}>Watchlist</Link>
                     <Link to="/portfolio" style={{ color: location.pathname.startsWith('/portfolio') ? '#00ff88' : '#d1d4dc', textDecoration: 'none' }}>Portfolio</Link>
                     <Link to="/backtest" style={{ color: location.pathname.startsWith('/backtest') || location.pathname.startsWith('/scenariotest') || location.pathname.startsWith('/etf-backtest') ? '#00ff88' : '#d1d4dc', textDecoration: 'none' }}>Backtest</Link>
-                    <Link to="/universe" style={{ color: location.pathname === '/universe' ? '#00ff88' : '#d1d4dc', textDecoration: 'none' }}>Universe</Link>
+                    <Link to="/universe" style={{ color: location.pathname === '/universe' ? '#00ff88' : '#d1d4dc', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                        Universe
+                        {/* IPO 追加候補の未レビュー件数。ステータス詳細はクリックしないと
+                            見えないので、気づける場所にも出す */}
+                        {!!systemHealth?.universe?.ipo_candidates_pending && (
+                            <span
+                                title={`IPO 追加候補が ${systemHealth.universe.ipo_candidates_pending} 件レビュー待ちです`}
+                                style={{
+                                    padding: '1px 6px',
+                                    background: '#ff9800',
+                                    color: '#1a1a1a',
+                                    borderRadius: '9px',
+                                    fontSize: '10px',
+                                    fontWeight: 700,
+                                    lineHeight: 1.5,
+                                }}
+                            >
+                                {systemHealth.universe.ipo_candidates_pending}
+                            </span>
+                        )}
+                    </Link>
                 </nav>
                 
                 {systemHealth && (
@@ -321,6 +341,17 @@ export default function App() {
                                             {systemHealth.pipeline_status.last_completed_at
                                                 ? new Date(systemHealth.pipeline_status.last_completed_at).toLocaleString('ja-JP')
                                                 : 'N/A'}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Universe */}
+                                <div style={{ marginBottom: '12px' }}>
+                                    <div style={{ fontWeight: 'bold', color: '#00ff88', marginBottom: '4px' }}>Universe</div>
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '4px' }}>
+                                        <div>IPO Candidates:</div>
+                                        <div style={{ color: systemHealth.universe?.ipo_candidates_pending ? '#ff9800' : '#d1d4dc' }}>
+                                            {systemHealth.universe?.ipo_candidates_pending ?? 0} pending
                                         </div>
                                     </div>
                                 </div>

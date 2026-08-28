@@ -1,6 +1,6 @@
 # IPO 銘柄の追加候補リストアップ 計画書
 
-- **ステータス**: 🚧 進行中（バックエンド完了。残: フロントエンド I〜K・E2・L・M）
+- **ステータス**: 🚧 進行中（実装完了。残: L ドキュメント・M 仕上げ・E2 は merge 後）
 - **実施者**: AI エージェント (Claude Opus 5) — オーケストレーター + implementer / test-writer へ委譲
 - **開始日**: 2026-08-27 / **完了日**: —
 - **作業ブランチ**: `worktree-ipo-candidates`（`.claude/worktrees/` 配下に作成）
@@ -238,15 +238,19 @@ cik_floor = 0                  # 縮退用。Yahoo が絞ってきたら 1900000
 - [x] **H. `weekly_maintenance.py` に週次ステップ追加 + テスト** — SEC 突合の直後（マスタキャッシュに相乗り）。レポートに `7b. IPO candidate scan` 節を追加
 - [x] **H2. ~~`classify_symbol_freshness()` の判定順を修正~~ → 調査の結果 “修正しない” が正解**
       既存の保護（`split_by_sec_verdict`）で足りることを回帰テスト3件で実証した（§3.7 参照）
-- [ ] **I. `UniverseCandidatesPage.tsx` + トップレベルタブ + API クライアント**
-- [ ] **J. `App.tsx` のバッジとポップオーバー**
-- [ ] **K. フロントエンドテスト（vitest）**
+- [x] **I. `UniverseCandidatesPage.tsx` + トップレベルタブ + API クライアント**
+- [x] **J. `App.tsx` のバッジとポップオーバー** — ナビの Universe 横にオレンジのバッジ + 詳細に Universe 節
+- [x] **K. フロントエンドテスト（vitest）** — 9件。全体 44 passed / `npm run build` 成功
 - [ ] **L. ドキュメント更新** — `universe_db_specification.md` に §9 追加、`backend_specification.md` / `frontend_specification.md` に反映
 - [ ] **M. 全テスト実行 + 本計画書を `doc/completed/` へ移動**
 
 ### 作業中メモ
 
-**現在地**: バックエンド完了（A〜H）。残りはフロントエンド I〜K・E2（merge 後）・L・M。
+**現在地**: 実装完了（A〜K）。残りは L（ドキュメント）・M（仕上げ）と、merge 後の E2。
+
+**ワークツリーでの検証時の注意（3件目）**: `frontend/node_modules` も git 管理外なので
+ワークツリーには存在しない。`npm test` / `npm run build` の前に
+`cd frontend && npm install` が要る（`doc/issue_list.md` の P2 課題と同根）。
 
 **E1 の実測結果（2026-08-28、サンドボックス 4,009 件）**:
 

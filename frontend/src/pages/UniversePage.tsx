@@ -30,7 +30,9 @@ import {
   type ImportDiff,
   type ImportResult,
   type ExportResult,
+  fetchCandidateStats,
 } from '../api/universe';
+import { UniverseCandidatesPage } from './UniverseCandidatesPage';
 
 /* ---------- Constants ---------- */
 
@@ -50,6 +52,10 @@ const SORTABLE_COLUMNS: { key: string; label: string; width?: string }[] = [
 /* ---------- Component ---------- */
 
 export function UniversePage() {
+  // トップレベルタブ。IPO 候補は別ファイル（このファイルは既に大きい）
+  const [mainTab, setMainTab] = useState<'symbols' | 'candidates'>('symbols');
+  const [pendingCount, setPendingCount] = useState<number>(0);
+
   // Data state
   const [data, setData] = useState<PaginatedSymbols | null>(null);
   const [stats, setStats] = useState<UniverseStats | null>(null);
@@ -140,6 +146,12 @@ export function UniversePage() {
   useEffect(() => {
     fetchStats().then(setStats).catch(() => {});
   }, []);
+
+  // IPO 候補の未レビュー件数（タブのバッジ）。
+  // タブを切り替えたときにも取り直して、採用/却下の結果を即座に反映する
+  useEffect(() => {
+    fetchCandidateStats().then((s) => setPendingCount(s.pending)).catch(() => {});
+  }, [mainTab]);
 
   /* ---------- Handlers ---------- */
 
@@ -737,6 +749,45 @@ export function UniversePage() {
         </div>
       </div>
 
+      {/* トップレベルタブ（銘柄一覧 / IPO候補） */}
+      <div style={{ display: 'flex', gap: '2px', marginBottom: '16px', borderBottom: '1px solid var(--border)' }}>
+        {([
+          { key: 'symbols' as const, label: '銘柄一覧', count: null },
+          { key: 'candidates' as const, label: 'IPO候補', count: pendingCount },
+        ]).map((t) => (
+          <button
+            key={t.key}
+            onClick={() => setMainTab(t.key)}
+            style={{
+              padding: '9px 20px',
+              background: 'none',
+              border: 'none',
+              borderBottom: mainTab === t.key ? '2px solid var(--accent)' : '2px solid transparent',
+              color: mainTab === t.key ? 'var(--text-primary)' : 'var(--text-muted)',
+              fontSize: '13px',
+              fontWeight: mainTab === t.key ? 600 : 400,
+              cursor: 'pointer',
+              marginBottom: '-1px',
+            }}
+          >
+            {t.label}
+            {t.count != null && t.count > 0 && (
+              <span style={{
+                marginLeft: '7px', padding: '1px 7px',
+                background: 'var(--accent)', color: '#fff',
+                borderRadius: '10px', fontSize: '10px', fontWeight: 700,
+              }}>
+                {t.count}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {mainTab === 'candidates' && <UniverseCandidatesPage />}
+
+      {mainTab === 'symbols' && (
+      <>
       {/* Error banner */}
       {error && (
         <div style={{
@@ -1483,6 +1534,8 @@ export function UniversePage() {
             )}
           </div>
         </div>
+      )}
+      </>
       )}
     </div>
   );
