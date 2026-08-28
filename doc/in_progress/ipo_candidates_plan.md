@@ -241,7 +241,7 @@ cik_floor = 0                  # 縮退用。Yahoo が絞ってきたら 1900000
 - [x] **I. `UniverseCandidatesPage.tsx` + トップレベルタブ + API クライアント**
 - [x] **J. `App.tsx` のバッジとポップオーバー** — ナビの Universe 横にオレンジのバッジ + 詳細に Universe 節
 - [x] **K. フロントエンドテスト（vitest）** — 9件。全体 44 passed / `npm run build` 成功
-- [ ] **L. ドキュメント更新** — `universe_db_specification.md` に §9 追加、`backend_specification.md` / `frontend_specification.md` に反映
+- [x] **L. ドキュメント更新** — `universe_db_specification.md` §2.4/§2.5、`backend_specification.md` §8.4b、`frontend_specification.md` §3.x
 - [ ] **M. 全テスト実行 + 本計画書を `doc/completed/` へ移動**
 
 ### 作業中メモ
