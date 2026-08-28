@@ -313,7 +313,8 @@ H3 の条件探索に使った。
 2. **Trend Line Break の移植** — 承認済み「1,2 は実装」の 2。構造が成立していないときに
    引かれる**カウンタートレンド線**の抜けで、作者のリストでは別カテゴリ（8/26 の BHVN / ERAS）。
    当初「移植しない」と決めた機能なので、Pine 側の該当ロジックの読み直しから
-3. **`exit_type = "structure_pivot"`（3段階ストップ + TP1/TP2 段階利確）— 判断保留**
+3. ~~**`exit_type = "structure_pivot"`（3段階ストップ + TP1/TP2 段階利確）**~~
+   — **中止（2026-08-29 ユーザー判断）。§5.5 に経緯。実装は revert 済み**
    （詳細は §8）
 
 ### 5.3 H3 / H4 の最適化結果（2026-08-28〜29）
@@ -441,6 +442,59 @@ H4 の study で ADR 8.5〜10.5 の近傍は 159 トライアルあり、
 台地の代表値 +0.106 は B2（+4.171）の 1/40。**型1では採用水準に届かない。**
 ゲートの誤設定という発見（0/200 → 39/200）は本物だが、それは
 「H3 が負だった理由の説明」であって「H3 が有望だった証拠」ではない。
+
+### 5.5 出口の差し替えは中止 / H 系の整理（2026-08-29）
+
+#### `exit_type = "structure_pivot"` は中止
+
+一度実装して単体テスト13件まで通したが、**ユーザー判断で中止し revert した**
+（`backtest_simulator.py` / `backtest_runner.py` / `screener_registry.py` の変更と
+`backend/tests/backtest/test_structure_pivot_exit.py` を削除。本文には何も残っていない）。
+
+判断の材料になったのは §2.2 に既にあった実測で、**作者の出口はヌル以下**だった:
+`rt_2nd_break` は勝率 63.8〜65.4% だが平均リターン +0.46%（ヌル +0.80%）、
+平均勝ち +5.79% / 平均負け −9.91% ＝ 損益分岐に必要な勝率 68.6% に対し実績 64.4%。
+加えて §5.3 で分かったのは**エントリー側の質が B2 と1桁違う**ことであり、
+出口を替えて1桁埋まる見込みは薄い。
+
+設計として1点だけ記録しておく。実装では TP1 を**全利確にせず部分利確**にした。
+H3 の勝ちは `sma50_atr_exit` 62件が平均 +40.8% を稼いでおり、
+TP1（構造上の中央値 +3.2%）で全部降りると**そこを落とす**ため。
+§2.2 の実測が使った「TP1 全利確 / HL 損切り / 60日」がヌル以下だったのは、
+この意味では当然の結果とも読める。再挑戦するならここから。
+
+また、戦略ごとに出口を上書きする仕組み（`[[strategy]]` の `exit_type`）も
+同時に revert した。`[exit_rules]` の全戦略共通固定は §2.2 のとおり維持されている。
+
+#### 副産物: `vxv_vix_ratio` は最適化経路で別物になる
+
+上記の調査中に、`exit_type = "vxv_vix_ratio"` を最適化で使うと
+VXV 判定が一度も発火しないことが分かった（`vxv_vix_series` を作るのは
+`run_backtest()` だけで、最適化は `run_single_strategy()` を直接呼ぶため）。
+**`doc/issue_list.md` の P1 に登録済み。**
+
+#### H 系の整理
+
+Optuna study と `backtest_config.toml` の戦略を **H3 の1本だけに絞り、
+`H1_structure_2nd_break` へ改名**した（ユーザー指示）。
+
+| 削除した study | 削除した戦略 |
+| :--- | :--- |
+| `H1_old` / `H1_structure_pivot_ready` / `H2_original_1st_break` / `H4_sp_2nd_wide` / `H4b_sp_2nd_adr_wide` | `H1_structure_pivot_ready` / `H1c_no_pivot_control` / `H2_original_1st_break` / `H4_sp_2nd_wide` / `H4b_sp_2nd_adr_wide` |
+
+- 改名は `optuna.copy_study`（trial を保持）→ 旧名を `delete_study`。200 trials と
+  best 値が一致することを検査済み
+- 実行前に `data/optimization_trials_backup_20260829_085045.db` を取得（VACUUM INTO）
+- 結果ファイルも追随（`holdout_H3_*` → `holdout_H1_*`、`trades_H3_*` → `trades_H1_*`、
+  削除した戦略の holdout は削除）
+- 戦略数 22 → 17
+
+> [!NOTE]
+> **§5.3 / §5.4 の記述は当時の名前（H1〜H4b）のまま残してある。**
+> 何を測って何が分かったかの記録なので、改名で書き換えると経緯が追えなくなる。
+> 現存するのは `H1_structure_2nd_break`（= 旧 `H3_structure_2nd_break`）のみ。
+> **H4 / H4b の study は消えたが、そこで得た知見（ゲート 0.3 が儲かる領域を
+> 丸ごと失格にしていた / ADR 9.5 は角解ではない）は §5.3・§5.4 に残っている。**
 
 ### 作業中メモ
 
