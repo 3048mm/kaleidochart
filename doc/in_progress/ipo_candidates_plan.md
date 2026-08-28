@@ -255,13 +255,13 @@ git merge worktree-ipo-candidates
 
 # 2) ipo_candidates テーブルを本番 universe.db に作る（冪等・自動バックアップ）
 $env:PYTHONPATH="backend"
-.env\Scripts\python.exe backend\scripts\migrate_universe_ipo_candidates.py --dry-run
-.env\Scripts\python.exe backend\scripts\migrate_universe_ipo_candidates.py --apply
+.\venv\Scripts\python.exe backend\scripts\migrate_universe_ipo_candidates.py --dry-run
+.\venv\Scripts\python.exe backend\scripts\migrate_universe_ipo_candidates.py --apply
 
 # 3) 初回ブートストラップ（約4,000件 / 約17分 + 企業概要の取得）
 #    まず件数を確認してから apply する
-.env\Scripts\python.exe backend\scripts\scan_ipo_candidates.py --dry-run
-.env\Scripts\python.exe backend\scripts\scan_ipo_candidates.py --apply
+.\venv\Scripts\python.exe backend\scripts\scan_ipo_candidates.py --dry-run
+.\venv\Scripts\python.exe backend\scripts\scan_ipo_candidates.py --apply
 
 # 4) API サーバを再起動（backend を変更したため。§10.5）
 ```
