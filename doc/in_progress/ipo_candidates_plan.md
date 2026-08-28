@@ -1,6 +1,6 @@
 # IPO 銘柄の追加候補リストアップ 計画書
 
-- **ステータス**: 🚧 進行中（A〜D / F / G 完了 — バックエンド一式。残: E1/E2・H・フロント）
+- **ステータス**: 🚧 進行中（バックエンド完了。残: フロントエンド I〜K・E2・L・M）
 - **実施者**: AI エージェント (Claude Opus 5) — オーケストレーター + implementer / test-writer へ委譲
 - **開始日**: 2026-08-27 / **完了日**: —
 - **作業ブランチ**: `worktree-ipo-candidates`（`.claude/worktrees/` 配下に作成）
@@ -164,38 +164,35 @@ SEC マスタは同一プロセス内で `SecClient` がキャッシュするの
   - 操作: チェックボックス複数選択 → 「追加」「却下」。追加時に category とテーマ紐付けを指定
   - フィルタ: status（既定は pending）/ SPAC疑いを表示 / 却下済みを表示 / 上場日レンジ / 時価総額下限
 
-### 3.7 `classify_symbol_freshness()` の判定順の修正
+### 3.7 `classify_symbol_freshness()` は変更しない（調査の結果、当初案を撤回）
 
-現在の実装（`weekly_maintenance.py:239`）は `no_history` を**行数だけで**先に判定するため、
-**上場直後で行数が少なくデータは最新、という銘柄が退役候補に落ちる**。
+当初は「行数だけで `no_history` を先に判定するのはバグ」として判定順の入れ替えを計画したが、
+**調査の結果それは誤りで、変更してはいけない**ことが分かった。
+
+**理由1: 既存テストが意図的にこの挙動を固定している。**
 
 ```python
-# 現在（バグ）
-if row_count <= low_history_rows or last_date is None:
-    return "no_history"                      # ← last_date を見ていない
-if last_date < spy_latest_date - timedelta(days=stale_days):
-    return "delisted"
-
-# 修正後: 「供給が今生きているか」を先に見る
-if last_date is None:
-    return "no_history"
-if last_date >= spy_latest_date - timedelta(days=stale_days):
-    return "ok" if last_date >= spy_latest_date else "lagging"
-if row_count <= low_history_rows:
-    return "no_history"
-return "delisted"
+(7, _date(2026, 7, 27)),   # LC: 最新日に追いついていても行数が足りない → no_history
+assert classify_symbol_freshness(20, _date(2026, 7, 27), SPY_LATEST) == "no_history"
 ```
 
-**`created_at` による除外ではなくこの方式を採る理由**: `created_at` は「最近追加した」という
-帳簿の都合でしかなく、最近追加した本当に死んだティッカーまで守ってしまう。
-`last_date` は「供給が今生きている」という事実そのもので、退役判定が本来見るべき対象。
+2026-07-29 の実際の事故（供給側にデータが無い銘柄を取りこぼした）を根拠にした設計判断。
+上場2週間の IPO（10行・最新）と `LC` 型（7行・最新）は
+**`(row_count, last_date, spy_latest)` だけでは原理的に区別できない**。
 
-**閾値は既存の `STALE_CALENDAR_DAYS = 7` を再利用する**（3 を新設しない）。
-別の閾値を作ると「行数15・最新日5日前」が新ルールで `no_history`、既存ルールで `lagging` と
-食い違い、「供給が生きている」の定義が2つになる。
+**理由2: `no_history` は自動退役しない。** 3段の安全弁がある。
 
-**既存銘柄への影響は実測ゼロ**（2026-08-27 時点、SPY 最新日 2026-08-26 に対し
-`active` かつ行数<=20 の銘柄は 0 件）。
+1. `no_history` は `delisting_recommendations.csv` に出るだけ
+2. **`split_by_sec_verdict()` が SEC マスタに載っている銘柄を CSV から除外する**
+3. 退役には `retire_stale_symbols.py --from-report` の明示実行が必要
+
+そして**採用した IPO 銘柄は必ず SEC マスタに載っている**（そこから検知したため）。
+つまり 2 の時点で自動退役の対象から外れる。**保護は既に存在していた。**
+
+回帰テスト3件（`TestNewIpoSymbolIsHeldFromRetirement`）でこれを実証し、
+レイヤの役割分担をコメントに残した:
+`classify_symbol_freshness` は「自分の DB から見た状態」だけを述べ、
+「実際に退役してよいか」は SEC との突合が決める。
 
 ### 3.6 `config.toml`
 
@@ -238,9 +235,9 @@ cik_floor = 0                  # 縮退用。Yahoo が絞ってきたら 1900000
       バックアップ取得 → in-place。merge 前に本番へ書いてはいけない
 - [x] **F. API エンドポイント + テスト** — `backend/tests/api/test_universe_candidates.py`（17テスト）
 - [x] **G. `/system/health` に件数追加 + スキーマ更新** — `universe.ipo_candidates_pending`（既定値ありで後方互換）
-- [ ] **H. `weekly_maintenance.py` に週次ステップ追加 + テスト**
-- [ ] **H2. `classify_symbol_freshness()` の判定順を修正（§3.7）+ 回帰テスト**
-      「行数10・データ最新」が `ok` になること、「行数10・データ30日前」が `no_history` のままであることを両方テストする
+- [x] **H. `weekly_maintenance.py` に週次ステップ追加 + テスト** — SEC 突合の直後（マスタキャッシュに相乗り）。レポートに `7b. IPO candidate scan` 節を追加
+- [x] **H2. ~~`classify_symbol_freshness()` の判定順を修正~~ → 調査の結果 “修正しない” が正解**
+      既存の保護（`split_by_sec_verdict`）で足りることを回帰テスト3件で実証した（§3.7 参照）
 - [ ] **I. `UniverseCandidatesPage.tsx` + トップレベルタブ + API クライアント**
 - [ ] **J. `App.tsx` のバッジとポップオーバー**
 - [ ] **K. フロントエンドテスト（vitest）**
@@ -249,7 +246,7 @@ cik_floor = 0                  # 縮退用。Yahoo が絞ってきたら 1900000
 
 ### 作業中メモ
 
-**現在地**: A〜G 完了（バックエンド一式 + フルスケール検証）。残りは E2（merge 後）・H・フロントエンド。
+**現在地**: バックエンド完了（A〜H）。残りはフロントエンド I〜K・E2（merge 後）・L・M。
 
 **E1 の実測結果（2026-08-28、サンドボックス 4,009 件）**:
 
@@ -346,6 +343,12 @@ cd frontend; npm test; npm run build
 
 ### 実装中に判明した事象
 
+- **`classify_symbol_freshness()` を変更しようとして踏みとどまった**（H2）。
+  計画では「行数だけで判定するのはバグ」として判定順の入れ替えを予定していたが、
+  既存テストが実際の事故（`LC`）を根拠に**意図的にこの挙動を固定**していた。
+  さらに `no_history` は自動退役せず、`split_by_sec_verdict()` が
+  SEC マスタ掲載銘柄を除外するため、**新規 IPO の保護は既に存在していた**。
+  計画書を鵜呑みにして変更していたら、過去の修正を巻き戻すところだった。
 - **ブートストラップ（E）は本番に書けない**（D 完了時に判明）。
   `agent_execution_rules.md` §10.3「本番データへは読み取りのみ。
   ワークツリーからの本番書き込みは禁止」に該当する。E1（サンドボックス検証）と

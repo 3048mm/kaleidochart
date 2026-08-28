@@ -549,6 +549,28 @@ def run_sec_corporate_action_sync(dry_run: bool, report_dir: str) -> dict:
         return {"error": str(e)}
 
 
+def run_ipo_candidate_scan(dry_run: bool) -> dict:
+    """SEC マスタとの差分から IPO 候補を検知し `ipo_candidates` に登録する。
+
+    週次に置く理由: SEC マスタ自体が週次更新であり、日次更新の critical path に
+    Yahoo 通信を増やしたくない。IPO を1週間遅れて知って困る場面も無い
+    （むしろ上場直後は買わない）。SEC マスタは `SecClient` が同一プロセス内で
+    キャッシュするため、直前の SEC 突合と合わせて追加リクエストは発生しない。
+
+    **失敗しても週次メンテ全体は落とさない。** `run_sec_corporate_action_sync()`
+    と同じ方針で、ここで例外を投げると物理メンテや整合性監査の結果まで失われる。
+    連絡先未設定（`config.local.toml` / `STOCKTOOL_SEC_CONTACT`）も同じ扱い。
+
+    詳細: `doc/in_progress/ipo_candidates_plan.md` §3.4
+    """
+    try:
+        from scripts.scan_ipo_candidates import run as ipo_run
+        return ipo_run(dry_run=dry_run)
+    except Exception as e:  # noqa: BLE001 — 週次メンテ全体を巻き込まない
+        logger.error(f"IPO 候補スキャンに失敗しました（週次メンテは続行します）: {e}")
+        return {"error": str(e)}
+
+
 def split_by_sec_verdict(rows, alive_tickers):
     """退役候補を「SEC 上も消えている」と「SEC 上は健在」に分ける。
 
@@ -585,6 +607,29 @@ def resolve_report_dir(db_path: str | None) -> str:
     if db_path:
         return os.path.join(os.path.dirname(os.path.abspath(db_path)), "maintenance_reports")
     return os.path.join(project_root, "data", "maintenance_reports")
+
+
+def _write_ipo_section(f, ipo: dict | None, dry_run: bool) -> None:
+    """IPO 候補スキャンの結果をレポートに書く。
+
+    未レビュー件数を**週次レポートにも出す**のは、フロントのバッジと二重化して
+    気づける場所を増やすため。画面を開かない週でもレポートで分かる。
+    """
+    f.write("\n7b. IPO candidate scan (universe.db):\n")
+    if ipo is None:
+        f.write("   - Skipped (--skip-sec)\n")
+        return
+    if ipo.get("error"):
+        f.write(f"   - [WARN] Skipped due to error: {ipo['error']}\n")
+        return
+    f.write(f"   - Probed: {ipo.get('candidates', 0)} / "
+            f"Passed: {ipo.get('passed', 0)}\n")
+    if dry_run:
+        f.write(f"   - [DRY-RUN] Would add as pending: {ipo.get('pending', 0)}\n")
+    else:
+        f.write(f"   - Newly added: {ipo.get('inserted', 0)}\n")
+        f.write(f"   - Awaiting review: {ipo.get('pending_total', 0)} "
+                f"(Universe 画面の「IPO候補」タブで採用/却下)\n")
 
 
 def _write_sec_section(f, sec: dict | None, dry_run: bool) -> None:
@@ -755,6 +800,7 @@ def write_maintenance_report(report: dict, dry_run: bool, db_path: str | None = 
         f.write("\n")
 
         _write_sec_section(f, report.get("sec_sync"), dry_run)
+        _write_ipo_section(f, report.get("ipo_scan"), dry_run)
 
         f.write("\n8. Physical size (SQLite hot cache):\n")
         for label, path in (("System DB", db_path), ("User DB", report.get("user_db_path"))):
@@ -876,6 +922,23 @@ def main():
                         f" needs_review={len(sec['pending']) + len(sec['unknown'])}"
                         f" (no_action: master_gap={len(sec['master_gap'])}"
                         f" coexisting={len(sec['coexisting'])})")
+
+            # IPO 候補スキャン。SEC 突合の直後に置くことで SecClient のマスタ
+            # キャッシュに相乗りする（追加リクエスト 0）
+            if args.skip_sec:
+                report["ipo_scan"] = None
+            else:
+                logger.info("Starting IPO candidate scan...")
+                ipo = run_ipo_candidate_scan(dry_run=args.dry_run)
+                report["ipo_scan"] = ipo
+                if ipo.get("error"):
+                    logger.warning(f"  IPO scan skipped due to error: {ipo['error']}")
+                else:
+                    logger.info(
+                        f"  IPO scan: probed={ipo.get('candidates', 0)}"
+                        f" passed={ipo.get('passed', 0)}"
+                        f" inserted={ipo.get('inserted', 0)}"
+                        f" pending_total={ipo.get('pending_total', 0)}")
 
 
             # Log summary
