@@ -774,3 +774,35 @@ min_adr_pct_21           = { type = "float", min = 2.0, max = 7.0, step = 0.5 }
 min_rs_trend_s21         = { type = "float", min = 0.95, max = 1.15, step = 0.025 }
 max_sma50_atr_mult       = { type = "float", min = 6.0, max = 10.0, step = 0.5 }
 min_market_cap           = { type = "categorical", choices = [1e7, 5e7, 1e8, 3e8, 1e9, 3e9, 1e10] }
+
+# -------------------------------------------------------------
+# H4: H3 の探索余地を広げた版（2026-08-28）
+#
+# H3 の best は min_adr_pct_21=7.0 / min_rs_trend_s21=1.15 と**探索範囲の角**に
+# 貼り付いて止まった。締めたくても締められなかったのは検出件数ゲート 0.3件/日で、
+# Bear 2022 が 0.359件/日とぎりぎりだったため。ゲートを 0.1 へ下げ
+# （quality_gate_lo = min(既定0.3, min_avg_hits_per_day) の既存仕様。E1/E2 と同じ使い方）、
+# 併せて角に当たっていた3軸の上限を広げる。**出口は共通の [exit_rules] のまま**で、
+# H5（構造ベースの出口）と1変数だけ違う対照になるようにしてある。
+# -------------------------------------------------------------
+[[strategy]]
+name = "H4_sp_2nd_wide"
+description = "H3 と同条件・検出件数ゲート 0.1 / 探索範囲を拡大（出口は共通固定）"
+max_hits_per_day = 10
+sort_column = "rs_ratio_rank_e21"
+sort_ascending = false
+is_structure_2nd_break = true
+min_dist_21ema_pct = 4.0
+min_adr_pct_21 = 7.0
+min_rs_trend_s21 = 1.15
+min_market_cap = 1e8
+max_sma50_atr_mult = 9.5
+max_allowed_dd = 35.0
+min_avg_hits_per_day = 0.1      # 検出件数ゲートの下限も 0.1 へ下がる
+
+[strategy.optimization]
+min_dist_21ema_pct       = { type = "float", min = 0.0, max = 8.0, step = 0.5 }
+min_adr_pct_21           = { type = "float", min = 2.0, max = 10.0, step = 0.5 }
+min_rs_trend_s21         = { type = "float", min = 0.95, max = 1.30, step = 0.025 }
+max_sma50_atr_mult       = { type = "float", min = 5.0, max = 12.0, step = 0.5 }
+min_market_cap           = { type = "categorical", choices = [1e7, 5e7, 1e8, 3e8, 1e9, 3e9, 1e10] }

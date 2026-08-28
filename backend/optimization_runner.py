@@ -634,6 +634,11 @@ def main():
     parser = argparse.ArgumentParser(description="Optimize backtest parameters with Optuna")
     parser.add_argument("--strategy", type=str, required=True, help="Strategy name or short code (A, B, C...)")
     parser.add_argument("--trials", type=int, default=30)
+    # ワークツリーから実験する場合の逃がし口。ワークツリーの data/ は空なので、
+    # 何も指定しないと本体とは別の空の trial DB が黙って作られ、既存 study と比較できない。
+    # （データ本体の切り替えは STOCKTOOL_DB_PATH が既に担当している）
+    parser.add_argument("--storage", type=str, default=None,
+                        help="Optuna trial DB のパス（既定: <project_root>/data/optimization_trials.db）")
     # 2026-07-18: n_jobs=-1（全コア並列）は RDBStorage(SQLite) の並行書き込み耐性の低さと
     # 衝突し、"ValueError: Cannot tell a COMPLETE trial" が発生する（複数スレッドが同一trialの
     # 完了を同時に study.tell しようとして SQLite 側でレース）。n_jobs=4 に下げても再発を確認
@@ -686,7 +691,8 @@ def main():
     print("Pre-warm complete.")
 
     # Setup storage
-    db_path = os.path.join(project_root, 'data', 'optimization_trials.db')
+    db_path = os.path.abspath(args.storage) if args.storage else \
+        os.path.join(project_root, 'data', 'optimization_trials.db')
     
     # 1. Ensure directories exist
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
