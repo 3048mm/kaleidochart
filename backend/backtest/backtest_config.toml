@@ -806,3 +806,36 @@ min_adr_pct_21           = { type = "float", min = 2.0, max = 10.0, step = 0.5 }
 min_rs_trend_s21         = { type = "float", min = 0.95, max = 1.30, step = 0.025 }
 max_sma50_atr_mult       = { type = "float", min = 5.0, max = 12.0, step = 0.5 }
 min_market_cap           = { type = "categorical", choices = [1e7, 5e7, 1e8, 3e8, 1e9, 3e9, 1e10] }
+
+# -------------------------------------------------------------
+# H4b: H4 の ADR 上限だけを外した版（2026-08-29）
+#
+# H4 の上位トライアルは min_adr_pct_21 = 9.5（範囲上限 10.0）が**全件で一致**し、
+# ここだけが角解のまま残った。min_rs_trend_s21 = 1.175 も全件一致だが範囲
+# 0.95〜1.30 の内側なので真の最適点。min_dist_21ema_pct（2.5〜7.5）と
+# max_sma50_atr_mult（6.0〜11.5）は上位内でばらついており、効いていない軸。
+#
+# ADR を上げると検出件数が減ってゲート 0.1件/日に当たるため、その分は
+# 他の軸が緩む形で最適化器が釣り合いを取る。**1軸だけ変えた H4 の対照**。
+# -------------------------------------------------------------
+[[strategy]]
+name = "H4b_sp_2nd_adr_wide"
+description = "H4 と同一・min_adr_pct_21 の探索上限のみ 10 → 20 へ"
+max_hits_per_day = 10
+sort_column = "rs_ratio_rank_e21"
+sort_ascending = false
+is_structure_2nd_break = true
+min_dist_21ema_pct = 2.5
+min_adr_pct_21 = 9.5
+min_rs_trend_s21 = 1.175
+min_market_cap = 1e8
+max_sma50_atr_mult = 6.0
+max_allowed_dd = 35.0
+min_avg_hits_per_day = 0.1
+
+[strategy.optimization]
+min_dist_21ema_pct       = { type = "float", min = 0.0, max = 8.0, step = 0.5 }
+min_adr_pct_21           = { type = "float", min = 2.0, max = 20.0, step = 0.5 }
+min_rs_trend_s21         = { type = "float", min = 0.95, max = 1.30, step = 0.025 }
+max_sma50_atr_mult       = { type = "float", min = 5.0, max = 12.0, step = 0.5 }
+min_market_cap           = { type = "categorical", choices = [1e7, 5e7, 1e8, 3e8, 1e9, 3e9, 1e10] }
