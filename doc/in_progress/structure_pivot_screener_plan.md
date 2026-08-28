@@ -204,48 +204,136 @@ min_up_down_vol_ratio_50 = 1.5
 
 ## 5. 実装順序と進捗チェックリスト
 
+**本タスクは実装・本番昇格まで完了している（2026-08-26）。**
+残作業は §5.2 の3件のみ。以下は当初計画の項目の消化状況。
+
 - [x] §4 のユーザー確認事項に回答をもらう（2026-08-26 に全件確定）
-- [ ] `DEFAULT_MAX_LEN` を 10 → 5 に変更し、依存する既存テストと仕様書を追随させる
-- [ ] **TDD**: `structure_pivot_series()` のテストを先に書く（確定遅延・構造が無いバーの NaN・
+- [x] `DEFAULT_MAX_LEN` を 10 → 5 に変更し、依存する既存テストと仕様書を追随させる
+- [x] **TDD**: `structure_pivot_series()` のテストを先に書く（確定遅延・構造が無いバーの NaN・
       `find_structures()` との一致）
-- [ ] `structure_pivot_series()` を実装
-- [ ] `indicators/calculate.py` に算出を追加、`db/models.py` に2カラム追加
-- [ ] `backend/tests/indicators/test_calculate.py` の `EXPECTATIONS`（protection テスト）へ追記
-- [ ] **T3 の所要時間を計測**（現状比。純 numpy の総当たりループが重ければ numba 化を検討。
-      `moving_averages.py` / `volatility.py` に前例あり）
-- [ ] 仮想カラム3種をレジストリ／SQL／pandas の3箇所に登録
-- [ ] `backend/tests/api/test_screener_parity.py` の `PARITY_CASES` に境界値を追加
-      （**全通過でも全落ちでもない**値にすること）
-- [ ] `backtest_config.toml` に `H1_structure_pivot_ready` を追加
-- [ ] `frontend/src/types.ts` の `ChartDataPoint` に `sp_pivot` / `sp_hl` を追加し、
-      `SymbolDataTable` の **RS MACD Hist（`rs_macd_hist_21`）の右**に2列を表示する
-      （ヘッダ行とデータ行の両方。`formatN` の桁は価格なので 2 桁）
-- [ ] バックエンド全体 pytest 全件パス
-- [ ] **Sandbox 検証**（`.claude/skills/sandbox-workflow`）:
-      本番 Parquet を `data/sandbox/` へコピー → `STOCKTOOL_DB_PATH` と
-      `STOCKTOOL_USER_DB_PATH` を**絶対パスで**設定 → `--rebuild-from T3` →
-      **SQL で新カラムの値を直接検証**（NULL 率・値域・チャート API の結果との一致）
-- [ ] Parquet 全期間バックフィルスクリプトを実装（§3.5。既存カラム不変の検査を含む）
-- [ ] Sandbox でバックフィルを実行し、既存カラムが1列も変わらないことを確認
-- [ ] `tools/db_health_check.py --all --check-nulls`
-- [ ] Sandbox で API を起動し、オレンジの警告バッジと `is_production: false` を確認
-- [ ] **型1バックテストと型3シナリオテストを実行し、採否を判定**（本タスクの目的）
-- [ ] 仕様書更新（`backend_specification.md` §3.4 の T3 カラム表、§5.0 のレジストリ）
-- [ ] 本番昇格（ユーザー実施）→ `/api/system/info` で `is_production: true` を確認
-- [ ] 本計画書を `doc/completed/` へ移動
+- [x] `structure_pivot_series()` を実装（`backend/indicators/structure_pivot.py`）
+- [x] `indicators/calculate.py` に算出を追加、`db/models.py` に2カラム追加
+- [x] `backend/tests/indicators/test_calculate.py` の `EXPECTATIONS`（protection テスト）へ追記
+- [x] **T3 の所要時間を計測** — 全期間 6,057,730 行のバックフィルで **65秒**（§6.1）。
+      numba 化は見送り（`tmp/bench_sp_series.py`）
+- [x] 仮想カラム3種をレジストリ／SQL／pandas の3箇所に登録
+- [x] `backend/tests/api/test_screener_parity.py` の `PARITY_CASES` に境界値を追加
+      （1st と 2nd の**両方**が非退化になるよう `hi` の中で値を分けている）
+- [x] `backtest_config.toml` に `H1_structure_pivot_ready` を追加
+      （その後 `H1c_no_pivot_control` / `H2_original_1st_break` / `H3_structure_2nd_break` まで拡張）
+- [x] `frontend/src/types.ts` の `ChartDataPoint` に `sp_pivot` / `sp_hl` を追加し、
+      `SymbolDataTable` に2列を表示
+      ※ **供給側（`/api/chart/{id}` のレスポンス組み立て）の配線漏れで当初は常に空だった**
+      （`c5bd232` で Parquet 経路・SQLite 経路の両方に追加。§7-2）
+- [x] バックエンド全体 pytest 全件パス（昇格時点 1,145件 / 最終 1,183件 green）
+- [x] **Sandbox 検証**（§6.1）
+- [x] Parquet 全期間バックフィルスクリプトを実装（`backend/scripts/backfill_structure_pivot.py`）
+- [x] Sandbox でバックフィルを実行し、既存63列が1列も変わらないことを確認（§6.1）
+- [x] `tools/db_health_check.py --all --check-nulls`
+      — 「最新日の主要指標 NULL: 1件」は上場から日が浅い銘柄のウォームアップで、本タスク由来ではない
+- [ ] ~~Sandbox で API を起動し、オレンジの警告バッジと `is_production: false` を確認~~
+      — **未実施**。昇格を `ALTER TABLE` + `UPDATE` の増分方式に切り替えたため（§5.1）、
+      本番で直接検証する形になった（`/api/chart/1/structure_pivot` の実応答で確認済み）
+- [x] **型1バックテストと型3シナリオテストを実行し、採否を判定**（本タスクの目的）
+      → **スクリーン条件としては不採用**（§6.1 / §6.2）。ただしその後、作者の公開リストとの
+      照合から `is_structure_2nd_break` が再浮上し、**H3 を最適化のベースとして採用**（§5.1）
+- [x] 仕様書更新（`backend_specification.md` §3.4 の T3 カラム表、§5.0 のレジストリ）— `0461fb5`
+- [x] **本番昇格**（2026-08-26。§5.1 の増分方式）→ `/api/system/info` で確認済み
+- [ ] 本計画書を `doc/completed/` へ移動 — **H3 の最適化結果を確認してから**
+
+### 5.1 当初計画に無かった追加実装（2026-08-26〜27）
+
+作者の公開リストとの照合から、当初「不採用」で閉じるはずだった話が広がった。
+
+| SHA | 内容 |
+| :--- | :--- |
+| `3d48c6d` | `is_structure_1st_break`（fib 0.618 上抜け）を特殊フィルタとして新設。記事準拠の `H2_original_1st_break` を追加 |
+| `65bf627` | **`is_structure_2nd_break`（本ピボット上抜け）** — TP1 上限は**付けない**（作者は使っていないことが BEAM の実例で確定） |
+| `5b692b3` | チャートに 1st / 2nd / TP1 / TP2 の4水準を描画（当初は 2nd のみだった） |
+| `d67a7c9` → `b93d863` | 履歴ピボット線を右端まで延長 → ユーザー判断で差し戻し。ただし「日付を順序付き配列で渡す」基盤変更は fib 水準が依存するため残置 |
+| `6f73681` | `resolve_required_columns()` が随伴パラメータを除外せず `UnknownFilterKeyError` で停止する穴（`is_vcp_breakout` の `pivot_tol` も同じ穴の上にあった） |
+| `d9e0f4d` | **特殊フィルタ一覧を API 駆動化** — 実装済み16件のうち**11件が画面に出ていなかった**。フロントのハードコードを撤去し `SPECIAL_FILTER_KEYS` から配信 |
+| `a86e90b` / `31652bc` | ラベルをキー名から機械生成（`>` と `Gt` の表記ゆれ解消）。`close_gt` 系を一覧から除外（`dist_*_pct` で代用可）、仮想カラムの別名重複を解消 |
+| `d44fcb7` → `56b3f43` / `cc65527` | モバイルで詳細スクリーン条件がスクロール不可。真因は `.glass-panel { overflow: hidden !important }` に inline style が負けていたこと。同型が `ChartPage` にもあった |
+| `5ed38c6` | `backend/scripts/promote_structure_pivot.py` — `run_production_restore.py` の破壊的経路を避ける昇格手順 |
+| `d7a45fe` | **`H3_structure_2nd_break`** — 最適化のベースにする条件セット |
+
+#### 本番昇格を増分方式に変えた経緯（2026-08-26）
+
+ユーザーが出先で、API サーバー（PID 17232・Session 0・別アカウント実行）を
+**エージェントの権限では kill できなかった**。標準の `run_production_restore.py` は
+DB をファイルごと削除する経路なので、`fx_rates` 7,715行喪失の前例と同じリスク階級に入る。
+そのため `VACUUM INTO` バックアップ → Parquet 新世代 publish → `ALTER TABLE ADD COLUMN`
+→ ホット期間だけ UPDATE → 検証、という**増分方式**に切り替えた（WAL なので読み取り中の
+サーバーと共存できる）。実測 254秒。手順は `promote_structure_pivot.py` に残してある。
+
+#### 作者の公開スクリーナー出力との照合（移植の正しさの確定）
+
+作者が X に投稿した銘柄リストと突き合わせた結果、**TP1 上限を外した定義で完全一致**した。
+
+| 日付 | 1st | 2nd | 母集団 |
+| :--- | :--- | :--- | ---: |
+| 8/20 | 1/1 | 2/2 | 3,212 |
+| 8/25 | 2/2（ユニバース外3） | 15/15（外1） | 3,208 |
+| 8/26 | 2/2 | 5/5（外1） | 3,207 |
+| **計** | **5/5** | **22/22** | — |
+
+ピボット検出（帯2-5・Tightest）・確定遅延・fib 0.618 の水準・1st と 2nd の排他条件が
+**すべて作者の実装と一致**していることの裏付け。8/19 を加えた4日分（ユニバース内26銘柄）を
+H3 の条件探索に使った。
+
+> [!IMPORTANT]
+> **ユニバースの欠落が5銘柄**（AVTX / VOR / ABSI / ORIC / RSUS）。作者は5000銘柄、
+> こちらは個別3,207銘柄なので取りこぼしが出る。IPO 候補の自動追加タスクと関連する。
+
+#### 絞り込みで分かったこと（H3 の根拠）
+
+| 条件 | 4日での判定 |
+| :--- | :--- |
+| **`min_adr_pct_21` ≥ 4** | **最も効く。母集団をほぼ半減**（45.5件 → 22.8件） |
+| `min_rs_trend_s21` ≥ 1.0 / `min_dist_21ema_pct` ≥ 2 | 補助的に効く |
+| `vol_surge_21` ≥ 1.0 | **効かない**（全日で残存率80%を保てない） |
+| `sma50_atr_mult` 2〜8 | **逆効果**（作者26件中18件しか入らない。下限で作者側が落ちる） |
+| 時価総額 | **ほぼ効かない**（作者リストの下限が $9.33億、母集団の中央値が $37億で分離しない） |
+| トレンドテンプレート | **逆効果**（作者の3/5が落ちる） |
+
+> [!WARNING]
+> **1日だけのデータで見つけた条件は2度とも後付けだった。**
+> 8/26 単独で「本命」とした `dist_ema21_pct ≥ 7` × `売買代金 ≥ $25M` も、
+> `rs_value` %rank ≥ 95（作者4件が 95.24 にぴったり揃って見えた）も、
+> 4日で評価すると崩れた。**条件の採否は必ず全日同時に評価すること。**
+
+作者の通過率が日によって **2%〜15% と7倍振れる**（8/19 は母集団187件に対し4件）ため、
+固定閾値の組み合わせでは再現しきれない。上位N件で切っている可能性が高い。
+完全再現はここで打ち切り、**妥当な条件セット（H3）を作って Optuna に委ねる**方針に転換した。
+
+### 5.2 残作業
+
+1. **H3 の最適化結果の確認** — `H3_structure_2nd_break` を型1で最適化し、採否を判定する。
+   探索軸は §5.1 の `d7a45fe` を参照。**study 名は既存トライアルと混ざらないよう注意**
+   （H1 は `H1_before` に退避済み。`E1_old` と同じ運用）
+2. **Trend Line Break の移植** — 承認済み「1,2 は実装」の 2。構造が成立していないときに
+   引かれる**カウンタートレンド線**の抜けで、作者のリストでは別カテゴリ（8/26 の BHVN / ERAS）。
+   当初「移植しない」と決めた機能なので、Pine 側の該当ロジックの読み直しから
+3. **`exit_type = "structure_pivot"`（3段階ストップ + TP1/TP2 段階利確）— 判断保留**
+   （詳細は §8）
 
 ### 作業中メモ
 
-**次にやること**: チェックリストの上から順に。まず `DEFAULT_MAX_LEN` を 5 にして
-既存テスト（`test_structure_pivot.py` の `test_pivot_strength_*` / `test_length_range_is_honored`、
-`test_chart_api.py` の `metadata.max_len`）を追随させ、その後 TDD で
-`structure_pivot_series()` に入る。
+**現在の状態**: 本番稼働中。`sp_pivot` / `sp_hl` が T3 に入り、DATA VIEW・チャート描画・
+詳細スクリーン条件（16件）すべて動いている。ブランチ `worktree-sp-screener-t3` は
+main と同一地点、作業ツリーはクリーン。
 
 **注意点**:
-- 確定遅延を崩さないこと（§3.2 の IMPORTANT）
-- Sandbox の環境変数は `STOCKTOOL_DB_PATH` と `STOCKTOOL_USER_DB_PATH` を
-  **両方・絶対パスで**設定する（片方だけだと本番 `user_data.db` を破壊する）
-- Parquet バックフィルは既存カラム不変の検査に通ってから（§3.5）
+- **`is_structure_2nd_break` は T3 のカラムではない。** T3 にあるのは `sp_pivot` / `sp_hl` の
+  2列だけで、2nd Break はスクリーン評価時に `sp_pivot` + `close` + `change_1d_pct` から
+  その場で計算する（デイリー更新の完了を待つ必要はない）
+- 確定遅延を崩さないこと（§3.2 の IMPORTANT）。崩すと型1バックテストは先読みで
+  成績が良くなるだけで気付けない
+- 長さ帯 2-5 はチャート表示と共有している。**片方だけ変えない**
+- 特殊フィルタを足したら `SPECIAL_FILTER_KEYS` に登録すれば画面に自動で出る
+  （`d9e0f4d` 以降。フロントのハードコードは撤去済み）
+- 随伴パラメータ（閾値）は `FilterSpec.params` に宣言しないと実行時に未知キーで停止する
 
 ## 6. 検証プラン / 結果
 
@@ -410,8 +498,16 @@ H1 のホールドアウト（`[[optimization_validation.sets]]`）:
 
 ## 8. スコープ外・残作業
 
-- チャート表示への fib 1st Pivot / TP1 / TP2 の水平線追加（別途。実装は軽い）
-- Advanced 版の出口管理システム（§2.2）
+- ~~チャート表示への fib 1st Pivot / TP1 / TP2 の水平線追加~~ — **実装済み（`5b692b3`）**。
+  1st = 黄の破線 / 2nd = 水色の太実線 / TP1・TP2 = 灰の破線。比率は API のクエリで変更可
+- **Advanced 版の出口管理システム（§2.2）— 判断保留のまま**（§5.2-3）。
+  Phase 1 = 21EMA(Low) トレール → Phase 2（2nd 突破後）= 1st に固定 →
+  Phase 3（TP1 到達後）= max(1st, MA)、TP1/TP2 で段階利確。
+  `[exit_rules]` の `exit_type` に1つ足す形で実装できる（`sp_pivot` / `sp_hl` は T3 にあり、
+  fib 水準はそこから導出、21EMA(Low) はシミュレータ側で計算可能）。
+  **宿題**: これまで測ったのはエントリー信号だけで、作者のシステムを測っていない。
+  H2/H3 は AvgWin +12.1% / AvgLoss −5.4% と勝ちが伸びておらず、
+  プロジェクト固定の出口（−8% / EMA21 2日連続割れ）で早々に切られている可能性がある
 - ショート側（HH-LH）
 - `deploy_after_merge.py` が「新規カラム追加時は730日しか埋めない」問題そのものの解消。
   本タスクでは専用バックフィルで回避するが、**同じ罠を次のカラム追加でも踏む**ため、
