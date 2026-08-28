@@ -1,6 +1,6 @@
 # IPO 銘柄の追加候補リストアップ 計画書
 
-- **ステータス**: 🚧 進行中（実装完了。残: L ドキュメント・M 仕上げ・E2 は merge 後）
+- **ステータス**: 🚧 実装完了・**merge 待ち**（残作業は E2 の本番ブートストラップのみ。変更種別 **C: ユーザー資産**）
 - **実施者**: AI エージェント (Claude Opus 5) — オーケストレーター + implementer / test-writer へ委譲
 - **開始日**: 2026-08-27 / **完了日**: —
 - **作業ブランチ**: `worktree-ipo-candidates`（`.claude/worktrees/` 配下に作成）
@@ -242,11 +242,39 @@ cik_floor = 0                  # 縮退用。Yahoo が絞ってきたら 1900000
 - [x] **J. `App.tsx` のバッジとポップオーバー** — ナビの Universe 横にオレンジのバッジ + 詳細に Universe 節
 - [x] **K. フロントエンドテスト（vitest）** — 9件。全体 44 passed / `npm run build` 成功
 - [x] **L. ドキュメント更新** — `universe_db_specification.md` §2.4/§2.5、`backend_specification.md` §8.4b、`frontend_specification.md` §3.x
-- [ ] **M. 全テスト実行 + 本計画書を `doc/completed/` へ移動**
+- [x] **M. 全テスト実行** — backend 1,347 passed / vitest 44 passed / `npm run build` 成功
+- [ ] **M2. merge → E2 実行 → 本計画書を `doc/completed/` へ移動**（ユーザー操作）
 
-### 作業中メモ
+### 作業中メモ — merge 後の手順（引き継ぎ）
 
-**現在地**: 実装完了（A〜K）。残りは L（ドキュメント）・M（仕上げ）と、merge 後の E2。
+**実装は完了しています。残るのは E2（本番ブートストラップ）だけです。**
+
+```powershell
+# 1) merge（ユーザー指示で実行）
+git merge worktree-ipo-candidates
+
+# 2) ipo_candidates テーブルを本番 universe.db に作る（冪等・自動バックアップ）
+$env:PYTHONPATH="backend"
+.env\Scripts\python.exe backend\scripts\migrate_universe_ipo_candidates.py --dry-run
+.env\Scripts\python.exe backend\scripts\migrate_universe_ipo_candidates.py --apply
+
+# 3) 初回ブートストラップ（約4,000件 / 約17分 + 企業概要の取得）
+#    まず件数を確認してから apply する
+.env\Scripts\python.exe backend\scripts\scan_ipo_candidates.py --dry-run
+.env\Scripts\python.exe backend\scripts\scan_ipo_candidates.py --apply
+
+# 4) API サーバを再起動（backend を変更したため。§10.5）
+```
+
+**期待値**: 通過 約205 / pending 約111 / auto_excluded 約94。
+大きく外れたら §3.1 のどの段で落ちすぎ/漏れすぎかを「落ちた理由」の内訳で切り分けます。
+
+**変更種別 C（ユーザー資産 DB に触れる）** なので、2 のバックアップが取れたことを
+必ず確認してください（`universe.db.bak_YYYYMMDD_HHMMSS`）。
+
+**merge について**: 本ブランチは `d9e0f4d` から分岐しており、その後 main は
+`ea47868` まで進んでいます（structure_2nd_break 系）。
+**両者が触ったファイルは1つも無い**ため競合しません。
 
 **ワークツリーでの検証時の注意（3件目）**: `frontend/node_modules` も git 管理外なので
 ワークツリーには存在しない。`npm test` / `npm run build` の前に
@@ -394,6 +422,21 @@ cd frontend; npm test; npm run build
   `--limit` と `cik_floor` による分割実行の逃げ道を実装に含める。
 - **`sleep` によるポーリング禁止**: ブートストラップは `run_in_background` で実行し完了通知を待つ
   （`CLAUDE.md` エラーリトライ規律）。
+
+## 6b. 最終テスト結果（2026-08-28）
+
+| 対象 | 結果 |
+| :--- | :--- |
+| backend pytest | **1,347 passed / 1 failed** |
+| frontend vitest | **44 passed**（新規 9 件） |
+| `npm run build` | 成功 |
+
+失敗1件は `test_scenario_comparison.py::test_run_comparison_generates_outputs` で、
+**ワークツリーに `data/parquet_master` が無いことによる環境要因**（本体では通る）。
+実装起因ではありません。規定の不備として `doc/issue_list.md` の P2 に起票済み。
+
+新規テスト内訳: 判定ロジック 113 / マイグレーション 8 / スキャン CLI 19 /
+API 17 / 週次組み込み 8 / フロント 9 = **174 件**
 
 ## 8. スコープ外・残作業
 
