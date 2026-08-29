@@ -89,8 +89,8 @@
 | 変数名 | DB 参照元 (Table.Column) | 計算論理・説明 |
 | :--- | :--- | :--- |
 | `min_up_down_vol_ratio_50` | `indicators.up_down_vol_ratio_50` | **Up/Down Volume Ratio（下限）**: 過去50日間の上昇日出来高合計 ÷ 下落日出来高合計。1.5以上で機関投資家のAccumulation（買い集め）が優勢であることを示す。 |
-| `is_rs_blue_dot` | `indicators.is_rs_blue_dot` | **RS Blue Dot**: RS（相対強度）が252日新高値を更新しているが、株価自体は252日新高値に到達していない状態。株価に先行してRSが強さを示すリーディングシグナル。 |
-| `is_rs_red_dot` | `indicators.is_rs_red_dot` | **RS Red Dot**: RS（相対強度）が252日新安値を更新しているが、株価自体は252日新安値に耐えている状態。株価に先行してRSが弱さを示す弱気シグナル。 |
+| `max_rs_blue_dot_age` | `indicators.rs_blue_dot_age` | **RS Blue Dot からの経過日数の上限**。RS が252日新高値を更新したが株価は未到達、という先行シグナルが「N営業日以内に出ていた」ことを要求する。`0` が旧 `is_rs_blue_dot = true` と等価。<br>ブルードットは**ウォッチリスト昇格の資格**であってエントリーシグナルではないため、`is_structure_2nd_break` 等のトリガーと**併用する**こと。 |
+| `min_rs_red_dot_age` / `max_rs_red_dot_age` | `indicators.rs_red_dot_age` | **RS Red Dot からの経過日数**。`min_` 側が「直近 N-1 日にレッドドットが無い」という除外フィルタになる（未点灯は 999 なので通る）。実測では効果を確認できていない。 |
 | `max_vcr` | `indicators.vcr` | **Volatility Contraction Ratio（上限）**: `ATR(10) / ATR(50)`。0.5以下で極度のボラティリティ収縮（VCPの第3〜4次収束）を示す。Trend Template適合 + 高RSランクと組み合わせることで、ブレイクアウト直前のベース形成銘柄を特定する。 |
 
 ---

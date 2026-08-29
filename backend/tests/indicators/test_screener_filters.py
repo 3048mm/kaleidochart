@@ -66,8 +66,8 @@ def _make_ind_row(symbol_id, d, **overrides):
         "up_down_vol_ratio_50": 1.3,
         "vcr": 0.5,
         "td9": 0,
-        "rs_blue_dot": 0,
-        "rs_red_dot": 0,
+        "rs_blue_dot_age": 999,
+        "rs_red_dot_age": 999,
     }
     row.update(overrides)
     return row

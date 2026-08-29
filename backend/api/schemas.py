@@ -83,8 +83,8 @@ class ChartDataPoint(BaseModel):
     market_cap: Optional[float] = None
     
     up_down_vol_ratio_50: Optional[float] = None
-    is_rs_blue_dot: Optional[int] = None
-    is_rs_red_dot: Optional[int] = None
+    rs_blue_dot_age: Optional[int] = None
+    rs_red_dot_age: Optional[int] = None
     vcr: Optional[float] = None
     vol_accum_days_5: Optional[int] = None
     
@@ -107,8 +107,6 @@ class ChartDataPoint(BaseModel):
     pct_from_63d_high: Optional[float] = None
     pct_from_52w_high: Optional[float] = None
     trend_template_ok: Optional[int] = None
-    rs_blue_dot: Optional[int] = None
-    rs_red_dot: Optional[int] = None
     
     # Legacy Relative Ranks for backward compatibility
     rank_rs_ratio_14: Optional[float] = None
@@ -186,16 +184,14 @@ class ScreenerResultItem(DashboardPanelItem):
     is_trend_template: Optional[int] = None
     market_cap: Optional[float] = None
     up_down_vol_ratio_50: Optional[float] = None
-    is_rs_blue_dot: Optional[int] = None
-    is_rs_red_dot: Optional[int] = None
+    rs_blue_dot_age: Optional[int] = None
+    rs_red_dot_age: Optional[int] = None
     vcr: Optional[float] = None
     vol_accum_days_5: Optional[int] = None
 
     # Legacy fields for frontend compatibility
     dist_sma50_atr: Optional[float] = None
     trend_template_ok: Optional[int] = None
-    rs_blue_dot: Optional[int] = None
-    rs_red_dot: Optional[int] = None
 
 class ScreenerDashboardItem(BaseModel):
     id: int

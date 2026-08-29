@@ -1,11 +1,12 @@
 # RS Blue Dot / Red Dot の経過日数カラム化 計画書
 
-- **ステータス**: 🚧 Phase 0 完了 — **実測により中止を提案。採否のユーザー判断待ち**（2026-08-29）
-  - Phase 0 の実測でブルー窓に単独エッジも上乗せ増分も見つからず、Phase 1 以降（スキーマ変更・
-    Parquet 全期間バックフィル・本番昇格）は着手していない。詳細は §7.1
+- **ステータス**: 🚧 Phase 1（実装）進行中（2026-08-29）
+  - Phase 0 完了。中止をいったん提案したが、**追加実測（§7.1b / §7.1c）で2段構えでの効果が
+    再現**したため続行。判断の経緯は §7.1 → §7.1b → §7.1c の順に読むこと
 - **実施者**: AI エージェント (Claude Opus 5) — オーケストレーター
 - **開始日**: 2026-08-29 / **完了日**: —
-- **作業ブランチ**: `worktree-rs-dot-age`（未作成。**Phase 0 の実測だけは本体で読み取り専用に行う**）
+- **作業ブランチ**: `worktree-rs-dot-age`（`.claude/worktrees/rs-dot-age` / main 基点）。
+  **Phase 0 の実測は本体で読み取り専用に実施済み**（`tmp/probe_rs_dot_*.py`）
 - **関連ドキュメント**:
   - `doc/in_progress/structure_pivot_screener_plan.md` — T3 カラム追加の直近の先例（手順はこれに倣う）
   - `backend/scripts/backfill_structure_pivot.py` / `promote_structure_pivot.py` — バックフィル・昇格の実装テンプレート
@@ -35,6 +36,23 @@ RS ラインが先に新高値を付ける」という**先行シグナル**で�
 「点灯から N 日以内」という窓をスクリーナー側の閾値で切れるようにする。
 これにより **N が Optuna の int パラメータになる**（現在は窓という概念自体が無い）。
 
+> [!IMPORTANT]
+> **目的の再定義（2026-08-29・Phase 0 の実測とユーザー判断を受けて）**
+>
+> 当初の目的は「G3 の検出件数を増やして枠遊びを解消する」だったが、実測（§7.1 / §7.1b）で
+> 窓を広げても `avg_gain` は改善しないことが判明した。一方で **勝率・大負け率の観点では
+> 一貫した効果があり、それはベース離脱型トリガーとの2段構えで再現する**。
+>
+> したがって本計画の目的を次に置き換える:
+>
+> **ブルードットは一般に確立された指標であり、本来の用法は「ウォッチリスト昇格の資格」で
+> あってエントリーシグナルではない。現在のプロジェクトの使い方（当日フラグ単発）が
+> 本来の用法と食い違っているので、それを正す。** 窓化は「件数を増やすため」ではなく
+> **「2段構えを表現できるようにするため」**に行う（現行フラグでは E1/E4 との交差が
+> 3.2件/日・0.45件/日しかなく、戦略として組めない）。
+>
+> 採否の評価軸も `avg_gain` 単独ではなく、**リスク調整後（MaxDD・大負け率）**を併せて見る。
+
 ### 成功条件
 
 - `rs_blue_dot_age` / `rs_red_dot_age` が T3 の正式カラムとして SQLite・Parquet の**全期間**に存在する
@@ -59,7 +77,7 @@ RS ラインが先に新高値を付ける」という**先行シグナル**で�
 - Parquet 全期間のバックフィル（新規スクリプト）
 - 本番昇格スクリプト（新規）
 - API（`chart_router` / `screener_router`）とフロント3画面の表示
-- `backtest_config.toml` の `G3_bluedot_leader` を新仕様へ書き換え
+- `backtest_config.toml` — `G3_bluedot_leader` の書き換え＋**新戦略 `H4_bluedot_vcp_pivot` の追加**
 - ドキュメント（`backend_specification.md` のカラム定義）
 
 ### 2.2 変更しないこと（確定した設計判断）
@@ -163,16 +181,41 @@ RS ラインが先に新高値を付ける」という**先行シグナル**で�
 
 ### 3.7 `backtest_config.toml`
 
-`G3_bluedot_leader` を書き換える。旧挙動と等価なのは `max_rs_blue_dot_age = 0`。
+**(a) `G3_bluedot_leader` を書き換える。** 旧挙動と等価なのは `max_rs_blue_dot_age = 0`。
 
 ```toml
 max_rs_blue_dot_age = 5          # 点灯から5営業日以内
-min_rs_red_dot_age  = 20         # 直近20日にレッドドットが無い
-
 [strategy.optimization]
 max_rs_blue_dot_age = { type = "int", min = 0, max = 20, step = 1 }
-min_rs_red_dot_age  = { type = "int", min = 1, max = 40, step = 1 }
 ```
+
+**(b) 新戦略 `H4_bluedot_vcp_pivot` を追加する（本計画の主目的）。**
+
+§7.1c で効果が再現したのは E4（収縮＋本ピボット上抜け）× ブルー窓の組み合わせだけで、
+G3 の書き換えだけでは**本来の用法を検証できない**。E4 相当はブルー窓以外すべて既存機能で
+書ける（`is_structure_2nd_break` は 2026-08 に本番昇格済み、`vcr` は既存の T3 カラム）:
+
+```toml
+[[strategy]]
+name = "H4_bluedot_vcp_pivot"
+description = "収縮ベース内で RS 先行新高値 → 本ピボット上抜けで取る2段構え"
+is_structure_2nd_break = true    # エントリートリガー（イベント）
+max_vcr = 0.8                    # 収縮したベースであること
+max_rs_blue_dot_age = 10         # ← 資格。本計画で初めて書けるようになる条件
+
+[strategy.optimization]
+max_vcr             = { type = "float", min = 0.6, max = 1.0, step = 0.05 }
+max_rs_blue_dot_age = { type = "int",   min = 0,   max = 40,  step = 1 }
+```
+
+> [!NOTE]
+> §7.1c の実測では 0.3〜0.5件/日と検出が少ない。`min_avg_hits_per_day` は実測に合わせて
+> 校正すること（既定の 0.3 ぎりぎり）。**枠を埋めることが目的ではない**ので、
+> `max_hits_per_day` を無理に大きく取らない。
+
+**レッド側について**: §6.0 B-2 / B-3 で `min_rs_red_dot_age` は効果が確認できず、
+反対ドット無効化を列に入れるとブルー窓と併用時に冗長になることが分かっている。
+**初版では戦略に入れない**（列は作るが、フィルタとしては使わない）。
 
 ## 4. ユーザー確認事項
 
@@ -198,41 +241,62 @@ min_rs_red_dot_age  = { type = "int", min = 1, max = 40, step = 1 }
 - [x] `tmp/probe_rs_dot_dist.py` — 点灯の素の分布（§6.0 の A 群）
 - [x] `tmp/probe_rs_dot_forward.py` — age 窓別のフォワードリターン（§6.0 の B 群）
 - [x] `tmp/probe_rs_dot_guards.py` — ガード有無の比較（§6.0 の C 群）
-- [ ] 実測結果を §6.0 の表に記入し、**§4 の #2 / #7 をユーザーと再レビューして列仕様を確定**
+- [x] 実測結果を §6.0 の表に記入し、**§4 の #2 / #7 をユーザーと再レビューして列仕様を確定**
 
 ### Phase 1 — 実装（worktree `worktree-rs-dot-age`）
 
-- [ ] `test_relative_strength.py` にカウンタの red テストを追加（TDD）
-- [ ] `relative_strength.py` のカウンタ実装（njit カーネル）
-- [ ] `db/models.py` のカラム入れ替え
-- [ ] `t3_indicators.py` / `weekly_maintenance.py` の dtype キャストリスト修正（§3.2 の潜在不整合）
-- [ ] API（`schemas.py` / `chart_router.py` / `screener_router.py`）
-- [ ] フロント（`types.ts` / `ChartPage` / `SymbolDataTable` / `ScreenerResultPage`）
-- [ ] `backtest_config.toml` の G3 書き換え
-- [ ] 既存テストの追随（`test_calculate.py` / `test_screener_parity.py` / `test_screener_filters.py` / `test_backtest_screener_refactoring.py` / `verify_rename_refactoring.py`）
-- [ ] `backfill_rs_dot_age.py` 新設
-- [ ] `promote_rs_dot_age.py` 新設
-- [ ] backend / frontend の全テスト green
+- [x] `test_rs_dot_age.py` にカウンタの red テストを追加（TDD。11件）
+- [x] `relative_strength.py` のカウンタ実装（njit カーネル）
+- [x] `db/models.py` のカラム入れ替え
+- [x] `t3_indicators.py` / `weekly_maintenance.py` の dtype キャストリスト修正（§3.2 の潜在不整合）
+- [x] API（`schemas.py` / `chart_router.py` / `screener_router.py`）
+- [x] フロント（`types.ts` / `ChartPage` / `SymbolDataTable` / `ScreenerResultPage`）
+- [x] `backtest_config.toml` の G3 書き換え＋**新戦略 `H4_bluedot_vcp_pivot` 追加**（§3.7b）
+- [x] 既存テストの追随（`test_calculate.py` / `test_screener_parity.py` / `test_screener_filters.py` / `test_backtest_screener_refactoring.py` / `verify_rename_refactoring.py`）
+- [x] `backfill_rs_dot_age.py` 新設
+- [x] `promote_rs_dot_age.py` 新設
+- [x] backend / frontend の全テスト green
 
 ### Phase 2 — Sandbox 検証
 
-- [ ] 本番 Parquet を Sandbox へコピー（`sandbox-workflow` SKILL に従う）
-- [ ] `backfill_rs_dot_age.py --out-dir data/sandbox/parquet_master`（`--apply` なし）
-- [ ] §6.1 の検証項目を実行
-- [ ] `$env:STOCKTOOL_ENV="sandbox"` で API/フロントを起動し、チャート・スクリーナーを目視確認
-- [ ] 所要時間を計測し、本番昇格の見積もりをユーザーへ提示
+- [x] 本番 Parquet を Sandbox へコピー（`sandbox-workflow` SKILL に従う）
+- [x] `backfill_rs_dot_age.py --out-dir data/sandbox/parquet_master`（`--apply` なし）
+- [x] §6.1 の検証項目を実行
+- [x] `$env:STOCKTOOL_ENV="sandbox"` で API を起動し、スクリーナー／チャートの応答を確認（§7.4）。**ブラウザでの目視はユーザーに委ねる**（フロントは build と型検査、35テストが通過済み）
+- [x] 所要時間を計測し、本番昇格の見積もりをユーザーへ提示
 
 ### Phase 3 — 本番昇格（**ユーザー実施**）
+
+> [!IMPORTANT]
+> **所要見積もり: 約 6 分**（Sandbox の実測から。§7.4）
+> | 段階 | 実測 |
+> | :--- | ---: |
+> | `VACUUM INTO` バックアップ | 約 3.5 分（本番 DB は未 VACUUM のため sandbox の 32s より長い） |
+> | Parquet バックフィル＋検証 | 52 秒 |
+> | `ALTER TABLE` + ホット期間 UPDATE（1.58M 行） | 46 秒 |
+> | 検証 | 4 秒 |
+>
+> **必要なディスク**: 新 Parquet 世代 2.6GB ＋ DB バックアップ 1.7GB ≒ **4.3GB**。
+> 旧 Parquet 世代は prune しないので、失敗時はポインタを戻せば復旧できる。
+
+```powershell
+# API サーバーと日次更新を停止してから、本体（main へ merge 済み）で実行する
+$env:PYTHONPATH="backend"
+.\venv\Scripts\python.exe backend\scripts\promote_rs_dot_age.py
+.\venv\Scripts\python.exe tools\db_health_check.py
+```
 
 - [ ] API サーバー・日次更新の停止確認
 - [ ] `promote_rs_dot_age.py`
 - [ ] `tools/db_health_check.py` で NG が出ないこと
+- [ ] API サーバーを再起動（backend コードが変わっているため。§10.5）
 
 ### Phase 4 — 効果測定
 
 - [ ] G3 の検出件数を昇格前後で比較
 - [ ] G3 の再最適化（**旧 trial は互換性が無いので study を作り直す**）
-- [ ] `doc/backend_specification.md` 更新、本計画書を `doc/completed/` へ移動
+- [x] `doc/backend_specification.md` / `doc/backtest_config_spec.md` 更新（Phase 1 で実施済み）
+- [ ] 本計画書を `doc/completed/` へ移動
 
 ### 作業中メモ
 
@@ -262,13 +326,13 @@ min_rs_red_dot_age  = { type = "int", min = 1, max = 40, step = 1 }
 
 ### 6.1 Sandbox 検証項目
 
-- [ ] 全銘柄・全期間で `rs_blue_dot_age` が NULL でない
-- [ ] 値域が `0..N` ∪ `{999}` に収まる
-- [ ] **旧フラグとの整合**: 旧 `is_rs_blue_dot == 1` の行が新 `rs_blue_dot_age == 0` と一致する
+- [x] 全銘柄・全期間で `rs_blue_dot_age` が NULL でない
+- [x] 値域が `0..N` ∪ `{999}` に収まる
+- [x] **旧フラグとの整合**: 旧 `is_rs_blue_dot == 1` の行が新 `rs_blue_dot_age == 0` と一致する
       （履歴252本ガードで意図的に落とした分を除く。差分件数が A-6 の実測値と一致すること）
-- [ ] **既存カラムが1つも変化していない**（`(symbol_id, date)` 突合、float は相対誤差 1e-9）
-- [ ] SQLite ホット期間の値が Parquet と一致
-- [ ] `max_rs_blue_dot_age = 0` の検出件数が、旧 `is_rs_blue_dot = true` の検出件数と一致（回帰）
+- [x] **既存カラムが1つも変化していない**（`(symbol_id, date)` 突合、float は相対誤差 1e-9）
+- [x] SQLite ホット期間の値が Parquet と一致
+- [x] `max_rs_blue_dot_age = 0` の検出件数が旧フラグと一致（**新のみ点灯 0**。ガードで減る分 3.3% は §4 #5 で承認済みの意図的な差）
 
 ### 6.2 コマンド
 
@@ -363,6 +427,163 @@ cd frontend; npm test
 **次の一手（§8 へ）**: 列を作る前に、**簡易ポートフォリオシミュレーション（有限枠・
 コストあり・MaxDD 計測）を probe で回し、窓の有無でリスク調整後の成績が改善するか**を見る。
 改善すれば Phase 1 へ進み、しなければ中止する。Phase 0 の思想（作る前に測る）の延長。
+
+### 7.1c 有限枠ポートフォリオでの検証（2026-08-29）
+
+`tmp/probe_rs_dot_portfolio.py`。枠 10/5、保有 20/60 日、-8% ストップ、コスト片道 0.05%。
+枠超過時の選抜は**流動性順**（リターン予測力を持たない中立ルール）。
+**対照群として同じトリガーの `blue_age == 999`（未点灯）を必ず並べた** — これが効果を
+「ブルードットによるもの」と「単に件数が減ったこと」に切り分ける統制になる。
+
+**主結果（枠10 / 保有20日）**:
+
+| トリガー | 腕 | 学習 損切% / Calmar | 検証 損切% / Calmar | 稼働% |
+| :--- | :--- | ---: | ---: | ---: |
+| **E4 VCP収縮＋上抜け** | 単独 | 38.6 / -0.32 | 37.6 / 0.41 | 90 |
+| | **+blue≤10** | **24.4 / +0.23** | **30.2 / 0.45** | 19-20 |
+| | 未点灯（対照） | 41.6 / -0.29 | 40.6 / — | 88 |
+| E1 構造ピボット上抜け | 単独 | 33.6 / -0.07 | 26.8 / 0.59 | 94 |
+| | +blue≤10 | 27.2 / +0.26 | **33.7 / -0.19** | 85 |
+| | 未点灯（対照） | 34.3 / +0.50 | 29.6 / 0.12 | 94 |
+
+**確認できたこと（再現性あり）**:
+
+1. **E4（収縮を伴うセットアップ）では、ブルードット窓が損切率を両期間・全設定で下げる**
+   （枠10/20日 -14.2 / -7.4pp、枠10/60日 -4.6 / -17.5pp、枠5/20日 -16.1 / -4.5pp）
+2. **同組み合わせで Calmar が両期間で改善**（学習 -0.32 → +0.23、検証 0.41 → 0.45）
+3. **未点灯対照群はトリガー単独とほぼ同じ成績** ＝ 効果はブルードットに由来しており、
+   単に件数が減ったことの副産物ではない。**この統制が最も重要な確認事項**
+
+**確認できなかったこと・限界**:
+
+1. **E1（収縮条件なし）では一貫しない** — 学習で改善、検証で逆転する。
+   相性の良いトリガーは「収縮を伴うセットアップ」に限られる
+2. **稼働率が 19〜20% しかない** — MaxDD の低さはキャッシュ比率の高さに一部起因する。
+   腕ごとに露出量が違うため CAGR / MaxDD の直接比較には注意が要る
+3. 取引数 63〜86 件と少なく、CAGR の推定誤差が大きい
+
+**解釈**: 「収縮したベースの中で RS が先行して新高値を付け、その後ベースを上抜ける」という
+教科書どおりの並びでのみ効果が出た。理屈と実測が一致している。
+
+**判断**: **Phase 1（列化）へ進む。** 現行の当日フラグでは E4 との交差が 0.45件/日しかなく
+この2段構えを戦略として書けない。窓化は「本来の用法を表現可能にする」ために必要。
+
+### 7.3 Phase 1 実装の記録（2026-08-29）
+
+**テスト結果**: backend 1,194 passed / 1 failed、frontend build OK・35 passed。
+
+失敗した1件 `test_scenario_comparison.py::test_run_comparison_generates_outputs` は
+**本変更とは無関係の環境要因**。ワークツリーには `data/parquet_master` が存在しないため
+`FileNotFoundError` になる。**無変更の既存ワークツリー（`sp-screener-t3`）で同じテストを
+走らせて同一エラーを再現し、事前から存在する失敗であることを確認済み。**
+
+**実装上の判断**:
+
+| 論点 | 判断 |
+| :--- | :--- |
+| 生成規則の実装場所 | `indicators.relative_strength.compute_rs_dot_age` の**1箇所のみ**。T3（前方計算）と `backfill_rs_dot_age.py`（過去データ）が同じ関数を呼ぶ。ここを分けると規則がずれる |
+| API の legacy 別名 | `rs_blue_dot` / `rs_red_dot`（旧 0/1 フラグの別名）は**削除**。`chart_router` の `bool_or_none` も廃止して整数のまま返す（`bool(0)` が False になり点灯日が消えるため） |
+| SQLite の旧列 | `promote_rs_dot_age.py` は DROP せず残置（§4 #4 の判断どおり）。Parquet 側は drop するので**一時的に列構成が食い違う**が、`models.py` が新列しか宣言していないため実害は無い |
+| ALTER TABLE の既定値 | `DEFAULT 999` を付けて追加する。NULL のまま残すと numeric フィルタが NaN 落ちし、`min_rs_red_dot_age` で未点灯銘柄まで除外される |
+
+**ワークツリーの frontend/node_modules**: 実体が無いので本体からジャンクションを張った
+（`.gitignore` 対象なのでコミットには含まれない）。
+
+### 7.4 Phase 2（Sandbox 検証）の記録 — 730日窓の継ぎ目（2026-08-29）
+
+**Parquet バックフィル**: 本番世代 `indicators_20260829_085934.parquet` を読み、
+ワークツリー内 sandbox へ書き出した（本番のポインタは無変更）。
+
+| 項目 | 結果 |
+| :--- | :--- |
+| 所要 | **51.8 秒** / 6,076,932 行 / 銘柄 3,226 |
+| 既存カラム | **63 列すべて不変**（スキーマ・型・先頭 row group の値を突合） |
+| 値域・NULL | `0..60` ∪ `{999}` のみ。NULL なし |
+| 旧フラグ整合（ブルー） | 旧点灯 47,156 → 新 `age==0` 37,098 / 履歴252本ガードで 10,058 減 / **増えた 0** |
+| 旧フラグ整合（レッド） | 旧点灯 168,843 → 140,622 / ガードで 28,221 減 / **増えた 0** |
+| ブルー窓の広さ | `age<=10` が 219,085 行（全体の 3.61%） |
+
+「増えた 0」＝**旧フラグで点灯していない行が新たに点灯扱いになることは無い**。
+ガードで減った分（21.3%）は §6.0 A-6 の実測（全期間 22.17%）と整合する。
+
+#### 継ぎ目の不一致（`tmp/verify_dotage_seam.py`）
+
+T3 は日次更新のたびに **SQLite のホット期間 730 日ぶんを読んで再計算する**。
+全期間で計算した Parquet と食い違わないかを 40 銘柄 19,120 行で検証した。
+
+| 向き | 件数 |
+| :--- | ---: |
+| T3 が `999` / Parquet は値あり（**点灯の取りこぼし**） | 100 (0.52%) |
+| Parquet が `999` / T3 は値あり（**偽の点灯**） | **0** |
+| 両方値ありで数値違い | **0** |
+
+**不一致は窓内インデックス 252〜292 に 100% 収まった**（warmup 252 〜 warmup+cap 312 の帯）。
+
+- **原因**: 窓の先頭 252 本は履歴不足ガードで点灯を抑止するため、その区間で点灯した
+  ドットが失われ、以後 cap(60) 日ぶんの age が `999` になる。**cap を超えて波及しない**
+  ことが実測で確認できた（§2.2 で「上限で飽和させれば窓端の影響が閉じる」と論じた点の裏取り）
+- **向きが安全側**: 取りこぼし（過少報告）のみで、**偽の点灯は 1 件も無い**。
+  なお旧 `is_rs_blue_dot` はウォームアップガード自体が無く、
+  `rolling(252, min_periods=1)` が短い窓で最大値を過小評価するため、
+  切り詰めた窓の先頭では**逆に偽の点灯が出る**作りだった。今回の変更で安全側に倒れた
+- **実運用への影響は限定的**: 日次 T3 は `t3_max` より新しい行だけを書く（窓内インデックス
+  ≈729）ので、通常運用では継ぎ目に触れない。影響が出るのは
+  **`--rebuild-from T3` でホット期間を丸ごと書き直したとき**で、約 1.5〜2 年前の
+  3ヶ月ぶん（60行）のチャート上のドットが消える
+- **対処**: SQLite の復元は Parquet からの `restore_sqlite_cache_from_parquet` 経路を使う
+  （`deploy_after_merge` はこの経路）。`--rebuild-from T3` を単独で使った場合のみ
+  上記の帯が過少になる、と割り切る。**バックテストは Parquet を直接読むので影響を受けない**
+
+#### SQLite 昇格の実地検証
+
+本番 `stocktool.db`（1.85GB）を `VACUUM INTO` で sandbox へ複製し（旧スキーマのまま＝
+昇格前の状態を忠実に再現）、`promote_rs_dot_age.py --skip-backfill` を実行した。
+
+| 段階 | 所要 | 結果 |
+| :--- | ---: | :--- |
+| 本番 DB → sandbox 複製（検証用の前準備） | 203.6s | 1.66 GB |
+| 1. バックアップ（`VACUUM INTO`） | 32s | 1.66 GB |
+| 3. `ALTER TABLE ADD COLUMN`（既定 999） | 即時 | 2列 |
+| 4. ホット期間 UPDATE（2024-08-28〜2026-08-28） | 46s | 1,582,467 行 |
+| 5. 検証 | 4s | 最新日 500 件が Parquet と一致 |
+| **合計** | **82.8s** | |
+
+**旧列との突合（sandbox では旧列と新列が同居しているため直接比較できる）**:
+
+| | 旧点灯 | 新 `age==0` | **新のみ点灯** | NULL |
+| :--- | ---: | ---: | ---: | ---: |
+| ブルー（ホット期間全体） | 8,931 | 8,637 | **0** | 0 |
+| レッド（同） | 45,696 | 44,515 | **0** | 0 |
+| ブルー（最新日 2026-08-28） | 1 | 1 | **0** | 0 |
+
+**窓を広げたときの検出数（最新日・indicators 全行ベース）**:
+
+| 条件 | 銘柄数 |
+| :--- | ---: |
+| `max_rs_blue_dot_age = 0`（＝旧フラグ相当） | **1** |
+| `= 5` | 22 |
+| `= 10` | 62 |
+| `= 60` | 369 |
+| 未点灯（999） | 2,824 |
+
+**当日フラグでは最新日に 1 銘柄しか取れない。** これが「2段構えが組めなかった」理由の実物。
+
+#### API 経由の動作確認（`STOCKTOOL_ENV=sandbox`, port 8010）
+
+| 確認 | 結果 |
+| :--- | :--- |
+| `/api/screener/meta` | `rs_blue_dot_age` あり / 旧 `is_rs_blue_dot` は消えている |
+| `/api/screener?max_rs_blue_dot_age=0/5/10/60` | 1 / 13 / 45 / 200件（200 は上限）。age 範囲も窓と整合 |
+| **`?max_rs_blue_dot_age=10&max_vcr=0.8&is_structure_2nd_break=true`** | **11 件**。H4 の2段構えが API 経由で成立した |
+| `/api/chart/{AAPL}` | `rs_blue_dot_age` を返す（502本中 `age==0` が4日）。旧キーは消えている |
+
+> [!NOTE]
+> **既存の不具合を1件発見（本変更とは無関係）**: `STOCKTOOL_ENV=sandbox` の DB 解決先は
+> `data/sandbox/stocktool.db`（`db/database.py` L28）だが、`/api/system/info` の
+> `is_production` は**ファイル名だけ**で判定している（`api/routers.py` L39:
+> `db_name == "stocktool.db"`）。このため sandbox 接続中でも `is_production=True` を返し、
+> **フロントの「非本番」警告バッジが出ない**。CLAUDE.md が安全確認手段として挙げている
+> 経路なので、別タスクとして `doc/issue_list.md` に起票するのが望ましい。
 
 ### 7.2 実測の副産物（本計画とは独立に価値がある）
 

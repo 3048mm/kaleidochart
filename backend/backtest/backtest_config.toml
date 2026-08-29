@@ -549,19 +549,19 @@ max_sma50_atr_mult = { type = "float", min = 4.0, max = 10.0, step = 0.5 }
 min_market_cap     = { type = "categorical", choices = [1e8, 3e8, 1e9] }
 is_close_gt_sma50  = { type = "categorical", choices = [true] }
 
-# 2026-07-22 修正済み: is_rs_blue_dot は backtest_screener.py の alias_map に
-# 'rs_blue_dot': 'is_rs_blue_dot' を追加してサイレント素通しバグを解消した
-# （2026-07-09〜2026-07-22の間、G3は実質「月次モメンタム＋地合い」だけのスクリーンとして
-# 動作しており、is_rs_blue_dot（全体の約0.36%のみ点灯するレア条件）が全く効いていなかった。
-# 200 trialの最適化が全滅する形で発覚。修正後は実際にフィルタが効くため検出件数が大幅に
-# 減る＝再最適化が前提。min_avg_hits_per_day 以下の値も実測を見て校正し直すこと）。
+# 2026-08-29: is_rs_blue_dot（0/1 フラグ）は rs_blue_dot_age（経過日数）へ改名された。
+# max_rs_blue_dot_age = 0 が旧フラグと等価で、値を上げると「点灯から N 日以内」に広がる。
+# 点灯率は実測 0.812%/日・17.9件/日（旧コメントの「約0.36%」は過小だった。
+# doc/completed/rs_dot_age_plan.md §6.0 A-1）。
+# なお実測では窓を広げても avg_gain は改善しない（同 §7.1）。ブルードットが効くのは
+# 「収縮ベースからの上抜け」と組み合わせた2段構えで、そちらは H4_bluedot_vcp_pivot が持つ。
 [[strategy]]
 name = "G3_bluedot_leader"
 description = "RS 先行新高値(blue dot)×月次モメンタムのリーダー先取り"
 max_hits_per_day = 10
 sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
-is_rs_blue_dot = true
+max_rs_blue_dot_age = 0
 min_change_1m_pct = 9.0
 is_close_gt_sma50 = true
 min_adr_pct_21 = 3.5
@@ -574,8 +574,37 @@ max_allowed_dd = 30.0
 min_change_1m_pct = { type = "float", min = 5.0, max = 20.0, step = 1.0 }
 min_adr_pct_21    = { type = "float", min = 2.0, max = 6.0, step = 0.5 }
 min_market_cap    = { type = "categorical", choices = [1e8, 3e8, 1e9] }
-is_rs_blue_dot    = { type = "categorical", choices = [true] }
+max_rs_blue_dot_age = { type = "int", min = 0, max = 20, step = 1 }
 is_close_gt_sma50 = { type = "categorical", choices = [true] }
+
+
+# =============================================================
+# H4: ブルードットの本来の用法（2段構え）
+#   資格 = 収縮ベース内で RS が先行して 252日新高値（rs_blue_dot_age <= N）
+#   エントリー = 本ピボット上抜け（is_structure_2nd_break）
+# 実測（doc/completed/rs_dot_age_plan.md §7.1c）では、この組み合わせでのみ
+# 損切率が両期間で低下し（-14.2 / -7.4pp）、Calmar も両期間で改善した。
+# 収縮条件（max_vcr）を外すと効果は再現しない。**外さないこと。**
+# 検出は 0.3〜0.5件/日と少ない。枠を埋めるための戦略ではない。
+# =============================================================
+[[strategy]]
+name = "H4_bluedot_vcp_pivot"
+description = "収縮ベース内で RS 先行新高値 → 本ピボット上抜けで取る2段構え"
+max_hits_per_day = 5
+sort_column = "rs_ratio_rank_e21"
+sort_ascending = false
+is_structure_2nd_break = true
+max_vcr = 0.8
+max_rs_blue_dot_age = 10
+min_market_cap = 1e8
+min_avg_hits_per_day = 0.25
+min_hit_rate_pct = 0.3
+max_allowed_dd = 30.0
+
+[strategy.optimization]
+max_vcr             = { type = "float", min = 0.6, max = 1.0, step = 0.05 }
+max_rs_blue_dot_age = { type = "int",   min = 0,   max = 40,  step = 1 }
+min_market_cap      = { type = "categorical", choices = [1e8, 3e8] }
 
 # =============================================================
 # Optimization Parameter Search Ranges (Optuna)

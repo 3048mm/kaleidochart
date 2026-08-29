@@ -364,8 +364,8 @@ export const ScreenerResultPage: React.FC = () => {
                             <div style={{ width: '36px', textAlign: 'right', fontSize: '11px', fontVariantNumeric: 'tabular-nums', color: item.up_down_vol_ratio_50 && item.up_down_vol_ratio_50 > 1.5 ? appConfig.colors.good : '#ccc', fontWeight: item.up_down_vol_ratio_50 && item.up_down_vol_ratio_50 > 1.5 ? 'bold' : 'normal', flexShrink: 0 }}>{formatNum(item.up_down_vol_ratio_50, 1)}</div>
                             <div style={{ width: '36px', textAlign: 'right', fontSize: '11px', fontVariantNumeric: 'tabular-nums', color: item.vcr && item.vcr < 0.5 ? appConfig.colors.accent : '#ccc', fontWeight: item.vcr && item.vcr < 0.5 ? 'bold' : 'normal', flexShrink: 0 }}>{formatNum(item.vcr, 2)}</div>
                             <div style={{ width: '24px', textAlign: 'center', flexShrink: 0, display: 'flex', justifyContent: 'center', gap: '2px' }}>
-                                {item.is_rs_blue_dot === 1 && <span style={{ color: '#00d0ff', fontSize: '14px', lineHeight: 1 }}>●</span>}
-                                {item.is_rs_red_dot === 1 && <span style={{ color: '#ff4444', fontSize: '14px', lineHeight: 1 }}>●</span>}
+                                {item.rs_blue_dot_age === 0 && <span style={{ color: '#00d0ff', fontSize: '14px', lineHeight: 1 }}>●</span>}
+                                {item.rs_red_dot_age === 0 && <span style={{ color: '#ff4444', fontSize: '14px', lineHeight: 1 }}>●</span>}
                             </div>
                              <div style={{ width: '40px', textAlign: 'right', fontSize: '11px', fontVariantNumeric: 'tabular-nums', fontWeight: item.sma50_atr_mult && Math.abs(item.sma50_atr_mult) > 2.0 ? 'bold' : 'normal', color: item.sma50_atr_mult && item.sma50_atr_mult > 2.0 ? appConfig.colors.good : item.sma50_atr_mult && item.sma50_atr_mult < -2.0 ? appConfig.colors.bad : '#ccc', flexShrink: 0 }}>{formatNum(item.sma50_atr_mult, 1)}</div>
                             <div style={{ width: '60px', flexShrink: 0 }}>

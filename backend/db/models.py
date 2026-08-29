@@ -161,8 +161,12 @@ class Indicator(Base):
     dist_52w_high_pct  = Column(Float)   # % below 52-week / 252-day high (long)
     
     # --- RS Leading Signals ---
-    is_rs_blue_dot     = Column(SmallInteger) # 1 if RS at 252d high AND price is NOT at 252d high
-    is_rs_red_dot      = Column(SmallInteger) # 1 if RS at 252d low AND price is NOT at 252d low
+    # 経過日数カウンタ: 0=当日点灯 / n=n営業日前に点灯 / 999=未点灯・無効
+    # （上限60日で999に飽和。反対ドット点灯で即999。履歴252本未満は999）
+    # 旧 is_rs_blue_dot / is_rs_red_dot（0/1 フラグ）からの改名。0 の意味が
+    # 「非点灯」→「当日点灯」に反転するため、同名での意味変更は禁止した
+    rs_blue_dot_age    = Column(SmallInteger) # RS が 252日新高値・株価は未達（強気先行）
+    rs_red_dot_age     = Column(SmallInteger) # RS が 252日新安値・株価は未達（弱気先行）
 
     # --- Volatility Contraction ---
     vcr                = Column(Float)        # Volatility Contraction Ratio = ATR(10) / ATR(50)

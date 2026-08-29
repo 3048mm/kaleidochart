@@ -153,7 +153,7 @@ _COLUMN_CATEGORIES = {
                       "rs_value_e14", "rs_value_e21", "rs_value_e63",
                       "rs_momentum_e14", "rs_momentum_e21", "rs_momentum_e63",
                       "rs_ratio_e14", "rs_ratio_e21", "rs_ratio_e63",
-                      "is_rs_blue_dot", "is_rs_red_dot"],
+                      "rs_blue_dot_age", "rs_red_dot_age"],
     "Fundamentals": ["market_cap"],
 }
 _COL_TO_CATEGORY = {}
@@ -211,8 +211,8 @@ _COLUMN_LABELS = {
     "rs_ratio_e14": "RS Ratio e14",
     "rs_ratio_e21": "RS Ratio e21",
     "rs_ratio_e63": "RS Ratio e63",
-    "is_rs_blue_dot": "RS Blue Dot",
-    "is_rs_red_dot": "RS Red Dot",
+    "rs_blue_dot_age": "Blue Dot 経過日数",
+    "rs_red_dot_age": "Red Dot 経過日数",
     # Fundamentals
     "market_cap": "Market Cap",
     # Ranks (Relative Rank indicator columns labels)
@@ -800,10 +800,8 @@ def get_screener(
             trend_template_ok=_int_or_none(row.is_trend_template),
             market_cap=_float_or_none(row.market_cap),
             up_down_vol_ratio_50=_float_or_none(row.up_down_vol_ratio_50),
-            is_rs_blue_dot=_int_or_none(row.is_rs_blue_dot),
-            rs_blue_dot=_int_or_none(row.is_rs_blue_dot),
-            is_rs_red_dot=_int_or_none(row.is_rs_red_dot),
-            rs_red_dot=_int_or_none(row.is_rs_red_dot),
+            rs_blue_dot_age=_int_or_none(row.rs_blue_dot_age),
+            rs_red_dot_age=_int_or_none(row.rs_red_dot_age),
             vcr=_float_or_none(row.vcr),
             vol_accum_days_5=_int_or_none(row.vol_accum_days_5)
         ))

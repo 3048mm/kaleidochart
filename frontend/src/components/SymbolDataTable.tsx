@@ -263,14 +263,14 @@ export const SymbolDataTable: React.FC<SymbolDataTableProps> = ({ data }) => {
                                 <td style={{ padding: '6px 8px', textAlign: 'right', color: getConditionColor(d.rs_trend_s200) }}>{formatN(d.rs_trend_s200, 2)}</td>
                                 <td style={{ 
                                     padding: '6px 8px', textAlign: 'center', 
-                                    background: d.is_rs_blue_dot === 1 ? 'rgba(0, 255, 136, 0.15)' : 'transparent',
+                                    background: d.rs_blue_dot_age === 0 ? 'rgba(0, 255, 136, 0.15)' : 'transparent',
                                     color: '#00ff88', fontSize: '14px'
-                                }}>{d.is_rs_blue_dot === 1 ? '●' : ''}</td>
+                                }}>{d.rs_blue_dot_age === 0 ? '●' : ''}</td>
                                 <td style={{ 
                                     padding: '6px 8px', textAlign: 'center', 
-                                    background: d.is_rs_red_dot === 1 ? 'rgba(255, 68, 68, 0.15)' : 'transparent',
+                                    background: d.rs_red_dot_age === 0 ? 'rgba(255, 68, 68, 0.15)' : 'transparent',
                                     color: '#ff4444', fontSize: '14px'
-                                }}>{d.is_rs_red_dot === 1 ? '●' : ''}</td>
+                                }}>{d.rs_red_dot_age === 0 ? '●' : ''}</td>
  
                                 {/* RS MACD */}
                                 <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: '#888' }}>{formatN(d.rs_macd_line_21, 4)}</td>

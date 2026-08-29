@@ -258,19 +258,20 @@ def test_apply_filters_min_theme_rs_trend_s21():
     assert len(active_stocks) == 1
     assert active_stocks.iloc[0]['ticker'] == 'STK1'
 
-def test_apply_filters_is_rs_blue_dot():
-    # 2026-07-22 発見: is_rs_blue_dot は alias_map に 'rs_blue_dot': 'is_rs_blue_dot' が
+def test_apply_filters_rs_blue_dot_age():
+    # 2026-07-22 発見: 旧 is_rs_blue_dot は alias_map に 'rs_blue_dot': 'is_rs_blue_dot' が
     # 無いため、汎用 is_ プレフィックス除去ロジックが存在しない列名 'rs_blue_dot' を探しに行き
     # サイレントに素通し（全銘柄通過）していた（G3_bluedot_leader で実害確認済み）。
+    # 2026-08-29: 経過日数カラムへ改名。max_ の numeric 経路で解決されるようになった。
     merged = pd.DataFrame([
-        # symbol_id, ticker, name, category, active, is_rs_blue_dot
-        [1, 'STK1', 'Stock 1', '個別', 1, 1],  # Pass: blue dot 点灯
-        [2, 'STK2', 'Stock 2', '個別', 1, 0],  # Fail: blue dot 不点灯
-    ], columns=['symbol_id', 'ticker', 'name', 'category', 'active', 'is_rs_blue_dot'])
+        # symbol_id, ticker, name, category, active, rs_blue_dot_age
+        [1, 'STK1', 'Stock 1', '個別', 1, 0],    # Pass: 当日点灯
+        [2, 'STK2', 'Stock 2', '個別', 1, 999],  # Fail: 未点灯
+    ], columns=['symbol_id', 'ticker', 'name', 'category', 'active', 'rs_blue_dot_age'])
 
     strategy = {
         'name': 'test_strat',
-        'is_rs_blue_dot': True
+        'max_rs_blue_dot_age': 0
     }
 
     filtered = apply_filters_to_df(

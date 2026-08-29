@@ -498,8 +498,6 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db), full_range
                         "rel_vol_vs_spy_21": val_or_none("vol_surge_rel_spy_21"), # Legacy compat
                         "pct_from_63d_high": val_or_none("dist_63d_high_pct"), # Legacy compat
                         "pct_from_52w_high": val_or_none("dist_52w_high_pct"), # Legacy compat
-                        "rs_blue_dot": val_or_none("is_rs_blue_dot"), # Legacy compat
-                        "rs_red_dot": val_or_none("is_rs_red_dot"), # Legacy compat
                         "trend_template_ok": val_or_none("is_trend_template"), # Legacy compat
                         "change_1d_pct": val_or_none("change_1d_pct", "calc_change_1d_pct", force_calc=True),
                         "change_1w_pct": val_or_none("change_1w_pct", "calc_change_1w_pct", force_calc=True),
@@ -538,8 +536,8 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db), full_range
                         "up_down_vol_ratio_50": val_or_none("up_down_vol_ratio_50"),
                         "dist_63d_high_pct": val_or_none("dist_63d_high_pct"),
                         "dist_52w_high_pct": val_or_none("dist_52w_high_pct"),
-                        "is_rs_blue_dot": bool_or_none("is_rs_blue_dot"), 
-                        "is_rs_red_dot": bool_or_none("is_rs_red_dot"),
+                        "rs_blue_dot_age": val_or_none("rs_blue_dot_age"),
+                        "rs_red_dot_age": val_or_none("rs_red_dot_age"),
                         "vcr": val_or_none("vcr"), 
                         # 構造ピボット (LL-HL)。DATA VIEW の Pivot / Pivot HL 列が読む
                         "sp_pivot": val_or_none("sp_pivot"),
@@ -730,8 +728,7 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db), full_range
                 "pct_from_63d_high": ind.dist_63d_high_pct, # Legacy compat
                 "dist_52w_high_pct": ind.dist_52w_high_pct,
                 "pct_from_52w_high": ind.dist_52w_high_pct, # Legacy compat
-                "is_rs_blue_dot": ind.is_rs_blue_dot, "is_rs_red_dot": ind.is_rs_red_dot,
-                "rs_blue_dot": ind.is_rs_blue_dot, "rs_red_dot": ind.is_rs_red_dot, # Legacy compat
+                "rs_blue_dot_age": ind.rs_blue_dot_age, "rs_red_dot_age": ind.rs_red_dot_age,
                 "vcr": ind.vcr, "is_trend_template": ind.is_trend_template,
                 # 構造ピボット (LL-HL)。DATA VIEW の Pivot / Pivot HL 列が読む
                 "sp_pivot": ind.sp_pivot, "sp_hl": ind.sp_hl,

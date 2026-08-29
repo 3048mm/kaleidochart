@@ -381,7 +381,7 @@ def resolve_filter_spec(key: str, known_columns: AbstractSet, rank_columns: Abst
             raise UnknownFilterKeyError(f"未知のフィルタキー: {key}")
 
     # 6. is_ / bool_ / has_ — 実カラム名は接頭辞を含んだまま定義されている
-    # （is_trend_template / is_rs_blue_dot / is_rs_red_dot 等）ため、素の key で照合する。
+    # （is_trend_template 等）ため、素の key で照合する。
     if key.startswith('is_') or key.startswith('bool_') or key.startswith('has_'):
         if key in known_columns:
             return FilterSpec(key=key, kind='bool_column', column=key, op='==',

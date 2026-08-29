@@ -29,7 +29,7 @@ EXPECTED_INDICATOR_COLS = [
     "sma50_atr_mult",
     "vol_surge_rel_spy_21",
     "dist_63d_high_pct", "dist_52w_high_pct",
-    "is_trend_template", "is_rs_blue_dot", "is_rs_red_dot",
+    "is_trend_template", "rs_blue_dot_age", "rs_red_dot_age",
 ]
 
 EXPECTED_RANK_COLS = [
@@ -49,6 +49,7 @@ OLD_INDICATOR_COLS = [
     "dist_sma50_atr", "rel_vol_vs_spy_21",
     "pct_from_63d_high", "pct_from_52w_high",
     "trend_template_ok", "rs_blue_dot", "rs_red_dot",
+    "is_rs_blue_dot", "is_rs_red_dot",
 ]
 
 OLD_RANK_COLS = [
@@ -114,7 +115,7 @@ def verify_db(db_path):
     try:
         row = conn.execute("""
             SELECT i.rs_value, i.rs_ratio_e21, i.rs_momentum_e21, i.rs_trend_s21,
-                   i.sma50_atr_mult, i.is_trend_template, i.is_rs_blue_dot
+                   i.sma50_atr_mult, i.is_trend_template, i.rs_blue_dot_age
             FROM indicators i
             JOIN symbols s ON i.symbol_id = s.id
             WHERE s.ticker = ? AND i.rs_value IS NOT NULL
@@ -129,7 +130,7 @@ def verify_db(db_path):
             print(f"  AAPL rs_trend_s21  = {trend:.4f} (期待: ≈1.0)")
             print(f"  AAPL sma50_atr_mult= {atr_mult:.4f} (期待: -10〜10)")
             print(f"  AAPL is_trend_template = {tt}   (期待: 0 or 1)")
-            print(f"  AAPL is_rs_blue_dot    = {bd}   (期待: 0 or 1)")
+            print(f"  AAPL rs_blue_dot_age   = {bd}   (期待: 0〜60 または 999)")
 
             # 範囲チェック
             if rs_val and not (0.1 < rs_val < 5.0):
