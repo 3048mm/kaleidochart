@@ -205,7 +205,7 @@ T2の価格データを元に算出される各種テクニカル・モメンタ
 | `is_trend_template` | SMALLINT | ミネルヴィニのトレンドテンプレート適合フラグ（1:適合, 0:不適合）。 | 右記5条件: ①close>sma50, ②sma50>sma150, ③sma150>sma200, ④sma200上昇中(20日前比), ⑤52週高値から30%以内 |
 | `sp_pivot` | FLOAT | **構造ピボット (LL-HL) のブレイクアウト水準。** 押し目構造が生きているバーのみ値を持ち、それ以外は NULL。 | LL と HL の**間**の最高値（両端の足は含まない）。`indicators/structure_pivot.py::structure_pivot_series()` |
 | `sp_hl` | FLOAT | **構造ピボットの HL（切り上げた安値）価格。そのまま損切り候補になる。** 同上、構造が無いバーは NULL。 | 直前のピボット安値より高いピボット安値。当日安値が割った時点で構造は消える |
-| `sp_counter` | FLOAT | **カウンタートレンド線の当日値。** LL-HL 構造が**成立していない**期間にだけ引かれる下向きの抵抗線で、`sp_pivot` とは排他（どちらか一方が NULL）。上抜けが Trend Line Break シグナル。 | ショート側のピボット高値2点を結ぶ。アンカー1＝直前の構造の終端までで最も高いピボット高値、アンカー2＝アンカー1 から見て最も急な下向き傾きになるピボット高値。`indicators/structure_pivot.py::counter_trend_series()` |
+| `sp_counter` | FLOAT | **カウンタートレンド線の当日値。** LL-HL 構造が**成立していない**期間にだけ引かれる下向きの抵抗線で、`sp_pivot` とは排他（どちらか一方が NULL）。上抜けが Trend Line Break シグナル。 | ショート側のピボット高値2点を結ぶ。候補は**長さごとの状態機械が持つ prev / curr の2点だけ**（帯 2-5 なので最大8点）。アンカー1＝`idx <= limit_idx` で価格が最大のもの、アンカー2＝`anchor1 < idx < limit_idx` の curr のうち**傾きが最大**のもの（最小ではない）。`limit_idx` はロング側の現在のピボット安値。`indicators/structure_pivot.py::counter_trend_series()` |
 
 > [!IMPORTANT]
 > **`sp_pivot` / `sp_hl` / `sp_counter` には確定遅延がある。** ピボットは `ta.pivotlow(low, L, L)` 相当の
