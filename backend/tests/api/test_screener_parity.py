@@ -125,6 +125,11 @@ def _stock_today_overrides(t: int) -> dict:
         #   lo    : pivot 108 -> どちらも不成立
         "sp_pivot": (99.0 if t <= 5 else 101.0) if hi else 108.0,
         "sp_hl": (96.0 if t <= 5 else 90.0) if hi else 88.0,
+        # カウンタートレンド線。実データでは sp_pivot と排他（構造が無い期間にだけ
+        # 値を持つ）だが、ここは**キー単位で経路一致を見る**ための供給なので併存させる。
+        #   hi : 98  -> 上抜け成立（95.24 <= 98 < 100）
+        #   lo : 90  -> 不成立（前日終値 101.01 が既に上）
+        "sp_counter": 98.0 if hi else 90.0,
     }
 
 

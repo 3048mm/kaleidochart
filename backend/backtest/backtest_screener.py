@@ -31,6 +31,7 @@ try:
         filter_theme_rs_trend_rank_s21_gt_s63,
         filter_structure_1st_break,
         filter_structure_2nd_break,
+        filter_structure_trend_line_break,
         filter_vcp_breakout,
     )
     from indicators import screener_registry
@@ -52,6 +53,7 @@ except ModuleNotFoundError:
         filter_theme_rs_trend_rank_s21_gt_s63,
         filter_structure_1st_break,
         filter_structure_2nd_break,
+        filter_structure_trend_line_break,
         filter_vcp_breakout,
     )
     from backend.indicators import screener_registry
@@ -494,6 +496,10 @@ def apply_filters_to_df(
             merged,
             fib_1st=float(strategy.get('structure_fib_1st', 0.618)),
         )
+
+    # カウンタートレンド線の上抜けイベント（構造が無い期間のシグナル）
+    if strategy.get('is_structure_trend_line_break'):
+        mask &= filter_structure_trend_line_break(merged)
 
     # VCP ブレイクアウト（収縮からのピボット上抜けイベント）
     if strategy.get('is_vcp_breakout'):
