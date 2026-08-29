@@ -70,8 +70,9 @@ export interface ChartDataPoint {
     is_trend_template?: number | null
     market_cap?: number | null
     up_down_vol_ratio_50?: number | null
-    is_rs_blue_dot?: number | null
-    is_rs_red_dot?: number | null
+    /** RS Blue Dot 経過日数: 0=当日点灯 / n=n営業日前 / 999=未点灯 */
+    rs_blue_dot_age?: number | null
+    rs_red_dot_age?: number | null
     vcr?: number | null
     /** 構造ピボット (LL-HL)。構造が生きていないバー・確定前は null */
     sp_pivot?: number | null
@@ -149,8 +150,8 @@ export interface ScreenerResultItem extends DashboardPanelItem {
     is_trend_template?: number | null;
     market_cap?: number | null;
     up_down_vol_ratio_50?: number | null;
-    is_rs_blue_dot?: number | null;
-    is_rs_red_dot?: number | null;
+    rs_blue_dot_age?: number | null;
+    rs_red_dot_age?: number | null;
     vcr?: number | null;
 }
 

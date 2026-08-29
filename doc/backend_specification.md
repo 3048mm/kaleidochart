@@ -199,8 +199,8 @@ T2の価格データを元に算出される各種テクニカル・モメンタ
 | `dist_52w_high_pct` | FLOAT | 52週（252日）高値からの下落率(%)。 | `(close - max(high, 252)) / max(high, 252) * 100` |
 | `dist_63d_high_pct` | FLOAT | 63日高値からの下落率(%)。 | `(close - max(high, 63)) / max(high, 63) * 100` |
 | `up_down_vol_ratio_50` | FLOAT | 50日間の上昇日出来高合計÷下落日出来高合計。機関投資家のAccumulationの強さを示す。1.5以上＝買い集め優勢。 | `sum(volume where close > prev_close, 50) / sum(volume where close < prev_close, 50)` |
-| `is_rs_blue_dot` | SMALLINT | RS新高値先行フラグ（1:点灯, 0:非点灯）。RSが株価に先行して52週新高値を更新した場合に点灯。 | `(rs_value >= max(RS, 252)) AND (close < max(close, 252))` |
-| `is_rs_red_dot` | SMALLINT | RS新安値先行フラグ（1:点灯, 0:非点灯）。RSが株価に先行して52週新安値を更新した場合に点灯。 | `(rs_value <= min(RS, 252)) AND (close > min(close, 252))` |
+| `rs_blue_dot_age` | SMALLINT | **RS新高値先行の経過日数**。`0`=当日点灯 / `n`=n営業日前に点灯 / `999`=未点灯・無効。点灯条件は RS が株価に先行して52週新高値を更新すること。<br>**単独で使わないこと** — 実測では窓を広げても平均リターンは改善せず、効果が再現するのは「収縮ベース（`max_vcr`）＋本ピボット上抜け（`is_structure_2nd_break`）」と組み合わせた2段構えのときだけ（`doc/completed/rs_dot_age_plan.md` §7.1c）。 | 点灯: `(rs_value >= max(RS, 252)) AND (close < max(close, 252))`<br>経過日数: 再点灯で0に戻す / 上限60超で999 / 反対ドット点灯で即999 / 履歴252本未満は999 |
+| `rs_red_dot_age` | SMALLINT | **RS新安値先行の経過日数**。値の意味は `rs_blue_dot_age` と同じ。実測では除外フィルタとしての効果を確認できていない（同 §6.0 B-2）。 | 点灯: `(rs_value <= min(RS, 252)) AND (close > min(close, 252))`<br>経過日数: 同上 |
 | `vcr` | FLOAT | Volatility Contraction Ratio。VCP（ベース形成）のスクイーズ度合いを定量化。0.5未満＝極度の収縮。 | `ATR(10) / ATR(50)` （True Rangeの単純移動平均として算出） |
 | `is_trend_template` | SMALLINT | ミネルヴィニのトレンドテンプレート適合フラグ（1:適合, 0:不適合）。 | 右記5条件: ①close>sma50, ②sma50>sma150, ③sma150>sma200, ④sma200上昇中(20日前比), ⑤52週高値から30%以内 |
 | `sp_pivot` | FLOAT | **構造ピボット (LL-HL) のブレイクアウト水準。** 押し目構造が生きているバーのみ値を持ち、それ以外は NULL。 | LL と HL の**間**の最高値（両端の足は含まない）。`indicators/structure_pivot.py::structure_pivot_series()` |

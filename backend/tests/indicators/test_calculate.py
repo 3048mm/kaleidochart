@@ -168,7 +168,7 @@ def test_calculate_indicators_protection():
         'vol_surge_rel_spy_21': 1.000777,
         'dist_52w_high_pct': -0.788022,
         'up_down_vol_ratio_50': None,
-        'is_rs_blue_dot': 0.000000,
+        'rs_blue_dot_age': 999.0,
         'is_trend_template': 1.000000,
         'avg_dollar_volume_21': 128010376.666667,
     }

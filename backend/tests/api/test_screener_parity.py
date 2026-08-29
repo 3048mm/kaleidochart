@@ -107,7 +107,7 @@ def _stock_today_overrides(t: int) -> dict:
         # --- 個別パターン ---
         "rs_trend_s14": (float(t) - 0.5) if t <= 3 else (float(t) + 0.5),
         "rs_trend_s63": 3.5,
-        "is_rs_blue_dot": 1 if t % 2 == 1 else 0,
+        "rs_blue_dot_age": 0 if t % 2 == 1 else 999,
         # RRG（rs_ratio_e21 / rs_momentum_e21）。STK1=leading_in, STK2=lagging_in,
         # STK3=improving_in をそれぞれ単独で成立させ、STK4-6 は無転換（安全値）にする。
         "rs_ratio_e21": {1: 0.5, 2: -0.5, 3: -0.3}.get(t, 0.1),
@@ -390,8 +390,9 @@ PARITY_CASES: dict = {
     # --- theme_rank / theme_numeric ---
     "min_theme_rs_ratio_rank_e21": 0.5,
     "min_theme_rs_trend_s21": 1.0,
+    # --- numeric（経過日数。0=当日点灯）---
+    "max_rs_blue_dot_age": 0,
     # --- bool_column ---
-    "is_rs_blue_dot": True,
     "is_trend_template": True,
 }
 # EXPLICIT_SPECS 由来のキー（special・close_gt）は機械的に True を割り当てる。

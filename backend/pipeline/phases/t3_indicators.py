@@ -109,7 +109,7 @@ def sync_phase_t3_indicators(db, sheet_data: List[Dict], symbol_id_map: Dict, sp
                         kwargs = {'symbol_id': res_sid, 'date': row['date']}
                         for col in indicator_cols:
                             val = row.get(col)
-                            if col in ('td9', 'trend_template_ok', 'rs_blue_dot', 'rs_red_dot'):
+                            if col in ('td9', 'trend_template_ok', 'rs_blue_dot_age', 'rs_red_dot_age'):
                                 kwargs[col] = int(val) if val is not None else None
                             else:
                                 kwargs[col] = val

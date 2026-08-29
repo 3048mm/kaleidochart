@@ -423,7 +423,7 @@ def audit_and_fix_weekly(db, dry_run: bool) -> dict:
                                 kwargs = {'symbol_id': sid, 'date': row_date}
                                 for col in indicator_cols:
                                     val = row.get(col)
-                                    if col in ('td9', 'trend_template_ok', 'rs_blue_dot', 'rs_red_dot'):
+                                    if col in ('td9', 'trend_template_ok', 'rs_blue_dot_age', 'rs_red_dot_age'):
                                         kwargs[col] = int(val) if val is not None and not pd.isna(val) else None
                                     else:
                                         kwargs[col] = float(val) if val is not None and not pd.isna(val) else None

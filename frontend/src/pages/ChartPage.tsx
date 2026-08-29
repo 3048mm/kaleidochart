@@ -522,8 +522,8 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
             rsSeries.setData(data.map(d => ({ time: d.time as any, value: 100 })));
             const dotMarkers: SeriesMarker<any>[] = [];
             data.forEach(d => {
-                if (d.is_rs_blue_dot === 1) dotMarkers.push({ time: d.time as any, position: 'inBar', color: '#00d0ff', shape: 'circle', text: '◆', size: 0 });
-                if (d.is_rs_red_dot === 1) dotMarkers.push({ time: d.time as any, position: 'inBar', color: '#ff4444', shape: 'circle', text: '◆', size: 0 });
+                if (d.rs_blue_dot_age === 0) dotMarkers.push({ time: d.time as any, position: 'inBar', color: '#00d0ff', shape: 'circle', text: '◆', size: 0 });
+                if (d.rs_red_dot_age === 0) dotMarkers.push({ time: d.time as any, position: 'inBar', color: '#ff4444', shape: 'circle', text: '◆', size: 0 });
             });
             dotMarkers.sort((a,b) => (a.time < b.time ? -1 : 1));
             rsSeries.setMarkers(dotMarkers);
