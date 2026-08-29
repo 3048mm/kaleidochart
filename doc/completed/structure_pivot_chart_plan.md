@@ -1,6 +1,6 @@
 # Structure Pivot (LL-HL) のチャート表示 計画書
 
-- **ステータス**: 🚧 進行中（計画レビュー済み 2026-08-23）
+- **ステータス**: ✅ 完了（2026-08-29 棚卸し）
 - **実施者**: AI エージェント (Claude Opus 5) — オーケストレーター
 - **開始日**: 2026-08-23 / **完了日**: —
 - **作業ブランチ**: `worktree-structure-pivot-chart`（`.claude/worktrees/structure-pivot-chart` / main 基点）
@@ -277,13 +277,12 @@ main を取り込み（49コミット・競合なし）、全テストを再実�
   初期コミットで追加されて以降、一度も import されたことのないデッドコード（181行）だった
   （`git log --follow` で確認）。CLAUDE.md のコンポーネント一覧からも外し、
   「ChartPage のチャートはページ内で直接組んでいる」旨を明記した
-- **`frontend/src/components/__tests__/RsLineChart.test.tsx` の失敗2件** —
-  `chart.addHistogramSeries is not a function`。**本タスク着手前から失敗している**
-  （変更を stash して確認済み）。lightweight-charts のモックに
-  `addHistogramSeries` が無いのが原因。修正は別タスク
-- **`chart_router.py` の DB パス解決の重複** — 本タスクで `_resolve_active_db_path()` を
-  切り出したが、既存の2箇所（`get_chart_data` 内）は同じ処理をインラインで持ったまま。
-  動いているコードなので今回は触らず、寄せるのは別途
+- ~~**`frontend/src/components/__tests__/RsLineChart.test.tsx` の失敗2件**~~
+  — **解消済み（2026-08-29 確認）。2件とも通る。** 本タスクの範囲外で直った
+- **`chart_router.py` の DB パス解決の重複** — **未解消（2026-08-29 確認）。**
+  `_resolve_active_db_path()`（L818）を切り出したが、L29-31 と L214-218 は
+  同じ処理をインラインで持ったまま。動いているので本タスクでは触らない。
+  **`doc/issue_list.md` の P3 に登録済み**
 - **改良版「Advanced Structure Pivot」のスクリーナー採用 — 見送り（2026-08-25 実測）**
 
   作者が note.com で公開した改良版（`https://note.com/oratnek_ill/n/nbca4d1b8c3e1`）を評価した。
@@ -361,7 +360,10 @@ main を取り込み（49コミット・競合なし）、全テストを再実�
   （T3 追加は Parquet 全再計算を伴い、バックテストのデータソースと衝突する）。
 
 - ショート側（HH-LH）の描画
-- **スクリーナー／バックテストへの結線**（§1 の実測により見送り）
+- ~~**スクリーナー／バックテストへの結線**~~ — **実施済み。**
+  `doc/completed/structure_pivot_screener_plan.md` で `sp_pivot` / `sp_hl` / `sp_counter` を
+  T3 に追加し本番昇格。型1で採否も判定した（結論は「採用水準に届かない」。同 §5.3〜§5.4）。
+  以下は見送り当時の記録として残す
 
   > 再検討する場合に備えた記録: 唯一の候補は
   > `SP:構造ピボットまで2%以内 × 52週高値10%以内 × VCR収縮 × 買い集め` で、
@@ -373,4 +375,7 @@ main を取り込み（49コミット・競合なし）、全テストを再実�
   > 型1バックテスト＋型3シナリオテストまで通して判断する**こと。
   > 20営業日の前向きリターンは代理指標に過ぎない。
 - Priority Mode の切り替え UI
-- カウンタートレンドライン
+- ~~カウンタートレンドライン~~ — **実装済み（2026-08-29）。**
+  `sp_counter` として T3 に追加し、スクリーナー条件 `is_structure_trend_line_break` を新設。
+  **チャート描画への追加はしていない**（線を引く実装は未着手。値は DATA VIEW から見える）。
+  経緯は `doc/completed/structure_pivot_screener_plan.md` §5.6
