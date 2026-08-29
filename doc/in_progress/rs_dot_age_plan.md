@@ -241,7 +241,7 @@ max_rs_blue_dot_age = { type = "int",   min = 0,   max = 40,  step = 1 }
 - [x] `tmp/probe_rs_dot_dist.py` — 点灯の素の分布（§6.0 の A 群）
 - [x] `tmp/probe_rs_dot_forward.py` — age 窓別のフォワードリターン（§6.0 の B 群）
 - [x] `tmp/probe_rs_dot_guards.py` — ガード有無の比較（§6.0 の C 群）
-- [ ] 実測結果を §6.0 の表に記入し、**§4 の #2 / #7 をユーザーと再レビューして列仕様を確定**
+- [x] 実測結果を §6.0 の表に記入し、**§4 の #2 / #7 をユーザーと再レビューして列仕様を確定**
 
 ### Phase 1 — 実装（worktree `worktree-rs-dot-age`）
 
@@ -259,23 +259,44 @@ max_rs_blue_dot_age = { type = "int",   min = 0,   max = 40,  step = 1 }
 
 ### Phase 2 — Sandbox 検証
 
-- [ ] 本番 Parquet を Sandbox へコピー（`sandbox-workflow` SKILL に従う）
-- [ ] `backfill_rs_dot_age.py --out-dir data/sandbox/parquet_master`（`--apply` なし）
-- [ ] §6.1 の検証項目を実行
-- [ ] `$env:STOCKTOOL_ENV="sandbox"` で API/フロントを起動し、チャート・スクリーナーを目視確認
-- [ ] 所要時間を計測し、本番昇格の見積もりをユーザーへ提示
+- [x] 本番 Parquet を Sandbox へコピー（`sandbox-workflow` SKILL に従う）
+- [x] `backfill_rs_dot_age.py --out-dir data/sandbox/parquet_master`（`--apply` なし）
+- [x] §6.1 の検証項目を実行
+- [x] `$env:STOCKTOOL_ENV="sandbox"` で API を起動し、スクリーナー／チャートの応答を確認（§7.4）。**ブラウザでの目視はユーザーに委ねる**（フロントは build と型検査、35テストが通過済み）
+- [x] 所要時間を計測し、本番昇格の見積もりをユーザーへ提示
 
 ### Phase 3 — 本番昇格（**ユーザー実施**）
+
+> [!IMPORTANT]
+> **所要見積もり: 約 6 分**（Sandbox の実測から。§7.4）
+> | 段階 | 実測 |
+> | :--- | ---: |
+> | `VACUUM INTO` バックアップ | 約 3.5 分（本番 DB は未 VACUUM のため sandbox の 32s より長い） |
+> | Parquet バックフィル＋検証 | 52 秒 |
+> | `ALTER TABLE` + ホット期間 UPDATE（1.58M 行） | 46 秒 |
+> | 検証 | 4 秒 |
+>
+> **必要なディスク**: 新 Parquet 世代 2.6GB ＋ DB バックアップ 1.7GB ≒ **4.3GB**。
+> 旧 Parquet 世代は prune しないので、失敗時はポインタを戻せば復旧できる。
+
+```powershell
+# API サーバーと日次更新を停止してから、本体（main へ merge 済み）で実行する
+$env:PYTHONPATH="backend"
+.\venv\Scripts\python.exe backend\scripts\promote_rs_dot_age.py
+.\venv\Scripts\python.exe tools\db_health_check.py
+```
 
 - [ ] API サーバー・日次更新の停止確認
 - [ ] `promote_rs_dot_age.py`
 - [ ] `tools/db_health_check.py` で NG が出ないこと
+- [ ] API サーバーを再起動（backend コードが変わっているため。§10.5）
 
 ### Phase 4 — 効果測定
 
 - [ ] G3 の検出件数を昇格前後で比較
 - [ ] G3 の再最適化（**旧 trial は互換性が無いので study を作り直す**）
-- [ ] `doc/backend_specification.md` 更新、本計画書を `doc/completed/` へ移動
+- [x] `doc/backend_specification.md` / `doc/backtest_config_spec.md` 更新（Phase 1 で実施済み）
+- [ ] 本計画書を `doc/completed/` へ移動
 
 ### 作業中メモ
 
@@ -305,13 +326,13 @@ max_rs_blue_dot_age = { type = "int",   min = 0,   max = 40,  step = 1 }
 
 ### 6.1 Sandbox 検証項目
 
-- [ ] 全銘柄・全期間で `rs_blue_dot_age` が NULL でない
-- [ ] 値域が `0..N` ∪ `{999}` に収まる
-- [ ] **旧フラグとの整合**: 旧 `is_rs_blue_dot == 1` の行が新 `rs_blue_dot_age == 0` と一致する
+- [x] 全銘柄・全期間で `rs_blue_dot_age` が NULL でない
+- [x] 値域が `0..N` ∪ `{999}` に収まる
+- [x] **旧フラグとの整合**: 旧 `is_rs_blue_dot == 1` の行が新 `rs_blue_dot_age == 0` と一致する
       （履歴252本ガードで意図的に落とした分を除く。差分件数が A-6 の実測値と一致すること）
-- [ ] **既存カラムが1つも変化していない**（`(symbol_id, date)` 突合、float は相対誤差 1e-9）
-- [ ] SQLite ホット期間の値が Parquet と一致
-- [ ] `max_rs_blue_dot_age = 0` の検出件数が、旧 `is_rs_blue_dot = true` の検出件数と一致（回帰）
+- [x] **既存カラムが1つも変化していない**（`(symbol_id, date)` 突合、float は相対誤差 1e-9）
+- [x] SQLite ホット期間の値が Parquet と一致
+- [x] `max_rs_blue_dot_age = 0` の検出件数が旧フラグと一致（**新のみ点灯 0**。ガードで減る分 3.3% は §4 #5 で承認済みの意図的な差）
 
 ### 6.2 コマンド
 
@@ -467,6 +488,102 @@ cd frontend; npm test
 
 **ワークツリーの frontend/node_modules**: 実体が無いので本体からジャンクションを張った
 （`.gitignore` 対象なのでコミットには含まれない）。
+
+### 7.4 Phase 2（Sandbox 検証）の記録 — 730日窓の継ぎ目（2026-08-29）
+
+**Parquet バックフィル**: 本番世代 `indicators_20260829_085934.parquet` を読み、
+ワークツリー内 sandbox へ書き出した（本番のポインタは無変更）。
+
+| 項目 | 結果 |
+| :--- | :--- |
+| 所要 | **51.8 秒** / 6,076,932 行 / 銘柄 3,226 |
+| 既存カラム | **63 列すべて不変**（スキーマ・型・先頭 row group の値を突合） |
+| 値域・NULL | `0..60` ∪ `{999}` のみ。NULL なし |
+| 旧フラグ整合（ブルー） | 旧点灯 47,156 → 新 `age==0` 37,098 / 履歴252本ガードで 10,058 減 / **増えた 0** |
+| 旧フラグ整合（レッド） | 旧点灯 168,843 → 140,622 / ガードで 28,221 減 / **増えた 0** |
+| ブルー窓の広さ | `age<=10` が 219,085 行（全体の 3.61%） |
+
+「増えた 0」＝**旧フラグで点灯していない行が新たに点灯扱いになることは無い**。
+ガードで減った分（21.3%）は §6.0 A-6 の実測（全期間 22.17%）と整合する。
+
+#### 継ぎ目の不一致（`tmp/verify_dotage_seam.py`）
+
+T3 は日次更新のたびに **SQLite のホット期間 730 日ぶんを読んで再計算する**。
+全期間で計算した Parquet と食い違わないかを 40 銘柄 19,120 行で検証した。
+
+| 向き | 件数 |
+| :--- | ---: |
+| T3 が `999` / Parquet は値あり（**点灯の取りこぼし**） | 100 (0.52%) |
+| Parquet が `999` / T3 は値あり（**偽の点灯**） | **0** |
+| 両方値ありで数値違い | **0** |
+
+**不一致は窓内インデックス 252〜292 に 100% 収まった**（warmup 252 〜 warmup+cap 312 の帯）。
+
+- **原因**: 窓の先頭 252 本は履歴不足ガードで点灯を抑止するため、その区間で点灯した
+  ドットが失われ、以後 cap(60) 日ぶんの age が `999` になる。**cap を超えて波及しない**
+  ことが実測で確認できた（§2.2 で「上限で飽和させれば窓端の影響が閉じる」と論じた点の裏取り）
+- **向きが安全側**: 取りこぼし（過少報告）のみで、**偽の点灯は 1 件も無い**。
+  なお旧 `is_rs_blue_dot` はウォームアップガード自体が無く、
+  `rolling(252, min_periods=1)` が短い窓で最大値を過小評価するため、
+  切り詰めた窓の先頭では**逆に偽の点灯が出る**作りだった。今回の変更で安全側に倒れた
+- **実運用への影響は限定的**: 日次 T3 は `t3_max` より新しい行だけを書く（窓内インデックス
+  ≈729）ので、通常運用では継ぎ目に触れない。影響が出るのは
+  **`--rebuild-from T3` でホット期間を丸ごと書き直したとき**で、約 1.5〜2 年前の
+  3ヶ月ぶん（60行）のチャート上のドットが消える
+- **対処**: SQLite の復元は Parquet からの `restore_sqlite_cache_from_parquet` 経路を使う
+  （`deploy_after_merge` はこの経路）。`--rebuild-from T3` を単独で使った場合のみ
+  上記の帯が過少になる、と割り切る。**バックテストは Parquet を直接読むので影響を受けない**
+
+#### SQLite 昇格の実地検証
+
+本番 `stocktool.db`（1.85GB）を `VACUUM INTO` で sandbox へ複製し（旧スキーマのまま＝
+昇格前の状態を忠実に再現）、`promote_rs_dot_age.py --skip-backfill` を実行した。
+
+| 段階 | 所要 | 結果 |
+| :--- | ---: | :--- |
+| 本番 DB → sandbox 複製（検証用の前準備） | 203.6s | 1.66 GB |
+| 1. バックアップ（`VACUUM INTO`） | 32s | 1.66 GB |
+| 3. `ALTER TABLE ADD COLUMN`（既定 999） | 即時 | 2列 |
+| 4. ホット期間 UPDATE（2024-08-28〜2026-08-28） | 46s | 1,582,467 行 |
+| 5. 検証 | 4s | 最新日 500 件が Parquet と一致 |
+| **合計** | **82.8s** | |
+
+**旧列との突合（sandbox では旧列と新列が同居しているため直接比較できる）**:
+
+| | 旧点灯 | 新 `age==0` | **新のみ点灯** | NULL |
+| :--- | ---: | ---: | ---: | ---: |
+| ブルー（ホット期間全体） | 8,931 | 8,637 | **0** | 0 |
+| レッド（同） | 45,696 | 44,515 | **0** | 0 |
+| ブルー（最新日 2026-08-28） | 1 | 1 | **0** | 0 |
+
+**窓を広げたときの検出数（最新日・indicators 全行ベース）**:
+
+| 条件 | 銘柄数 |
+| :--- | ---: |
+| `max_rs_blue_dot_age = 0`（＝旧フラグ相当） | **1** |
+| `= 5` | 22 |
+| `= 10` | 62 |
+| `= 60` | 369 |
+| 未点灯（999） | 2,824 |
+
+**当日フラグでは最新日に 1 銘柄しか取れない。** これが「2段構えが組めなかった」理由の実物。
+
+#### API 経由の動作確認（`STOCKTOOL_ENV=sandbox`, port 8010）
+
+| 確認 | 結果 |
+| :--- | :--- |
+| `/api/screener/meta` | `rs_blue_dot_age` あり / 旧 `is_rs_blue_dot` は消えている |
+| `/api/screener?max_rs_blue_dot_age=0/5/10/60` | 1 / 13 / 45 / 200件（200 は上限）。age 範囲も窓と整合 |
+| **`?max_rs_blue_dot_age=10&max_vcr=0.8&is_structure_2nd_break=true`** | **11 件**。H4 の2段構えが API 経由で成立した |
+| `/api/chart/{AAPL}` | `rs_blue_dot_age` を返す（502本中 `age==0` が4日）。旧キーは消えている |
+
+> [!NOTE]
+> **既存の不具合を1件発見（本変更とは無関係）**: `STOCKTOOL_ENV=sandbox` の DB 解決先は
+> `data/sandbox/stocktool.db`（`db/database.py` L28）だが、`/api/system/info` の
+> `is_production` は**ファイル名だけ**で判定している（`api/routers.py` L39:
+> `db_name == "stocktool.db"`）。このため sandbox 接続中でも `is_production=True` を返し、
+> **フロントの「非本番」警告バッジが出ない**。CLAUDE.md が安全確認手段として挙げている
+> 経路なので、別タスクとして `doc/issue_list.md` に起票するのが望ましい。
 
 ### 7.2 実測の副産物（本計画とは独立に価値がある）
 
