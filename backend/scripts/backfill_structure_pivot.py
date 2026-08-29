@@ -47,17 +47,20 @@ import pyarrow.parquet as pq
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from indicators.structure_pivot import (  # noqa: E402
-    DEFAULT_MAX_LEN, DEFAULT_MIN_LEN, structure_pivot_series,
+    DEFAULT_MAX_LEN, DEFAULT_MIN_LEN, counter_trend_series, structure_pivot_series,
 )
 
-NEW_COLUMNS = ('sp_pivot', 'sp_hl')
+#: バックフィルできる列の全体。--columns で部分指定する（既に本番に入っている列を
+#: 除いて追加するため。sp_pivot / sp_hl は 2026-08-26 に昇格済み）
+ALL_COLUMNS = ('sp_pivot', 'sp_hl', 'sp_counter')
 
 
 def _log(msg: str) -> None:
     print(f'[{datetime.now():%H:%M:%S}] {msg}', flush=True)
 
 
-def compute_structure_columns(prices_path: str, min_len: int, max_len: int) -> pd.DataFrame:
+def compute_structure_columns(prices_path: str, min_len: int, max_len: int,
+                              columns: tuple) -> pd.DataFrame:
     """価格マスターから全銘柄の (symbol_id, date, sp_pivot, sp_hl) を作る。
 
     銘柄ごとに日付昇順で計算する。確定遅延は `structure_pivot_series` 側で保たれている。
@@ -71,32 +74,40 @@ def compute_structure_columns(prices_path: str, min_len: int, max_len: int) -> p
     low = px['low'].to_numpy(np.float64)
     close = px['close'].to_numpy(np.float64)
 
-    sp_pivot = np.full(len(px), np.nan)
-    sp_hl = np.full(len(px), np.nan)
+    buf = {c: np.full(len(px), np.nan) for c in columns}
+    need_structure = ('sp_pivot' in columns) or ('sp_hl' in columns)
 
     bounds = np.flatnonzero(np.r_[True, sid[1:] != sid[:-1], True])
     for a, z in zip(bounds[:-1], bounds[1:]):
-        p, h = structure_pivot_series(high[a:z], low[a:z], close[a:z], min_len, max_len)
-        sp_pivot[a:z], sp_hl[a:z] = p, h
+        if need_structure:
+            p, h = structure_pivot_series(high[a:z], low[a:z], close[a:z], min_len, max_len)
+            if 'sp_pivot' in buf:
+                buf['sp_pivot'][a:z] = p
+            if 'sp_hl' in buf:
+                buf['sp_hl'][a:z] = h
+        if 'sp_counter' in buf:
+            buf['sp_counter'][a:z] = counter_trend_series(
+                high[a:z], low[a:z], close[a:z], min_len, max_len)
 
     out = px[['symbol_id', 'date']].copy()
-    out['sp_pivot'] = sp_pivot
-    out['sp_hl'] = sp_hl
-    n_defined = int(np.isfinite(sp_pivot).sum())
+    for c in columns:
+        out[c] = buf[c]
+    n_defined = int(np.isfinite(buf[columns[0]]).sum())
     _log(f'構造ピボット算出: {len(out):,} 行 / 銘柄 {len(bounds) - 1:,} / '
          f'構造が生きている行 {n_defined:,} ({n_defined / max(len(out), 1) * 100:.1f}%)')
     return out
 
 
-def backfill_indicators(indicators_path: str, sp_df: pd.DataFrame, out_path: str) -> dict:
-    """indicators を row group ごとに読み、2列を足して書き出す。
+def backfill_indicators(indicators_path: str, sp_df: pd.DataFrame, out_path: str,
+                        columns: tuple) -> dict:
+    """indicators を row group ごとに読み、指定された列を足して書き出す。
 
     **既存カラムは arrow の Table のまま素通しする。** pandas に変換しないので
     dtype も値も変わらない。
     """
     pf = pq.ParquetFile(indicators_path)
     existing = set(pf.schema_arrow.names)
-    for col in NEW_COLUMNS:
+    for col in columns:
         if col in existing:
             raise SystemExit(f'既に {col} が存在します。作り直す場合は元世代から実行してください。')
 
@@ -113,17 +124,16 @@ def backfill_indicators(indicators_path: str, sp_df: pd.DataFrame, out_path: str
             keys['date'] = keys['date'].astype(str)
             joined = keys.join(lookup, on=['symbol_id', 'date'])
 
-            table = table.append_column(
-                'sp_pivot', pa.array(joined['sp_pivot'].to_numpy(np.float64), pa.float64()))
-            table = table.append_column(
-                'sp_hl', pa.array(joined['sp_hl'].to_numpy(np.float64), pa.float64()))
+            for col in columns:
+                table = table.append_column(
+                    col, pa.array(joined[col].to_numpy(np.float64), pa.float64()))
 
             if writer is None:
                 writer = pq.ParquetWriter(out_path, table.schema, compression='snappy')
             writer.write_table(table)
 
             total += table.num_rows
-            matched += int(joined['sp_pivot'].notna().sum())
+            matched += int(joined[columns[0]].notna().sum())
             _log(f'  row group {i + 1}/{pf.metadata.num_row_groups}: {table.num_rows:,} 行')
     finally:
         if writer is not None:
@@ -131,7 +141,7 @@ def backfill_indicators(indicators_path: str, sp_df: pd.DataFrame, out_path: str
     return {'rows': total, 'defined': matched}
 
 
-def verify(original_path: str, new_path: str) -> None:
+def verify(original_path: str, new_path: str, columns: tuple) -> None:
     """既存カラムが1つも変わっていないことを検査する。
 
     構造的に変わらない作りではあるが、**「変わらないはず」で済ませない**。
@@ -142,7 +152,7 @@ def verify(original_path: str, new_path: str) -> None:
         f'行数が変わった: {old_pf.metadata.num_rows:,} -> {new_pf.metadata.num_rows:,}')
 
     old_names, new_names = old_pf.schema_arrow.names, new_pf.schema_arrow.names
-    assert new_names == list(old_names) + list(NEW_COLUMNS), (
+    assert new_names == list(old_names) + list(columns), (
         f'カラム構成が想定と違う: {set(new_names) - set(old_names)}')
     for name in old_names:
         assert old_pf.schema_arrow.field(name).type == new_pf.schema_arrow.field(name).type, (
@@ -153,7 +163,7 @@ def verify(original_path: str, new_path: str) -> None:
     new_t = new_pf.read_row_group(0).select(list(old_names))
     assert old_t.equals(new_t), '先頭 row group の既存カラムに差分がある'
     _log(f'検査 OK: {old_pf.metadata.num_rows:,} 行 / 既存 {len(old_names)} 列は不変 '
-         f'/ 追加 {list(NEW_COLUMNS)}')
+         f'/ 追加 {list(columns)}')
 
 
 def main() -> int:
@@ -163,6 +173,8 @@ def main() -> int:
     ap.add_argument('--out-dir', required=True, help='新しい indicators を書くディレクトリ')
     ap.add_argument('--min-len', type=int, default=DEFAULT_MIN_LEN)
     ap.add_argument('--max-len', type=int, default=DEFAULT_MAX_LEN)
+    ap.add_argument('--columns', nargs='+', default=list(ALL_COLUMNS), choices=list(ALL_COLUMNS),
+                    help='追加する列。既に本番に入っている列は指定しないこと')
     ap.add_argument('--apply', action='store_true',
                     help='latest_master.json を新世代へ差し替える（付けなければポインタは動かさない）')
     args = ap.parse_args()
@@ -177,13 +189,15 @@ def main() -> int:
     stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     out_path = os.path.join(args.out_dir, f'indicators_{stamp}.parquet')
 
-    sp_df = compute_structure_columns(latest['prices'], args.min_len, args.max_len)
-    stats = backfill_indicators(latest['indicators'], sp_df, out_path)
+    columns = tuple(args.columns)
+    _log(f'追加する列: {list(columns)}')
+    sp_df = compute_structure_columns(latest['prices'], args.min_len, args.max_len, columns)
+    stats = backfill_indicators(latest['indicators'], sp_df, out_path, columns)
     _log(f'書き出し: {out_path}')
     _log(f'  {stats["rows"]:,} 行 / 値が入った行 {stats["defined"]:,} '
          f'({stats["defined"] / max(stats["rows"], 1) * 100:.1f}%)')
 
-    verify(latest['indicators'], out_path)
+    verify(latest['indicators'], out_path, columns)
 
     if args.apply:
         new_latest = dict(latest)

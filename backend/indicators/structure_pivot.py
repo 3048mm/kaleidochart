@@ -309,3 +309,109 @@ def structure_pivot_series(
         sp_hl[better] = low[hl_idx[better]]
 
     return sp_pivot, sp_hl
+
+
+def pivot_strength_high(high: np.ndarray) -> np.ndarray:
+    """各足について `ta.pivothigh(high, L, L)` が成立する **最大の L** を返す。
+
+    `pivot_strength_low` の鏡像。符号を反転した系列の安値側強度に等しいので、
+    ロジックを二重に持たず委譲する（片方だけ直す事故を防ぐ）。
+    """
+    high = np.asarray(high, dtype=np.float64)
+    return pivot_strength_low(-high)
+
+
+def counter_trend_series(
+    high: np.ndarray,
+    low: np.ndarray,
+    close: np.ndarray,
+    min_len: int = DEFAULT_MIN_LEN,
+    max_len: int = DEFAULT_MAX_LEN,
+) -> np.ndarray:
+    """各バーのカウンタートレンドライン値を返す。引かれないバーは `NaN`。
+
+    作者の改良版が `rt_cnt_break`（Trend Line Break）として出しているシグナルの土台。
+    **LL-HL 構造が生きていない期間**に、ショート側のピボット高値2点を結んだ
+    下向きの線を引く。これを終値が上抜けたら「次の上昇トレンドへの転換」とみなす。
+
+    アンカーの取り方（原典の解説記事より）:
+
+    - **アンカー1** = 直前の LL-HL 構造の終端までで最も高いピボット高値
+      （構造がまだ一度も出来ていなければ、現在バーまでの全体から採る）
+    - **アンカー2** = アンカー1 より後で、アンカー1 から見て
+      **最も急な下向き傾き**になるピボット高値
+    - 値 = ``y2 + m * (i - x2)``  ただし ``m = (y2 - y1) / (x2 - x1)``
+
+    傾きが負でなければ*カウンター*トレンド線ではないので引かない。
+
+    確定遅延は LL-HL 側と同じ扱い。ピボット高値も左右 L 本を見る中心窓なので、
+    位置 `p` のピボットは `p + min_len` 本目まで**存在を知り得ない**。
+    アンカーに採用するのはその条件を満たしたものだけで、ここを崩すと
+    「あとから引いた線を過去に当てはめる」＝先読みになる。
+
+    アンカー2 は「アンカー1 以降の最小傾き」なので、無効化されるまでは
+    バーが進んでも**単調に更新されるだけ**。走査は O(n)。
+    """
+    high = np.asarray(high, dtype=np.float64)
+    low = np.asarray(low, dtype=np.float64)
+    close = np.asarray(close, dtype=np.float64)
+
+    n = high.shape[0]
+    line = np.full(n, np.nan)
+    if n == 0:
+        return line
+    if low.shape[0] != n or close.shape[0] != n:
+        raise ValueError('high / low / close の長さが一致していません')
+    if max_len < min_len or min_len < 1 or n < _min_bars_required(min_len):
+        return line
+
+    sp_pivot, _sp_hl = structure_pivot_series(high, low, close, min_len, max_len)
+    active = ~np.isnan(sp_pivot)
+
+    strength_high = pivot_strength_high(high)
+    # 位置 p のピボットが「知られる」バー。p + min_len 本目以降
+    is_pivot = strength_high >= min_len
+
+    # アンカー1 は「構造の終端まで」の最高ピボット。構造が終わるたびに引き直すので、
+    # 各バー時点での「確定済みピボットの中の最高値」を前もって作っておく
+    best_idx_upto = np.full(n, -1, dtype=np.int64)
+    best = -1
+    for i in range(n):
+        p = i - min_len          # このバーで新たに確定するピボット位置
+        if p >= 0 and is_pivot[p] and (best < 0 or high[p] > high[best]):
+            best = p
+        best_idx_upto[i] = best
+
+    last_active_end = -1     # 直近で構造が終わったバー
+    anchor1 = -1
+    anchor2 = -1
+    best_slope = 0.0
+
+    for i in range(n):
+        if active[i]:
+            last_active_end = i
+            anchor1 = anchor2 = -1     # 構造が出来たらラインは消える
+            continue
+
+        # --- アンカー1 の確定（構造が終わった直後に1度だけ） ---
+        if anchor1 < 0:
+            window_end = last_active_end if last_active_end >= 0 else i
+            cand = best_idx_upto[min(window_end, i)]
+            if cand < 0:
+                continue
+            anchor1 = cand
+            anchor2 = -1
+            best_slope = 0.0
+
+        # --- アンカー2 の更新（このバーで確定したピボットだけを見る） ---
+        p = i - min_len
+        if p > anchor1 and p >= 0 and is_pivot[p]:
+            slope = (high[p] - high[anchor1]) / (p - anchor1)
+            if slope < 0 and (anchor2 < 0 or slope < best_slope):
+                anchor2 = p
+                best_slope = slope
+
+        if anchor2 >= 0:
+            line[i] = high[anchor2] + best_slope * (i - anchor2)
+
+    return line

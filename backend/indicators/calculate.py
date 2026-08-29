@@ -5,7 +5,7 @@ from .moving_averages import calc_moving_averages
 from .volatility import calc_volatility
 from .relative_strength import calc_relative_strength
 from .volume_and_trends import calc_volume_and_trends
-from .structure_pivot import structure_pivot_series
+from .structure_pivot import counter_trend_series, structure_pivot_series
 
 # Export calculate_market_signals so that update_pipeline can import it from here if needed
 # or it can import it directly. We'll expose it here for backward compatibility.
@@ -53,6 +53,12 @@ def calculate_indicators(df_daily: pd.DataFrame, df_spy: pd.DataFrame = None) ->
     )
     df['sp_pivot'] = sp_pivot
     df['sp_hl'] = sp_hl
+    #    カウンタートレンド線は構造が無い期間に引かれる（sp_pivot とは排他）
+    df['sp_counter'] = counter_trend_series(
+        df['high'].to_numpy(dtype=float),
+        df['low'].to_numpy(dtype=float),
+        df['close'].to_numpy(dtype=float),
+    )
 
     # Sanitize: replace np.nan with None for SQLAlchemy
     df = df.replace({np.nan: None})

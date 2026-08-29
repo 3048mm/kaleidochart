@@ -232,6 +232,14 @@ _SPECIAL_SPECS = {
         prev_requires=(),
         params=(),
     ),
+    # カウンタートレンド線の上抜け（作者の rt_cnt_break）。
+    # sp_counter は構造が無い期間にだけ値を持つので sp_pivot とは排他
+    'is_structure_trend_line_break': FilterSpec(
+        key='is_structure_trend_line_break', kind='special', column=None, op=None,
+        requires=('sp_counter', 'change_1d_pct'),
+        prev_requires=(),
+        params=(),
+    ),
     'is_structure_1st_break': FilterSpec(
         key='is_structure_1st_break', kind='special', column=None, op=None,
         requires=('sp_pivot', 'sp_hl', 'change_1d_pct'),

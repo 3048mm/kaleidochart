@@ -519,6 +519,30 @@ def filter_structure_2nd_break(merged: pd.DataFrame) -> pd.Series:
     return mask.fillna(False)
 
 
+def filter_structure_trend_line_break(merged: pd.DataFrame) -> pd.Series:
+    """カウンタートレンド線を当日上抜けたイベント（作者の `rt_cnt_break`）。
+
+    LL-HL 構造が**成立していない**期間に、ショート側のピボット高値2点を結んだ
+    下向きの抵抗線が引かれる。これを終値が上抜けることが
+    「次の上昇トレンドへの転換」シグナル。構造が生きている行は `sp_counter` が
+    NULL なので自然に False になる（`sp_pivot` とは排他）。
+
+    前日終値は `change_1d_pct` から復元する（1st / 2nd break と同じ）。
+
+    > [!NOTE]
+    > **前日のライン値は当日の値で代用している。** `sp_counter` は傾きを持つ線なので
+    > 厳密には前日の水準は当日と異なるが、スクリーナーは当日の1行しか見ないため
+    > 復元できない。1日ぶんの傾き（実測で概ね終値の 0.1〜0.5%）は許容する。
+    > 作者の実出力（2026-08-26 の BHVN / ERAS）はこの近似で両方とも再現できている。
+    """
+    required = ('sp_counter', 'close', 'change_1d_pct')
+    if any(c not in merged.columns for c in required):
+        return pd.Series(False, index=merged.index)
+
+    prev_close = merged['close'] / (1 + merged['change_1d_pct'] / 100)
+    mask = (prev_close <= merged['sp_counter']) & (merged['close'] > merged['sp_counter'])
+    return mask.fillna(False)
+
 # ============================================================
 # 特殊ブールフィルタキーのレジストリ
 # ============================================================
