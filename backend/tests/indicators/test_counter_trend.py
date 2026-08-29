@@ -62,8 +62,11 @@ def downtrend():
         high[idx] = peak
         high[idx - 1] = peak - 8
         high[idx + 1] = peak - 8
-    # 安値は単調に切り下げ、HL が出来ないようにする
-    low[:] = np.linspace(58, 30, n)
+    # 安値は切り下げつつジグザグにする。単調だとピボット安値が1つも出来ず、
+    # limit_idx（ロング側の現在のピボット安値）が立たないためラインが引けない。
+    # 谷は下がり続けるので HL は成立せず、構造は生きないまま
+    idx = np.arange(n, dtype=float)
+    low[:] = 58 - 0.45 * idx + 3.0 * np.sin(idx * 0.9)
     close = high - 1.0
     return high, low, close
 
@@ -92,18 +95,6 @@ class TestLineGeometry:
         low = np.linspace(58, 30, n)
         line = counter_trend_series(high, low, high - 1.0)
         assert np.isnan(line).all()
-
-    def test_no_line_when_slope_is_not_downward(self):
-        """高値が切り上がる（傾きが正）局面では*カウンター*トレンド線にならない。"""
-        n = 60
-        high = np.full(n, 60.0)
-        for idx, peak in ((5, 80.0), (15, 90.0), (25, 100.0)):   # 切り上がり
-            high[idx] = peak
-            high[idx - 1] = high[idx + 1] = peak - 8
-        low = np.linspace(58, 30, n)
-        line = counter_trend_series(high, low, high - 1.0)
-        assert np.isnan(line).all()
-
 
 # ============================================================
 # 確定遅延（最重要）
@@ -172,3 +163,69 @@ class TestDegenerateInput:
     def test_flat_series_has_no_line(self):
         a = np.full(50, 100.0)
         assert np.isnan(counter_trend_series(a, a, a)).all()
+
+
+# ============================================================
+# 履歴の長さに対する安定性（2026-08-29 の実障害の回帰テスト）
+
+
+# ============================================================
+# 傾きの選び方（2026-08-29 に実際に間違えた箇所）
+# ============================================================
+
+class TestSlopeSelection:
+    """Pine 原文は `find_highs` のとき **`m > best_slope`** で更新する＝**最大化**。
+
+    「最も急な下向き傾き」と読み違えて最小化で実装したところ、
+    作者の公開出力（8/26 の BHVN / ERAS）が **2/2 → 0/2** になった。
+    """
+
+    def test_rising_highs_draw_no_line(self):
+        """高値が切り上がり続ける局面ではラインが引けないこと。
+
+        当初は「*カウンター*トレンド線なので下向きのはず」と考えて
+        `slope < 0` を課していたが、**原文にその条件は無い**。
+        条件が無くても成り立つのは、アンカー1 が `idx <= limit_idx` の**最大値**で、
+        アンカー2 の候補は `a1 < idx < limit_idx` に限られるため。
+        切り上がり続けると最後のピークがアンカー1 になり、その後ろに候補が無くなる。
+        （＝ 傾きは構造上つねに 0 以下。符号判定は冗長だった）
+        """
+        n = 70
+        high = np.full(n, 60.0)
+        for idx_, peak in ((10, 80.0), (20, 90.0), (30, 100.0)):   # 切り上がり
+            high[idx_] = peak
+            high[idx_ - 1] = high[idx_ + 1] = peak - 12
+        idx = np.arange(n, dtype=float)
+        low = 58 - 0.45 * idx + 3.0 * np.sin(idx * 0.9)
+        line = counter_trend_series(high, low, high - 1.0)
+        assert np.isnan(line).all()
+
+
+# ============================================================
+# 履歴の長さに対する安定性（2026-08-29 の実障害の回帰テスト）
+# ============================================================
+
+class TestHistoryLengthStability:
+    """**同じ状況なら、読んだ本数が違っても同じ値になること。**
+
+    アンカーの候補は「長さごとの状態機械が持つ prev / curr の2点」だけなので、
+    値は直近の数ピボットで決まり、履歴の長さに依存しない。
+    途中で「窓の中の全ピボットから探す」実装にしたときは、
+    本番実測で T3（SQLite 約500本）と Parquet バックフィル（全期間）が
+    最終バーで 12% / 直近60本で 44% 食い違った。**この性質は落とせない。**
+    """
+
+    @staticmethod
+    def _series(n, seed):
+        rng = np.random.default_rng(seed)
+        base = 100 + np.cumsum(rng.normal(0, 1.2, n))
+        return (base + rng.random(n) * 2 + 1, base - rng.random(n) * 2 - 1, base)
+
+    @pytest.mark.parametrize('seed', range(8))
+    def test_tail_values_do_not_depend_on_how_much_history_is_loaded(self, seed):
+        extra, warmup = 400, 120
+        high, low, close = self._series(extra + warmup + 400, seed)
+        full = counter_trend_series(high, low, close)
+        cut = counter_trend_series(high[extra:], low[extra:], close[extra:])
+        np.testing.assert_allclose(cut[warmup:], full[extra + warmup:],
+                                   equal_nan=True, rtol=1e-9)

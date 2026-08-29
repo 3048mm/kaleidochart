@@ -321,6 +321,26 @@ def pivot_strength_high(high: np.ndarray) -> np.ndarray:
     return pivot_strength_low(-high)
 
 
+def _pivot_state_track(strength: np.ndarray, length: int):
+    """Pine の `PivotState.update()` 相当。各バー時点の (prev_idx, curr_idx) を返す。
+
+    新しいピボットが確定したら `prev = curr; curr = 新` と押し出す。
+    確定遅延を守るため、位置 `i` のピボットを見るのは `i + length` 本目から。
+    高値側・安値側のどちらにも使う（渡す strength が違うだけ）。
+    """
+    n = strength.shape[0]
+    prev_i = np.full(n, -1, dtype=np.int64)
+    curr_i = np.full(n, -1, dtype=np.int64)
+    p, c = -1, -1
+    for t in range(n):
+        i = t - length
+        if i >= 0 and strength[i] >= length:
+            p, c = c, i
+        prev_i[t] = p
+        curr_i[t] = c
+    return prev_i, curr_i
+
+
 def counter_trend_series(
     high: np.ndarray,
     low: np.ndarray,
@@ -331,26 +351,32 @@ def counter_trend_series(
     """各バーのカウンタートレンドライン値を返す。引かれないバーは `NaN`。
 
     作者の改良版が `rt_cnt_break`（Trend Line Break）として出しているシグナルの土台。
-    **LL-HL 構造が生きていない期間**に、ショート側のピボット高値2点を結んだ
-    下向きの線を引く。これを終値が上抜けたら「次の上昇トレンドへの転換」とみなす。
+    **LL-HL 構造が生きていない期間**に、ショート側のピボット高値2点を結んだ線を引く。
+    終値がこれを上抜けたら「次の上昇トレンドへの転換」とみなす。
 
-    アンカーの取り方（原典の解説記事より）:
+    Pine 原文（`get_counter_coordinates(opp_arr, w.curr_idx, true)`）の移植:
 
-    - **アンカー1** = 直前の LL-HL 構造の終端までで最も高いピボット高値
-      （構造がまだ一度も出来ていなければ、現在バーまでの全体から採る）
-    - **アンカー2** = アンカー1 より後で、アンカー1 から見て
-      **最も急な下向き傾き**になるピボット高値
-    - 値 = ``y2 + m * (i - x2)``  ただし ``m = (y2 - y1) / (x2 - x1)``
+    - **候補点はショート側の状態が持つ prev / curr の2点だけ**。長さ帯 2-5 なので
+      全部で最大8点しかない。「窓の中の全ピボット」ではない
+    - **アンカー1** = `idx <= limit_idx` の候補のうち**価格が最大**のもの
+      （prev / curr の両方を見る）
+    - **アンカー2** = `anchor1 < idx < limit_idx` の **curr のみ**が候補で、
+      アンカー1 から見た傾き `m` が**最大**のもの
+    - `limit_idx` = ロング側の状態が持つ現在のピボット安値（`w.curr_idx`）
+    - 値 = ``y2 + m * (i - x2)``
 
-    傾きが負でなければ*カウンター*トレンド線ではないので引かない。
+    > [!IMPORTANT]
+    > **傾きは最大化であって最小化ではない。** 原文は `find_highs` のとき
+    > `if m > best_slope` で更新する。アンカー1 が最高値なので後続は下向きになり、
+    > 最大化＝**最も浅い下向き**＝後続の高値を上から包む線になる。
+    > 「最も急な下向き」と読み違えると別物の線になる（2026-08-29 に実際に間違えた）。
+    > 傾きの符号は**判定しない**（原文にその条件は無い）。
 
-    確定遅延は LL-HL 側と同じ扱い。ピボット高値も左右 L 本を見る中心窓なので、
-    位置 `p` のピボットは `p + min_len` 本目まで**存在を知り得ない**。
-    アンカーに採用するのはその条件を満たしたものだけで、ここを崩すと
-    「あとから引いた線を過去に当てはめる」＝先読みになる。
-
-    アンカー2 は「アンカー1 以降の最小傾き」なので、無効化されるまでは
-    バーが進んでも**単調に更新されるだけ**。走査は O(n)。
+    > [!NOTE]
+    > 候補点が prev / curr の2点だけなので、値は**直近の数ピボット**だけで決まる。
+    > 履歴を何本読ませても同じ値になり、T3（SQLite 約500本）と Parquet の
+    > バックフィル（全期間）が一致する。回帰テストは
+    > `test_counter_trend.py::TestHistoryLengthStability`。
     """
     high = np.asarray(high, dtype=np.float64)
     low = np.asarray(low, dtype=np.float64)
@@ -369,49 +395,48 @@ def counter_trend_series(
     active = ~np.isnan(sp_pivot)
 
     strength_high = pivot_strength_high(high)
-    # 位置 p のピボットが「知られる」バー。p + min_len 本目以降
-    is_pivot = strength_high >= min_len
+    strength_low = pivot_strength_low(low)
+    lengths = range(min_len, max_len + 1)
+    short_states = {L: _pivot_state_track(strength_high, L) for L in lengths}
+    long_states = {L: _pivot_state_track(strength_low, L) for L in lengths}
 
-    # アンカー1 は「構造の終端まで」の最高ピボット。構造が終わるたびに引き直すので、
-    # 各バー時点での「確定済みピボットの中の最高値」を前もって作っておく
-    best_idx_upto = np.full(n, -1, dtype=np.int64)
-    best = -1
-    for i in range(n):
-        p = i - min_len          # このバーで新たに確定するピボット位置
-        if p >= 0 and is_pivot[p] and (best < 0 or high[p] > high[best]):
-            best = p
-        best_idx_upto[i] = best
-
-    last_active_end = -1     # 直近で構造が終わったバー
-    anchor1 = -1
-    anchor2 = -1
-    best_slope = 0.0
-
-    for i in range(n):
-        if active[i]:
-            last_active_end = i
-            anchor1 = anchor2 = -1     # 構造が出来たらラインは消える
+    for t in range(n):
+        if active[t]:
             continue
 
-        # --- アンカー1 の確定（構造が終わった直後に1度だけ） ---
-        if anchor1 < 0:
-            window_end = last_active_end if last_active_end >= 0 else i
-            cand = best_idx_upto[min(window_end, i)]
-            if cand < 0:
+        # limit_idx = ロング側の現在のピボット安値。帯の中で最も新しいものを採る
+        limit_idx = -1
+        for L in lengths:
+            c = long_states[L][1][t]
+            if c > limit_idx:
+                limit_idx = c
+        if limit_idx < 0:
+            continue
+
+        # --- アンカー1: limit_idx までで価格が最大の候補（prev / curr 両方） ---
+        a1 = -1
+        for L in lengths:
+            prev_i, curr_i = short_states[L]
+            for idx in (prev_i[t], curr_i[t]):
+                if 0 <= idx <= limit_idx and (a1 < 0 or high[idx] > high[a1]):
+                    a1 = idx
+        if a1 < 0:
+            continue
+
+        # --- アンカー2: a1 < idx < limit_idx の curr のみ。傾きが最大のもの ---
+        a2 = -1
+        best_slope = 0.0
+        for L in lengths:
+            idx = short_states[L][1][t]
+            if idx <= a1 or idx >= limit_idx:
                 continue
-            anchor1 = cand
-            anchor2 = -1
-            best_slope = 0.0
+            m = (high[idx] - high[a1]) / (idx - a1)
+            if a2 < 0 or m > best_slope:
+                a2 = idx
+                best_slope = m
+        if a2 < 0:
+            continue
 
-        # --- アンカー2 の更新（このバーで確定したピボットだけを見る） ---
-        p = i - min_len
-        if p > anchor1 and p >= 0 and is_pivot[p]:
-            slope = (high[p] - high[anchor1]) / (p - anchor1)
-            if slope < 0 and (anchor2 < 0 or slope < best_slope):
-                anchor2 = p
-                best_slope = slope
-
-        if anchor2 >= 0:
-            line[i] = high[anchor2] + best_slope * (i - anchor2)
+        line[t] = high[a2] + best_slope * (t - a2)
 
     return line
