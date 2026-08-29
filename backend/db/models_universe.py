@@ -6,8 +6,8 @@
 
 from datetime import datetime
 from sqlalchemy import (
-    Column, Integer, String, Float, DateTime, SmallInteger,
-    UniqueConstraint, Index,
+    BigInteger, Column, DateTime, Float, Index, Integer, SmallInteger,
+    String, Text, UniqueConstraint,
 )
 from sqlalchemy.orm import declarative_base
 
@@ -80,4 +80,58 @@ class TickerHistory(BaseUniverse):
 
     __table_args__ = (
         UniqueConstraint("old_ticker", "old_exchange", name="uq_ticker_history_old"),
+    )
+
+
+class IpoCandidate(BaseUniverse):
+    """IPO 銘柄の追加候補（レビュー待ちの銘柄プール）。
+
+    SEC マスタと `symbols_master` の差分から週次で検知した新規上場銘柄を、
+    人間がレビューして `symbols_master` へ採用するまでの待機場所。
+
+    **`symbols_master.active` の第3の値にはしない。** `active` は実質 bool で、
+    T1 同期・`detect_candidates()`・退役スクリプトが全て真偽値として読んでいる。
+    第3の値を足すと全経路の洗い直しになる（計画書 §2.2）。
+
+    **却下しても行は消さない。** `status='rejected'` で残しておけば
+    画面のトグル1つで復活でき、追加コストがゼロで済む。
+
+    検知ロジック: `data_collection/ipo_discovery.py`
+    """
+
+    __tablename__ = "ipo_candidates"
+
+    id       = Column(Integer, primary_key=True)
+    ticker   = Column(String, nullable=False, index=True)
+    exchange = Column(String)                    # Yahoo の fullExchangeName
+    name     = Column(String)
+    cik      = Column(Integer, index=True)
+
+    # Yahoo `firstTradeDate`。**上場日の正**（SEC は上場日を持たない）
+    first_trade_date = Column(String)            # ISO date 文字列
+
+    # 検知時点のスナップショット。レビュー時の判断材料であり、
+    # 最新値を追い続ける必要はない（追うなら採用して T2 に載せる）
+    market_cap  = Column(BigInteger)
+    avg_volume  = Column(BigInteger)
+    last_price  = Column(Float)
+
+    # 企業概要。テーマのタグ付け判断に使う。`.info` が不安定なので NULL 可
+    sector   = Column(String)
+    industry = Column(String)
+    summary  = Column(Text)
+    website  = Column(String)
+
+    # 'spac' / 'fund' のカンマ区切り。**除外ではなく分類**。
+    # SPAC は合併後に実業会社へ変わるため、行を残して拾い直せるようにする
+    flags = Column(String)
+
+    status      = Column(String, nullable=False, default="pending")
+    status_note = Column(String)
+    reviewed_at = Column(DateTime)
+    detected_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("ticker", "exchange", name="uq_ipo_candidates_ticker_exchange"),
+        Index("ix_ipo_candidates_status", "status"),
     )

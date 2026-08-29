@@ -268,3 +268,130 @@ export async function exportToSpreadsheet(spreadsheetUrl: string): Promise<Expor
   }
   return res.json();
 }
+
+/* ---------- IPO 追加候補 ---------- */
+
+/**
+ * IPO 追加候補。週次スキャン（`scripts/scan_ipo_candidates.py`）が検知し、
+ * この画面で採用/却下する。
+ *
+ * `status` の意味:
+ *   pending       … 未レビュー。既定でこれだけ表示する
+ *   accepted      … symbols_master へ採用済み
+ *   rejected      … 却下。**行は残る**のでトグルで再表示できる
+ *   auto_excluded … SPAC・ファンド・ADR としてスキャンが自動除外した
+ */
+export interface IpoCandidate {
+  id: number;
+  ticker: string;
+  exchange: string | null;
+  name: string | null;
+  cik: number | null;
+  first_trade_date: string | null;
+  market_cap: number | null;
+  avg_volume: number | null;
+  last_price: number | null;
+  sector: string | null;
+  industry: string | null;
+  summary: string | null;
+  website: string | null;
+  flags: string[];
+  status: string;
+  status_note: string | null;
+  detected_at: string | null;
+  reviewed_at: string | null;
+}
+
+export interface PaginatedCandidates {
+  items: IpoCandidate[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface CandidateStats {
+  pending: number;
+  accepted: number;
+  rejected: number;
+  auto_excluded: number;
+}
+
+export interface CandidateFilters {
+  status?: string;
+  flag?: string;
+  listed_from?: string;
+  listed_to?: string;
+  min_market_cap?: number;
+  page?: number;
+  page_size?: number;
+}
+
+export async function fetchCandidates(f: CandidateFilters = {}): Promise<PaginatedCandidates> {
+  const p = new URLSearchParams();
+  Object.entries(f).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== '') p.set(k, String(v));
+  });
+  const res = await fetch(`${API}/candidates?${p.toString()}`);
+  if (!res.ok) throw new Error(`Fetch candidates failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchCandidateStats(): Promise<CandidateStats> {
+  const res = await fetch(`${API}/candidates/stats`);
+  if (!res.ok) throw new Error(`Fetch candidate stats failed: ${res.status}`);
+  return res.json();
+}
+
+export interface AcceptPayload {
+  category?: string;
+  industry?: string | null;
+  sector_etf?: string | null;
+  themes?: string[];
+  note?: string | null;
+}
+
+export async function acceptCandidate(id: number, payload: AcceptPayload = {}): Promise<IpoCandidate> {
+  const res = await fetch(`${API}/candidates/${id}/accept`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Accept failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function rejectCandidate(id: number, note?: string): Promise<IpoCandidate> {
+  const res = await fetch(`${API}/candidates/${id}/reject`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ note: note ?? null }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Reject failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export interface BulkResult {
+  updated: number;
+  skipped: { id: number; detail: string }[];
+}
+
+export async function bulkReviewCandidates(
+  ids: number[], action: 'accept' | 'reject', note?: string,
+): Promise<BulkResult> {
+  const res = await fetch(`${API}/candidates/bulk`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids, action, note: note ?? null }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Bulk review failed: ${res.status}`);
+  }
+  return res.json();
+}

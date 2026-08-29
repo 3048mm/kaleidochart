@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from data_collection.symbol_classify import derive_theme_type
 from db.database_universe import get_universe_db, get_universe_write_db
-from db.models_universe import SymbolMaster, ThemeMember
+from db.models_universe import IpoCandidate, SymbolMaster, ThemeMember
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/universe", tags=["universe"])
@@ -96,6 +96,59 @@ class StatsOut(BaseModel):
     total_themes: int
     total_theme_members: int
     last_updated: Optional[datetime] = None
+
+
+class IpoCandidateOut(BaseModel):
+    id: int
+    ticker: str
+    exchange: Optional[str] = None
+    name: Optional[str] = None
+    cik: Optional[int] = None
+    first_trade_date: Optional[str] = None
+    market_cap: Optional[int] = None
+    avg_volume: Optional[int] = None
+    last_price: Optional[float] = None
+    sector: Optional[str] = None
+    industry: Optional[str] = None
+    summary: Optional[str] = None
+    website: Optional[str] = None
+    flags: List[str] = []
+    status: str
+    status_note: Optional[str] = None
+    detected_at: Optional[datetime] = None
+    reviewed_at: Optional[datetime] = None
+
+
+class PaginatedCandidates(BaseModel):
+    items: List[IpoCandidateOut]
+    total: int
+    page: int
+    page_size: int
+
+
+class CandidateAcceptRequest(BaseModel):
+    category: str = "個別"
+    industry: Optional[str] = None
+    sector_etf: Optional[str] = None
+    themes: List[str] = []
+    note: Optional[str] = None
+
+
+class CandidateRejectRequest(BaseModel):
+    note: Optional[str] = None
+
+
+class CandidateBulkRequest(BaseModel):
+    ids: List[int]
+    action: str          # "accept" | "reject"
+    note: Optional[str] = None
+
+
+class CandidateStatsOut(BaseModel):
+    pending: int = 0
+    accepted: int = 0
+    rejected: int = 0
+    auto_excluded: int = 0
 
 
 class ImportRequest(BaseModel):
@@ -579,3 +632,157 @@ def export_spreadsheet(
     except Exception as e:
         logger.error(f"Export spreadsheet error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"エクスポートエラー: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# IPO 候補レビュー
+#
+# 検知は `scripts/scan_ipo_candidates.py`（週次）。ここは人間がレビューして
+# `symbols_master` へ採用する経路だけを持つ。
+#
+# **却下しても行は消さない。** `status='rejected'` で残すことで、画面のトグル
+# ひとつで復活でき、追加コストがゼロで済む（計画書 §2.2）。
+# ---------------------------------------------------------------------------
+
+def _candidate_to_out(row: IpoCandidate) -> dict:
+    """`flags` はカンマ区切りで持っているのでリストに開いて返す。"""
+    d = {c.name: getattr(row, c.name) for c in IpoCandidate.__table__.columns}
+    d["flags"] = [f for f in (row.flags or "").split(",") if f]
+    return d
+
+
+@router.get("/candidates", response_model=PaginatedCandidates)
+def list_candidates(
+    status: str = Query("pending", description="pending / accepted / rejected / auto_excluded / all"),
+    flag: Optional[str] = Query(None, description="spac / fund で絞り込む"),
+    listed_from: Optional[str] = Query(None, description="上場日の下限 (ISO)"),
+    listed_to: Optional[str] = Query(None, description="上場日の上限 (ISO)"),
+    min_market_cap: Optional[int] = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1, le=500),
+    db: Session = Depends(_get_read_db),
+):
+    """IPO 追加候補の一覧。既定は未レビュー（`pending`）のみ。"""
+    q = db.query(IpoCandidate)
+    if status != "all":
+        q = q.filter(IpoCandidate.status == status)
+    if flag:
+        q = q.filter(IpoCandidate.flags.like(f"%{flag}%"))
+    if listed_from:
+        q = q.filter(IpoCandidate.first_trade_date >= listed_from)
+    if listed_to:
+        q = q.filter(IpoCandidate.first_trade_date <= listed_to)
+    if min_market_cap is not None:
+        q = q.filter(IpoCandidate.market_cap >= min_market_cap)
+
+    total = q.count()
+    rows = (q.order_by(IpoCandidate.first_trade_date.desc(),
+                       IpoCandidate.ticker.asc())
+             .offset((page - 1) * page_size).limit(page_size).all())
+    return {"items": [_candidate_to_out(r) for r in rows],
+            "total": total, "page": page, "page_size": page_size}
+
+
+@router.get("/candidates/stats", response_model=CandidateStatsOut)
+def get_candidate_stats(db: Session = Depends(_get_read_db)):
+    """status 別の件数。ヘッダのバッジと画面タブの件数表示に使う。"""
+    rows = (db.query(IpoCandidate.status, func.count(IpoCandidate.id))
+              .group_by(IpoCandidate.status).all())
+    out = {"pending": 0, "accepted": 0, "rejected": 0, "auto_excluded": 0}
+    for st, n in rows:
+        if st in out:
+            out[st] = n
+    return out
+
+
+@router.post("/candidates/{candidate_id}/accept", response_model=IpoCandidateOut)
+def accept_candidate(
+    candidate_id: int,
+    body: CandidateAcceptRequest,
+    db: Session = Depends(_get_write_db),
+):
+    """候補を `symbols_master` へ採用する。
+
+    `theme_type` は **`derive_theme_type()` を通す**（銘柄 CRUD と同じ経路）。
+    ここで独自に導出すると分類ロジックが二重化する。
+    """
+    cand = db.query(IpoCandidate).filter(IpoCandidate.id == candidate_id).first()
+    if cand is None:
+        raise HTTPException(status_code=404, detail=f"候補 id={candidate_id} が見つかりません")
+
+    existing = (db.query(SymbolMaster)
+                  .filter(SymbolMaster.ticker == cand.ticker,
+                          SymbolMaster.exchange == cand.exchange)
+                  .first())
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{cand.ticker} ({cand.exchange}) は既に symbols_master にあります")
+
+    db.add(SymbolMaster(
+        ticker=cand.ticker,
+        exchange=cand.exchange,
+        name=cand.name,
+        category=body.category,
+        industry=body.industry or cand.industry,
+        theme_type=_derive_theme_type(cand.exchange, body.category, cand.ticker),
+        sector_etf=body.sector_etf,
+        active=1,
+        source="ipo_candidate",
+        cik=cand.cik,
+    ))
+
+    for theme in body.themes:
+        dup = (db.query(ThemeMember)
+                 .filter(ThemeMember.theme_ticker == theme,
+                         ThemeMember.member_ticker == cand.ticker).first())
+        if dup is None:
+            db.add(ThemeMember(theme_ticker=theme, member_ticker=cand.ticker,
+                               weight=1.0, source="ipo_candidate"))
+
+    cand.status = "accepted"
+    cand.status_note = body.note
+    cand.reviewed_at = datetime.utcnow()
+    db.flush()
+    return _candidate_to_out(cand)
+
+
+@router.post("/candidates/{candidate_id}/reject", response_model=IpoCandidateOut)
+def reject_candidate(
+    candidate_id: int,
+    body: CandidateRejectRequest,
+    db: Session = Depends(_get_write_db),
+):
+    """候補を却下する。**行は消さず** status を変えるだけ（画面から復活できる）。"""
+    cand = db.query(IpoCandidate).filter(IpoCandidate.id == candidate_id).first()
+    if cand is None:
+        raise HTTPException(status_code=404, detail=f"候補 id={candidate_id} が見つかりません")
+    cand.status = "rejected"
+    cand.status_note = body.note
+    cand.reviewed_at = datetime.utcnow()
+    db.flush()
+    return _candidate_to_out(cand)
+
+
+@router.post("/candidates/bulk")
+def bulk_review_candidates(
+    body: CandidateBulkRequest,
+    db: Session = Depends(_get_write_db),
+):
+    """複数の候補をまとめて採用/却下する。"""
+    if body.action not in ("accept", "reject"):
+        raise HTTPException(status_code=400,
+                            detail="action は accept / reject のいずれかです")
+
+    updated, skipped = 0, []
+    for cid in body.ids:
+        try:
+            if body.action == "reject":
+                reject_candidate(cid, CandidateRejectRequest(note=body.note), db)
+            else:
+                accept_candidate(cid, CandidateAcceptRequest(note=body.note), db)
+            updated += 1
+        except HTTPException as e:
+            # 1件の失敗で残りを巻き添えにしない（既に symbols_master にある等）
+            skipped.append({"id": cid, "detail": e.detail})
+    return {"updated": updated, "skipped": skipped}

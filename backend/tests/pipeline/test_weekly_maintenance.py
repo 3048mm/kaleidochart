@@ -392,6 +392,21 @@ class TestClassifySymbolFreshness:
     def test_none_last_date_is_no_history_regardless_of_count(self):
         assert classify_symbol_freshness(9999, None, SPY_LATEST) == "no_history"
 
+    def test_新規IPO銘柄も行数不足ならno_historyになる(self):
+        """**これは仕様どおり。**変更してはいけない。
+
+        上場2週間の IPO（10行・データは最新）と、供給側にデータが無い銘柄
+        （`LC`: 7行・データは最新）は、`(row_count, last_date, spy_latest)` だけでは
+        **原理的に区別できない**。ここで「最新なら ok」に倒すと、
+        2026-07-29 に修正した `LC` 型の取りこぼしが復活する。
+
+        新規 IPO の保護は**この関数ではなく `split_by_sec_verdict()` が担う**
+        （SEC マスタに載っている銘柄は自動退役 CSV から外れる）。
+        レイヤの役割分担: 本関数は「自分の DB から見た状態」だけを述べ、
+        「実際に退役してよいか」は SEC との突合で決める。
+        """
+        assert classify_symbol_freshness(10, SPY_LATEST, SPY_LATEST) == "no_history"
+
     def test_thresholds_are_configurable(self):
         assert classify_symbol_freshness(
             30, _date(2026, 7, 27), SPY_LATEST, low_history_rows=50) == "no_history"
@@ -546,3 +561,108 @@ class TestSecCrossCheckOnRetirementCandidates:
         keep, alive = split_by_sec_verdict(rows, None)
 
         assert keep == rows and alive == []
+
+
+# ---------------------------------------------------------------------------
+# 新規 IPO 銘柄が退役候補に落ちないこと
+#
+# `ipo_candidates` から採用した銘柄は上場直後で行数が少なく、`classify_symbol_freshness`
+# は `no_history`（退役候補）と分類する。これは仕様どおりで（上の
+# `test_新規IPO銘柄も行数不足ならno_historyになる` 参照）、実際に退役されないことは
+# **`split_by_sec_verdict()` の SEC 突合**が担保する。
+#
+# 採用した IPO 銘柄は必ず SEC マスタに載っている（そこから検知したため）ので、
+# 「SEC 上は健在」として自動退役 CSV から外れる。
+# 詳細: `doc/in_progress/ipo_candidates_plan.md` §7
+# ---------------------------------------------------------------------------
+
+from scripts.weekly_maintenance import split_by_sec_verdict  # noqa: E402
+
+
+class TestNewIpoSymbolIsHeldFromRetirement:
+
+    def test_SEC上健在な新規IPOは自動退役CSVから外れる(self):
+        # 上場2週間、10行、データは最新 → no_history に分類される銘柄
+        rows = [("EROC", _date(2026, 7, 27), 10)]
+        keep, held = split_by_sec_verdict(rows, alive_tickers={"EROC", "SPY"})
+        assert keep == [], "SEC 上健在な銘柄を自動退役 CSV に載せてはいけない"
+        assert [r[0] for r in held] == ["EROC"]
+
+    def test_SECからも消えた銘柄は退役候補に残る(self):
+        rows = [("GONE", _date(2025, 1, 10), 5)]
+        keep, held = split_by_sec_verdict(rows, alive_tickers={"SPY"})
+        assert [r[0] for r in keep] == ["GONE"]
+        assert held == []
+
+    def test_SEC同期が失敗したときは握り潰さない(self):
+        """照合できないことを「健在の証拠なし」と混同しない（既存の設計）。"""
+        rows = [("EROC", _date(2026, 7, 27), 10)]
+        keep, held = split_by_sec_verdict(rows, alive_tickers=None)
+        assert [r[0] for r in keep] == ["EROC"]
+        assert held == []
+
+
+# ---------------------------------------------------------------------------
+# IPO 候補スキャンの週次組み込み
+#
+# SEC 突合と同じく universe.db に対する操作。**失敗しても週次メンテ全体を落とさない**
+# （物理メンテと整合性監査の結果を失う方が困る）という既存の方針に合わせる。
+# ---------------------------------------------------------------------------
+
+from scripts.weekly_maintenance import run_ipo_candidate_scan  # noqa: E402
+
+
+class TestRunIpoCandidateScan:
+
+    def test_dry_runではapplyしない(self, monkeypatch):
+        seen = {}
+
+        def fake_run(dry_run, **kw):
+            seen["dry_run"] = dry_run
+            return {"candidates": 10, "passed": 2, "pending": 2}
+
+        import scripts.scan_ipo_candidates as scan
+        monkeypatch.setattr(scan, "run", fake_run)
+
+        r = run_ipo_candidate_scan(dry_run=True)
+        assert seen["dry_run"] is True
+        assert r["passed"] == 2
+
+    def test_applyで実際に登録する(self, monkeypatch):
+        seen = {}
+
+        def fake_run(dry_run, **kw):
+            seen["dry_run"] = dry_run
+            return {"inserted": 3, "pending_total": 111}
+
+        import scripts.scan_ipo_candidates as scan
+        monkeypatch.setattr(scan, "run", fake_run)
+
+        r = run_ipo_candidate_scan(dry_run=False)
+        assert seen["dry_run"] is False
+        assert r["inserted"] == 3
+
+    def test_失敗しても例外を投げずerrorを返す(self, monkeypatch):
+        """**週次メンテ全体を巻き添えにしない。**
+
+        SEC / Yahoo はネットワーク依存で、ここで例外を投げると
+        物理メンテや整合性監査の結果まで失われる（`run_sec_corporate_action_sync`
+        と同じ方針）。
+        """
+        def boom(dry_run, **kw):
+            raise RuntimeError("Yahoo に絞られた")
+
+        import scripts.scan_ipo_candidates as scan
+        monkeypatch.setattr(scan, "run", boom)
+
+        r = run_ipo_candidate_scan(dry_run=False)
+        assert "Yahoo に絞られた" in r["error"]
+
+    def test_SEC連絡先未設定でもエラーを返すだけ(self, monkeypatch):
+        def boom(dry_run, **kw):
+            raise ValueError("SEC への連絡先が未設定です")
+
+        import scripts.scan_ipo_candidates as scan
+        monkeypatch.setattr(scan, "run", boom)
+
+        assert run_ipo_candidate_scan(dry_run=True)["error"]

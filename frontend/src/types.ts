@@ -278,12 +278,19 @@ export interface ValidationInfo {
     warnings: string[];
 }
 
+export interface UniverseInfo {
+    /** IPO 追加候補のうち未レビューの件数。Universe 画面のタブとヘッダのバッジに出す */
+    ipo_candidates_pending: number;
+}
+
 export interface SystemHealthResponse {
     overall_status: 'healthy' | 'warning' | 'error';
     data_freshness: FreshnessInfo;
     data_integrity: IntegrityInfo;
     pipeline_status: PipelineStatusInfo;
     validation: ValidationInfo;
+    /** バックエンドが古い場合に備えて optional にしておく */
+    universe?: UniverseInfo;
 }
 
 export interface ThemeConstituentItem {

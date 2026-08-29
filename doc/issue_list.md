@@ -371,6 +371,42 @@
 
 ## P2 — 中（体感改善・保守性・運用安全性）
 
+- [ ] **ワークツリーで本番 Parquet を読む手段が規定と矛盾している（2026-08-28 発見）**
+  - **事象**: ワークツリーで `pytest backend/tests/` を回すと
+    `test_scenario_comparison.py::test_run_comparison_generates_outputs` が必ず落ちる。
+
+    ```
+    FileNotFoundError: Parquet master cache files not found at
+      <worktree>\data\parquet_master! Please run the pipeline once to generate it.
+    ```
+
+    本体では通る。ワークツリーの `data/` が git 管理外で空なため。
+  - **規定の矛盾**: `agent_execution_rules.md` の記述が食い違っている。
+    - §10.4 Case 1 は「**本番 Parquet を読み取り専用参照してワークツリーでそのまま実行できる**」と書いている
+    - しかし Parquet の所在は `get_parquet_master_dir(db_path)` が `db_path` から導出するだけで
+      （`pipeline/parquet_cache_manager.py:20`）、**Parquet 専用の環境変数が存在しない**
+    - 本番 Parquet を指すには `STOCKTOOL_DB_PATH` を本番に向けるしかないが、
+      §10.3 は「設定漏れで本番を破壊する恐れがあるため避けてください」と**明示的に禁じている**
+    - `STOCKTOOL_ENV=sandbox` は `data/sandbox/` を指すので、
+      `create_sandbox.py` を走らせるまで Parquet は無い
+  - **結果**: 「ワークツリーで全テストを回したとき、この1件の失敗は正常か異常か」を
+    判断する根拠がドキュメントに無い。**実装起因のリグレッションを環境要因と誤認する**
+    （あるいはその逆の）余地が残る。
+  - **対応案**（いずれか）:
+    1. **読み取り専用の Parquet パス env（`STOCKTOOL_PARQUET_DIR` 等）を新設**し、
+       §10.4 Case 1 の約束を実際に果たせるようにする。書き込み経路からは参照しないことで
+       §10.3 の懸念（本番破壊）を回避できる
+    2. 本番 Parquet を要求するテストに `pytest.mark.requires_production_data` を付け、
+       ワークツリーでは自動 skip する。§10.3 に「ワークツリーの全テストはこのマーカー分が
+       skip される」と明記する
+    3. 最小対応として §10.3 に「ワークツリーでの `pytest backend/tests/` は
+       本番データ依存テストが落ちる。落ちる件数と対象を控えて実装起因と切り分けること」
+       とだけ書く
+  - **推奨**: 2 が費用対効果が高い。マーカーなら**どのテストが本番データ依存かがコード上で自明**になり、
+    件数の暗記に頼らずに済む。1 は筋が良いが env の追加は誤設定の面を増やす。
+  - 発見の経緯: `doc/in_progress/ipo_candidates_plan.md` の実装中
+
+
 - [ ] **Monte Carlo の CAGR 集計が相加平均になっている**（2026-08-25 起票）
   - `backend/api/backtest_router.py` の `cagr_avg = float(np.mean(cagrs))` が
     **10本の MC run の CAGR を相加平均**している。CAGR は複利の成長率なので、

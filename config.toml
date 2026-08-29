@@ -14,3 +14,14 @@ log_level = "INFO"
 # Start dates for initial historical data fetch
 index_start_date = "2010-04-01"
 default_start_date = "2018-04-01"
+
+[ipo_scan]
+# IPO 候補スキャン（backend/scripts/scan_ipo_candidates.py）
+# 棚卸し済みの水位。初期インポート元スプレッドシートを作った時期で、
+# これ以降に上場した銘柄だけを候補にする。以降は却下状態が水位の役割を引き継ぐ
+since = "2026-04-01"
+# Yahoo chart API のスロットル。実測 440 件を 0.25s 間隔で完走した
+yahoo_rate_per_sec = 4
+# 縮退用。Yahoo に絞られたら 1900000 を入れる（CIK は連番なので新しいほど大きい）。
+# 実測では高CIK(>=1.9M)帯が候補の約85%を占めるが、低CIK帯にも約34件ある
+cik_floor = 0

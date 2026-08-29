@@ -95,6 +95,98 @@ graph LR
 
 ---
 
+### 2.4 `ipo_candidates`（レビュー待ちの新規上場銘柄）
+
+週次スキャンが検知した IPO 候補を、人間が採用/却下するまで保持する。
+検知ロジックは `data_collection/ipo_discovery.py`、実行は `scripts/scan_ipo_candidates.py`。
+
+| カラム | 型 | 説明 |
+| :--- | :--- | :--- |
+| `ticker` / `exchange` | VARCHAR | Yahoo の `fullExchangeName` を取引所として持つ |
+| `name` / `cik` | — | SEC マスタ由来 |
+| `first_trade_date` | VARCHAR | **上場日。Yahoo `firstTradeDate`**（SEC は上場日を持たない） |
+| `market_cap` / `avg_volume` / `last_price` | — | 検知時点のスナップショット。追い続けない |
+| `sector` / `industry` / `summary` / `website` | — | `.info` 由来。テーマのタグ付け判断用。取得失敗を許容（NULL 可） |
+| `flags` | VARCHAR | `spac` / `fund` / `adr` のカンマ区切り。**除外理由の記録であって削除ではない** |
+| `status` | VARCHAR | `pending` / `accepted` / `rejected` / `auto_excluded` |
+| `status_note` / `reviewed_at` / `detected_at` | — | — |
+
+**一意制約**: `(ticker, exchange)` / **索引**: `ticker` / `cik` / `status`
+
+> [!IMPORTANT]
+> **却下しても行は消しません。** `status='rejected'` で残すことで画面のトグルから
+> 復活でき、かつ再スキャンで同じ銘柄が `pending` に戻ってきません。
+> **`status` が `pending` 以外の行は再スキャンが上書きしません**（人間の判断だから）。
+
+---
+
+## 2.5 IPO 候補の検知（SEC → universe.db）
+
+既存の SEC 同期（§4）は universe.db → SEC の方向にしか走査しないため、
+**「新規上場」は構造的に検知できません**。本機能は逆方向に走査します。
+
+| SEC マスタの (cik, ticker) | 意味 | 担当 |
+| :--- | :--- | :--- |
+| cik 既知 / ticker 既知 | 既存銘柄 | — |
+| cik 既知 / ticker 未知 | 改称・新クラス上場 | **§4 の SEC 同期** |
+| **cik 未知** | 新規発行体 | **本機能** |
+
+この切り分けにより二重検知が起きません。
+
+### 判定パイプライン
+
+```
+[1] SEC company_tickers.json（週次同期が取得済み。追加リクエスト 0）
+[2] 除外: symbols_master 全件（active 問わず）/ ipo_candidates 全件
+         / ticker_history.old_ticker / company_tickers_mf.json
+[3] cik 未知の CIK だけ残す                    → 実測 5,117 CIK
+[4] CIK 内で普通株を1本選抜                    → 実測 4,011
+      ADR(`[A-Z]{4,5}[YF]`)・ダッシュ優先株(`-P*`)を落とす
+      → 残りが空なら CIK ごと除外（ADR のみ 873 CIK / 優先株のみ）
+      → 最短をベースとし、他が全てユニット・ワラント・ライツなら採用
+      → それ以外で2本以上残れば複数クラス別上場として CIK ごと除外（231 CIK）
+[5] フラグ付け: 社名 `acquisition|merger` → spac / `ETF|funds?` → fund
+              / `american depositary` → adr、**ユニット兄弟があれば** spac
+[6] Yahoo chart API（4 req/s）で確定
+      取引所 完全一致 {NasdaqGS, NasdaqGM, NasdaqCM, NYSE, NYSE American}
+      instrumentType == 'EQUITY' / firstTradeDate >= config の ipo_scan.since
+[7] 通過分に `.info` で企業概要を付与 → upsert
+```
+
+### 実測で確定した4つの落とし穴
+
+> [!CAUTION]
+> **① `instrumentType` / `longName` で株式種別は判定できない。**
+> `SCAG`(普通株) も `SCAGW`(ワラント) も `EQUITY` / "Scage Future" を返す。
+> `EURKU`(ユニット) も "Eureka Acquisition Corp"。**ティッカー構造で見るしかない。**
+>
+> **② 取引所は完全一致。** `'NYSEArca'.startswith('NYSE')` は True になり、
+> ETF・信託の取引所が混入する（`MSBT` Morgan Stanley Bitcoin Trust が実際に通過した）。
+>
+> **③ SPAC の兄弟ティッカーは語幹が伸びる。** `JAB` の兄弟は `JABRR`/`JABRU`/`JABRW`。
+> 「ベース＋サフィックス」の完全一致では**262 件を取りこぼす**。末尾1文字で見る。
+>
+> **④ ユニットとワラントを区別する。** ユニットは合併成立時に消滅するため、
+> **ユニットがある＝現役 SPAC / ワラントだけ残る＝de-SPAC 済みの実業会社**。
+> 区別しないと `SCAG`(Scage Future) `INV`(Innventure) `HPAI` `FOXX` を捨ててしまう。
+
+`Trust` は社名フィルタに**入れません**。実測で該当した4件はいずれも REIT
+（`OPI` Office Properties / `TPTS` Terra Property）で、除外すると正当な銘柄を落とします。
+暗号資産信託は NYSEArca なので取引所判定で落ちます。
+
+### 採用した銘柄が退役候補に落ちない仕組み
+
+上場直後の銘柄は行数が少ないため `classify_symbol_freshness()` は `no_history`
+（退役候補）と分類します。**これは仕様どおりで、変更してはいけません** —
+上場2週間の IPO と供給側にデータが無い銘柄（`LC`: 7行・最新）は
+`(row_count, last_date, spy_latest)` だけでは原理的に区別できないからです。
+
+実際に退役されないことは **`split_by_sec_verdict()` の SEC 突合**が担保します。
+採用した IPO 銘柄は必ず SEC マスタに載っている（そこから検知したため）ので、
+「SEC 上は健在」として自動退役 CSV から外れます。
+
+---
+
 ## 3. T1 同期（universe.db → stocktool.db）
 
 実装: `backend/data_collection/universe_sync.py::sync_symbols_from_universe()`
@@ -187,7 +279,10 @@ push を通さずに入り込んだ行は、API 起動時の heal が `ticker_hi
 | `scripts/remap_user_data_symbol_ids.py` | 再構築後の `user_data.db` 再マップ（§3.2） |
 | `data_collection/sheet_importer.py` | スプレッドシート import（§7） |
 | `data_collection/universe_sync.py` | T1 同期（§3） |
-| `api/universe_router.py` | Universe 画面のバックエンド |
+| `scripts/scan_ipo_candidates.py` | IPO 候補の検知（§2.5）。週次メンテから自動実行 |
+| `scripts/migrate_universe_ipo_candidates.py` | `ipo_candidates` テーブルの追加（冪等） |
+| `data_collection/ipo_discovery.py` | IPO 候補の判定ロジック（純粋関数） |
+| `api/universe_router.py` | Universe 画面のバックエンド（候補レビュー API を含む） |
 
 ---
 

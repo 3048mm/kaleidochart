@@ -735,9 +735,15 @@ class ValidationInfo(BaseModel):
     is_valid: bool
     warnings: List[str]
 
+class UniverseInfo(BaseModel):
+    """Universe 側の未処理件数。ヘッダのバッジと詳細ポップオーバーに出す。"""
+    ipo_candidates_pending: int = 0
+
+
 class SystemHealthResponse(BaseModel):
     overall_status: str
     data_freshness: FreshnessInfo
     data_integrity: IntegrityInfo
     pipeline_status: PipelineStatusInfo
     validation: ValidationInfo
+    universe: UniverseInfo = UniverseInfo()
