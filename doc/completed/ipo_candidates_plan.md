@@ -231,8 +231,8 @@ cik_floor = 0                  # 縮退用。Yahoo が絞ってきたら 1900000
       `agent_execution_rules.md` §10.3 が**ワークツリーからの本番書き込みを禁止**しているため、
       本番 `universe.db` を読み取り専用でコピーし `STOCKTOOL_UNIVERSE_DB_PATH` で差し替えて回す。
       ここで確認するのは「4,000件規模で Yahoo に絞られないか」「pending 件数が見積り 50〜80 に入るか」
-- [ ] **E2. 本番へのブートストラップ（merge 後）** — 変更種別 **C: ユーザー資産 DB に触れる**。
-      バックアップ取得 → in-place。merge 前に本番へ書いてはいけない
+- [x] **E2. 本番へのブートストラップ（merge 後）** — **完了（2026-08-29）。§6c に結果**。
+      変更種別 **C: ユーザー資産 DB に触れる**。バックアップ取得 → in-place
 - [x] **F. API エンドポイント + テスト** — `backend/tests/api/test_universe_candidates.py`（17テスト）
 - [x] **G. `/system/health` に件数追加 + スキーマ更新** — `universe.ipo_candidates_pending`（既定値ありで後方互換）
 - [x] **H. `weekly_maintenance.py` に週次ステップ追加 + テスト** — SEC 突合の直後（マスタキャッシュに相乗り）。レポートに `7b. IPO candidate scan` 節を追加
@@ -243,9 +243,9 @@ cik_floor = 0                  # 縮退用。Yahoo が絞ってきたら 1900000
 - [x] **K. フロントエンドテスト（vitest）** — 9件。全体 44 passed / `npm run build` 成功
 - [x] **L. ドキュメント更新** — `universe_db_specification.md` §2.4/§2.5、`backend_specification.md` §8.4b、`frontend_specification.md` §3.x
 - [x] **M. 全テスト実行** — backend 1,347 passed / vitest 44 passed / `npm run build` 成功
-- [ ] **M2. merge → E2 実行 → 本計画書を `doc/completed/` へ移動**（ユーザー操作）
-      **2026-08-28 に merge 可否を再検証済み**: 分岐点 `d9e0f4d` 以降、
-      ブランチ側が触った24ファイルと main 側が触った9ファイルに**重複ゼロ**。競合しない
+- [x] **M2. merge → E2 実行 → 本計画書を `doc/completed/` へ移動** — **完了（2026-08-29）**。
+      main へ `01baaa0` でマージ（分岐点 `d9e0f4d` 以降のファイル重複ゼロ・競合なし）、
+      E2 実行、本ファイルを `doc/completed/` へ移動
 
 ### 作業中メモ — merge 後の手順（引き継ぎ）
 
@@ -439,6 +439,49 @@ cd frontend; npm test; npm run build
 
 新規テスト内訳: 判定ロジック 113 / マイグレーション 8 / スキャン CLI 19 /
 API 17 / 週次組み込み 8 / フロント 9 = **174 件**
+
+## 6c. E2 本番ブートストラップ結果（2026-08-29）
+
+merge（`01baaa0`）後に本番 `universe.db` へ実行した。**E1 のサンドボックス実測とほぼ一致**。
+
+| | E1（サンドボックス 8/28） | **E2（本番 8/29）** |
+| :--- | ---: | ---: |
+| Yahoo プローブ | 4,009 | **4,073** |
+| 通過 | 205 | **205** |
+| pending | 111 | **113** |
+| auto_excluded | 91 | **92**（spac 89 / fund 3） |
+
+```
+落ちた理由: before_since 2,751 / exchange 837 / instrument_type 154
+            / no_quote 123 / no_first_trade_date 3
+バックアップ: universe.db.bak_20260829_144221（マイグレーション）
+              universe.db.bak_20260829_150240（スキャン）
+企業概要が入った pending: 110 / 113
+```
+
+マイグレーションは**テーブルが既に存在する状態**で流した（`create_all()` が
+どこかで先に走っていたとみられる。0行・18列で正常だったため冪等に検証のみ）。
+API も本番で確認済み: `/api/system/health` の `universe.ipo_candidates_pending` が **113**、
+`/api/universe/candidates?status=pending` が中身を返す。
+
+### pending に ETF / ADS が各1件混入している（上流起因・仕様どおりの挙動）
+
+| ティッカー | 実体 | Yahoo の `instrumentType` |
+| :--- | :--- | :--- |
+| `BTA` | Beacon Tactical Alternatives Risk **ETF** | **EQUITY**（誤ラベル） |
+| `PHOS` | First Phosphate Corp. **American Depositary Shares** | **EQUITY**（誤ラベル） |
+
+実測で確認したとおり **Yahoo が両方とも EQUITY を返す**ため、
+`instrument_type` 段（154件を除外）でも ADR サフィックス段でも落とせない。
+判定ロジックの不具合ではなく**供給側の誤ラベル**
+（`.claude/skills/upstream-data-diagnosis` の類型）。
+
+`pending` は人間のレビュー待ち行列なので**手動で reject すれば済む**。
+一度 `rejected` にすれば `upsert_candidates()` が `pending` に戻さないため、
+再スキャンで蒸し返されることもない。混入は 113 件中2件（1.8%）で受け入れ基準の範囲内。
+
+なお名前に Trust を含む `BXDC` / `OPI` / `TPTS` は **REIT の正規の普通株**であり混入ではない。
+
 
 ## 8. スコープ外・残作業
 
