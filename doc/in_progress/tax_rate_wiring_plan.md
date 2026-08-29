@@ -1,6 +1,6 @@
 # 税率（`consider_tax`）が売買戦略に届いていない不具合の修正 計画書
 
-- **ステータス**: 🚧 進行中
+- **ステータス**: 🚧 進行中（実装は完了・型3の実測のみ残）
 - **実施者**: AI エージェント (Claude Opus 5) — オーケストレーター
 - **開始日**: 2026-08-20 / **完了日**: —
 - **作業ブランチ**: worktree-tax-rate-wiring
@@ -143,18 +143,19 @@ def load_tax_rate(config: dict) -> float:
 
 ## 5. 実装順序と進捗チェックリスト
 
-- [ ] `common_constraints.load_tax_rate()` + `InvalidTaxRateError`（テスト先行）
-- [ ] `backtest_config.toml` を `0.2` へ
-- [ ] 既存2経路（`backtest_runner` / `optimization_runner`）を `load_tax_rate()` 経由へ
-- [ ] `run_scenario_batch.py` に配線（**最重要。実運用で使う経路**）
-- [ ] `scenario_runner.py` CLI に `--tax` を追加
-- [ ] `optimization_market_score.py` / `scenario_comparison_runner.py` に配線
-- [ ] `etf_single_runner.py` の `--tax` 既定を設定値由来へ
-- [ ] 各エントリポイントに税率ログ
-- [ ] 全テスト（backend）
-- [ ] **実測で税が効くことを確認**（§6）
-- [ ] 仕様書更新（`backend_specification.md` §6.1 / §6.5.1）
-- [ ] `issue_list.md` に本件を完了として起票
+- [x] `common_constraints.load_tax_rate()` + `InvalidTaxRateError`（テスト先行）
+- [x] `backtest_config.toml` を `0.2` へ
+- [x] 既存2経路（`backtest_runner` / `optimization_runner`）を `load_tax_rate()` 経由へ
+- [x] `run_scenario_batch.py` に配線（**最重要。実運用で使う経路**）
+- [x] `scenario_runner.py` CLI に `--tax` を追加
+- [x] `optimization_market_score.py` / `scenario_comparison_runner.py` に配線
+- [x] `etf_single_runner.py` の `--tax` 既定を設定値由来へ
+- [x] 各エントリポイントに税率ログ
+- [x] 全テスト（backend）
+- [x] 型1（`run_single_strategy`）で税が効くことを実測（§6。複利倍率 18.18 → 8.23）
+- [ ] **型3（`run_scenario_batch`）の並列 MC で税が効くことを実測**（§6。**本丸・未了**）
+- [x] 仕様書更新（`backend_specification.md` §6.1 / §6.5.1）
+- [x] `issue_list.md` に本件を完了として起票
 - [ ] 計画書を `doc/completed/` へ移動
 
 ### 作業中メモ
@@ -182,6 +183,49 @@ def load_tax_rate(config: dict) -> float:
 - 型3（`run_scenario_batch.py`）: 1ジョブ × 1モデル × 2 run 程度で前後比較
 - 型1（`backtest_runner.py`）: 1戦略で前後比較
 - 型2（`etf_single_runner.py`）: 1銘柄で前後比較
+
+### 結果（2026-08-29 棚卸しで確認）
+
+**実装は全経路に入っている**（コードを1件ずつ確認）:
+
+| 項目 | 確認方法 | 結果 |
+| :--- | :--- | :--- |
+| `load_tax_rate()` / `InvalidTaxRateError` | `common_constraints.py` | あり（テスト6件） |
+| `backtest_config.toml` の `consider_tax` | 設定値 | `0.2`（型1専用の `consider_tax_optimization` は `0.0`） |
+| 7経路への配線 | `grep -l load_tax_rate` | `backtest_runner` / `optimization_runner` / `run_scenario_batch` / `scenario_runner` / `optimization_market_score` / `scenario_comparison_runner` / `etf_single_runner` の**全7件** |
+| `scenario_runner --tax` | CLI | あり（L717-727） |
+| 税率ログ | `grep "\[Tax\]"` | 14箇所 |
+
+**型1で税が効くことを実測**（`tmp/verify_tax_effect.py`。B2 / 2024-06〜2025-12 / 145取引）:
+
+| 税率 | 取引 | 勝率 | 1取引平均 | 複利倍率 |
+| ---: | ---: | ---: | ---: | ---: |
+| 0.00 | 145 | 44.8% | +12.816% | **18.1793** |
+| 0.20 | 145 | 44.8% | +12.816% | **8.2305** |
+
+複利倍率が 18.18 → 8.23 に落ちており、**配線は生きている**。
+
+> [!NOTE]
+> **`avg_gain` / 勝率 / PF は税引前のまま**なのは仕様。税は
+> `backtest_report.py` L210-211 で `strat_mult`（複利倍率）を積む際に
+> 勝ちトレードへ適用される。1トレードの質を表す指標には乗らない。
+
+### 未了: 型3（`run_scenario_batch`）の実測
+
+計画書 §6 が「**これが本丸**」とした並列 MC ワーカーへの伝播が**未確認**。
+コード上は `scenario_portfolio.PortfolioConfig` のフィールドとして渡るので
+サブプロセスへも pickle される見込みだが、**実測していない**。
+
+さらに棚卸しで分かったこと:
+
+> [!WARNING]
+> **現在 `output/scenario/` にある結果（750 run）は、税の配線が入る前のもの。**
+> `run_params` に `consider_tax` キーが無い。同キーを書き出すコミットは
+> `9f380fc`（2026-08-25 08:36）だが、出力ファイルの更新は **同日 02:09** で
+> 6時間半前。**つまり今読めるシナリオ結果は税が効いていない可能性が高い。**
+> `consider_tax = 0.2` を前提に読むと成績を過大評価する。
+> 型3 のバッチを回し直したときに `run_params.consider_tax = 0.2` が
+> 記録されることを確認するのが、そのまま本丸の検証になる。
 
 ### 最適化への影響（確認のみ）
 2026-08-16 に「税を入れても全16戦略の順位は変わらない」ことを実測済み。
