@@ -282,14 +282,16 @@ prod_root = "D:/My Documents/Programing/stocktool/data"
 
 ### Phase 1 — 実害を止める
 
-- [ ] `backend/tests/test_paths.py` を先に書く（TDD red）: 解決順・worktree 判定・fail-fast
-- [ ] `backend/paths.py` を実装する
-- [ ] `db/database.py` / `database_user.py` / `database_universe.py` に `allow_create` と fail-fast を追加
-- [ ] `backend/conftest.py` に `STOCKTOOL_ALLOW_DB_CREATE=1` を設定
-- [ ] 本番データへの書き込みガード（§3.3）を実装
-- [ ] `tools/provision_worktree_data.py` を実装（`tmp/provision_worktree_data.py` が試作）
-- [ ] `.gitignore` を確認（`data/sandbox/` は既存、`config.local.toml` も既存。追加は不要の見込み）
-- [ ] 使い捨てワークツリーで read / write 両モードの通しリハーサル
+- [x] `backend/tests/test_paths.py` を先に書く（TDD red）: 解決順・worktree 判定・fail-fast
+- [x] `backend/paths.py` を実装する
+- [x] `db/database.py` / `database_user.py` / `database_universe.py` に `allow_create` と fail-fast を追加
+- [x] `backend/conftest.py` に `STOCKTOOL_ALLOW_DB_CREATE=1` を設定
+- [x] 本番データへの書き込みガード（§3.3）を実装
+- [x] **`require_populated()` を追加**（計画外・§7-7）— 存在チェックだけでは
+      「スキーマだけの空DB」を通してしまい、実際の症状を塞げなかった
+- [x] `tools/provision_worktree_data.py` を実装 + `backend/tests/tools/test_provision_worktree_data.py`
+- [x] `.gitignore` は変更不要を確認（`data/sandbox/` / `config.local.toml` とも既存）
+- [ ] 使い捨てワークツリーで read / write 両モードの通しリハーサル（read 完了 / write 実行中）
 
 ### Phase 2 — 既存コードの移行
 
@@ -349,7 +351,39 @@ git worktree add .claude/worktrees/wt-verify -b worktree-wt-verify
 
 ### 6.3 結果
 
-（実装後に記入）
+#### Phase 1（2026-08-31）
+
+**自動テスト**（ワークツリー `data-provisioning` 上）
+
+| 時点 | 結果 |
+| :--- | :--- |
+| ベースライン（変更前） | 1 failed, **1383 passed** |
+| Phase 1 実装後 | 1 failed, **1424 passed**（+41 = `test_paths.py`） |
+
+唯一の failed は `test_scenario_comparison.py::test_run_comparison_generates_outputs`
+で、**変更前から失敗している**。実データで 2025-01-01〜04-01 のバックテストを走らせる
+テストであり、ワークツリーにデータが無いことが原因。本計画の Phase 2 で
+`scenario_comparison_runner.py`（`_PROJECT_ROOT/data` 系統）を `paths.py` に
+移行すれば解消する見込み。
+
+新規テスト: `test_paths.py` 41件 + `test_provision_worktree_data.py` 25件 = 66件、全て pass。
+
+**手動リハーサル**（実ワークツリーで実測）
+
+| 項目 | 結果 |
+| :--- | :--- |
+| 本番 parquet ファイル数 / バイト数 | 10 / 3,823,433,169 → **変化なし** |
+| 本番 `stocktool.db` サイズ | 1,709,023,232 → **変化なし** |
+| 本番 `data/` 直下の項目数 | 58 → **変化なし** |
+| D: 空き容量の減少 | 1,710,194,688 バイト（= `stocktool.db` の実コピー分のみ。**Parquet 3.56GB は 0 バイト**） |
+| Parquet のリンク数 | 本番 + sandbox の 2 本（`fsutil hardlink list` で確認） |
+| sandbox の DB | symbols 3,226 / daily_prices 1,582,469 / indicators 1,582,469（**T2=T3 の不変条件を満たす**）/ T2 最新日 2026-08-28 |
+| sandbox の Parquet | prices 6,076,934 行 / 2010-04-01〜2026-08-28 |
+| `config.local.toml` | BOM なし・LF・`[sec]` を保持したまま `[data]` を付加 |
+| 未プロビジョニング時の `init_db()` | `DataNotProvisionedError` で即死（メッセージに復旧コマンド） |
+| 空DB（139KB 残骸）を掴んだとき | `DataNotProvisionedError`（§7-7 の対応後） |
+| 本番絶対パスを渡したとき | sandbox へリダイレクトされ、**本番には触れない** |
+| `git status` | 生成物は全て `.gitignore` 済み（`config.local.toml` / `data/sandbox/`） |
 
 ---
 
@@ -436,6 +470,74 @@ TypeError: 'NoneType' object is not subscriptable
 ln: failed to create symbolic link 'x': Operation not permitted
 [WinError 1314] クライアントは要求された特権を保有していません
 ```
+
+### 7-7. 存在チェックだけでは「スキーマだけの空DB」を素通しする 🔴（実装中に発覚）
+
+`require_existing()` を入れたうえでワークツリーから `init_db()` を呼んだところ、
+**エラーにならず通過した**。原因は `data/stocktool.db` が既に存在していたこと:
+
+```
+-rw-r--r-- 139264 Aug 31 08:30 data/stocktool.db   <- スキーマだけの空DB
+```
+
+これは **pytest が `STOCKTOOL_ALLOW_DB_CREATE=1` で作った残骸**。
+つまり「テストを走らせるとワークツリーに空DBが残り、その後の本番のつもりの実行が
+それを掴んで 0 件の結果を正常な結果として返す」という経路が残っていた。
+`ipo-candidates` ワークツリーで観測した 139,264 バイトの空DBと**同一の症状**であり、
+§1.1 のベースラインそのもの。
+
+**対応**: `paths.require_populated()` を追加（計画外の追加）。番兵テーブル
+（`stocktool` → `symbols` / `universe` → `symbols_master`）が存在しないか 0 行なら
+未プロビジョニングとみなして `DataNotProvisionedError` を送出する。
+`user_data` は**空が正常な状態**（ウォッチリスト未登録）なので対象外。
+
+### 7-8. プロビジョニングの冪等判定も同じ穴を持っていた（実装中に発覚）
+
+`copy_sqlite()` は「宛先が存在すればスキップ」だったため、上記の空DBを
+「既存」とみなして残してしまった:
+
+```
+SQLite:
+  [skip    ] stocktool.db（既存）   <- 139KB の空DB がそのまま残る
+```
+
+**対応**: `is_empty_sqlite()` を追加し、**テーブルが無い / 全テーブル 0 行 /
+SQLite として読めない**場合は既存とみなさず作り直す。中身のある複製は従来どおり
+スキップする（冪等性は維持）。
+
+### 7-9. プロビジョニングが本体の `paths.py` を読もうとして merge 前に落ちた
+
+```
+FileNotFoundError: [Errno 2] No such file or directory: 'D:\\...\\stocktool\\backend\\paths.py'
+```
+
+パス解決の権威を再実装しないため本体の `backend/paths.py` を読む設計にしていたが、
+`paths.py` はまだこのブランチにしか無いため、**merge 前のワークツリーでは動かない**。
+**対応**: スクリプト自身と同じリポジトリから読む（`repo_root` を明示的に渡して使うので、
+参照するファイルは常に本体側になる）。
+
+### 7-10. pytest 下の `api.server` import が本番 DB を開いていた 🔴（ガードが検出）
+
+プロビジョニング後にスイートを回すと 3 モジュールが collection 時に落ちた:
+
+```
+ERROR backend/tests/api/test_backtest_api.py - paths.ProductionWriteError
+ERROR backend/tests/api/test_etf_single_api.py - paths.ProductionWriteError
+ERROR backend/tests/api/test_scenario_comparison_api.py - paths.ProductionWriteError
+```
+
+これらは `api.server` をモジュールレベルで import する。`server.py` は
+`init_db(config["system"]["db_path"])` を実行し、その値は
+**`config.toml` の本番絶対パス**。つまり **ワークツリーで pytest を回すと
+本番 `stocktool.db` を開いていた**（本計画以前からの挙動）。
+
+`prod_root` が未設定だった間はガードが素通りしていたため、
+プロビジョニングして初めて表面化した。
+
+**対応**: `resolve_db_path_for_init()` に「ワークツリーでは、引数を尊重する場合でも
+**本番配下を指す値だけは通さず** `paths` の解決結果へ振り替える」規則を追加。
+`STOCKTOOL_ALLOW_DB_CREATE`（pytest）でも解除されない。本体チェックアウトからの
+本番オープンは従来どおり通す。
 
 ### 7-6. `.gitignore` に `data/prod_ro/` が必要（→ 本方針では不要になった）
 

@@ -3,6 +3,7 @@ from contextlib import contextmanager
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from db.models_user import BaseUser
+import paths
 
 engine_user = None
 SessionLocalUser = None
@@ -11,35 +12,30 @@ _active_user_db_path = None
 def get_active_user_db_path():
     return _active_user_db_path
 
-def init_user_db(db_path: str):
+def init_user_db(db_path: str, allow_create: bool = False):
+    """ユーザー資産DB（watchlist / portfolio）を初期化する。
+
+    `user_data.db` は**ユーザー資産**であり swap・クリア・再構築が禁止されている
+    （`doc/agent_execution_rules.md` §10.1）。ワークツリーから本番を掴んで
+    `heal_*_ids()` に破壊的 UPDATE をさせた前例があるため、`init_db()` と同じ
+    ガード（本番書き込み禁止・存在しなければ即死）を通す。
+
+    Args:
+        db_path: 呼び出し側が想定するパス。ワークツリーでは無視される。
+        allow_create: 存在しない場合の新規作成を許可する（既定 False）。
+    """
     global engine_user, SessionLocalUser, _active_user_db_path
-    
-    # Allow override via environment variables
-    env_name = os.getenv("STOCKTOOL_ENV")
-    if env_name == "sandbox":
-        db_path = "data/sandbox/user_data.db"
-        print("\n" + "!" * 60)
-        print(f"!!! [INFO] USER DATABASE ENVIRONMENT: SANDBOX !!!")
-        print(f"!!! Target DB: {db_path} ")
-        print("!" * 60 + "\n")
-    elif env_name == "test":
-        db_path = "data/test/user_data.db"
-        print("\n" + "!" * 60)
-        print(f"!!! [INFO] USER DATABASE ENVIRONMENT: TEST !!!")
-        print(f"!!! Target DB: {db_path} ")
-        print("!" * 60 + "\n")
-    else:
-        env_db_path = os.getenv("STOCKTOOL_USER_DB_PATH")
-        if env_db_path:
-            db_path = env_db_path
-            print("\n" + "!" * 60)
-            print(f"!!! [WARNING] USER DATABASE OVERRIDDEN BY ENVIRONMENT VARIABLE !!!")
-            print(f"!!! Target DB: {db_path} ")
-            print("!" * 60 + "\n")
-    
-    db_path = os.path.abspath(db_path)
+
+    db_path = paths.resolve_db_path_for_init("user_data", db_path)
+    paths.announce_non_production("USER DATABASE", db_path)
+
+    paths.ensure_writable(db_path)
+    if not allow_create:
+        paths.require_existing(db_path, "ユーザーDB (user_data.db)")
+        paths.require_populated(db_path, "user_data")
+
     _active_user_db_path = db_path
-    
+
     db_dir = os.path.dirname(db_path)
     if db_dir and not os.path.exists(db_dir):
         os.makedirs(db_dir, exist_ok=True)

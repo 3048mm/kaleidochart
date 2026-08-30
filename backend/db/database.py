@@ -3,6 +3,7 @@ from contextlib import contextmanager
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from db.models import Base
+import paths
 
 # DB engine and session factory will be initialized after loading config
 # engine/SessionLocal        : API・読み取り用（DEFERRED。SELECT が書き込みロックを取らない）
@@ -16,43 +17,37 @@ _active_db_path = None
 def get_active_db_path():
     return _active_db_path
 
-def init_db(db_path: str):
+def init_db(db_path: str, allow_create: bool = False):
     """
     Initializes the database engine and creates all tables if they don't exist.
+
+    Args:
+        db_path: 呼び出し側が想定する DB パス。**ワークツリーでは無視され**、
+            プロビジョニング結果（`paths.py`）が優先される。詳細は
+            `paths.resolve_db_path_for_init()`。
+        allow_create: DB ファイルが存在しないときに新規作成を許可する。
+            既定 False。存在しなければ `DataNotProvisionedError` を送出する
+            ——「黙って空DBを作り、間違ったデータで結論を出す」事故を防ぐため。
+            環境変数 `STOCKTOOL_ALLOW_DB_CREATE=1` でも解除できる（pytest 等）。
     """
     global engine, write_engine, SessionLocal, SessionLocalWrite, _active_db_path
-    
-    # Allow override via environment variables
-    env_name = os.getenv("STOCKTOOL_ENV")
-    if env_name == "sandbox":
-        db_path = "data/sandbox/stocktool.db"
-        print("\n" + "!" * 60)
-        print(f"!!! [INFO] DATABASE ENVIRONMENT: SANDBOX !!!")
-        print(f"!!! Target DB: {db_path} ")
-        print("!" * 60 + "\n")
-    elif env_name == "test":
-        db_path = "data/test/stocktool.db"
-        print("\n" + "!" * 60)
-        print(f"!!! [INFO] DATABASE ENVIRONMENT: TEST !!!")
-        print(f"!!! Target DB: {db_path} ")
-        print("!" * 60 + "\n")
-    else:
-        env_db_path = os.getenv("STOCKTOOL_DB_PATH")
-        if env_db_path:
-            db_path = env_db_path
-            print("\n" + "!" * 60)
-            print(f"!!! [WARNING] DATABASE OVERRIDDEN BY ENVIRONMENT VARIABLE !!!")
-            print(f"!!! Target DB: {db_path} ")
-            print("!" * 60 + "\n")
-    
-    db_path = os.path.abspath(db_path)
+
+    db_path = paths.resolve_db_path_for_init("stocktool", db_path)
+    paths.announce_non_production("DATABASE", db_path)
+
+    # ワークツリーから本番へ書こうとしていないか（FS では防げないのでここで）
+    paths.ensure_writable(db_path)
+    if not allow_create:
+        paths.require_existing(db_path, "システムDB (stocktool.db)")
+        paths.require_populated(db_path, "stocktool")
+
     _active_db_path = db_path
-    
+
     # Ensure directory exists
     db_dir = os.path.dirname(db_path)
     if db_dir and not os.path.exists(db_dir):
         os.makedirs(db_dir, exist_ok=True)
-        
+
     # Example: sqlite:///data/stocktool.db
     database_url = f"sqlite:///{db_path}"
     

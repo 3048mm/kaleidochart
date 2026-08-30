@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from db.models_universe import BaseUniverse
+import paths
 
 # Module-level state
 engine_universe = None
@@ -22,36 +23,30 @@ def get_active_universe_db_path():
     return _active_universe_db_path
 
 
-def init_universe_db(db_path: str):
-    """Initialize universe.db engine, session factories, and create tables."""
+def init_universe_db(db_path: str, allow_create: bool = False):
+    """Initialize universe.db engine, session factories, and create tables.
+
+    `universe.db` は**ユーザー資産**（手動編集と `ticker_history` を持ち再生成
+    不可能）であり、swap・クリア・再構築が禁止されている
+    （`doc/agent_execution_rules.md` §10.1 / `doc/universe_db_specification.md`）。
+    `init_db()` と同じガードを通す。
+
+    Args:
+        db_path: 呼び出し側が想定するパス。ワークツリーでは無視される。
+        allow_create: 存在しない場合の新規作成を許可する（既定 False）。
+    """
     global engine_universe, write_engine_universe
     global SessionLocalUniverse, SessionLocalUniverseWrite
     global _active_universe_db_path
 
-    # Environment-based override (same convention as database.py)
-    env_name = os.getenv("STOCKTOOL_ENV")
-    if env_name == "sandbox":
-        db_path = "data/sandbox/universe.db"
-        print("\n" + "!" * 60)
-        print("!!! [INFO] UNIVERSE DATABASE ENVIRONMENT: SANDBOX !!!")
-        print(f"!!! Target DB: {db_path} ")
-        print("!" * 60 + "\n")
-    elif env_name == "test":
-        db_path = "data/test/universe.db"
-        print("\n" + "!" * 60)
-        print("!!! [INFO] UNIVERSE DATABASE ENVIRONMENT: TEST !!!")
-        print(f"!!! Target DB: {db_path} ")
-        print("!" * 60 + "\n")
-    else:
-        env_db_path = os.getenv("STOCKTOOL_UNIVERSE_DB_PATH")
-        if env_db_path:
-            db_path = env_db_path
-            print("\n" + "!" * 60)
-            print("!!! [WARNING] UNIVERSE DATABASE OVERRIDDEN BY ENVIRONMENT VARIABLE !!!")
-            print(f"!!! Target DB: {db_path} ")
-            print("!" * 60 + "\n")
+    db_path = paths.resolve_db_path_for_init("universe", db_path)
+    paths.announce_non_production("UNIVERSE DATABASE", db_path)
 
-    db_path = os.path.abspath(db_path)
+    paths.ensure_writable(db_path)
+    if not allow_create:
+        paths.require_existing(db_path, "銘柄定義DB (universe.db)")
+        paths.require_populated(db_path, "universe")
+
     _active_universe_db_path = db_path
 
     # Ensure directory exists
