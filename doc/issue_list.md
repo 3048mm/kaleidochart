@@ -13,6 +13,80 @@
 
 ## P1 — 高（正確性・データ保全。P0 の次）
 
+- [ ] 🔴 **`get_latest_master_files()` が読み込み失敗を握り潰し、Parquet の全期間履歴を捨てる経路がある（2026-09-01 発見）**
+  - **事象**: `pipeline/parquet_cache_manager.py` の `get_latest_master_files()` は、
+    ポインタ（`latest_master.json`）が読めなかったときに**ログを一切出さずに `None` を返す**。
+    「ファイルが存在しない」と「存在するが読めない」が呼び出し側から区別できない。
+
+    ```python
+    try:
+        with open(pointer_file, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        time.sleep(0.01)                    # 別プロセスの書き込みと衝突した場合のリトライ
+        try:
+            ...
+        except Exception:
+            return None                     # ← 理由を捨てる。warning すら出さない
+    ```
+
+    リトライ自体は `os.replace` 中の一時的な `PermissionError`（Windows）を吸収する
+    ための正当な設計だが、**恒久的な失敗（BOM 混入・JSON 破損・権限）まで同じ扱い**になる。
+  - **🔴 なぜ P1 か（データ保全）**: `rotate_and_archive_to_parquet()` が
+    **マージ元の旧 Parquet を特定するのにこの戻り値を使っている**。
+
+    ```python
+    latest_pointers = get_latest_master_files(pointer_file)
+    ...
+    old_paths = latest_pointers if latest_pointers else {}     # ← 空になる
+    ```
+
+    `old_paths` が空だと `process_and_merge_table()` は旧 Parquet を読まず `df_sql` を返す。
+    SQLite は**ホットキャッシュ（直近730日）しか持たない**ため、
+    公開される新世代は**7年超の履歴を失った直近730日だけ**になる。
+    - 「マージに失敗しました」の警告は**旧パスが存在するときにしか出ない**。
+      `old_paths` が空の経路は**完全に無警告**。
+    - `require_non_empty` ガードは「空でないこと」しか見ないので、
+      **切り詰められた世代は普通に公開される**。
+    - 同ファイルのコメントに**同型の前例**が記録されている:
+      「実際 2026-07-30 の再構築で 7,711行(1996-2026) が 22行(直近30日) に消えた」
+  - **発火経路**: `backtest_runner.preload_data()` は、ポインタが読めないと
+    **自動で `rotate_and_archive_to_parquet()` を呼ぶ**（「キャッシュが無いので生成します」）。
+    つまり**バックテストを1本走らせるだけで本番 Parquet が切り詰められうる**。
+    その後に出るメッセージも誤誘導する（ファイルは実在するのに「無い」と言う）:
+
+    ```
+    FileNotFoundError: Parquet master cache files not found at ...\parquet_master!
+      Please run the pipeline once to generate it.
+    ```
+
+    直接呼び出した場合は無関係な場所で落ちる:
+
+    ```
+    TypeError: 'NoneType' object is not subscriptable
+    ```
+
+  - **実際に踏んだ例**: `latest_master.json` を PowerShell で書き換えて BOM が付き、
+    `json.load()` が `Unexpected UTF-8 BOM` を投げた（2026-08-30）。
+    `agent_execution_rules.md` §5.1 / §5.2 に恒久ノウハウとして記録済み。
+    現実的な発火要因は BOM だけでなく、**ポインタ差し替え中の二重失敗**
+    （`os.replace` 中に 10ms 間隔の2回とも `PermissionError`）・ディスクエラー・
+    アンチウイルスによるロックなど。
+  - **対策案**:
+    1. **`get_latest_master_files()` で「存在しない」と「読めない」を分ける**。
+       前者は `None`、後者は**例外を送出**する（または最低限 `logger.error` を出す）。
+       リトライは残す。
+    2. `rotate_and_archive_to_parquet()` で、**ポインタが読めないときはマージ元不明として
+       中止する**（`old_paths = {}` で先へ進まない）。`require_non_empty` と同じ思想の
+       fail-loud ガードを「履歴の切り詰め」にも掛ける。
+    3. `preload_data()` の自動再生成をやめる（または `--allow-regenerate` を必須にする）。
+       読み取り専用のはずのバックテストが本番 Parquet を書き換えるのは筋が悪い。
+  - **推奨**: 1 と 2 は必須。3 は挙動変更の影響範囲が広いので別途判断。
+  - **未検証**: ここまでは**コードを追って特定した経路**であり、実際に履歴が切り詰められる
+    ところまでは再現していない。着手時はまず sandbox で再現させること
+    （`tools/provision_worktree_data.py --mode write` で隔離環境を作れる）。
+  - 発見の経緯: `doc/completed/worktree_data_provisioning_plan.md` §7-2
+
 - [x] 🔴 **最適化スコアが「速度用の足切り」に支配され、B2/B3/B5/B6/F が実質評価されていなかった（2026-08-15 発見・同日対応）**
   - **発端**: 2026-08-14 の全戦略再最適化で B5 が 49.0→-9.30、B6 が 43.6→-6.33 と崩壊。
     ベースライン trial#0 は B5 -323 / B6 -809 / B2 -873 / B3 -777 / F -156 で、
