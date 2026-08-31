@@ -57,14 +57,11 @@ def load_etf_data(
 
     db_path = get_active_db_path()
     if not db_path:
-        try:
-            import tomli
-            config_path = pathlib.Path(__file__).parents[2] / "config.toml"
-            with open(config_path, "rb") as f:
-                config = tomli.load(f)
-            db_path = config.get("system", {}).get("db_path", "data/stocktool.db")
-        except Exception:
-            db_path = "data/stocktool.db"
+        # パス解決は paths.py に一任する。旧コードは config.toml を直読みし、
+        # 失敗時に相対パス "data/stocktool.db" を返していたため、ワークツリーでは
+        # 存在しない DB（＝空の Parquet ディレクトリ）を指していた。
+        import paths
+        db_path = paths.get_db_path("stocktool")
 
     parquet_dir = get_parquet_master_dir(db_path)
     pointer_file = get_pointer_file_path(parquet_dir)
@@ -151,14 +148,11 @@ def build_mts_v3_raw_timeline(
     
     db_path = get_active_db_path()
     if not db_path:
-        try:
-            import tomli
-            config_path = pathlib.Path(__file__).parents[2] / "config.toml"
-            with open(config_path, "rb") as f:
-                config = tomli.load(f)
-            db_path = config.get("system", {}).get("db_path", "data/stocktool.db")
-        except Exception:
-            db_path = "data/stocktool.db"
+        # パス解決は paths.py に一任する。旧コードは config.toml を直読みし、
+        # 失敗時に相対パス "data/stocktool.db" を返していたため、ワークツリーでは
+        # 存在しない DB（＝空の Parquet ディレクトリ）を指していた。
+        import paths
+        db_path = paths.get_db_path("stocktool")
             
     parquet_dir = get_parquet_master_dir(db_path)
     pointer_file = get_pointer_file_path(parquet_dir)
@@ -201,14 +195,11 @@ def build_mts_v3_raw_timeline(
         
         db_path = get_active_db_path()
         if not db_path:
-            try:
-                import tomli
-                config_path = pathlib.Path(__file__).parents[2] / "config.toml"
-                with open(config_path, "rb") as f:
-                    config = tomli.load(f)
-                db_path = config.get("system", {}).get("db_path", "data/stocktool.db")
-            except Exception:
-                db_path = "data/stocktool.db"
+            # パス解決は paths.py に一任する。旧コードは config.toml を直読みし、
+            # 失敗時に相対パス "data/stocktool.db" を返していたため、ワークツリーでは
+            # 存在しない DB（＝空の Parquet ディレクトリ）を指していた。
+            import paths
+            db_path = paths.get_db_path("stocktool")
                 
         parquet_dir = get_parquet_master_dir(db_path)
         pointer_file = get_pointer_file_path(parquet_dir)

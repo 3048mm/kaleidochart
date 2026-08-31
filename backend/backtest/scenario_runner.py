@@ -226,19 +226,10 @@ def run_scenario_test(
         df_symbols, df_prices, df_indicators, df_ranks, df_theme_constituents, trading_dates = preloaded_data
     else:
         from backend.db import database
-        app_config_path = os.path.join(project_root, "config.toml")
-        try:
-            import tomli
-            with open(app_config_path, "rb") as f:
-                app_config = tomli.load(f)
-            db_path = app_config.get("system", {}).get("db_path", "data/stocktool.db")
-            if not os.path.isabs(db_path):
-                db_path = os.path.join(project_root, db_path)
-        except Exception as e:
-            print(f"Warning: Failed to load config.toml: {e}")
-            db_path = os.path.join(project_root, "data/stocktool.db")
-            
-        database.init_db(db_path)
+        # パス解決は paths.py に一任する（config.toml の直読みをやめる）。
+        # ワークツリーではプロビジョニング結果、本体では従来どおり config.toml。
+        import paths
+        database.init_db(paths.get_db_path("stocktool"))
         db = database.SessionLocal()
         try:
             engine = db.get_bind()

@@ -101,6 +101,7 @@ backend/api/screener_router.py               screener_presets.toml
 | `parquet_master` を実コピーする | **却下** | 3.8GB（過去には 9.6GB）。ハードリンクなら実測 4,096 bytes |
 | 本番 `data/` の構造を変える | **しない** | 追加・移動なし。ハードリンクは本番側のリンクカウントが増えるだけでディレクトリエントリは増えない（実測済み） |
 | `config.toml` の絶対パス記述を消す | **しない（本体では維持）** | 本体チェックアウトの現行動作を壊さない。ワークツリーでは `config.toml` を**無視**する（§3.1） |
+| `screener_presets.toml` 等の TOML も `paths.py` 経由にする | **却下** | `data/` には2種類のものが混在している: ①git 管理下の設定 TOML（`screener_presets.toml` / `price_corrections.toml` / `scenario_batch_jobs.toml`）と、②実データ（DB / Parquet）。①は**ブランチごとに内容が異なる git 管理物**なので `_PROJECT_ROOT/data` で解決するのが正しく、sandbox へ向けるとファイルが存在せず壊れる。`paths.py` の管轄は②に限る |
 
 ---
 
@@ -293,12 +294,25 @@ prod_root = "D:/My Documents/Programing/stocktool/data"
 - [x] `.gitignore` は変更不要を確認（`data/sandbox/` / `config.local.toml` とも既存）
 - [ ] 使い捨てワークツリーで read / write 両モードの通しリハーサル（read 完了 / write 実行中）
 
-### Phase 2 — 既存コードの移行
+### Phase 2 — 既存コードの移行（スコープ B: 影響の小さいものに限定）
 
-- [ ] `tools/db_health_check.py` を `paths.py` 経由に
-- [ ] `backend/scripts/` の11ファイルを順次移行
-- [ ] `backend/api/routers.py` / `screener_router.py` の presets パスを移行
-- [ ] `backend/backtest/` の相対デフォルト（`backtest_runner.py` / `etf_single_runner.py` / `scenario_*.py`）を移行
+> **2026-08-31 ユーザー判断**: 本番を直接操作するスクリプト
+> （`run_production_restore.py` / `run_production_migration.py` / `run_local_rebuild.py` /
+> `import_universe.py` / `retire_stale_symbols.py` / `deploy_after_merge.py` /
+> `archive_parquet_master.py` / `backfill_symbol_history.py` /
+> `restore_truncated_symbol_history.py` / `weekly_maintenance.py`）は
+> **本フェーズの対象外**とし、レビューを経てから別途移行する。
+
+- [x] `tools/db_health_check.py` を `paths.py` 経由に
+- [x] `backend/backtest/backtest_runner.py` — `resolve_backtest_db_path()` の最終フォールバック
+- [x] `backend/backtest/etf_single_runner.py` — 3箇所の `config.toml` 直読み
+- [x] `backend/backtest/scenario_runner.py`
+- [x] `backend/backtest/scenario_comparison_runner.py`（§7-11 の既存バグも同時に解消）
+- [x] `backend/scripts/rebuild_backtest_data.py` — フォールバック
+- [x] **対象外と確定**: `backend/api/routers.py` / `screener_router.py` の
+      `screener_presets.toml` パス。これは**データではなく git 管理下の設定**であり、
+      ブランチごとに内容が異なる。`_PROJECT_ROOT/data` で解決するのが正しく、
+      sandbox へ向けるとファイルが存在せず壊れる（§2.2 に追記）
 
 ### Phase 3 — 運用の整備
 
@@ -384,6 +398,35 @@ git worktree add .claude/worktrees/wt-verify -b worktree-wt-verify
 | 空DB（139KB 残骸）を掴んだとき | `DataNotProvisionedError`（§7-7 の対応後） |
 | 本番絶対パスを渡したとき | sandbox へリダイレクトされ、**本番には触れない** |
 | `git status` | 生成物は全て `.gitignore` 済み（`config.local.toml` / `data/sandbox/`） |
+
+#### Phase 2（スコープ B・2026-08-31）
+
+| 時点 | 結果 |
+| :--- | :--- |
+| Phase 1 後 | 1 failed, 1457 passed |
+| **Phase 2（スコープ B）後** | **0 failed, 1458 passed** |
+
+Phase 1 で残っていた `test_run_comparison_generates_outputs` が **pass に転じた**。
+真因は `scenario_comparison_runner.py` の既存バグ（§7-11）で、
+本体チェックアウトでは偶然本番と一致するため表面化していなかったもの。
+
+**`tools/db_health_check.py` の実行確認**（ワークツリーから）:
+
+```
+DB_PATH : ...\worktrees\data-provisioning\data\sandbox\stocktool.db
+サイズ  : 1,709,023,232 bytes   （従来は 0 バイトの空DBを新規作成していた）
+symbols : 3226
+```
+
+```
+$ python tools/db_health_check.py --parquet
+Parquetマスタディレクトリ: ...\data\sandbox\parquet_master
+  • PRICES    : 6076934 rows (2010-04-01 ~ 2026-08-28)
+  • INDICATORS: 6076932 rows (2010-04-01 ~ 2026-08-28)
+  • RANKS     : 5927744 rows (2018-04-02 ~ 2026-08-28)
+```
+
+ハードリンク経由で本番と同一の Parquet を読めており、dtype 検査も全て通っている。
 
 ---
 
@@ -538,6 +581,37 @@ ERROR backend/tests/api/test_scenario_comparison_api.py - paths.ProductionWriteE
 **本番配下を指す値だけは通さず** `paths` の解決結果へ振り替える」規則を追加。
 `STOCKTOOL_ALLOW_DB_CREATE`（pytest）でも解除されない。本体チェックアウトからの
 本番オープンは従来どおり通す。
+
+### 7-11. `scenario_comparison_runner.py` の既存バグ（絶対パス時に代入されない）🔴
+
+Phase 2 で唯一残っていたテスト failure の真因。
+
+```python
+db_path = os.path.join(project_root, "data/stocktool.db")
+...
+config_db_path = app_config.get("system", {}).get("db_path", "data/stocktool.db")
+if not os.path.isabs(config_db_path):
+    db_path = os.path.join(project_root, config_db_path)   # ← 相対のときしか代入しない
+```
+
+`config.toml` の `db_path` は**絶対パス**なので、`db_path` は
+`project_root/data/stocktool.db` のまま残る。本体チェックアウトでは
+これが本番と一致するため**偶然動いていた**が、ワークツリーでは存在しない DB を指し、
+`init_db()` が空DBを作り、Parquet 生成が「symbols が 0 行」で中止され、
+最終的に `FileNotFoundError` になっていた。
+
+```
+FileNotFoundError: Parquet master cache files not found at
+  ...\worktrees\data-provisioning\data\parquet_master!
+ERROR parquet_cache_manager.py:250 Parquet マスタの公開を中止しました: symbols が 0 行
+```
+
+同じファミリの `scenario_runner.py` は
+`db_path = config.get(...)` → `if not isabs: join` の順で**正しく**書かれており、
+だから scenario 実行自体は成功して SPY ベンチマーク部分だけが落ちていた。
+
+**対応**: 該当ブロックごと `paths.get_db_path("stocktool")` に置き換え。
+これで当該テストは pass するようになった（§6.3 Phase 2）。
 
 ### 7-6. `.gitignore` に `data/prod_ro/` が必要（→ 本方針では不要になった）
 

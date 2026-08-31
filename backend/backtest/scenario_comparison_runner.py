@@ -99,21 +99,15 @@ def run_comparison(
                 equity_curves[model] = df_eq[['date', 'total_equity']].rename(columns={'total_equity': f'equity_{model}'})
 
     # 2. Get SPY data for benchmark curve
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    app_config_path = os.path.join(project_root, "config.toml")
-    db_path = os.path.join(project_root, "data/stocktool.db")
-    try:
-        import tomli
-        if os.path.exists(app_config_path):
-            with open(app_config_path, "rb") as f:
-                app_config = tomli.load(f)
-            config_db_path = app_config.get("system", {}).get("db_path", "data/stocktool.db")
-            if not os.path.isabs(config_db_path):
-                db_path = os.path.join(project_root, config_db_path)
-    except Exception as e:
-        print(f"Warning: Failed to load config.toml: {e}")
-        
-    database.init_db(db_path)
+    #
+    # パス解決は paths.py に一任する（config.toml の直読みをやめる）。
+    # 旧コードには **config.toml の db_path が絶対パスのときに db_path へ代入しない**
+    # というバグがあった（相対パスのときだけ代入する分岐になっていた）。
+    # 本体チェックアウトでは project_root/data/stocktool.db が本番と一致するため
+    # 表面化しなかったが、ワークツリーでは存在しない DB を指し、
+    # 「Parquet master cache files not found」で落ちていた。
+    import paths
+    database.init_db(paths.get_db_path("stocktool"))
     db = database.SessionLocal()
     spy_df = pd.DataFrame()
     try:

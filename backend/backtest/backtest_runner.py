@@ -74,14 +74,12 @@ def resolve_backtest_db_path(active_db_path, logger=None) -> str:
     if active_db_path:
         return active_db_path
 
-    try:
-        import tomllib
-        config_path = pathlib.Path(__file__).parents[2] / "config.toml"
-        with open(config_path, "rb") as f:
-            config = tomllib.load(f)
-            return config.get("system", {}).get("db_path", "data/stocktool.db")
-    except Exception:
-        return "data/stocktool.db"
+    # 最終フォールバックは paths.py に一任する。
+    # 旧コードは config.toml を直読みして失敗時に相対パス "data/stocktool.db" を
+    # 返しており、ワークツリーでは存在しない DB（＝空の Parquet ディレクトリ）を
+    # 指していた。paths 側は未プロビジョニングなら DataNotProvisionedError を出す。
+    import paths
+    return paths.get_db_path("stocktool")
 
 
 def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = False):
@@ -469,11 +467,11 @@ def run_backtest(config: dict, strategy_filter: str = None, refresh_cache: bool 
         if not os.path.isabs(db_path):
             db_path = os.path.abspath(db_path)
     else:
-        config_path_app = os.path.join(project_root, 'config.toml')
-        with open(config_path_app, 'rb') as f:
-            app_config = tomli.load(f)
-        db_path = os.path.join(project_root, app_config['system']['db_path'])
-    
+        # パス解決は paths.py に一任する（--db-path での明示指定は上で優先済み）。
+        import paths
+        db_path = paths.get_db_path("stocktool")
+
+
     print(f"  Connecting to DB: {db_path}")
     init_db(db_path)
 

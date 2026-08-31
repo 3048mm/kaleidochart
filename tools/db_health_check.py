@@ -5,12 +5,18 @@ import os
 import sys
 from datetime import datetime
 
-# プロジェクトルートをパスに追加
+# プロジェクトルートと backend/ をパスに追加
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
+for _p in (project_root, os.path.join(project_root, "backend")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
-DB_PATH = os.path.join(project_root, "data", "stocktool.db")
+import paths
+
+# `__file__` 起点で `data/stocktool.db` を組み立てると、ワークツリーでは
+# 存在しない DB を指し、`sqlite3.connect()` が**0 バイトの空DBを黙って作る**。
+# その状態でヘルスチェックを回すと「異常なし」に見えてしまうため paths.py に一任する。
+DB_PATH = paths.get_db_path("stocktool")
 
 CRITICAL_COLUMNS = [
     'sma_200', 'ema_21', 'rs_value', 'rs_ratio_e21', 'rs_momentum_e21'
@@ -200,17 +206,8 @@ def check_parquet_health(parquet_dir_override: str = None):
     print("📋 PARQUET MASTER CACHE HEALTH CHECK")
     print("-" * 60)
 
-    # configからdb_pathを取得
-    try:
-        import tomllib
-        config_path = os.path.join(project_root, "config.toml")
-        with open(config_path, "rb") as f:
-            config = tomllib.load(f)
-            db_path = config.get("system", {}).get("db_path", "data/stocktool.db")
-    except Exception:
-        db_path = os.path.join(project_root, "data", "stocktool.db")
-
-    parquet_dir = parquet_dir_override or os.path.join(os.path.dirname(db_path), "parquet_master")
+    # Parquet の所在は paths.py に一任する（config.toml の直読みをやめる）。
+    parquet_dir = parquet_dir_override or paths.get_parquet_master_dir()
     pointer_file = os.path.join(parquet_dir, "latest_master.json")
     
     if not os.path.exists(pointer_file):

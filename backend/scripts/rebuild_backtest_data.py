@@ -33,7 +33,11 @@ TARGET_TICKERS = ["SPY", "QQQ", "TQQQ", "^VIX", "^VIX3M"]
 START_DATE = "2010-04-01"
 
 def rebuild_data():
-    db_path = get_active_db_path() or os.path.join(project_root, "data", "stocktool.db")
+    # フォールバックは paths.py に一任する。旧コードの
+    # `os.path.join(project_root, "data", "stocktool.db")` は `__file__` 起点のため
+    # ワークツリーでは存在しない DB を指し、空DBを新規作成していた。
+    import paths
+    db_path = get_active_db_path() or paths.get_db_path("stocktool")
     logger.info(f"Rebuilding backtest historical data in DB: {db_path}")
     init_db(db_path)
 
