@@ -76,6 +76,8 @@ export interface ChartDataPoint {
     vcr?: number | null
     /** 構造ピボット (LL-HL)。構造が生きていないバー・確定前は null */
     sp_pivot?: number | null
+    /** 下向きの抵抗線。上抜けが Trend Line Break */
+    sp_counter?: number | null
     sp_hl?: number | null
 
     // Bollinger Bands (Calculated on the fly)
