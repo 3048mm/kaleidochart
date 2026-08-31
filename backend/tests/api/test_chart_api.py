@@ -147,11 +147,14 @@ def test_structure_pivot_unknown_symbol_returns_404(db_session):
 
 
 def test_chart_data_exposes_structure_pivot_columns(seed_chart_data):
-    """/chart のレスポンスに sp_pivot / sp_hl が含まれること。
+    """/chart のレスポンスに sp_pivot / sp_hl / sp_counter が含まれること。
 
-    DATA VIEW の Pivot / Pivot HL 列はここから値を読む。T3 に列を足し、
+    DATA VIEW の Pivot / Pivot HL / Counter 列はここから値を読む。T3 に列を足し、
     フロント側に表示を足しても、**この供給経路を配線し忘れると列は常に空になる**
-    （2026-08-26 に実際に発生。本番昇格後の動作確認で発覚した）。
+    （2026-08-26 に sp_pivot で実際に発生。本番昇格後の動作確認で発覚した）。
+
+    2026-09-01: `sp_counter` が同じ穴に落ちていた。DB・Parquet・screener_filters には
+    入っていたのに chart API が返しておらず、チャートで検証できない状態だった。
     """
     resp = get_chart_data(symbol_id=1, db=seed_chart_data)
     data = json.loads(resp.body)["data"]
@@ -159,3 +162,21 @@ def test_chart_data_exposes_structure_pivot_columns(seed_chart_data):
     assert data, "チャートデータが空"
     assert "sp_pivot" in data[-1], "chart API が sp_pivot を返していない"
     assert "sp_hl" in data[-1], "chart API が sp_hl を返していない"
+    assert "sp_counter" in data[-1], "chart API が sp_counter を返していない"
+
+
+def test_chart_data_exposes_rs_dot_age_columns(seed_chart_data):
+    """/chart のレスポンスに rs_blue_dot_age / rs_red_dot_age が含まれること。
+
+    DATA VIEW の Blue / Red 列とチャート上の ◆ マーカーがここから値を読む。
+    経過日数（0=当日点灯 / n=n営業日前 / 999=未点灯）なので、**0 を falsy として
+    扱う実装にすると点灯日が消える**。整数のまま返っていることを確かめる。
+    """
+    resp = get_chart_data(symbol_id=1, db=seed_chart_data)
+    data = json.loads(resp.body)["data"]
+
+    assert data, "チャートデータが空"
+    assert "rs_blue_dot_age" in data[-1], "chart API が rs_blue_dot_age を返していない"
+    assert "rs_red_dot_age" in data[-1], "chart API が rs_red_dot_age を返していない"
+    # 旧フラグ名が復活していないこと（0/1 と経過日数は意味が反転する）
+    assert "is_rs_blue_dot" not in data[-1], "旧フラグ is_rs_blue_dot が復活している"

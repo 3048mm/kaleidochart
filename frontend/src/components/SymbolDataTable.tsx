@@ -44,6 +44,16 @@ export const SymbolDataTable: React.FC<SymbolDataTableProps> = ({ data }) => {
         return 'inherit';
     };
 
+    /**
+     * RS ドットの経過日数を表示用に整える。
+     * 0=当日点灯 / n=n営業日前に点灯 / 999=未点灯・無効（RS_DOT_AGE_NONE）。
+     * **0 は falsy なので `!val` で判定しないこと** — 点灯日が消える。
+     */
+    const formatDotAge = (val: number | null | undefined) => {
+        if (val == null || val >= 999) return '';
+        return val === 0 ? '●' : String(val);
+    };
+
     const getVcrColor = (val: number | null | undefined) => {
         if (val == null) return 'inherit';
         if (val < 0.4) return '#00ff88'; // 強力なボラティリティ収縮 (VCP間近)
@@ -152,6 +162,7 @@ export const SymbolDataTable: React.FC<SymbolDataTableProps> = ({ data }) => {
                         {/* Structure Pivot (LL-HL) */}
                         <th style={{ width: '65px', padding: '8px', textAlign: 'center', borderLeft: '1px solid #333', color: '#00bcd4' }}>Pivot</th>
                         <th style={{ width: '65px', padding: '8px', textAlign: 'center', color: '#00bcd4' }}>Pivot<br />HL</th>
+                        <th style={{ width: '65px', padding: '8px', textAlign: 'center', color: '#00bcd4' }}>Counter</th>
  
                         {/* Volume Analysis */}
                         <th style={{ width: '65px', padding: '8px', textAlign: 'center', borderLeft: '1px solid #333' }}>Vol<br />Surge<br />SMA21</th>
@@ -261,16 +272,19 @@ export const SymbolDataTable: React.FC<SymbolDataTableProps> = ({ data }) => {
                                 <td style={{ padding: '6px 8px', textAlign: 'right', color: getConditionColor(d.rs_trend_s21) }}>{formatN(d.rs_trend_s21, 2)}</td>
                                 <td style={{ padding: '6px 8px', textAlign: 'right', color: getConditionColor(d.rs_trend_s63) }}>{formatN(d.rs_trend_s63, 2)}</td>
                                 <td style={{ padding: '6px 8px', textAlign: 'right', color: getConditionColor(d.rs_trend_s200) }}>{formatN(d.rs_trend_s200, 2)}</td>
-                                <td style={{ 
-                                    padding: '6px 8px', textAlign: 'center', 
+                                {/* 点灯日は ●、以降は経過日数。未点灯(999)は空欄 */}
+                                <td style={{
+                                    padding: '6px 8px', textAlign: 'center',
                                     background: d.rs_blue_dot_age === 0 ? 'rgba(0, 255, 136, 0.15)' : 'transparent',
-                                    color: '#00ff88', fontSize: '14px'
-                                }}>{d.rs_blue_dot_age === 0 ? '●' : ''}</td>
-                                <td style={{ 
-                                    padding: '6px 8px', textAlign: 'center', 
+                                    color: '#00ff88', fontSize: d.rs_blue_dot_age === 0 ? '14px' : '11px',
+                                    opacity: d.rs_blue_dot_age === 0 ? 1 : 0.65
+                                }}>{formatDotAge(d.rs_blue_dot_age)}</td>
+                                <td style={{
+                                    padding: '6px 8px', textAlign: 'center',
                                     background: d.rs_red_dot_age === 0 ? 'rgba(255, 68, 68, 0.15)' : 'transparent',
-                                    color: '#ff4444', fontSize: '14px'
-                                }}>{d.rs_red_dot_age === 0 ? '●' : ''}</td>
+                                    color: '#ff4444', fontSize: d.rs_red_dot_age === 0 ? '14px' : '11px',
+                                    opacity: d.rs_red_dot_age === 0 ? 1 : 0.65
+                                }}>{formatDotAge(d.rs_red_dot_age)}</td>
  
                                 {/* RS MACD */}
                                 <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: '#888' }}>{formatN(d.rs_macd_line_21, 4)}</td>
@@ -280,6 +294,7 @@ export const SymbolDataTable: React.FC<SymbolDataTableProps> = ({ data }) => {
                                 {/* Structure Pivot: 構造が生きていないバーは NULL */}
                                 <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: '#00bcd4' }}>{formatN(d.sp_pivot, 2)}</td>
                                 <td style={{ padding: '6px 8px', textAlign: 'right', color: '#00bcd4' }}>{formatN(d.sp_hl, 2)}</td>
+                                <td style={{ padding: '6px 8px', textAlign: 'right', color: '#00bcd4' }}>{formatN(d.sp_counter, 2)}</td>
  
                                 {/* Volume */}
                                 <td style={{ padding: '6px 8px', textAlign: 'right', borderLeft: '1px solid rgba(255,255,255,0.03)', color: (d.vol_surge_21 || 0) > 2 ? appConfig.colors.good : 'inherit' }}>{formatN(d.vol_surge_21, 2)}</td>

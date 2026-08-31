@@ -541,6 +541,7 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db), full_range
                         "vcr": val_or_none("vcr"), 
                         # 構造ピボット (LL-HL)。DATA VIEW の Pivot / Pivot HL 列が読む
                         "sp_pivot": val_or_none("sp_pivot"),
+                        "sp_counter": val_or_none("sp_counter"),
                         "sp_hl": val_or_none("sp_hl"),
                         "is_trend_template": bool_or_none("is_trend_template"),
                         "vol_accum_days_5": val_or_none("vol_accum_days_5"),
@@ -732,6 +733,7 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db), full_range
                 "vcr": ind.vcr, "is_trend_template": ind.is_trend_template,
                 # 構造ピボット (LL-HL)。DATA VIEW の Pivot / Pivot HL 列が読む
                 "sp_pivot": ind.sp_pivot, "sp_hl": ind.sp_hl,
+                "sp_counter": ind.sp_counter,
                 "trend_template_ok": ind.is_trend_template, # Legacy compat
                 "vol_accum_days_5": ind.vol_accum_days_5,
                 "bb_upper": (ind.sma_21 + 2*ind.atr_14) if ind.sma_21 and ind.atr_14 else None,
