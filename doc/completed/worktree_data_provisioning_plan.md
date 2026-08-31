@@ -689,13 +689,31 @@ phantom disk 検出を足したところ、プロビジョニング済みのワ�
 
 ## 8. スコープ外・残作業
 
-- **本番を直接操作するスクリプト10本の `paths.py` 移行**（Phase 2 スコープ外・2026-08-31 ユーザー判断）:
-  `run_production_restore.py` / `run_production_migration.py` / `run_local_rebuild.py` /
-  `import_universe.py` / `retire_stale_symbols.py` / `deploy_after_merge.py` /
-  `archive_parquet_master.py` / `backfill_symbol_history.py` /
-  `restore_truncated_symbol_history.py` / `weekly_maintenance.py`。
-  これらは `_PROJECT_ROOT/data` 起点のままなので、**ワークツリーで実行すると
-  空DBを作る**（本番には届かない）。レビューを経てから別途移行する。
+- **本番を直接操作するスクリプト10本の `paths.py` 移行**（Phase 2 スコープ外・2026-08-31 ユーザー判断）
+  → **2026-09-01 に再調査し、「移行不要」と結論**。
+
+  > [!NOTE]
+  > 当初この欄には「`_PROJECT_ROOT/data` 起点のままなので**ワークツリーで実行すると
+  > 空DBを作る**」と書いていたが、**これは誤りだった**。実態は以下のとおり。
+
+  | 分類 | 対象 | 実態 |
+  | :--- | :--- | :--- |
+  | **Phase 1 で保護済み（7本）** | `run_production_restore` / `run_production_migration` / `run_local_rebuild` / `import_universe` / `retire_stale_symbols` / `backfill_symbol_history` / `weekly_maintenance` | `init_db()` 系を経由する。`resolve_db_path_for_init()` が**ワークツリーでは呼び出し側の引数を破棄**して `paths.py` の解決結果を使うため、既に安全（未プロビジョニングなら `DataNotProvisionedError`）。`_PROJECT_ROOT/data/...` の計算結果は捨てられる |
+  | **移行してはいけない（1本）** | `deploy_after_merge.py` | 本体チェックアウト専用の昇格ツール。`--prod-db-path` が本番を指すのは設計どおり。`paths.py` に寄せると `STOCKTOOL_ENV=sandbox` が設定されていたときに**昇格先が黙って sandbox になる** |
+  | **実害なし（2本）** | `archive_parquet_master.py`（`--data-dir` 既定値）/ `restore_truncated_symbol_history.py`（`DEFAULT_BACKUP_DIR`） | CLI で上書き可能な既定値のみ。ワークツリーで実行するとレポート・バックアップがワークツリー側に出るが、**それが望ましい挙動** |
+
+  `weekly_maintenance.py` の生 `sqlite3.connect` 3箇所も `_PROJECT_ROOT` 定数ではなく
+  **引数で渡された `db_path`** を開いており、上流で `init_db()` 経由の値が入る。
+
+  実測（プロビジョニング済みワークツリーで、対象スクリプトと同じ値を `init_db()` に渡した）:
+
+  ```
+  スクリプトが計算する値 : ...\worktrees\data-provisioning\data\stocktool.db
+  その実在              : False              <- 存在しないパス
+  init_db が実際に開いた : ...\data\sandbox\stocktool.db
+  捨てられたか          : True
+  symbols 件数          : 3226               <- 正しい sandbox を掴んでいる
+  ```
 - **`get_latest_master_files()` のサイレント失敗**（§7-2）: 失敗理由を握り潰して `None` を
   返す。本計画では触らず、`doc/issue_list.md` に起票して別途対応する。
 - **既存15ワークツリーのゴミ掃除**: 未取り込み作業の棚卸しが先。§4-2 のとおり

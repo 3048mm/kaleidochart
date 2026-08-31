@@ -167,7 +167,11 @@ Check `/api/system/info` (`is_production` flag) to confirm which environment you
 
 ## Coding conventions specific to this repo
 
-- **File encoding/line endings**: UTF-8 without BOM, LF line endings for `.py/.md/.toml/.json/.tsx` etc. (`.bat` files are CRLF, `.sh` are LF — see `.gitattributes`). Windows Notepad/PowerShell redirection (`>`) can silently corrupt this — be careful when writing files.
+- **File encoding/line endings**: UTF-8 without BOM, LF line endings for `.py/.md/.toml/.json/.tsx` etc. (`.bat` files are CRLF, `.sh` are LF — see `.gitattributes`)。
+  **PowerShell でテキストを読み書きするときはエンコーディングを必ず明示する**（何度も踏んでいる。詳細と実例: `doc/agent_execution_rules.md` §5.1 / §5.2）:
+  - **書き込み**: `Set-Content -Encoding utf8` / `Out-File` / `>` は **BOM を付ける**。設定ファイル・JSON を生成するスクリプトは **PowerShell で書かず Python で `open(p, "w", encoding="utf-8", newline="\n")`** を使う。BOM 付き JSON は `json.load()` が `Unexpected UTF-8 BOM` で落ちるが、呼び出し側が例外を握り潰していると**無関係な `TypeError` として現れて原因に辿り着けない**。
+  - **読み込み**: `Get-Content` は **BOM なし UTF-8 を CP932 として読む**。日本語コメントを含むファイルでは誤デコードが**改行を飲み込み**、次の行が前の行に連結される。その結果 `-match '(?m)^\s*\[data\]'` のような**行頭アンカーの判定が例外なしで false になる**。必ず `-Encoding UTF8` を付ける。
+  - 確認方法: `head -c 3 <file> | od -An -tx1` → `ef bb bf` なら BOM 付き。
 - **SQLite (WAL mode)**: every connection must set `PRAGMA journal_mode=WAL`, `PRAGMA busy_timeout>=5000`, `PRAGMA synchronous=NORMAL`; writes should use `BEGIN IMMEDIATE` to avoid upgrade deadlocks. Don't change `journal_mode` at runtime while other connections are open (causes `database is locked`). Inside a write session NEVER: `pd.read_sql(q, db.bind)` (self-deadlock — use `get_read_engine_for(db)` after `db.commit()`), `PRAGMA synchronous`, or `VACUUM` (both fail in-transaction). Full details: `.claude/skills/sqlite-wal-handling/SKILL.md`.
 - **SQL/ORM**: no `SELECT *`, avoid N+1 (use `joinedload`/`selectinload`), always parameterize queries, never run unscoped `DELETE`/`UPDATE`. Details: `.claude/skills/sql-best-practices/SKILL.md`.
 - **import 規約**: `PYTHONPATH=backend` 前提の `api.x` / `pipeline.x` / `indicators.x` 形式が基本。`backend.x` プレフィックス形式は `scenario_*` 系など一部のみ（プロジェクトルートから直接実行する前提）。両形式が混在しているため、**編集対象ファイルの既存 import 形式に必ず合わせる**。
