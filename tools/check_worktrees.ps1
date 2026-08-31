@@ -2,12 +2,21 @@
 #   - worktrees with uncommitted changes or commits not in main
 #   - stale worktree registrations (folder deleted)
 #   - agent branches (worktree-*) not yet merged / already merged into main
-# See doc/agent_execution_rules.md section 7.
+#   - data provisioning state of each worktree (read / write / NOT provisioned)
+#   - phantom disk: parquet generations pinned by a worktree after production pruned them
+# See doc/agent_execution_rules.md sections 7 and 10.3.
 # NOTE: keep this file ASCII-only. Windows PowerShell 5.1 reads BOM-less
 #       files as ANSI (CP932), and multibyte comments corrupt parsing.
 
 $ErrorActionPreference = 'Continue'
 $root = Split-Path $PSScriptRoot -Parent
+
+# Production data lives in the MAIN checkout, which is not necessarily $root:
+# this script may be run from a worktree's own copy, and then $root is that
+# worktree. --git-common-dir always resolves to the main checkout's .git.
+$gitCommon = git -C $root rev-parse --path-format=absolute --git-common-dir 2>$null
+$mainRoot = if ($gitCommon) { Split-Path $gitCommon -Parent } else { $root }
+$prodParquetDir = Join-Path $mainRoot 'data\parquet_master'
 
 Write-Output "=== Worktrees ==="
 $wtPaths = @()
@@ -31,12 +40,55 @@ foreach ($p in $wtPaths) {
     # disposable sandbox data inside a worktree (skip main: its data/ is production)
     if ($br -ne 'main') {
         $dataDir = Join-Path $p 'data'
+
+        # provisioning state, from config.local.toml written by
+        # tools/provision_worktree_data.py (see doc/agent_execution_rules.md section 10.3)
+        $confPath = Join-Path $p 'config.local.toml'
+        $mode = 'NOT provisioned'
+        if (Test-Path $confPath) {
+            # -Encoding UTF8 is REQUIRED: the file is BOM-less UTF-8 with Japanese
+            # comments, and PowerShell 5.1 would decode it as CP932, corrupting
+            # line boundaries. See doc/agent_execution_rules.md section 5.
+            $conf = Get-Content $confPath -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
+            if ($conf -match '(?m)^\s*root\s*=\s*"([^"]+)"') {
+                $mode = if ($Matches[1] -match 'sandbox') { 'write (sandbox)' } else { 'read (prod ref)' }
+            }
+        }
+        $pmark = if ($mode -eq 'NOT provisioned') { '[!]' } else { '   ' }
+        Write-Output ("      {0} data provisioning: {1}" -f $pmark, $mode)
+
         if (Test-Path $dataDir) {
             $bytes = (Get-ChildItem $dataDir -Recurse -File -ErrorAction SilentlyContinue |
                 Measure-Object Length -Sum).Sum
+
+            # Parquet shared with production via hardlink costs no extra disk, so the
+            # raw byte sum overstates real usage. Split it, and flag generations that
+            # production has already pruned: those keep their blocks alive (phantom disk)
+            # until this worktree is removed.
+            $sbPq = Join-Path $dataDir 'sandbox\parquet_master'
+            $sharedBytes = 0
+            $stale = @()
+            if (Test-Path $sbPq) {
+                foreach ($f in (Get-ChildItem $sbPq -File -Filter *.parquet -ErrorAction SilentlyContinue)) {
+                    if (Test-Path (Join-Path $prodParquetDir $f.Name)) { $sharedBytes += $f.Length }
+                    else { $stale += $f }
+                }
+            }
             $mb = [math]::Round($bytes / 1MB, 0)
+            $ownMb = [math]::Round(($bytes - $sharedBytes) / 1MB, 0)
             if ($mb -ge 1) {
-                Write-Output ("      local sandbox data: {0} MB (delete before/with worktree removal)" -f $mb)
+                if ($sharedBytes -gt 0) {
+                    Write-Output ("      local data: {0} MB listed / {1} MB not shared with production" -f $mb, $ownMb)
+                } else {
+                    Write-Output ("      local data: {0} MB" -f $mb)
+                }
+            }
+            if ($stale.Count -gt 0) {
+                $smb = [math]::Round((($stale | Measure-Object Length -Sum).Sum) / 1MB, 0)
+                # Either a stale real copy, or a hardlink keeping a pruned generation's
+                # blocks alive. Both are reclaimed the same way: remove the worktree.
+                Write-Output ("      [!] holds {0} parquet generation(s) no longer in production" -f $stale.Count)
+                Write-Output ("          {0} MB reclaimed when this worktree is removed" -f $smb)
             }
         }
     }

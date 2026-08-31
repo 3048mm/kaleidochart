@@ -24,7 +24,7 @@
 - 本番への書き込みは FS では防げない（reparse point も hardlink も
   自前の ACL を持たない）ため、`ensure_writable()` でコード側で担保する。
 
-設計の全体像: `doc/in_progress/worktree_data_provisioning_plan.md` §3.1
+設計の全体像: `doc/completed/worktree_data_provisioning_plan.md` §3.1
 """
 import os
 

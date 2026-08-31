@@ -1,7 +1,7 @@
 """tools/provision_worktree_data.py のテスト。
 
 実データを触らずに、事故につながる細部（BOM・絶対パス・冪等性）を固定する。
-背景: doc/in_progress/worktree_data_provisioning_plan.md §3.4 / §7
+背景: doc/completed/worktree_data_provisioning_plan.md §3.4 / §7
 """
 import importlib.util
 import json

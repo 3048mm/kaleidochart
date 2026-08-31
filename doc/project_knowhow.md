@@ -11,6 +11,13 @@
 #### 原則
 本作業環境では、本番データ (`data/stocktool.db`) を保護するため、実験や破壊的なテストにはサンドボックス環境を使用する。その際、**`config.toml` は書き換えず、環境変数によって動的に切り替えること。**
 
+> [!IMPORTANT]
+> **以下は本体チェックアウトでの手順。ワークツリーでは通用しない。**
+> ワークツリーの `data/sandbox/` は誰も作り込んでいないため、`STOCKTOOL_ENV=sandbox` を
+> 設定しただけでは中身の無い環境を指す（かつて空DBを掴む直接の原因だった）。
+> ワークツリーでは先に `tools/provision_worktree_data.py` を実行すること。
+> 手順: `doc/agent_execution_rules.md` §10.3 / 罠の詳細: 本書 A-7
+
 #### ルール
 - **環境変数の利用**: 一時的な環境変数 `STOCKTOOL_ENV = "sandbox"` をセットして実行する。これにより、システムDB (`data/sandbox/stocktool.db`) およびユーザーDB (`data/sandbox/user_data.db`) が一貫して完全に分離され、片方の設定漏れによる本番汚染事故を防止できます。
   - PowerShell 例: `$env:STOCKTOOL_ENV = "sandbox"; python backend/api/server.py`
@@ -93,6 +100,46 @@ Pandas のデフォルトインサートが逐次クエリを発行するため�
 
 ---
 
+### A-7. 「存在するが中身が空」の DB を掴む罠 (Schema-Only Empty DB)
+
+#### 症状
+ワークツリーで処理を走らせると、**エラーも警告も出ないのに検出件数が 0 件**になる。
+`data/stocktool.db` は存在し、サイズも 0 ではないので「DB が無い」ようには見えない。
+
+```
+data/stocktool.db            139,264 B   <- スキーマだけの空DB
+data/sandbox/stocktool.db    139,264 B   <- 同上
+data/parquet_master/                     <- 空ディレクトリ
+```
+
+#### 原因
+`139,264 バイト`は **pytest が作った残骸**。テストは `STOCKTOOL_ALLOW_DB_CREATE=1`
+（`backend/conftest.py`）で新規作成が許可されているため、ワークツリーで一度テストを回すと
+テーブルだけがある空 DB が残る。その後の「本番のつもり」の実行がこれを掴み、
+**0 件を正常な結果として受け取る**。
+
+`doc/issue_list.md` に並ぶ事故（`is_trend_template` のサイレント素通し、
+流動性床の未適用、yfinance が 404 と 429 を同じメッセージに畳む）と**同じ型**。
+
+#### 対策ルール
+- `backend/paths.py` の `require_populated()` が番兵テーブル
+  （`stocktool` → `symbols` / `universe` → `symbols_master`）の行数を見て弾く。
+  `init_db()` 系は既にこれを通す:
+
+  ```
+  DataNotProvisionedError: stocktool DB は存在しますが中身がありません: ...\data\stocktool.db
+    理由: テーブル symbols が 0 行です（サイズ 139,264 バイト）
+    pytest が残した空DBを掴んでいる可能性があります。
+  ```
+
+- `user_data.db` は**空が正常**（ウォッチリスト未登録）なので対象外。
+- ワークツリーでは `tools/provision_worktree_data.py` を先に実行する
+  （`doc/agent_execution_rules.md` §10.3）。**サイズだけを見て「DB はある」と判断しない。**
+- 新しく `sqlite3.connect()` を直接書くときは、`paths.get_db_path()` 経由にすること。
+  `connect()` は存在しないパスに **0 バイトのファイルを黙って作る**。
+
+---
+
 ## B. API・バックエンド関連 (API, Backend & Cache)
 
 ### B-1. API エンドポイントのタイムアウト
@@ -149,6 +196,47 @@ Pandas のデフォルトインサートが逐次クエリを発行するため�
 - **射影 (Projection) の活用**: 最新日等を特定するために `max` 値を取りたいだけのときは、全列をロードせず、必要な `date` 列のみを投影ロードする:
   *例*: `df_dates = pd.read_parquet(file_path, columns=['date'])`
 - **効果**: メモリ消費量が数GBからわずか **740 MB** に劇的に激減し、ロード時間も **1秒台** に超爆速化します。
+
+---
+
+### B-5. `latest_master.json` は絶対パスを持ち、読み込み失敗は `None` に化ける
+
+#### 症状1: Parquet をコピー／リンクしたのに本番を読んでいる
+`latest_master.json` の中身は**絶対パス**である。
+
+```json
+{
+  "prices": "D:\\My Documents\\Programing\\stocktool\\data\\parquet_master\\prices_20260829_144251.parquet",
+  ...
+}
+```
+
+sandbox に Parquet を用意してポインタを**単純コピー**すると、ポインタは本番ファイルを
+指し続ける。**しかも読めてしまうので誤りに気づけない**（正しいデータが返るので
+テストも通る。書き込み時にはじめて本番を壊す）。
+
+**対策**: Parquet を別ディレクトリへ複製するときは、**ポインタ内のパスを必ず複製先へ書き換える**。
+`tools/provision_worktree_data.py` の `link_parquet_master()` が実装例。
+
+#### 症状2: 無関係な `TypeError` で落ちる
+`get_latest_master_files()`（`pipeline/parquet_cache_manager.py`）は
+**読み込み失敗を握り潰して `None` を返す**。呼び出し側が添字アクセスすると:
+
+```
+TypeError: 'NoneType' object is not subscriptable
+```
+
+真因はポインタが読めないことで、実例は BOM 混入だった
+（`doc/agent_execution_rules.md` §5.1）。**`None` が返ったら「ファイルが無い」ではなく
+「読めなかった」も疑う**こと。ポインタの先頭バイト確認: `head -c 3 latest_master.json | od -An -tx1`。
+
+#### 補足: Parquet の書き込み方式と共有
+Parquet マスターは MVCC で**新しいタイムスタンプ名のファイルを書く**だけで既存ファイルは
+不変、ポインタは `os.replace` で差し替える。この性質のおかげで
+**ファイル単位のハードリンクによる共有が安全**に成立している
+（`os.replace` はリンクを切るので本番に書き抜けない）。
+逆に言えば、**既存ファイル名への in-place 上書きを新たに書くと本番に書き抜ける**。
+禁止事項として回帰テストで固定してある。
 
 ---
 
@@ -232,5 +320,6 @@ Pandas のデフォルトインサートが逐次クエリを発行するため�
 - 2026-04-19: DBに関するノウハウを「A. データベース・スキーマ関連」として階層化・集約整理
 - 2026-05-23: テーマの命名ルール（{テーマグループ}::{サブテーマ}）とフロントエンド分割描画仕様を E-1 として追記
 - 2026-05-31: ハイブリッドデータ移行に伴う Parquet フィルター高速化 (B-4) および sqlite3.executemany による SQLite ネイティブバルクインサート高速化 (A-6) を追記
+- 2026-09-01: A-7（スキーマだけの空DBを掴む罠 — pytest が残す 139,264 バイトの残骸）と B-5（`latest_master.json` の絶対パス / `get_latest_master_files()` が失敗を `None` に化けさせる）を追記。OS・Git 起因のリンク事情は `agent_execution_rules.md` §11 へ
 - 2026-08-20: D-3 自己更新ルールを改訂 — 3回打ち切り時を追記トリガーに追加、エラー原文（検索キー）の必須化、agent_execution_rules.md との振り分けを明記
 

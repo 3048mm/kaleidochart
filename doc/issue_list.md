@@ -438,13 +438,13 @@
     glob するため、**git 管理外のローカル生成物がテストの合否を左右する**。
     「本体では落ちるがワークツリーでは落ちない」という切り分けにくい形になるので、
     同種の failure を見たらまず `data/screener_presets*.toml` の untracked 分を疑うこと。
-  - 発見の経緯: `worktree-data-provisioning` の merge 後検証（`doc/in_progress/worktree_data_provisioning_plan.md`）
+  - 発見の経緯: `worktree-data-provisioning` の merge 後検証（`doc/completed/worktree_data_provisioning_plan.md`）
 
 - [x] **ワークツリーで本番 Parquet を読む手段が規定と矛盾している（2026-08-28 発見 / 2026-09-01 解決）**
 
   > [!NOTE]
   > **2026-09-01 解決済み。** `worktree-data-provisioning` ブランチ（`def5d00` / `c4f4894` / `c339687`、
-  > main に merge 済み）で対応した。計画書: `doc/in_progress/worktree_data_provisioning_plan.md`
+  > main に merge 済み）で対応した。計画書: `doc/completed/worktree_data_provisioning_plan.md`
   >
   > - **対応案1（読み取り専用の Parquet パス）を採用**した形になっている。ただし env 追加ではなく
   >   `backend/paths.py` に集約し、`get_prod_parquet_master_dir()` / `get_prod_data_root()` で

@@ -31,7 +31,7 @@
 - **シンボリックリンク／ジャンクションは使わない**。前者は管理者権限が要り、
   後者は `git worktree remove` が辿ってリンク先を全削除する（実測）。
 
-詳細: `doc/in_progress/worktree_data_provisioning_plan.md`
+詳細: `doc/completed/worktree_data_provisioning_plan.md`
 """
 from __future__ import annotations
 

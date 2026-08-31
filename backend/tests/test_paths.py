@@ -1,7 +1,7 @@
 """backend/paths.py のテスト。
 
 パス解決の唯一の権威としての振る舞いを固定する。
-背景と設計: doc/in_progress/worktree_data_provisioning_plan.md §3.1
+背景と設計: doc/completed/worktree_data_provisioning_plan.md §3.1
 """
 import os
 

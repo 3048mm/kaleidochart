@@ -138,6 +138,48 @@ Windows のデフォルトエンコーディング (Shift-JIS / CP932) と、Pyt
 - **ファイル書き込み**: PowerShell の `>` リダイレクトや `Set-Content` を使わない。代わりに `write_to_file` ツールまたは .NET の `UTF8Encoding($False)` を使用して **BOM なし UTF-8** で書き込む。
 - **CMD (Batch)**: `chcp 65001 > nul &&` をコマンド先頭に付与する。
 
+### 5.1 BOM は「例外」ではなく「サイレント失敗」として現れることがある
+
+`Set-Content -Encoding utf8`（Windows PowerShell 5.1）は **BOM 付き**で書き出す。
+JSON を書いた場合、読み手が `json.load()` すると次で落ちる:
+
+```
+json.decoder.JSONDecodeError: Unexpected UTF-8 BOM (decode using utf-8-sig): line 1 column 1 (char 0)
+```
+
+**厄介なのは、呼び出し側がこの例外を握り潰していると無関係な場所で落ちる点**。
+実例（2026-08-30、`latest_master.json` を PowerShell で書き換えた）:
+
+```
+TypeError: 'NoneType' object is not subscriptable
+```
+
+`get_latest_master_files()` が例外を捨てて `None` を返すため、
+**BOM が原因だと気づけない**。設定ファイル・JSON を生成するスクリプトは
+**PowerShell ではなく Python で書き、`encoding="utf-8", newline="\n"` を明示する**こと。
+先頭バイトの確認: `head -c 3 <file> | od -An -tx1` → `ef bb bf` なら BOM 付き。
+
+### 5.2 読み込み側も同じ。`Get-Content` は `-Encoding UTF8` を明示する
+
+PowerShell 5.1 の `Get-Content` は **BOM なし UTF-8 を CP932 として読む**。
+日本語コメントを含む TOML / 設定ファイルでは、誤デコードが**改行を飲み込み**、
+次の行が前の行に連結される。2026-09-01 に実際に踏んだ例（`config.local.toml`）:
+
+```
+# 誤: Get-Content $conf -Raw
+...蜆ｪ蜈医＆繧後ｋ縲・[sec]      <- 改行が消えて [sec] が同じ行になる
+...邱ｨ髮・＠縺ｪ縺・％縺ｨ縲・[data]  <- 同上
+
+# 正: Get-Content $conf -Raw -Encoding UTF8
+[sec]
+[data]
+```
+
+このため `-match '(?m)^\s*\[data\]'` のような**行頭アンカーの判定が黙って失敗する**
+（例外は出ず、単に「セクションが無い」と判定される）。
+§6.1 の「`.bat` の日本語コメントが次の行を壊す」と同じ現象が、読み込み側でも起きる。
+**PowerShell から設定ファイルを読むときは常に `-Encoding UTF8` を付けること。**
+
 ---
 
 ## 6. `.bat` にマルチバイト文字を書かない / `schtasks` は成功を報告しても信用しない
@@ -296,10 +338,69 @@ if errorlevel 1 goto :fail
 
 ### 10.3 ワークツリーでのデータアクセス
 
-- ワークツリーの `data/` はほぼ空（git 管理の TOML 数件のみ）。**相対パスのまま実行するとエラーにならず空 DB が新規作成される**罠がある。
-- DB / Parquet にアクセスする実行では、環境変数 `STOCKTOOL_ENV=sandbox` を設定して起動します（これによりシステムDB、ユーザーDBが一括して `data/sandbox/` 下へ安全に切り替わります。個別のレガシー環境変数 `STOCKTOOL_DB_PATH` / `STOCKTOOL_USER_DB_PATH` を使うのは設定漏れで本番を破壊する恐れがあるため避けてください）。Parquet の所在は DB パスと同じディレクトリから自動解決されます。
-- 本番データへは**読み取りのみ**（sandbox のコピー元、バックテストの入力）。ワークツリーからの本番書き込みは禁止。
-- sandbox はワークツリー内に使い捨てで作る（`backend/scripts/create_sandbox.py` 経由）。**昇格の元ネタにはしない**。ワークツリー削除と同時に破棄する。
+ワークツリーの `data/` は git 管理の TOML 数件しか無い。**そのまま実行してもエラーにならず、
+空の DB が新規作成される**という罠があったため、2026-09-01 に
+「使う前にプロビジョニングする」方式へ変更した。
+
+#### 手順（作業前に1回だけ）
+
+タスクの性質でモードを選ぶ。**本体チェックアウトでは不要**（`data/` が本番そのもの）。
+
+```powershell
+# 本番データを読むだけ（バックテスト・スクリーナー式の変更・API 読み取り・フロントエンド = 種別 A）
+.\venv\Scripts\python.exe tools\provision_worktree_data.py <worktree> --mode read
+
+# データ形状に触れる（スキーマ変更・indicator 追加・パイプライン変更 = 種別 B / C）
+.\venv\Scripts\python.exe tools\provision_worktree_data.py <worktree> --mode write
+```
+
+`--mode write` の内訳:
+
+| 対象 | 方式 | 実測コスト |
+| :--- | :--- | ---: |
+| `parquet_master` の最新世代 | **ハードリンク**（同一ボリューム・特権不要） | 4,096 バイト（見かけ 3.56GB） |
+| `stocktool.db` | SQLite バックアップ API で実コピー（`--light` で省略） | 約 1.6GB |
+| `user_data.db` / `universe.db` | **実コピー**（ユーザー資産。本番を指させない） | 一瞬 |
+| `optimization_trials.db` | `--with-optuna` 指定時のみ | 約 40MB |
+
+生成物はワークツリーの `config.local.toml`（`[data] root` と `[data] prod_root`）と
+`data/sandbox/`。どちらも `.gitignore` 済み。本体の `[sec]` / `[tls]` も引き継ぐため、
+SEC を参照するスクリプトがワークツリーで動くようになる副次効果もある。
+
+#### パス解決は `backend/paths.py` が唯一の権威
+
+- **ワークツリーでは `config.toml` を意図的に無視する**（本番の絶対パスを持っており、
+  尊重すると「ワークツリーから本番を書ける」経路が残るため）。
+- 未プロビジョニングのまま DB にアクセスすると `DataNotProvisionedError` で**即座に停止**する。
+  例外メッセージに復旧コマンドが入っている。**黙って空 DB を作ることはもう無い。**
+- **「存在するが中身が空」も弾く**（`require_populated()`）。pytest が残す
+  139,264 バイトのスキーマだけの DB を掴んで「0 件」を正常な結果として受け取る事故を防ぐ。
+- 本番配下への書き込みは `ensure_writable()` が拒否する（`ProductionWriteError`）。
+  ファイルシステムでは読み取り専用にできない（reparse point も hardlink も自前の ACL を
+  持たない）ため、**ガードはコード側にしか置けない**。
+
+> [!WARNING]
+> **旧手順の `STOCKTOOL_ENV=sandbox` だけを設定する方法は使わないこと。**
+> ワークツリーの `data/sandbox/` は誰も作り込んでいないため、**ルールに素直に従うほど
+> 空 DB を掴む**という状態だった（この記述自体が事故の直接の原因だった）。
+> 現在は fail-fast で止まるので実害は無いが、正しい手順は上のプロビジョニングである。
+
+#### そのほかの規則
+
+- 本番データへは**読み取りのみ**（sandbox のコピー元、バックテストの入力）。
+  ワークツリーからの本番書き込みは禁止。
+- sandbox はワークツリー内に使い捨てで作る。**昇格の元ネタにはしない**。
+  ワークツリー削除と同時に破棄する（`git worktree remove` で sandbox ごと消える。
+  ハードリンクの削除は本番に影響しない）。
+- `data/` に**リンクを張らない**。特にジャンクションは
+  **`git worktree remove` が辿ってリンク先を全削除する**（2026-08-30 に実測。
+  `rm -rf` と `git clean -xdf` は辿らないが、`git worktree remove` だけは辿る）。
+  シンボリックリンクは管理者権限が要るので、そもそも作れない。
+- 本番で prune 済みの世代をハードリンクで掴んだままの古いワークツリーがあると、
+  **その分のディスクが解放されない**（本番の構造は無傷）。`tools/check_worktrees.ps1` が検出する。
+- 軽量な SQLite が欲しい場合は `backend/scripts/create_sandbox.py`（主要銘柄＋テーマ・
+  直近180日）も使えるが、**母集団が足りず指標検証で誤った結論を出しうる**ため既定にはしない。
+- 設計と実測の詳細: `doc/completed/worktree_data_provisioning_plan.md`
 
 ### 10.4 バックテスト評価は merge 前に行う
 
@@ -323,6 +424,75 @@ merge 直後に本体で `tools/deploy_after_merge.ps1` を実行する（1コ�
 
 ---
 
+## 11. Windows のリンクと `git worktree remove` の削除挙動
+
+すべて 2026-08-30 に非管理者・開発者モード無効の環境で実測した結果。
+ワークツリーへ大きなデータを持ち込む方法を検討する際の前提になる。
+
+### 11.1 作成できるリンクとできないリンク
+
+| 種類 | 非管理者で作成 | 備考 |
+| :--- | :--- | :--- |
+| **ハードリンク** | **可** | ファイル専用。**同一ボリューム必須**（別ドライブは `Access is denied`） |
+| **ジャンクション** (`mklink /J`) | 可 | ディレクトリ専用 |
+| **シンボリックリンク** | **不可** | 管理者権限または開発者モードが必要 |
+
+ディレクトリにハードリンクは張れない（`New-Item -ItemType HardLink`:
+`A file is required for the operation.` / `mklink /H`・`fsutil hardlink create`:
+`Access is denied.`）。NTFS の制限ではなく、親子関係が循環しうるための意図的な禁止。
+
+シンボリックリンク作成時のエラー原文:
+
+```
+New-Item : Administrator privilege required for this operation.
+mklink   : You do not have sufficient privilege to perform this operation.
+Python   : OSError: [WinError 1314] クライアントは要求された特権を保有していません
+```
+
+### 11.2 Git Bash の `ln -s` は成功を報告してコピーを作る
+
+**最も危険**。exit code 0 を返すが、実体は symlink ではなく**ただのコピー**になる。
+
+```
+$ ln -s src/a.txt link.txt ; echo $?
+0
+$ test -L link.txt && echo symlink || echo "NOT a symlink"
+NOT a symlink
+```
+
+MSYS2 の `winsymlinks` フォールバック。`MSYS=winsymlinks:nativestrict` を付けると
+正直に失敗する:
+
+```
+ln: failed to create symbolic link 'x': Operation not permitted
+```
+
+**リンクを張ったつもりで数GBが実コピーされる**ので、`ln -s` の成功を信用しないこと。
+
+### 11.3 `git worktree remove` だけがジャンクションを辿って中身を消す 🔴
+
+同一条件で比較した結果、**コマンドによって挙動が違う**:
+
+| 操作 | ジャンクションを辿るか | リンク先 |
+| :--- | :--- | :--- |
+| `Remove-Item -Recurse -Force` | 辿らない | 無傷 |
+| Git Bash `rm -rf` | 辿らない | 無傷 |
+| `git clean -xdf` | 辿らない | 無傷 |
+| **`git worktree remove --force`** | **辿る** | **全削除** |
+
+実測時の出力（リンク先の中身が消え、しかも途中で停止してワークツリー側は残骸になる）:
+
+```
+error: failed to delete 'D:/.../.claude/worktrees/<name>': Permission denied
+```
+
+**対策**: ワークツリーの中に、消えては困る場所を指すジャンクションを置かない。
+本番 `data/` を指すジャンクションを張ったまま `git worktree remove` を打つと
+**本番データが全損する**。データを共有したい場合は**ファイル単位のハードリンク**を使う
+（リンクを1本消しても実体は残るため削除が安全。§10.3 参照）。
+
+---
+
 ## 更新履歴
 - 2026-04-10: 初版作成（プロジェクト固有の問題を分離、5項目 + 自己更新ルール）
 - 2026-04-11: Git 操作時の合意形成ルールを追記
@@ -331,4 +501,7 @@ merge 直後に本体で `tools/deploy_after_merge.ps1` を実行する（1コ�
 - 2026-07-09: §10 を新設 — データの3分類・変更の4種別・ワークツリーでのデータアクセス・merge 前バックテスト評価・昇格手順（deploy_after_merge.ps1）・git add の明示パス限定
 - 2026-07-16: §10.5 昇格項目に API サーバー再起動ルールを追記。
 - 2026-08-20: §4.1「ノウハウ照会・追記フロー」を新設 — 3回打ち切り時の 照会→適用→追記 の手順、追記先の振り分け表、エラー原文（検索キー）の必須化、サブエージェントの扱い。§8 に検索キー必須とトリガー2種を反映
+- 2026-09-01: §5.2 を新設 — `Get-Content` が BOM なし UTF-8 を CP932 として読み、誤デコードが改行を飲み込んで行頭アンカーの判定を黙って失敗させる（`-Encoding UTF8` 必須）
+- 2026-09-01: §11 を新設 — Windows のリンク種別ごとの特権要件、Git Bash の `ln -s` が exit 0 でコピーを作る件、**`git worktree remove` だけがジャンクションを辿ってリンク先を全削除する**件（すべて実測・エラー原文つき）。§5.1 を新設 — BOM が「例外」ではなく無関係な `TypeError` として現れる経路
+- 2026-09-01: §10.3 を全面改訂 — ワークツリーのデータは `tools/provision_worktree_data.py` で明示的にプロビジョニングする方式へ。旧記述（`STOCKTOOL_ENV=sandbox` を設定するだけ）は誰も `data/sandbox/` を作り込んでいないため**ルールに従うほど空DBを掴む**状態であり、事故の直接の原因だった。`backend/paths.py` による fail-fast（`DataNotProvisionedError` / `require_populated` / `ensure_writable`）と、`data/` にリンクを張らない理由（`git worktree remove` がジャンクションを辿ってリンク先を全削除する実測）を追記
 - 2026-08-24: §6 を新設（欠番だった） — `.bat` にマルチバイト文字を書かない（次の行が飛ぶ）、`schtasks /create` は空コマンドでも SUCCESS を返すので読み戻して検証する、同一行での `%errorlevel%` 展開。週次メンテナンスが3週間実行されていなかった件の再発防止

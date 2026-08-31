@@ -1,8 +1,8 @@
 # ワークツリーのデータ・プロビジョニング整備 計画書
 
-- **ステータス**: 🚧 進行中（計画レビュー完了 2026-08-31）
+- **ステータス**: ✅ 完了 — ワークツリーの「データが無い」問題を、パス解決の一元化（`backend/paths.py`）＋ 空DB fail-fast ＋ ハードリンクによるプロビジョニングで解消した。本番データは 1 バイトも変更していない（実測）。副次的に既存バグ4件（`scenario_comparison_runner` の絶対パス分岐、pytest が本番DBを開いていた件、空DB残骸の生成、PowerShell の CP932 読み）も解消。
 - **実施者**: AI エージェント（Claude Opus 5）+ ユーザーレビュー
-- **開始日**: 2026-08-30 / **完了日**: —
+- **開始日**: 2026-08-30 / **完了日**: 2026-09-01
 - **作業ブランチ**: `worktree-data-provisioning`（Phase 1・2 を同一ブランチで実施 — §4-3）
 - **対象 issue / 関連ドキュメント**:
   - `doc/agent_execution_rules.md` §10.3（本計画で全面書き換え）
@@ -316,12 +316,13 @@ prod_root = "D:/My Documents/Programing/stocktool/data"
 
 ### Phase 3 — 運用の整備
 
-- [ ] `SessionStart` フックを追加（未プロビジョニング警告）
-- [ ] `check_worktrees.ps1` にプロビジョニング状態表示と phantom disk 検出を追加
-- [ ] `doc/agent_execution_rules.md` §10.3 を書き換え
-- [ ] `.claude/skills/sandbox-workflow/SKILL.md` §1.1 を書き換え
-- [ ] `doc/project_knowhow.md` に §7 の罠を追記
-- [ ] `tmp/provision_worktree_data.py`（試作）を削除
+- [x] `SessionStart` フックを追加（`tools/hooks/worktree_data_check.ps1` + `.claude/settings.json`）
+- [x] `check_worktrees.ps1` にプロビジョニング状態表示と phantom disk 検出を追加
+- [x] `doc/agent_execution_rules.md` §10.3 を全面改訂。併せて §5.1 / §5.2 / §11 を新設
+- [x] `.claude/skills/sandbox-workflow/SKILL.md` §1.1 を書き換え
+- [x] `doc/project_knowhow.md` に A-7 / B-5 を追記（OS・Git 起因は D-3 の振り分け規則に従い `agent_execution_rules.md` §11 へ）
+- [x] `tmp/provision_worktree_data.py`（試作）を削除
+- [x] 計画書を `doc/completed/` へ移動
 
 ### 作業中メモ
 
@@ -427,6 +428,33 @@ Parquetマスタディレクトリ: ...\data\sandbox\parquet_master
 ```
 
 ハードリンク経由で本番と同一の Parquet を読めており、dtype 検査も全て通っている。
+
+#### Phase 3（2026-09-01）
+
+**`SessionStart` フック**（`tools/hooks/worktree_data_check.ps1`）— 4パターンを実測:
+
+| cwd | 期待 | 結果 |
+| :--- | :--- | :--- |
+| 本体チェックアウト | 警告しない | ✅ 出力なし |
+| プロビジョニング済みワークツリー | 警告しない | ✅ 出力なし |
+| 未プロビジョニング（`ipo-candidates`） | 警告する | ✅ `systemMessage` + `additionalContext` |
+| ワークツリー内のサブディレクトリ | 警告する | ✅ 同上（ワークツリー名を正しく抽出） |
+
+`.claude/settings.json` は既存の `PreToolUse` 2群・`permissions.allow` 3件・
+`worktree.baseRef` を保持したままマージ済み（JSON 構文・キー数を検証）。
+
+**`check_worktrees.ps1`** — 実行して既存15ワークツリーの状態を可視化:
+
+```
+[!] .../data-provisioning
+      branch=worktree-data-provisioning  dirty=4  ahead-of-main=0
+          data provisioning: write (sandbox)
+      local data: 5279 MB listed / 1633 MB not shared with production
+[!] .../ipo-candidates
+      [!] data provisioning: NOT provisioned
+```
+
+ハードリンクで共有されている Parquet 3.6GB を「自前のディスク消費」から除外できている。
 
 ---
 
@@ -613,6 +641,43 @@ ERROR parquet_cache_manager.py:250 Parquet マスタの公開を中止しまし�
 **対応**: 該当ブロックごと `paths.get_db_path("stocktool")` に置き換え。
 これで当該テストは pass するようになった（§6.3 Phase 2）。
 
+### 7-12. `Get-Content` が BOM なし UTF-8 を CP932 として読み、改行を飲み込む 🔴（Phase 3 で発覚）
+
+`SessionStart` フックが**プロビジョニング済みのワークツリーを「未プロビジョニング」と
+誤判定**した。原因は `Get-Content $conf -Raw` が `config.local.toml`（BOM なし UTF-8 /
+日本語コメントあり）を CP932 として読んだこと。誤デコードが**改行を飲み込み**、
+`[sec]` と `[data]` が前のコメント行に連結された:
+
+```
+# 誤: Get-Content $conf -Raw
+...蜆ｪ蜈医＆繧後ｋ縲・[sec]
+...邱ｨ髮・＠縺ｪ縺・％縺ｨ縲・[data]
+
+# 正: Get-Content $conf -Raw -Encoding UTF8
+[sec]
+[data]
+```
+
+結果、`-match '(?m)^\s*\[data\]'` が**例外を出さずに false** になる。
+§6.1 の「`.bat` の日本語コメントが次の行を壊す」と同型の現象が読み込み側でも起きる。
+
+**対応**: `worktree_data_check.ps1` と `check_worktrees.ps1` の両方に `-Encoding UTF8` を明示。
+恒久ノウハウとして `doc/agent_execution_rules.md` §5.2 を新設。
+
+> [!NOTE]
+> `check_worktrees.ps1` 側は `root = "..."` 行が ASCII で独立行だったため**偶然動いていた**。
+> 症状が出ていなくても同じ誤りが潜んでいた。
+
+### 7-13. `check_worktrees.ps1` の `$root` がスクリプトの置き場所を指していた（Phase 3 で発覚）
+
+phantom disk 検出を足したところ、プロビジョニング済みのワークツリーに対して
+「本番に存在しない世代を7件掴んでいる」と誤検出した。`$root = Split-Path $PSScriptRoot -Parent`
+はスクリプトが置かれたリポジトリ（＝ワークツリーのコピーから実行すればワークツリー）を指すため、
+比較対象の「本番 parquet_master」が空ディレクトリになっていた。
+
+**本計画がまさに潰してきた「スクリプト位置起点でパスを組む」バグと同じ型**。
+`git rev-parse --git-common-dir` で本体チェックアウトを解決するよう修正した。
+
 ### 7-6. `.gitignore` に `data/prod_ro/` が必要（→ 本方針では不要になった）
 
 ジャンクション案の検証中、`data/prod_ro/` が `?? data/prod_ro/` として未追跡表示され、
@@ -624,6 +689,13 @@ ERROR parquet_cache_manager.py:250 Parquet マスタの公開を中止しまし�
 
 ## 8. スコープ外・残作業
 
+- **本番を直接操作するスクリプト10本の `paths.py` 移行**（Phase 2 スコープ外・2026-08-31 ユーザー判断）:
+  `run_production_restore.py` / `run_production_migration.py` / `run_local_rebuild.py` /
+  `import_universe.py` / `retire_stale_symbols.py` / `deploy_after_merge.py` /
+  `archive_parquet_master.py` / `backfill_symbol_history.py` /
+  `restore_truncated_symbol_history.py` / `weekly_maintenance.py`。
+  これらは `_PROJECT_ROOT/data` 起点のままなので、**ワークツリーで実行すると
+  空DBを作る**（本番には届かない）。レビューを経てから別途移行する。
 - **`get_latest_master_files()` のサイレント失敗**（§7-2）: 失敗理由を握り潰して `None` を
   返す。本計画では触らず、`doc/issue_list.md` に起票して別途対応する。
 - **既存15ワークツリーのゴミ掃除**: 未取り込み作業の棚卸しが先。§4-2 のとおり

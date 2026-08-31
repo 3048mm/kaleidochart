@@ -29,10 +29,37 @@ DBスキーマ変更・新規指標の追加・パイプラインロジック変
 
 ### 1.1 ワークツリーから利用する場合（バックグラウンドジョブ・並列ワーカー）
 
-- ワークツリーの `data/` はほぼ空（git 管理の TOML 数件のみ）。**相対パスのまま実行するとエラーにならず空 DB が新規作成される**ので、環境変数（上記2つ）は必ず**絶対パス**で設定する。
-- Sandbox は**ワークツリー内に使い捨てで作成**する（コピー元は本体の `data/parquet_master/`）。複数ワーカーの並行検証で共有 Sandbox を取り合わない。
+**環境変数を手で設定するのではなく、プロビジョニングスクリプトを1回実行する**（2026-09-01 変更）。
+
+```powershell
+# データ形状に触れる検証（スキーマ変更・indicator 追加・パイプライン変更）
+.\venv\Scripts\python.exe tools\provision_worktree_data.py <worktree> --mode write
+```
+
+これで `<worktree>/data/sandbox/` に検証環境が揃い、`config.local.toml` に所在が記録される。
+以降そのワークツリーでは環境変数なしで正しい Sandbox を掴む。
+
+- **Parquet はハードリンク**で張られる（同一ボリューム・特権不要）。実測でディスク消費
+  **4,096 バイト**（見かけ 3.56GB）。Parquet の MVCC は新しいタイムスタンプ名で書き、
+  ポインタは `os.replace` で差し替えるため、**sandbox 側の書き込みが本番へ抜けることはない**。
+  ただし「既存ファイル名への in-place 上書き」を新たに書くと本番に書き抜けるので**禁止**
+  （回帰テストで担保済み）。
+- `user_data.db` / `universe.db` は**実コピー**。ユーザー資産なので本番を指させない。
+- **未プロビジョニングのまま実行しても空DBはできない**。`backend/paths.py` の
+  `DataNotProvisionedError` で即座に停止し、メッセージに復旧コマンドが出る。
+  「存在するが中身が空」（pytest が残す 139,264 バイトのスキーマだけの DB）も弾く。
+- 本番配下への書き込みは `ensure_writable()` が `ProductionWriteError` で拒否する。
+- Sandbox は**ワークツリー内に閉じる**ので、複数ワーカーが共有 Sandbox を取り合わない。
 - ワークツリー内 Sandbox は**昇格の元ネタにしない**（昇格は merge 後に本番データから再生成 — §2 Step 4 参照）。ワークツリー削除と同時に破棄する。
-- `git add` は明示パスのみ（Sandbox の Parquet を誤コミットしない）。データ運用全般の規定は `doc/agent_execution_rules.md` §10。
+- `git add` は明示パスのみ（Sandbox の Parquet を誤コミットしない）。データ運用全般の規定は `doc/agent_execution_rules.md` §10.3。
+
+> [!CAUTION]
+> **`data/` にジャンクション（`mklink /J`）を張ってはいけない。**
+> `git worktree remove` は**ジャンクションを辿ってリンク先の中身を全削除する**
+> （2026-08-30 に実測。`rm -rf` / `git clean -xdf` / `Remove-Item -Recurse` は辿らないが、
+> `git worktree remove` だけは辿る）。本番 `data/` を指したまま実行すると全損する。
+> シンボリックリンクは管理者権限または開発者モードが必要なので、そもそも作れない
+> （`WinError 1314`）。**ファイル単位のハードリンクだけが安全な共有手段。**
 
 ## 2. 検証フロー（5ステップ）
 

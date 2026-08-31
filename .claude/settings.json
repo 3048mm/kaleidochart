@@ -27,6 +27,18 @@
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -File \"$CLAUDE_PROJECT_DIR/tools/hooks/worktree_data_check.ps1\"",
+            "timeout": 15,
+            "statusMessage": "worktree data check"
+          }
+        ]
+      }
     ]
   },
   "permissions": {
