@@ -579,7 +579,42 @@ is_close_gt_sma50 = { type = "categorical", choices = [true] }
 
 
 # =============================================================
-# H4: ブルードットの本来の用法（2段構え）
+# H 系: 構造ピボット (LL-HL)
+# =============================================================
+# 実測の経緯は doc/in_progress/structure_pivot_screener_plan.md §1。
+# 素の構造ピボット単独・改良版のブレイクイベント単独はいずれもヌルを上回らなかった。
+# 効いたのは「構造が成立していて、まだピボットを抜けていない（あと 2% 以内）」という
+# **状態**であり、上抜けイベントではない。
+# 学習 2021-03〜2024-03 / 検証 2024-03〜2026-03 の -8%ストップ付き20日リターンで
+#   学習 0.57件/日 +1.11pp(±0.84) 勝率62.2% | 検証 0.71件/日 +2.07pp(±0.90) 勝率64.1%
+# ADV 項（ピボット近接）を抜くと学習 -0.38pp・勝率52.4% まで落ちる。
+# 既存列による近接（63日高値4%以内）では再現しない。
+[[strategy]]
+name = "H1_structure_2nd_break"
+description = "構造ピボットの本ピボット上抜け × 値動きの大きさ × RS"
+max_hits_per_day = 10
+sort_column = "rs_ratio_rank_e21"
+sort_ascending = false
+is_structure_2nd_break = true
+min_dist_21ema_pct = 2.0        # 21EMA の上にいる
+min_adr_pct_21 = 4.0            # 動く銘柄。母集団をほぼ半減させる最も効いた条件
+min_rs_trend_s21 = 1.0          # SPY より強い
+# 流動性床は [general] が全戦略へ実行時注入するため戦略側には書かない
+min_market_cap = 3e8            # 作者リストを1件も落とさない水準
+max_sma50_atr_mult = 8.0        # 上限6だと 8/26 の CNXC(6.11) が落ちるため 8 から
+max_allowed_dd = 35.0
+min_avg_hits_per_day = 0.3
+
+[strategy.optimization]
+min_dist_21ema_pct       = { type = "float", min = 0.0, max = 5.0, step = 0.5 }
+min_adr_pct_21           = { type = "float", min = 2.0, max = 7.0, step = 0.5 }
+min_rs_trend_s21         = { type = "float", min = 0.95, max = 1.15, step = 0.025 }
+max_sma50_atr_mult       = { type = "float", min = 6.0, max = 10.0, step = 0.5 }
+min_market_cap           = { type = "categorical", choices = [1e7, 5e7, 1e8, 3e8, 1e9, 3e9, 1e10] }
+
+
+# =============================================================
+# H2: ブルードットの本来の用法（2段構え）
 #   資格 = 収縮ベース内で RS が先行して 252日新高値（rs_blue_dot_age <= N）
 #   エントリー = 本ピボット上抜け（is_structure_2nd_break）
 # 実測（doc/completed/rs_dot_age_plan.md §7.1c）では、この組み合わせでのみ
@@ -588,7 +623,7 @@ is_close_gt_sma50 = { type = "categorical", choices = [true] }
 # 検出は 0.3〜0.5件/日と少ない。枠を埋めるための戦略ではない。
 # =============================================================
 [[strategy]]
-name = "H4_bluedot_vcp_pivot"
+name = "H2_bluedot_vcp_pivot"
 description = "収縮ベース内で RS 先行新高値 → 本ピボット上抜けで取る2段構え"
 max_hits_per_day = 5
 sort_column = "rs_ratio_rank_e21"
@@ -606,12 +641,6 @@ max_vcr             = { type = "float", min = 0.6, max = 1.0, step = 0.05 }
 max_rs_blue_dot_age = { type = "int",   min = 0,   max = 40,  step = 1 }
 min_market_cap      = { type = "categorical", choices = [1e8, 3e8] }
 
-# =============================================================
-# Optimization Parameter Search Ranges (Optuna)
-# type: "float" | "int" | "categorical"
-# float/int: min, max, step
-# categorical: choices  (use "none" for Python None)
-# =============================================================
 
 
 
@@ -682,36 +711,3 @@ detect_floor = 0.4     # 帯外でもこれ以上は割り引かない係数の�
 lcb_gate_penalty = 0.2
 
 
-# =============================================================
-# H 系: 構造ピボット (LL-HL)
-# =============================================================
-# 実測の経緯は doc/in_progress/structure_pivot_screener_plan.md §1。
-# 素の構造ピボット単独・改良版のブレイクイベント単独はいずれもヌルを上回らなかった。
-# 効いたのは「構造が成立していて、まだピボットを抜けていない（あと 2% 以内）」という
-# **状態**であり、上抜けイベントではない。
-# 学習 2021-03〜2024-03 / 検証 2024-03〜2026-03 の -8%ストップ付き20日リターンで
-#   学習 0.57件/日 +1.11pp(±0.84) 勝率62.2% | 検証 0.71件/日 +2.07pp(±0.90) 勝率64.1%
-# ADV 項（ピボット近接）を抜くと学習 -0.38pp・勝率52.4% まで落ちる。
-# 既存列による近接（63日高値4%以内）では再現しない。
-[[strategy]]
-name = "H1_structure_2nd_break"
-description = "構造ピボットの本ピボット上抜け × 値動きの大きさ × RS"
-max_hits_per_day = 10
-sort_column = "rs_ratio_rank_e21"
-sort_ascending = false
-is_structure_2nd_break = true
-min_dist_21ema_pct = 2.0        # 21EMA の上にいる
-min_adr_pct_21 = 4.0            # 動く銘柄。母集団をほぼ半減させる最も効いた条件
-min_rs_trend_s21 = 1.0          # SPY より強い
-# 流動性床は [general] が全戦略へ実行時注入するため戦略側には書かない
-min_market_cap = 3e8            # 作者リストを1件も落とさない水準
-max_sma50_atr_mult = 8.0        # 上限6だと 8/26 の CNXC(6.11) が落ちるため 8 から
-max_allowed_dd = 35.0
-min_avg_hits_per_day = 0.3
-
-[strategy.optimization]
-min_dist_21ema_pct       = { type = "float", min = 0.0, max = 5.0, step = 0.5 }
-min_adr_pct_21           = { type = "float", min = 2.0, max = 7.0, step = 0.5 }
-min_rs_trend_s21         = { type = "float", min = 0.95, max = 1.15, step = 0.025 }
-max_sma50_atr_mult       = { type = "float", min = 6.0, max = 10.0, step = 0.5 }
-min_market_cap           = { type = "categorical", choices = [1e7, 5e7, 1e8, 3e8, 1e9, 3e9, 1e10] }

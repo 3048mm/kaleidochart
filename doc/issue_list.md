@@ -401,7 +401,67 @@
 
 ## P2 — 中（体感改善・保守性・運用安全性）
 
-- [ ] **ワークツリーで本番 Parquet を読む手段が規定と矛盾している（2026-08-28 発見）**
+- [ ] **`max_dist_52w_high_pct` が `PARITY_CASES` に未登録で、本体のテストが常時 red（2026-09-01 発見）**
+  - **事象**: 本体チェックアウトで `pytest backend/tests/` を回すと 1 件だけ失敗する。
+
+    ```
+    FAILED backend/tests/api/test_screener_parity.py::test_parity_cases_cover_all_required_keys
+    AssertionError: PARITY_CASES に無いキー（実装漏れの疑い）: ['max_dist_52w_high_pct']
+    ```
+
+  - **出所**: `data/screener_presets_E_only.toml` の `check_vcp` プリセットのみ。
+    このファイルは **git 管理外**（`run_scenario_batch.generate_preset_toml()` が
+    Optuna の best params から生成する成果物）で、**2026-06-10 生成**。
+    ワークツリーにはチェックアウトされないため、**ワークツリーでは再現しない**。
+  - **実装漏れではない（2026-09-01 実測で確認済み）**: `resolve_filter_spec()` の
+    `max_` 接頭辞の汎用規則で正しく解決され、フィルタとして機能している。
+
+    ```
+    dist_52w_high_pct が既知列か : True
+    min_dist_52w_high_pct    -> OK  kind=numeric column=dist_52w_high_pct op=>=
+    max_dist_52w_high_pct    -> OK  kind=numeric column=dist_52w_high_pct op=<=
+    max_totally_bogus_xyz    -> UnknownFilterKeyError（fail-loud）
+    ```
+
+    つまり `is_trend_template`（P1）のような**サイレント素通しではない**。
+    欠けているのは**パリティテストのケース登録だけ**。テスト側のメッセージが
+    「実装漏れの疑い」と書いているため誤読しやすいので注意。
+  - **なぜ P2 か**: 正確性の問題ではないが、「コミット前に全テストがパスすること」
+    （CLAUDE.md）という規約が本体では**常に破れている状態**になる。
+    赤が常駐すると新しい失敗を見落とす土台になるため、運用安全性の課題として扱う。
+  - **対応案**:
+    1. `PARITY_CASES` に `max_dist_52w_high_pct` を追加する（`min_dist_52w_high_pct` と対称に）
+    2. `_E_only` が陳腐化しているなら再生成または削除する（生成から3ヶ月弱）
+  - **推奨: 1**。キーは実際に機能しており、パリティ検証の対象に含めるのが本来の姿。
+    2 は preset を再生成するたびに同種の問題が再発しうるため根本対策にならない。
+  - **構造的な注意点**: `_collect_required_keys()` は `data/screener_presets*.toml` を
+    glob するため、**git 管理外のローカル生成物がテストの合否を左右する**。
+    「本体では落ちるがワークツリーでは落ちない」という切り分けにくい形になるので、
+    同種の failure を見たらまず `data/screener_presets*.toml` の untracked 分を疑うこと。
+  - 発見の経緯: `worktree-data-provisioning` の merge 後検証（`doc/in_progress/worktree_data_provisioning_plan.md`）
+
+- [x] **ワークツリーで本番 Parquet を読む手段が規定と矛盾している（2026-08-28 発見 / 2026-09-01 解決）**
+
+  > [!NOTE]
+  > **2026-09-01 解決済み。** `worktree-data-provisioning` ブランチ（`def5d00` / `c4f4894` / `c339687`、
+  > main に merge 済み）で対応した。計画書: `doc/in_progress/worktree_data_provisioning_plan.md`
+  >
+  > - **対応案1（読み取り専用の Parquet パス）を採用**した形になっている。ただし env 追加ではなく
+  >   `backend/paths.py` に集約し、`get_prod_parquet_master_dir()` / `get_prod_data_root()` で
+  >   本番を読み取り専用参照できるようにした。所在の記録は
+  >   `config.local.toml` の `[data] prod_root`（`tools/provision_worktree_data.py` が生成）。
+  > - **対応案2（skip マーカー）は採らなかった**。テストを skip するのではなく、
+  >   ワークツリーに実データを用意する方向で解決したため。
+  >   `tools/provision_worktree_data.py --mode write` が本番 Parquet の最新世代を
+  >   **ハードリンク**で sandbox に張る（実測ディスク消費 4,096 バイト / 見かけ 3.56GB）。
+  > - **`test_run_comparison_generates_outputs` は green になった**（0 failed, 1458 passed）。
+  >   なお真因はワークツリーのデータ不在だけではなく、`scenario_comparison_runner.py` の
+  >   「`config.toml` の `db_path` が絶対パスのときに代入しない」既存バグでもあった
+  >   （本体では偶然本番と一致するため表面化していなかった）。計画書 §7-11。
+  > - **§10.3 の記述との矛盾も解消**する（`STOCKTOOL_ENV=sandbox` を促す現行文面が
+  >   空DB作成の直接原因だった）。ドキュメント書き換えは同計画の Phase 3 で実施する。
+
+  以下は当初の起票内容（経緯の記録として保持）。
   - **事象**: ワークツリーで `pytest backend/tests/` を回すと
     `test_scenario_comparison.py::test_run_comparison_generates_outputs` が必ず落ちる。
 
