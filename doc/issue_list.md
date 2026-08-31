@@ -484,9 +484,19 @@
     ```
 
   - **出所**: `data/screener_presets_E_only.toml` の `check_vcp` プリセットのみ。
-    このファイルは **git 管理外**（`run_scenario_batch.generate_preset_toml()` が
-    Optuna の best params から生成する成果物）で、**2026-06-10 生成**。
-    ワークツリーにはチェックアウトされないため、**ワークツリーでは再現しない**。
+    このファイルは **git 管理外**で、**2026-06-10 生成**（mtime）。
+    ワークツリーにはチェックアウトされないため、**ワークツリーでは再現しない**
+    （全9ワークツリーを確認。いずれも tracked な `screener_presets.toml` しか持たない）。
+  - **このファイルは自動生成物ではなく手で維持されている（2026-09-01 訂正）**:
+    当初「`run_scenario_batch.generate_preset_toml()` の成果物」と書いていたが**誤り**。
+    根拠3点 —
+    (a) 唯一の呼び出し箇所（`run_scenario_batch.py:507`）の出力先は
+    `tmp/preset_{strat_name}_opt.toml` であり、`data/screener_presets_*_only.toml` へ
+    書くコードはリポジトリ内に存在しない。
+    (b) 同関数は `id = "{name}_opt"` / `name = "{name}_opt"` / `subname` を出すが、
+    `_E_only` は `id = "check_vcp"` / `name = "VCP"` / **`subtitle`**。
+    (c) 手書きのコメントヘッダ・区切り線・末尾の `# [backtest results]` ブロックがある。
+    実体は `screener_presets.toml` から E 系を抜き出した**手持ちのファイル**。
   - **実装漏れではない（2026-09-01 実測で確認済み）**: `resolve_filter_spec()` の
     `max_` 接頭辞の汎用規則で正しく解決され、フィルタとして機能している。
 
@@ -505,9 +515,13 @@
     赤が常駐すると新しい失敗を見落とす土台になるため、運用安全性の課題として扱う。
   - **対応案**:
     1. `PARITY_CASES` に `max_dist_52w_high_pct` を追加する（`min_dist_52w_high_pct` と対称に）
-    2. `_E_only` が陳腐化しているなら再生成または削除する（生成から3ヶ月弱）
+    2. `_E_only` が陳腐化しているなら手で直すか削除する（生成から3ヶ月弱）。
+       **再生成する手段は存在しない**（上記の訂正のとおり自動生成物ではない）
   - **推奨: 1**。キーは実際に機能しており、パリティ検証の対象に含めるのが本来の姿。
-    2 は preset を再生成するたびに同種の問題が再発しうるため根本対策にならない。
+    2 は preset を手で書き換えるたびに同種の問題が再発しうるため根本対策にならない。
+  - **削除する場合の注意**: `_A_only` / `_B_only` / `_E_only` のうち
+    **`_B_only` だけは `optimization_market_score.py:57` が `config_path` として読んでいる**。
+    `_E_only` を消すのは安全だが、同じ理屈で `_B_only` を消すとコードが壊れる。
   - **構造的な注意点**: `_collect_required_keys()` は `data/screener_presets*.toml` を
     glob するため、**git 管理外のローカル生成物がテストの合否を左右する**。
     「本体では落ちるがワークツリーでは落ちない」という切り分けにくい形になるので、
