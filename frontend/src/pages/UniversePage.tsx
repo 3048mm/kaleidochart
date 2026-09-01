@@ -81,6 +81,12 @@ export function UniversePage() {
     ticker: '', exchange: '', name: '', category: '個別', industry: '', sector_etf: '',
   });
 
+  // Edit symbol modal (for mobile & desktop whole-row editing)
+  const [editingSymbol, setEditingSymbol] = useState<SymbolMaster | null>(null);
+  const [editForm, setEditForm] = useState({
+    ticker: '', exchange: '', name: '', category: '個別', industry: '', sector_etf: '',
+  });
+
   // Expansion panel (shared for both themes and stocks)
   const [expandedRow, setExpandedRow] = useState<{ ticker: string; type: 'theme' | 'stock' } | null>(null);
   const [panelMembers, setPanelMembers] = useState<ThemeMember[]>([]);
@@ -244,6 +250,45 @@ export function UniversePage() {
       loadData();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Delete failed');
+    }
+  };
+
+  // Open edit modal for mobile/desktop
+  const openEditModal = (sym: SymbolMaster) => {
+    setEditingSymbol(sym);
+    setEditForm({
+      ticker: sym.ticker || '',
+      exchange: sym.exchange || '',
+      name: sym.name || '',
+      category: sym.category || '個別',
+      industry: sym.industry || '',
+      sector_etf: sym.sector_etf || '',
+    });
+  };
+
+  const handleSaveModalEdit = async () => {
+    if (!editingSymbol) return;
+    try {
+      const updatedSym = await updateSymbol(editingSymbol.id, {
+        ticker: editForm.ticker.trim().toUpperCase(),
+        exchange: editForm.exchange.trim() || null,
+        name: editForm.name.trim() || null,
+        category: editForm.category,
+        industry: editForm.industry.trim() || null,
+        sector_etf: editForm.sector_etf.trim() || null,
+      });
+
+      setData(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          items: prev.items.map(item => (item.id === editingSymbol.id ? updatedSym : item)),
+        };
+      });
+
+      setEditingSymbol(null);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Update failed');
     }
   };
 
@@ -465,7 +510,14 @@ export function UniversePage() {
       return (
         <span
           onDoubleClick={() => startEdit(sym.id, field, value)}
-          title="ダブルクリックで編集"
+          onClick={(e) => {
+            // スマホやタッチデバイスでダブルタップ不要にするため、モバイル幅または1タップで編集モーダルを開ける
+            if (window.innerWidth <= 768) {
+              e.stopPropagation();
+              openEditModal(sym);
+            }
+          }}
+          title="ダブルクリックまたはタップで編集"
           style={{
             padding: '2px 8px',
             borderRadius: '10px',
@@ -486,8 +538,14 @@ export function UniversePage() {
     return (
       <span
         onDoubleClick={() => startEdit(sym.id, field, value)}
-        style={{ cursor: 'text', display: 'block', minHeight: '18px' }}
-        title="ダブルクリックで編集"
+        onClick={(e) => {
+          if (window.innerWidth <= 768) {
+            e.stopPropagation();
+            openEditModal(sym);
+          }
+        }}
+        style={{ cursor: 'pointer', display: 'block', minHeight: '18px' }}
+        title="ダブルクリックまたはタップで編集"
       >
         {value || <span style={{ color: 'var(--text-muted)', fontStyle: 'italic', fontSize: '11px' }}>—</span>}
       </span>
@@ -673,7 +731,7 @@ export function UniversePage() {
   return (
     <div style={{ padding: '24px', maxWidth: '1400px', margin: '0 auto' }}>
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
         <div>
           <h1 style={{ fontSize: '22px', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
             Universe Manager
@@ -684,7 +742,7 @@ export function UniversePage() {
             </p>
           )}
         </div>
-        <div style={{ display: 'flex', gap: '10px' }}>
+        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
           <button
             onClick={() => {
               resetImportModal();
@@ -910,7 +968,7 @@ export function UniversePage() {
                   >
                     Tags / Members {renderSortIcon('member_count')}
                   </th>
-                  <th style={{ ...thStyle, width: '50px' }}></th>
+                  <th style={{ ...thStyle, width: '80px', textAlign: 'center' }}>操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -1043,8 +1101,24 @@ export function UniversePage() {
                           )}
                         </div>
                       </td>
-                      {/* Delete */}
-                      <td style={tdStyle}>
+                      {/* Actions (Edit modal + Delete) */}
+                      <td style={{ ...tdStyle, textAlign: 'center', whiteSpace: 'nowrap' }}>
+                        <button
+                          onClick={() => openEditModal(sym)}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: 'var(--accent)',
+                            cursor: 'pointer',
+                            fontSize: '14px',
+                            padding: '2px 4px',
+                            marginRight: '6px',
+                            transition: 'opacity 0.2s',
+                          }}
+                          title="銘柄情報を編集"
+                        >
+                          ✏️
+                        </button>
                         <button
                           onClick={() => handleDelete(sym)}
                           style={{
@@ -1052,7 +1126,8 @@ export function UniversePage() {
                             border: 'none',
                             color: 'var(--text-muted)',
                             cursor: 'pointer',
-                            fontSize: '14px',
+                            fontSize: '15px',
+                            padding: '2px 4px',
                             transition: 'color 0.2s',
                           }}
                           title="非アクティブ化"
@@ -1204,6 +1279,127 @@ export function UniversePage() {
                 }}
               >
                 追加
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Symbol Modal (Mobile & Desktop) */}
+      {editingSymbol && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0, 0, 0, 0.65)',
+          backdropFilter: 'blur(4px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 9999,
+        }}
+          onClick={() => setEditingSymbol(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'var(--bg-surface)',
+              border: '1px solid var(--border)',
+              borderRadius: 'var(--radius-lg)',
+              padding: '24px',
+              width: '440px',
+              maxWidth: '92vw',
+              maxHeight: '90vh',
+              overflowY: 'auto',
+              boxShadow: '0 20px 60px rgba(0, 0, 0, 0.6)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h2 style={{ fontSize: '18px', fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>
+                銘柄情報を編集
+              </h2>
+              <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--accent-yellow)', background: 'rgba(245, 158, 11, 0.15)', padding: '2px 8px', borderRadius: '10px' }}>
+                {editingSymbol.ticker}
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div>
+                <label style={labelStyle}>Ticker *</label>
+                <input type="text" value={editForm.ticker}
+                  onChange={(e) => setEditForm({ ...editForm, ticker: e.target.value })}
+                  placeholder="NVDA" style={modalInputStyle} />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={labelStyle}>Exchange</label>
+                  <input type="text" value={editForm.exchange}
+                    onChange={(e) => setEditForm({ ...editForm, exchange: e.target.value })}
+                    placeholder="NASDAQ" style={modalInputStyle} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Category</label>
+                  <select value={editForm.category}
+                    onChange={(e) => setEditForm({ ...editForm, category: e.target.value })}
+                    style={{ ...modalInputStyle, cursor: 'pointer' }}>
+                    {CATEGORIES.filter(c => c !== '全て').map(c => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label style={labelStyle}>Name</label>
+                <input type="text" value={editForm.name}
+                  onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                  placeholder="NVIDIA Corporation" style={modalInputStyle} />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={labelStyle}>Industry</label>
+                  <input type="text" value={editForm.industry}
+                    onChange={(e) => setEditForm({ ...editForm, industry: e.target.value })}
+                    placeholder="半導体" style={modalInputStyle} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Sector ETF</label>
+                  <input type="text" value={editForm.sector_etf}
+                    onChange={(e) => setEditForm({ ...editForm, sector_etf: e.target.value })}
+                    placeholder="XLK" style={modalInputStyle} />
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '24px' }}>
+              <button
+                onClick={() => setEditingSymbol(null)}
+                style={{
+                  padding: '10px 18px',
+                  background: 'var(--bg-glass)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius-sm)',
+                  color: 'var(--text-secondary)',
+                  fontSize: '13px',
+                  cursor: 'pointer',
+                }}
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={handleSaveModalEdit}
+                disabled={!editForm.ticker.trim()}
+                style={{
+                  padding: '10px 22px',
+                  background: editForm.ticker.trim() ? 'linear-gradient(135deg, var(--accent), #6366f1)' : 'var(--bg-glass)',
+                  border: 'none',
+                  borderRadius: 'var(--radius-sm)',
+                  color: '#fff',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  cursor: editForm.ticker.trim() ? 'pointer' : 'not-allowed',
+                  opacity: editForm.ticker.trim() ? 1 : 0.5,
+                }}
+              >
+                保存
               </button>
             </div>
           </div>

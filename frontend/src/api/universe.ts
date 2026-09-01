@@ -61,10 +61,10 @@ export interface SymbolCreatePayload {
 
 export interface SymbolUpdatePayload {
   ticker?: string;
-  exchange?: string;
-  name?: string;
+  exchange?: string | null;
+  name?: string | null;
   category?: string;
-  industry?: string;
+  industry?: string | null;
   theme_type?: string | null;
   sector_etf?: string | null;
   active?: number;

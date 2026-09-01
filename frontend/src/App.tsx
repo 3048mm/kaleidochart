@@ -401,6 +401,24 @@ export default function App() {
                     <Link to="/watchlist" onClick={() => setSidebarOpen(false)} style={{ color: location.pathname === '/watchlist' ? '#00ff88' : '#d1d4dc', textDecoration: 'none', fontWeight: 600, fontSize: '13px' }}>Watchlist</Link>
                     <Link to="/portfolio" onClick={() => setSidebarOpen(false)} style={{ color: location.pathname.startsWith('/portfolio') ? '#00ff88' : '#d1d4dc', textDecoration: 'none', fontWeight: 600, fontSize: '13px' }}>Portfolio</Link>
                     <Link to="/backtest" onClick={() => setSidebarOpen(false)} style={{ color: location.pathname.startsWith('/backtest') || location.pathname.startsWith('/scenariotest') || location.pathname.startsWith('/etf-backtest') ? '#00ff88' : '#d1d4dc', textDecoration: 'none', fontWeight: 600, fontSize: '13px' }}>Backtest</Link>
+                    <Link to="/universe" onClick={() => setSidebarOpen(false)} style={{ color: location.pathname === '/universe' ? '#00ff88' : '#d1d4dc', textDecoration: 'none', fontWeight: 600, fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        Universe
+                        {!!systemHealth?.universe?.ipo_candidates_pending && (
+                            <span
+                                style={{
+                                    padding: '1px 6px',
+                                    background: '#ff9800',
+                                    color: '#1a1a1a',
+                                    borderRadius: '9px',
+                                    fontSize: '10px',
+                                    fontWeight: 700,
+                                    lineHeight: 1.5,
+                                }}
+                            >
+                                {systemHealth.universe.ipo_candidates_pending}
+                            </span>
+                        )}
+                    </Link>
                 </div>
                 <div className="sidebar-search" style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                     <input
