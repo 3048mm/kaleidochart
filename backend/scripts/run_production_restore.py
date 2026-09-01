@@ -173,7 +173,13 @@ def run_production_restore(db_path: str = None, force: bool = False):
     # 3. Create fresh database with correct schemas
     logger.info("2. Re-creating fresh SQLite database schemas from models...")
     try:
-        init_db(prod_db_path)
+        # allow_create=True が要る。init_db の存在チェックは「ワークツリーで空 DB を
+        # 作ってしまう」事故を防ぐためのガードだが、**このスクリプトは直前の L150 で
+        # DB ファイルを意図的に削除している**ので必ず不在になる。
+        # 2026-09-02: これを渡していなかったため、本番の復元が
+        #   「システムDB (stocktool.db)が存在しません」
+        # で停止し、DB を削除した直後の状態で放置された。
+        init_db(prod_db_path, allow_create=True)
         if not file_deleted:
             logger.warning("  --force が指定されたため DROP ALL にフォールバックします"
                            "（読み取りロックがあると長時間停止する可能性があります）")

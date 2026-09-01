@@ -555,3 +555,107 @@ class TestFullSyncShrinkGuard:
         _df, action = resolve_full_sync_table(new, None, ["currency_pair", "date"])
 
         assert action == "replace"
+
+
+# ---------------------------------------------------------------------------
+# merge_timeseries_table — 時系列テーブルのマージがコールド履歴を捨てないこと
+#
+# 背景（2026-09-01 に実発生・6年分の指標を喪失）:
+# rotate 内の process_and_merge_table は、旧 Parquet とのマージに失敗すると
+# `except` で握りつぶして「SQLite の内容だけ」を返していた。SQLite は
+# ホットキャッシュ（730日）なので、**コールド側の全履歴がそこで消える**。
+#
+#   [WARNING] Failed to merge with old parquet cache for indicators:
+#     Unable to allocate 1.77 GiB for an array with shape (39, 6082624)
+#     and data type float64. Storing SQL only.
+#
+# 警告1行だけで、パイプラインは COMPLETED SUCCESSFULLY を出した。実際には
+# indicators が 6,076,932行 → 1,594,632行 になり、2021〜2024前半の指標が
+# 全滅してバックテストが動かなくなった。
+#
+# 同種の「テーブルが激減する」事故は全期間同期テーブル側では
+# resolve_full_sync_table（2026-08-06 の fx_rates 7,717→23行）で既に塞がれて
+# いたが、時系列マージ側には防護が無かった。
+# ---------------------------------------------------------------------------
+class TestMergeTimeseriesTable:
+    @staticmethod
+    def _old_parquet(tmp_path, rows):
+        p = str(tmp_path / "old.parquet")
+        pd.DataFrame(rows).to_parquet(p, index=False)
+        return p
+
+    def test_merges_new_rows_onto_old_history(self, tmp_path):
+        from pipeline.parquet_cache_manager import merge_timeseries_table
+
+        old = self._old_parquet(tmp_path, [
+            {"symbol_id": 1, "date": "2020-01-01", "v": 1.0},
+            {"symbol_id": 1, "date": "2020-01-02", "v": 2.0},
+        ])
+        sql = pd.DataFrame([{"symbol_id": 1, "date": "2020-01-03", "v": 3.0}])
+
+        out = merge_timeseries_table("indicators", ["symbol_id", "date"], sql, old, logger)
+
+        assert len(out) == 3, "旧履歴 + 新規行にならない"
+        assert sorted(out["date"]) == ["2020-01-01", "2020-01-02", "2020-01-03"]
+
+    def test_sql_row_wins_for_the_same_key(self, tmp_path):
+        from pipeline.parquet_cache_manager import merge_timeseries_table
+
+        old = self._old_parquet(tmp_path, [{"symbol_id": 1, "date": "2020-01-01", "v": 1.0}])
+        sql = pd.DataFrame([{"symbol_id": 1, "date": "2020-01-01", "v": 99.0}])
+
+        out = merge_timeseries_table("indicators", ["symbol_id", "date"], sql, old, logger)
+
+        assert len(out) == 1
+        assert out.iloc[0]["v"] == 99.0, "同一キーは SQLite 側が勝つべき"
+
+    def test_raises_instead_of_silently_returning_sql_only(self, tmp_path, monkeypatch):
+        """旧 Parquet の読み込みが失敗したら、**例外を上げて rotate を止める**。
+
+        ここで SQLite の内容だけを返すと、ホットキャッシュ(730日)が
+        全履歴マスタを置き換えてしまう。2026-09-01 の事故そのもの。
+        """
+        from pipeline import parquet_cache_manager as pcm
+
+        old = self._old_parquet(tmp_path, [
+            {"symbol_id": 1, "date": "2020-01-01", "v": 1.0},
+            {"symbol_id": 1, "date": "2020-01-02", "v": 2.0},
+        ])
+        sql = pd.DataFrame([{"symbol_id": 1, "date": "2026-01-01", "v": 3.0}])
+
+        def _boom(*a, **kw):
+            raise MemoryError("Unable to allocate 1.77 GiB")
+
+        monkeypatch.setattr(pcm.pd, "read_parquet", _boom)
+
+        with pytest.raises(Exception) as exc:
+            pcm.merge_timeseries_table("indicators", ["symbol_id", "date"], sql, old, logger)
+        assert "indicators" in str(exc.value)
+
+    def test_raises_when_merge_would_lose_old_rows(self, tmp_path, monkeypatch):
+        """マージ結果が旧世代より減っていたら中断する。
+
+        マージは和集合なので行が減ることは原理的に無い。減っていたら実装が
+        壊れているので、マスタを上書きせずに止める。
+        """
+        from pipeline import parquet_cache_manager as pcm
+
+        old = self._old_parquet(tmp_path, [
+            {"symbol_id": 1, "date": f"2020-01-{d:02d}", "v": float(d)} for d in range(1, 11)
+        ])
+        sql = pd.DataFrame([{"symbol_id": 1, "date": "2026-01-01", "v": 99.0}])
+
+        # 行を落とすマージを注入して防護柵が働くことを確かめる
+        monkeypatch.setattr(pcm.pd, "concat", lambda *a, **kw: sql.copy())
+
+        with pytest.raises(Exception) as exc:
+            pcm.merge_timeseries_table("indicators", ["symbol_id", "date"], sql, old, logger)
+        assert "行" in str(exc.value) or "row" in str(exc.value).lower()
+
+    def test_no_old_parquet_returns_sql_as_is(self, tmp_path):
+        """初回（旧世代が無い）は SQLite の内容がそのままマスタになる。"""
+        from pipeline.parquet_cache_manager import merge_timeseries_table
+
+        sql = pd.DataFrame([{"symbol_id": 1, "date": "2020-01-01", "v": 1.0}])
+        out = merge_timeseries_table("indicators", ["symbol_id", "date"], sql, None, logger)
+        assert len(out) == 1

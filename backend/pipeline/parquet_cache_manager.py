@@ -98,6 +98,87 @@ def clean_old_parquet_versions(parquet_dir: str, logger: logging.Logger, keep_co
             # Skip if file is currently open/locked by other processes. It will be removed in subsequent cleanups.
             logger.debug(f"Skipped cleanup of {os.path.basename(ptr_file)} due to: {e}")
 
+def merge_timeseries_table(table_name: str, key_columns: list, df_sql, old_parquet_path,
+                           logger) -> "pd.DataFrame":
+    """時系列テーブル（prices / indicators / ranks / signals）を旧世代とマージする。
+
+    SQLite はホット期間（730日）しか持たないので、**旧 Parquet との和集合**を取って
+    全履歴マスタを作る。同一キーは SQLite 側を採用する（再計算の反映）。
+
+    ## 失敗したら黙って SQLite の内容だけを返してはいけない
+
+    旧実装は `except` で握りつぶして `return df_sql` していた。SQLite はホット期間
+    しか無いので、**それはコールド側の全履歴を捨てることを意味する**。
+
+        2026-09-01  indicators 6,076,932行 → 1,594,632行
+        [WARNING] Failed to merge with old parquet cache for indicators:
+          Unable to allocate 1.77 GiB ... Storing SQL only.
+
+    警告1行だけでパイプラインは SUCCESS を返し、2021〜2024前半の指標が全滅して
+    バックテストが動かなくなった。**マスタを壊すくらいなら公開しない**
+    （`is_publishable_master` と同じ思想）ので、例外はそのまま送出する。
+
+    同種の「激減」は全期間同期テーブル側では `resolve_full_sync_table`
+    （2026-08-06 の fx_rates 7,717→23行）で既に塞がれていた。こちらにも防護柵を置く。
+
+    Raises:
+        RuntimeError: 旧世代の読み込み・マージに失敗した場合、または
+            マージ結果が旧世代より行数が減った場合。
+    """
+    if not old_parquet_path or not os.path.exists(old_parquet_path):
+        # 初回（旧世代が無い）。SQLite の内容がそのままマスタになる
+        return df_sql
+
+    try:
+        df_old = pd.read_parquet(old_parquet_path)
+    except Exception as e:
+        raise RuntimeError(
+            f"{table_name}: 旧 Parquet 世代の読み込みに失敗しました: {e}"
+            f" — SQLite はホット期間しか持たないため、ここで先に進むと全履歴を失います。"
+            f" マスタは更新していません。"
+        ) from e
+
+    if df_old.empty or df_sql.empty:
+        # どちらかが空なら和集合を取る意味が無い。行数の多い方を残す
+        return df_sql if len(df_sql) >= len(df_old) else df_old
+
+    try:
+        # キー列の型を揃える（date は文字列に寄せてタイムゾーン差異を避ける）
+        for col in key_columns:
+            if col in df_old.columns and col in df_sql.columns:
+                if col == 'date':
+                    df_old[col] = df_old[col].astype(str)
+                    df_sql[col] = df_sql[col].astype(str)
+                elif col in ('symbol_id', 'theme_id'):
+                    df_old[col] = pd.to_numeric(df_old[col], errors='coerce').astype('Int64')
+                    df_sql[col] = pd.to_numeric(df_sql[col], errors='coerce').astype('Int64')
+                else:
+                    try:
+                        df_old[col] = df_old[col].astype(df_sql[col].dtype)
+                    except Exception:
+                        df_old[col] = df_old[col].astype(str)
+                        df_sql[col] = df_sql[col].astype(str)
+
+        df_merged = pd.concat([df_old, df_sql], ignore_index=True)
+        df_merged = df_merged.drop_duplicates(subset=key_columns, keep='last')
+    except Exception as e:
+        raise RuntimeError(
+            f"{table_name}: 旧世代とのマージに失敗しました: {e}"
+            f" — マスタは更新していません。"
+        ) from e
+
+    # 防護柵: マージは和集合なので、行が減ることは原理的に無い
+    if len(df_merged) < len(df_old):
+        raise RuntimeError(
+            f"{table_name}: マージ結果が旧世代より減っています"
+            f"（{len(df_old):,}行 → {len(df_merged):,}行）。"
+            f" 和集合で行が減ることは無いため、実装かデータの異常です。"
+            f" マスタは更新していません。"
+        )
+
+    return df_merged
+
+
 def rotate_and_archive_to_parquet(db, db_path: str, logger: logging.Logger,
                                   require_non_empty: bool = True) -> dict:
     """
@@ -142,37 +223,6 @@ def rotate_and_archive_to_parquet(db, db_path: str, logger: logging.Logger,
     from db.database import get_read_engine_for
     engine = get_read_engine_for(db)
     
-    def process_and_merge_table(table_name: str, key_columns: list[str], df_sql: pd.DataFrame, old_parquet_path: str | None) -> pd.DataFrame:
-        """Helper to load old parquet, append new SQL data, and drop duplicates safely."""
-        if old_parquet_path and os.path.exists(old_parquet_path):
-            try:
-                df_old = pd.read_parquet(old_parquet_path)
-                if not df_old.empty and not df_sql.empty:
-                    # Align column types to prevent concat failures (dates to string to avoid timezone/dt conflicts)
-                    for col in key_columns:
-                        if col in df_old.columns and col in df_sql.columns:
-                            if col == 'date':
-                                df_old[col] = df_old[col].astype(str)
-                                df_sql[col] = df_sql[col].astype(str)
-                            elif col in ('symbol_id', 'theme_id'):
-                                # Guarantee numerical IDs are cast to standard Int64 (nullable integer)
-                                df_old[col] = pd.to_numeric(df_old[col], errors='coerce').astype('Int64')
-                                df_sql[col] = pd.to_numeric(df_sql[col], errors='coerce').astype('Int64')
-                            else:
-                                try:
-                                    target_type = df_sql[col].dtype
-                                    df_old[col] = df_old[col].astype(target_type)
-                                except:
-                                    df_old[col] = df_old[col].astype(str)
-                                    df_sql[col] = df_sql[col].astype(str)
-                    
-                    df_merged = pd.concat([df_old, df_sql], ignore_index=True)
-                    df_merged = df_merged.drop_duplicates(subset=key_columns, keep='last')
-                    return df_merged
-            except Exception as e:
-                logger.warning(f"Failed to merge with old parquet cache for {table_name}: {e}. Storing SQL only.")
-        return df_sql
-
     logger.info("  1. Querying active SQLite data to archive...")
     # Load all records currently in SQLite
     df_symbols_sql = pd.read_sql("SELECT * FROM symbols", engine)
@@ -203,10 +253,10 @@ def rotate_and_archive_to_parquet(db, db_path: str, logger: logging.Logger,
     df_fx = df_fx_sql
 
     # --- 時系列テーブル: SQLite はホット期間のみのため「マージ」する ------
-    df_prices = process_and_merge_table("daily_prices", ["symbol_id", "date"], df_prices_sql, old_paths.get('prices'))
-    df_indicators = process_and_merge_table("indicators", ["symbol_id", "date"], df_indicators_sql, old_paths.get('indicators'))
-    df_ranks = process_and_merge_table("relative_ranks", ["symbol_id", "date"], df_ranks_sql, old_paths.get('ranks'))
-    df_signals = process_and_merge_table("market_signals", ["date"], df_signals_sql, old_paths.get('signals'))
+    df_prices = merge_timeseries_table("daily_prices", ["symbol_id", "date"], df_prices_sql, old_paths.get('prices'), logger)
+    df_indicators = merge_timeseries_table("indicators", ["symbol_id", "date"], df_indicators_sql, old_paths.get('indicators'), logger)
+    df_ranks = merge_timeseries_table("relative_ranks", ["symbol_id", "date"], df_ranks_sql, old_paths.get('ranks'), logger)
+    df_signals = merge_timeseries_table("market_signals", ["date"], df_signals_sql, old_paths.get('signals'), logger)
 
     # 安全弁: 全期間同期テーブルが「空」または「激減」したら置換しない。
     #   空       → SQLite が壊れた等。旧世代を維持する
