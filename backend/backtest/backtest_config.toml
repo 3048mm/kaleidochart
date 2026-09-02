@@ -646,6 +646,61 @@ min_market_cap      = { type = "categorical", choices = [1e8, 3e8] }
 
 
 # =============================================================
+# H3: カウンタートレンド線の上抜け（作者の rt_cnt_break）
+#   構造（LL-HL）が成立していない期間に、ショート側のピボット高値2点を結んだ
+#   下向きの抵抗線を終値が上抜ける「転換」シグナル。sp_pivot とは排他。
+#
+# 検出件数の実測（2026-09-03 ドライラン / 個別 active 2,889銘柄 / 1,256営業日）:
+#   生 32.13件/日 → 流動性床 $2M で 26.34件/日 → 下記の既定値で 2.24件/日
+#   Bear 2022 = 3.22件/日 / Bull 2024-25 = 2.20件/日（どちらもゲート帯 0.3〜5.0 の内側）
+#
+# **H系で唯一「検出が過剰」な戦略。** H1 が全滅した原因は検出不足による枠遊びだったが、
+# H3 は候補が 26件/日 出るため max_hits_per_day の枠が実効的に効く。
+# したがって sort_column の選択がスコアを強く左右する
+# （doc/in_progress/trend_line_break_optimization_plan.md §4-Q1。まず rs_ratio_rank_e21）。
+#
+# 単一条件の効き（流動性床の上に1つだけ足したとき・累積ではない）:
+#   max_vcr<=0.8 → 3.89 / min_rs_trend_s21>=1.0 → 8.63 / min_adr_pct_21>=4 → 8.99
+#   close>ema21 → 16.65 / mcap>=1e9 → 22.11 / sma50_atr_mult<=8 → 26.31（ほぼ無効）
+# max_sma50_atr_mult は探索空間から外した。3.0〜10.0 を実測しても 2.011〜2.304件/日 と
+# ほとんど動かず（最厳の 3.0 でも -13% だけ）、次元を1つ食うだけで情報を持たない。
+# =============================================================
+[[strategy]]
+name = "H3_structure_trend_line_break"
+description = "構造が無い期間のカウンタートレンド線を上抜けた転換シグナル"
+max_hits_per_day = 10
+sort_column = "rs_ratio_rank_e21"
+sort_ascending = false
+is_structure_trend_line_break = true
+min_adr_pct_21 = 4.0
+min_rs_trend_s21 = 1.0
+min_dist_21ema_pct = 2.0
+max_vcr = 1.5
+min_market_cap = 3e8
+# 流動性床は [general] が全戦略へ実行時注入するため戦略側には書かない
+# min_avg_hits_per_day / quality_gate_min_hits_per_day は書かない。
+# グローバル既定（1.0 / 0.3）で足りる（H1 が抱えた下限割れが H3 には無い）
+#
+# **[strategy.optimization] の全キーに既定値を書くこと。** enqueue_baseline_trial は
+# strat_base に有る分だけを enqueue_trial() に渡し、**残りはサンプラーが乱択する**。
+# 書き漏らすとベースライン trial が別物になる（2026-09-03 に max_vcr を書き忘れ、
+# 0.75 が乱択されて trial 0 が検出 0.12件/日 → 罰点 -260.96 になった）。
+
+[strategy.optimization]
+min_adr_pct_21     = { type = "float", min = 2.0, max = 7.0, step = 0.5 }
+min_rs_trend_s21   = { type = "float", min = 0.90, max = 1.15, step = 0.025 }
+# TLB は「直近が弱い」期間に点灯するため 21EMA の下で出るのが自然な形。
+# H1 の下限 0.0 をそのまま使うと本来の母集団を切り落とすので負側まで開ける
+min_dist_21ema_pct = { type = "float", min = -3.0, max = 5.0, step = 0.5 }
+# 下限 0.80: 実測で 0.60→0.003 / 0.70→0.045 / 0.75→0.099 / 0.80→0.184 件/日 と
+# **0.85 未満は他条件の既定値と併用すると検出ゲートを割る死に領域**。0.80 だけ残して
+# TPE に勾配を与える。上限 1.5 は実質「収縮を要求しない」（制約なし比 -6%）
+max_vcr            = { type = "float", min = 0.80, max = 1.50, step = 0.05 }
+# 効きは弱いが検出件数の微調整枠として残す（ユーザー判断 2026-09-03）
+min_market_cap     = { type = "categorical", choices = [1e8, 3e8, 1e9, 3e9] }
+
+
+# =============================================================
 # Optimization Evaluation Periods (Multi-period cross-validation)
 # =============================================================
 

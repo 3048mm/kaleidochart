@@ -21,6 +21,50 @@ PowerShell 上で `python -c "..."` を使って複数文の Python コードを
 - **4行以上、または try/except / for / if を含むコード**: **必ずスクリプトファイル（`.py`）を作成**してから `python script.py` で実行する。`-c` での無理な記述を禁止する。
 - **スクリプトファイルの配置場所**: プロジェクト内の `tmp/` ディレクトリに一時ファイルとして作成する（例: `tmp/debug_check.py`）。
 
+
+### 1.1 Bash のヒアドキュメントは、クォートしないとバッククォートが実行される
+
+Bash ツールで `python - <<EOF` の形を使うとき、**終端子をクォートするかどうかで
+中身の扱いが変わる**。日本語ドキュメントを生成するコードは Markdown のインラインコードを
+大量に含むため、ここを間違えると**エラーを出さずに本文が消える**。
+
+| 書き方 | シェルの展開 | 使いどころ |
+| :--- | :--- | :--- |
+| `<<'EOF'`（クォートあり） | **一切しない**（リテラル） | **既定。ほぼ常にこちら** |
+| `<<EOF`（クォートなし） | 変数・バッククォート・バックスラッシュを展開 | シェル変数を埋めたいときだけ |
+
+クォートしないと、本文中のインラインコードが**コマンド置換として実行され、
+その出力（＝通常は空）に置き換わる**。実際に出た症状:
+
+```
+/usr/bin/bash: line 31: [strategy.optimization]: command not found
+doc/agent_execution_rules.md: line 13: syntax error near unexpected token
+```
+
+Python 側は「成功」を報告するため（`print("ok")` が出る）、**書き込んだファイルを
+読み返すまで壊れたことに気付けない**。実例では Markdown の箇条書きから
+インラインコード3箇所が消え、文が意味を成さなくなっていた。
+
+#### 対策ルール
+
+- **ヒアドキュメントの終端子は常にクォートする**（`<<'PYEOF'`）。
+- シェル変数を渡したいときも、クォートしたまま**環境変数か `sys.argv` で渡す**。
+- ファイルを書いたら**必ず読み返して確認する**（`tail` / `grep`）。
+  これはエンコーディング問題（§5）と同じ「サイレント破壊」の型。
+
+### 1.2 作業コピーの改行は CRLF、リポジトリは LF
+
+`core.autocrlf=true` かつ `.gitattributes` が `* text=auto` のため、
+**作業コピーの `.md` / `.toml` / `.py` は CRLF、index は LF** になっている
+（`git ls-files --eol <file>` で `i/lf w/crlf` と確認できる）。
+
+Python で `newline=""` を指定して読むと CR がそのまま入るため、
+改行を含むアンカー文字列が**例外なしで一致しなくなる**（`AssertionError` だけが出る）。
+
+- **読み込みは universal newlines**（`open(p, encoding="utf-8")`、`newline` 指定なし）。
+- **書き込みは `newline="
+"`**（CLAUDE.md の LF 規約どおり。index は LF なので差分は増えない）。
+
 ---
 
 ## 2. PowerShell のパス・ワーキングディレクトリの誤り
@@ -347,12 +391,28 @@ if errorlevel 1 goto :fail
 タスクの性質でモードを選ぶ。**本体チェックアウトでは不要**（`data/` が本番そのもの）。
 
 ```powershell
-# 本番データを読むだけ（バックテスト・スクリーナー式の変更・API 読み取り・フロントエンド = 種別 A）
+# 本番データを読むだけ（スクリーナー式の変更・API 読み取り・フロントエンド = 種別 A）
 .\venv\Scripts\python.exe tools\provision_worktree_data.py <worktree> --mode read
 
 # データ形状に触れる（スキーマ変更・indicator 追加・パイプライン変更 = 種別 B / C）
+# **バックテスト・最適化もこちら**（下記の注意を参照）
 .\venv\Scripts\python.exe tools\provision_worktree_data.py <worktree> --mode write
 ```
+
+> [!IMPORTANT]
+> **バックテスト／最適化は「読むだけ」だが `--mode read` では起動できない**（2026-09-03 実測）。
+> `backtest_runner.preload_data()` は Parquet しか読まないが、
+> `optimization_runner.main()` が冒頭で `init_db()` を呼ぶため、
+> `stocktool.db` が無いと fail-fast で止まる:
+>
+> ```
+> paths.DataNotProvisionedError: システムDB (stocktool.db)が存在しません: ...
+> ```
+>
+> さらに **`--light` は `stocktool.db` を作らない**（「`create_sandbox.py` で別途構築してください」と
+> 表示して終わる）。`create_sandbox.py` を本体で叩くと本番の `data/sandbox/` を触りにいくので、
+> **`--light` を付けず実コピー（約1.6GB / 十数秒）するのが確実**。
+> Parquet はハードリンクなので、実コストはこの SQLite コピーだけ。
 
 `--mode write` の内訳:
 
@@ -505,3 +565,5 @@ error: failed to delete 'D:/.../.claude/worktrees/<name>': Permission denied
 - 2026-09-01: §11 を新設 — Windows のリンク種別ごとの特権要件、Git Bash の `ln -s` が exit 0 でコピーを作る件、**`git worktree remove` だけがジャンクションを辿ってリンク先を全削除する**件（すべて実測・エラー原文つき）。§5.1 を新設 — BOM が「例外」ではなく無関係な `TypeError` として現れる経路
 - 2026-09-01: §10.3 を全面改訂 — ワークツリーのデータは `tools/provision_worktree_data.py` で明示的にプロビジョニングする方式へ。旧記述（`STOCKTOOL_ENV=sandbox` を設定するだけ）は誰も `data/sandbox/` を作り込んでいないため**ルールに従うほど空DBを掴む**状態であり、事故の直接の原因だった。`backend/paths.py` による fail-fast（`DataNotProvisionedError` / `require_populated` / `ensure_writable`）と、`data/` にリンクを張らない理由（`git worktree remove` がジャンクションを辿ってリンク先を全削除する実測）を追記
 - 2026-08-24: §6 を新設（欠番だった） — `.bat` にマルチバイト文字を書かない（次の行が飛ぶ）、`schtasks /create` は空コマンドでも SUCCESS を返すので読み戻して検証する、同一行での `%errorlevel%` 展開。週次メンテナンスが3週間実行されていなかった件の再発防止
+- 2026-09-03: §1.1 / §1.2 を新設 — Bash のヒアドキュメントを `<<EOF` とクォート無しで書くと本文中のインラインコードがコマンド置換として実行され、**エラーなく Markdown 本文が消える**（実例つき）。作業コピーが CRLF・index が LF のため、`newline=""` で読むと改行を含むアンカーが黙って一致しなくなる件も併記
+- 2026-09-03: §10.3 を修正 — バックテスト／最適化は「読むだけ」だが `optimization_runner` が冒頭で `init_db()` を呼ぶため `--mode read` では `DataNotProvisionedError` で起動できない。`--light` は `stocktool.db` を作らない点も明記
