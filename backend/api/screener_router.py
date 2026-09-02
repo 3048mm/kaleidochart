@@ -249,6 +249,7 @@ def get_screener_presets():
     def _to_items(raw_list):
         items = []
         for p in raw_list:
+            backtest_raw = p.get("backtest")
             items.append(schemas.ScreenerPresetItem(
                 id=p.get("id", ""),
                 name=p.get("name", ""),
@@ -257,6 +258,8 @@ def get_screener_presets():
                 group=p.get("group", ""),
                 filters=p.get("filters", {}),
                 expression=p.get("expression"),
+                description=p.get("description"),
+                backtest=schemas.ScreenerBacktestStats(**backtest_raw) if backtest_raw else None,
             ))
         return items
     return schemas.ScreenerPresetsResponse(

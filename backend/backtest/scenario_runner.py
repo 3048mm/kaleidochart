@@ -93,12 +93,14 @@ def inject_liquidity_floor(strategies: Dict[str, Dict[str, Any]], min_avg_dollar
 # 個別銘柄シナリオテストがスキャンする戦略名の接頭辞。
 #
 # `load_scenario_config` が組み立てる戦略名は `f"{section.capitalize()} - {group} - {name}"`
-# なので、preset TOML の `group` が "Check" 以外だと**警告なくスキャン対象外**になっていた
-# （2026-07-20 発見）。現行の preset は全て group="Check" のため実害は出ていないが、
-# 防御が無いままでは新しい preset を足したときに黙って無視される。
+# なので、preset TOML の `group` がこの値と揃っていないと**警告なくスキャン対象外**になる
+# （2026-07-20 発見）。2026-09-03 の Pickup/Check/Common 再編で「エントリー条件として
+# バックテスト実績のある戦略」は group="Pickup" に統一されたため、対象を "Rise - Pickup"
+# に変更した（旧 "Rise - Check" のままだと新体制の Pickup 戦略が黙ってスキャン対象外になる）。
+# 新設の "Check" グループは観察用途で edge 未検証のため、意図的にスキャン対象外のままにする。
 #
 # 定数を1箇所に置き、runner と scorer が同じ値を使う（判定が分裂すると再発する）。
-SCENARIO_TARGET_PREFIX = 'Rise - Check'
+SCENARIO_TARGET_PREFIX = 'Rise - Pickup'
 
 
 def split_scannable_strategies(strategies, target_prefix: str = SCENARIO_TARGET_PREFIX):
@@ -137,7 +139,7 @@ def report_strategy_scan_coverage(strategies, target_prefix: str = SCENARIO_TARG
         for name in skipped:
             reason = ("Fall 側はロング専用のため未対応"
                       if name.startswith('Fall - ')
-                      else "preset の group を 'Check' にしてください")
+                      else "preset の group を 'Pickup' にしてください")
             logger_fn(f"    - {name}  ← {reason}")
 
     if not scanned:
@@ -145,7 +147,7 @@ def report_strategy_scan_coverage(strategies, target_prefix: str = SCENARIO_TARG
             f"シナリオテストの対象となる戦略が1件もありません"
             f"（接頭辞 '{target_prefix}' に一致する戦略が無い）。\n"
             f"  ロードされた戦略: {list(strategies)}\n"
-            f"  preset TOML の group を 'Check' にするか、active_rise_ids を確認してください。"
+            f"  preset TOML の group を 'Pickup' にするか、active_rise_ids を確認してください。"
         )
     return scanned
 

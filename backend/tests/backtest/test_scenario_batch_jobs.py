@@ -85,7 +85,7 @@ def test_generate_preset_toml(tmp_path):
     rise_entry = config["rise"][0]
     assert rise_entry["id"] == "B4_rs_trend_with_theme_opt"
     assert rise_entry["name"] == "B4_rs_trend_with_theme_opt"
-    assert rise_entry["group"] == "Check"
+    assert rise_entry["group"] == "Pickup"
     assert rise_entry["use_vxv_vix_hysteresis"] is True
 
     filters = rise_entry["filters"]
@@ -114,7 +114,7 @@ def test_generate_preset_toml_single_strategy_byte_identical_to_legacy(tmp_path)
     expected += f'id = "{strategy_name}_opt"\n'
     expected += f'name = "{strategy_name}_opt"\n'
     expected += f'subname = "Optuna Best for {strategy_name}"\n'
-    expected += 'group = "Check"\n'
+    expected += 'group = "Pickup"\n'
     expected += 'use_vxv_vix_hysteresis = true\n'
     expected += 'vxv_vix_hysteresis_type = "vxv_vix_ema"\n'
     expected += '\n[rise.filters]\n'
@@ -135,7 +135,7 @@ def test_generate_preset_toml_single_strategy_byte_identical_to_legacy(tmp_path)
 
 
 def test_generate_preset_toml_multi_strategy(tmp_path):
-    """複数戦略を渡すと、その数だけ [[rise]] ブロックが生成され、全て group = "Check" であること。"""
+    """複数戦略を渡すと、その数だけ [[rise]] ブロックが生成され、全て group = "Pickup" であること。"""
     output_file = tmp_path / "preset_multi.toml"
     strategies = [
         ("B2_theme_rsrank_momentum", {"min_change_1d_pct": 5.0}),
@@ -155,7 +155,7 @@ def test_generate_preset_toml_multi_strategy(tmp_path):
     ]
     assert len(config["rise"]) == 3
     for entry in config["rise"]:
-        assert entry["group"] == "Check"
+        assert entry["group"] == "Pickup"
 
     ids = [entry["id"] for entry in config["rise"]]
     assert ids == [

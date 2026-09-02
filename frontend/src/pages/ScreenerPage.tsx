@@ -6,6 +6,15 @@ import { WatchlistButton } from '../components/WatchlistButton';
 import { Sparkline } from '../components/Sparkline';
 import { ScreenerDashboardItem, ScreenerDashboardCategory, ScreenerDashboardResponse } from '../types';
 
+interface ScreenerBacktestStats {
+    win_rate?: number;
+    expectancy_lcb?: number;
+    port_cagr?: number;
+    max_drawdown?: number;
+    port_vs_spy?: number;
+    total_trades?: number;
+}
+
 interface PresetItem {
     id: string;
     name: string;
@@ -13,6 +22,8 @@ interface PresetItem {
     group: string;
     filters: Record<string, number | string>;
     expression?: string;
+    description?: string;
+    backtest?: ScreenerBacktestStats;
 }
 
 interface PresetsResponse {
@@ -33,7 +44,10 @@ export const ScreenerPage: React.FC = () => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [activeTab, setActiveTab] = useState<'Rise' | 'Fall'>('Rise');
-    
+    // プリセット説明+成績のポップオーバー。1枚だけ開く想定で preset id を1つだけ保持する
+    // （App.tsx の System Status ポップオーバーと同じクリックトグル方式）。
+    const [openInfoPopoverId, setOpenInfoPopoverId] = useState<string | null>(null);
+
     const { isTickerActive, toggleWatchlist } = useWatchlist();
 
     // Load available dates
@@ -119,6 +133,16 @@ export const ScreenerPage: React.FC = () => {
             .finally(() => setLoading(false));
     }, [selectedDate, navigate]);
 
+    // バックテスト成績テーブルの表示順とラベル・フォーマット
+    const BACKTEST_STAT_FIELDS: Array<{ key: keyof ScreenerBacktestStats; label: string; format: (v: number) => string }> = [
+        { key: 'win_rate', label: '勝率', format: v => `${v.toFixed(1)}%` },
+        { key: 'expectancy_lcb', label: '期待値LCB', format: v => `${v.toFixed(2)}%` },
+        { key: 'port_cagr', label: 'CAGR', format: v => `${v.toFixed(1)}%` },
+        { key: 'max_drawdown', label: '最大DD', format: v => `${v.toFixed(1)}%` },
+        { key: 'port_vs_spy', label: 'vs SPY', format: v => `${v.toFixed(1)}%` },
+        { key: 'total_trades', label: '取引数', format: v => `${v}` },
+    ];
+
     const renderPanel = (category: ScreenerDashboardCategory) => {
         // Find matching preset for link building
         const allPresets = presets ? [...(presets.rise || []), ...(presets.fall || [])] : [];
@@ -127,6 +151,8 @@ export const ScreenerPage: React.FC = () => {
         const linkTarget = matchingPreset
             ? buildResultLink(matchingPreset)
             : `/screener/result/${category.id}?target_date=${selectedDate}`;
+
+        const isInfoOpen = openInfoPopoverId === category.id;
 
         return (
             <div key={category.id} className="glass-panel" style={{ padding: '15px', display: 'flex', flexDirection: 'column', minWidth: '300px', flex: '1 1 300px' }}>
@@ -143,7 +169,75 @@ export const ScreenerPage: React.FC = () => {
                             </div>
                         )}
                     </Link>
-                    <span style={{ fontSize: '12px', color: '#aaa', marginTop: '4px' }}>Top 8</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        {matchingPreset?.description && (
+                            <div style={{ position: 'relative', display: 'inline-block' }}>
+                                <button
+                                    onClick={() => setOpenInfoPopoverId(prev => prev === category.id ? null : category.id)}
+                                    title="説明を表示"
+                                    style={{
+                                        width: '18px',
+                                        height: '18px',
+                                        padding: 0,
+                                        borderRadius: '50%',
+                                        border: `1px solid ${appConfig.colors.glassBorder}`,
+                                        background: 'rgba(255,255,255,0.05)',
+                                        color: '#aaa',
+                                        fontSize: '11px',
+                                        lineHeight: '16px',
+                                        cursor: 'pointer',
+                                    }}
+                                >
+                                    i
+                                </button>
+
+                                {isInfoOpen && (
+                                    <div style={{
+                                        position: 'absolute',
+                                        top: '100%',
+                                        right: 0,
+                                        marginTop: '8px',
+                                        width: '260px',
+                                        backgroundColor: 'rgba(21, 26, 38, 0.95)',
+                                        backdropFilter: 'blur(10px)',
+                                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                                        borderRadius: '8px',
+                                        boxShadow: '0 10px 25px rgba(0, 0, 0, 0.5)',
+                                        padding: '12px',
+                                        zIndex: 1000,
+                                        color: '#d1d4dc',
+                                        fontSize: '12px',
+                                        textAlign: 'left',
+                                    }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                                            <span style={{ fontWeight: 'bold', color: '#fff' }}>{category.name}</span>
+                                            <button
+                                                onClick={() => setOpenInfoPopoverId(null)}
+                                                style={{ background: 'none', border: 'none', color: '#d1d4dc', cursor: 'pointer', fontSize: '14px' }}
+                                            >
+                                                ×
+                                            </button>
+                                        </div>
+                                        <div style={{ marginBottom: matchingPreset.backtest ? '10px' : 0, lineHeight: 1.5 }}>
+                                            {matchingPreset.description}
+                                        </div>
+                                        {matchingPreset.backtest && (
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '8px' }}>
+                                                {BACKTEST_STAT_FIELDS.filter(f => matchingPreset.backtest![f.key] !== undefined && matchingPreset.backtest![f.key] !== null)
+                                                    .map(f => (
+                                                        <React.Fragment key={f.key}>
+                                                            <div style={{ color: '#888' }}>{f.label}</div>
+                                                            <div style={{ textAlign: 'right' }}>{f.format(matchingPreset.backtest![f.key] as number)}</div>
+                                                        </React.Fragment>
+                                                    ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                        <span style={{ fontSize: '12px', color: '#aaa', marginTop: '4px' }}>Top 8</span>
+                    </div>
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -273,7 +367,10 @@ export const ScreenerPage: React.FC = () => {
         const tickerMap: Record<string, { item: ScreenerDashboardItem; categories: string[]; count: number }> = {};
         
         // Define exact allowed groups for confluence
-        const allowedGroups = activeTab === 'Rise' ? ['Check'] : ['Warning'];
+        // Rise 側は Pickup(バックテスト実績あり)グループの複数シグナル一致のみを対象とする。
+        // 旧 'Check' は今回の再編で「観察用途で edge 未検証」の別グループに変わったため、
+        // ここを追従させないと Pickup 同士の一致が拾えなくなり黙って壊れる。
+        const allowedGroups = activeTab === 'Rise' ? ['Pickup'] : ['Warning'];
 
         categories.forEach(cat => {
             // Trim and check group name strictly
