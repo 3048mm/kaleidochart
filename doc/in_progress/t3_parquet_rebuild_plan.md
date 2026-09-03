@@ -192,21 +192,21 @@ ETF の 2010〜2018 が SQLite に入らない（§1(c)）。
 
 ### Phase 1 — 実装（TDD）
 
-- [ ] `test_recompute_chunked.py` — 全銘柄再計算がチャンクで OOM せず、既存 Parquet と一致する
-- [ ] `recompute_indicators` のチャンク書き出しラッパー
-- [ ] `update_pipeline.py --rebuild-from` を Parquet 基点へ変更
-- [ ] 復元のカットオフ撤廃（§3.2）＋ docstring 訂正2件
-- [ ] `refresh_T3Table.bat` の縮小
-- [ ] `test_backfill_price_history.py` — 既存行を書き換えないこと / 取得不足を検出すること
-- [ ] `backfill_price_history.py` 新設
-- [ ] backend / frontend の全テスト green
+- [x] `test_recompute_chunked.py` — 全銘柄再計算がチャンクで OOM せず、既存 Parquet と一致する
+- [x] `recompute_indicators` のチャンク書き出しラッパー
+- [x] `update_pipeline.py --rebuild-from` を Parquet 基点へ変更
+- [x] 復元のカットオフ撤廃（§3.2）＋ docstring 訂正2件
+- [x] `refresh_T3Table.bat` の縮小
+- [x] `test_backfill_price_history.py` — 既存行を書き換えないこと / 取得不足を検出すること
+- [x] `backfill_price_history.py` 新設
+- [x] backend / frontend の全テスト green
 
 ### Phase 2 — Sandbox 検証
 
-- [ ] **730日しか無い SQLite の状態で `--rebuild-from T3` を実行し、マスターが壊れないこと**
+- [x] **730日しか無い SQLite の状態で `--rebuild-from T3` を実行し、マスターが壊れないこと**
       （2026-08-29 の事故シナリオの再現テスト）
-- [ ] 再計算結果が現行 Parquet と**差分0**であること（充足前。ETF の 2018-2021 を除く）
-- [ ] 充足の dry-run で対象銘柄数・取得範囲が妥当なこと
+- [x] 再計算結果が現行 Parquet と**差分0**であること（充足前。ETF の 2018-2021 を除く）
+- [x] 充足の dry-run で対象銘柄数・取得範囲が妥当なこと
 - [ ] 所要時間の計測（充足の yfinance 取得が支配的な見込み）
 
 ### Phase 3 — 本番反映（**ユーザー実施**）
@@ -246,7 +246,47 @@ ETF の 2010〜2018 が SQLite に入らない（§1(c)）。
 
 ## 7. 途中発生した課題
 
-（未着手）
+### 7.1 §3.2 の判断を逆にした（復元は全期間 → ホット期間のみ）
+
+計画時は「復元のカットオフを撤廃して全期間を読む（+1.4%）」としていたが、
+実装中に前提が変わったため**逆にした**。
+
+T3 の再計算が Parquet 基点になったことで、SQLite にホット期間より古い行を
+載せる理由が消えた。むしろ載せると:
+
+- 復元後 600万行 → purge で158万行へ削るのに**実測 3.2時間**
+- その状態で rotate すると 600万 × 600万のマージになり、
+  **2026-09-01 に OOM して指標マスタが切り詰められた条件そのもの**
+
+`HOT_WINDOW_DAYS = 730` を定数化し、復元と purge が同じ値を見るようにした。
+結果的に docstring（"restoring only the latest 2 years"）に実装を合わせた形になる。
+
+### 7.2 検証基準を2回作り直した
+
+初回の検証は「ROLLING 系は完全一致 / EMA 系は相対%で許容」という2分類にしたが、
+**正しい実装を落とした**（誤検知）。原因は2つ:
+
+1. `rs_trend_s*`（`rs_value_e5` を含む）と `rs_*_dot_age`（経路依存カウンタ）を
+   ROLLING 系に分類していた
+2. `rs_ratio_e*` / `rs_momentum_e*` は **z-score**、`rs_macd_*` は EMA の差分で、
+   **値がゼロ近傍を取るため相対%が発散する**（最大 12511% を観測）
+
+列を EXACT / LEVEL / CENTERED / COUNTER の4分類にし、CENTERED は絶対差で評価する
+形に改めた。**合否のゲートは EXACT のみ**とし、他は日付範囲を添えて情報提供する。
+
+### 7.3 差分は「既存の破損を再計算が直している」ことが判明した
+
+LEVEL/CENTERED の差分がどの日付に出るかを調べたところ、
+**ホット期間の境界(2024-08-28)からの相対位置に理論どおり集中**していた:
+
+| 列 | 差分の日付 | 理論上の位置 |
+| :--- | :--- | :--- |
+| `rs_trend_s200` | 2025-01-14〜2025-06-06 | `rolling(200, min_periods=100)` の 100〜200本目 |
+| `vol_surge_rel_spy_21` | 2024-08-21〜2024-09-18 | 境界直後の 21本以内 |
+| `ema_200` | 2026-08-06〜2026-09-01 | 日次 T3 が730日窓で計算した直近行 |
+
+つまり本変更は将来の事故予防だけでなく、**過去のリビルドが残した破損を修復する**。
+
 
 ## 8. スコープ外・残作業
 
