@@ -530,11 +530,69 @@
   - **削除する場合の注意**: `_A_only` / `_B_only` / `_E_only` のうち
     **`_B_only` だけは `optimization_market_score.py:57` が `config_path` として読んでいる**。
     `_E_only` を消すのは安全だが、同じ理屈で `_B_only` を消すとコードが壊れる。
+
+    > [!NOTE]
+    > **2026-09-04 追記: 3ファイルとも消滅していた。** `data/` にも `data/_bk_*` にも
+    > 全10ワークツリーにも残っておらず、git は一度も追跡していないため**復元不可能**。
+    > 影響と対応は下記「MTS ウェイト最適化が…」エントリに分離した。
   - **構造的な注意点**: `_collect_required_keys()` は `data/screener_presets*.toml` を
     glob するため、**git 管理外のローカル生成物がテストの合否を左右する**。
     「本体では落ちるがワークツリーでは落ちない」という切り分けにくい形になるので、
     同種の failure を見たらまず `data/screener_presets*.toml` の untracked 分を疑うこと。
   - 発見の経緯: `worktree-data-provisioning` の merge 後検証（`doc/completed/worktree_data_provisioning_plan.md`）
+
+- [x] **MTS ウェイト最適化が消えたプリセットを読んでいた（2026-09-04 発見・同日解決）**
+
+  > [!NOTE]
+  > **解決済み。** `worktree-mts-preset-cleanup` で対応（ユーザー判断: 素直に整理する）。
+  > 「次に MTS 最適化をかけるなら戦略も練り直す」ため、過去との比較可能性は捨ててよいと判断。
+
+  - **事象**: `backend/backtest/optimization_market_score.py` が
+    `config_path="data/screener_presets_B_only.toml"` を読んでいたが、**ファイルが存在しない**。
+    `_A_only` / `_B_only` / `_E_only` の3つとも消滅しており（git 管理外・バックアップにも
+    ワークツリーにも無し）復元できない。
+
+  - **なぜ気付きにくかったか（本質）**: クラッシュせず**静かに嘘の結果を出していた**。
+
+    ```
+    Trial 00 failed due to: Config file not found: ...\data/screener_presets_B_only.toml
+
+       Optimization Complete!
+       Best Calmar Score: -9999.0000
+         -> spy_trend      : 0.2500 (25.0%)  ...
+    ```
+
+    `load_scenario_config()` は `FileNotFoundError` を上げるが、`objective()` の
+    **広い `except Exception` が握りつぶして `-9999.0` を返す**。結果、全トライアルが
+    同じ罰点のまま study が「正常終了」し、意味のない Best Weights を表示する
+    （上の 25% 均等はベースライン trial の値がそのまま出ているだけ）。
+    `main()` は表示しかしないので自動的な汚染は無いが、
+    **人間がその値をダッシュボード設定へ手でコピーすると本番に入る**のが実害経路。
+
+  - **影響範囲**: 本番コードは**この1ファイルのみ**。単独の手動 CLI で、`.bat` からも
+    他モジュールの import からも呼ばれず、日次パイプライン・API・スクリーナー・
+    バックテスト・シナリオバッチのいずれにも含まれない。
+    `_A_only` を読んでいたのはテストだけ、`_E_only` は現在どこからも読まれていない。
+
+  - **対応（3点）**:
+    1. `config_path` を `data/screener_presets.toml` へ変更。定数 `SCENARIO_CONFIG_PATH` に切り出し、
+       **過去の最適化結果とは母集団が違うので比較できない**旨をコメントで明記
+    2. `objective()` の例外処理を狭め、`FileNotFoundError` / `TOMLDecodeError` は
+       握りつぶさず落とす。加えて `main()` で**起動前に設定の存在を検証**し、
+       全件罰点で終わった study の Best を表示せず `sys.exit(1)` する
+    3. `test_special_removal.py` の `test_a_only_toml_no_special` /
+       `test_b_only_toml_no_special` を削除（参照先が復元不可能でテストとして成立しない）
+
+  - **残る前提条件（次に MTS 最適化をかける人へ）**: 新しい参照先では
+    **評価対象が1戦略しか無い**。シナリオテストは
+    `scenario_runner.SCENARIO_TARGET_PREFIX = 'Rise - Pickup'` に前方一致する戦略だけを
+    スキャンするため（`scenario_runner.py:366`）、`screener_presets.toml` の7戦略のうち
+    該当は `Rise - Pickup - RRG Improving In` の**1本のみ**（残りは Common / Warning /
+    Rebound sign）。**先に Pickup 群を意図した構成に整えること。**
+
+  - **教訓**: 罰点に丸める `except` は、最適化の失敗と**設定ミス**を区別できない。
+    設定不備は fail-fast させること。この形は
+    `doc/agent_execution_rules.md` の「サイレント失敗」と同じ型。
 
 - [x] **ワークツリーで本番 Parquet を読む手段が規定と矛盾している（2026-08-28 発見 / 2026-09-01 解決）**
 

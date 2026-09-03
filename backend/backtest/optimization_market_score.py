@@ -8,6 +8,7 @@ of the portfolio scenario simulation.
 import os
 import sys
 import argparse
+import tomli
 import logging
 import optuna
 
@@ -23,6 +24,27 @@ from backend.backtest.common_constraints import load_tax_rate
 
 # Suppress Optuna verbose logging to keep terminal clean
 optuna.logging.set_verbosity(optuna.logging.WARNING)
+
+#: MTS ウェイト最適化が評価に使うスクリーナープリセット。
+#:
+#: 2026-09-04 に `data/screener_presets_B_only.toml` から変更した。
+#: 旧ファイルは **git 管理外のローカル生成物**で、バックアップにもワークツリーにも
+#: 残っておらず復元できない（`doc/issue_list.md` の該当エントリ参照）。
+#:
+#: > [!IMPORTANT]
+#: > **過去の最適化結果とは比較できない。** 旧 `_B_only` は B 系だけに絞った
+#: > プリセットで、評価する母集団が違う。以前のウェイトと数値を並べて優劣を論じないこと。
+#:
+#: > [!WARNING]
+#: > **現状この設定では評価対象が1戦略しか無い。** シナリオテストは
+#: > `scenario_runner.SCENARIO_TARGET_PREFIX = 'Rise - Pickup'` に前方一致する
+#: > 戦略だけをスキャンする（`scenario_runner.py:366`）。
+#: > `screener_presets.toml` の7戦略のうち該当するのは
+#: > **`Rise - Pickup - RRG Improving In` の1本だけ**で、残りは Common / Warning /
+#: > Rebound sign。つまり MTS ウェイトはこの1戦略に対して最適化される。
+#: > **次に MTS 最適化をかけるときは、まず Pickup 群を意図した構成に整えること。**
+SCENARIO_CONFIG_PATH = "data/screener_presets.toml"
+
 
 def objective(trial, consider_tax: float = 0.0):
     # 1. Suggest raw weight components (0.0 to 1.0)
@@ -54,7 +76,7 @@ def objective(trial, consider_tax: float = 0.0):
             initial_capital=100000.0,
             max_positions=8,
             min_score=1,
-            config_path="data/screener_presets_B_only.toml",
+            config_path=SCENARIO_CONFIG_PATH,
             market_weights=weights,
             scaling_ratio=scaling_ratio,
             output_dir="output/scenario_opt_temp",
@@ -86,6 +108,11 @@ def objective(trial, consider_tax: float = 0.0):
               
         return score
         
+    except (FileNotFoundError, tomli.TOMLDecodeError):
+        # 設定の不備は「最適化の失敗」ではない。-9999 に丸めると全トライアルが
+        # 同じ値になり、study が「正常終了」して意味のない Best を表示してしまう
+        # （2026-09-04 に実際に起きた。§下記 NOTE）。ここは握りつぶさず落とす
+        raise
     except Exception as e:
         print(f"Trial {trial.number:02d} failed due to: {e}", flush=True)
         return -9999.0
@@ -107,6 +134,15 @@ def main():
         print("   [Tax] 税なし (consider_tax=0.0)")
     print("=" * 70, flush=True)
 
+    # 設定の不備は**最適化を始める前に**落とす。トライアルの中で気付くと、
+    # 全件が同じ罰点で埋まったまま study が完走してしまう
+    _cfg = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)))), SCENARIO_CONFIG_PATH)
+    if not os.path.exists(_cfg):
+        print(f"[ERROR] シナリオ設定が見つかりません: {_cfg}")
+        sys.exit(1)
+    print(f"   Scenario config: {SCENARIO_CONFIG_PATH}")
+
     study = optuna.create_study(direction='maximize')
     
     # Enforce default baseline weights as trial 0 (25% each, ratio=1.0)
@@ -121,6 +157,16 @@ def main():
     
     study.optimize(lambda t: objective(t, consider_tax=tax_rate), n_trials=args.n_trials)
     
+    # 全トライアルが罰点で終わった study の "Best" は意味を持たない。
+    # これを黙って表示すると、その値がダッシュボード設定へ手でコピーされうる
+    if study.best_value <= -9999.0:
+        print()
+        print("=" * 70)
+        print("   [ERROR] 有効なトライアルが1件もありません（全件が罰点 -9999）。")
+        print("   表示できる最適ウェイトはありません。上のトライアルログで原因を確認してください。")
+        print("=" * 70, flush=True)
+        sys.exit(1)
+
     # Normalize the best weights
     best_params = study.best_params
     best_ratio = best_params.get('scaling_ratio', 1.0)

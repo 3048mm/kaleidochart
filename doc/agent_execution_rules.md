@@ -413,6 +413,17 @@ if errorlevel 1 goto :fail
 > 表示して終わる）。`create_sandbox.py` を本体で叩くと本番の `data/sandbox/` を触りにいくので、
 > **`--light` を付けず実コピー（約1.6GB / 十数秒）するのが確実**。
 > Parquet はハードリンクなので、実コストはこの SQLite コピーだけ。
+>
+> **`pytest backend/tests/` 全体を回す場合も同じ**（2026-09-04 実測）。
+> `--mode read` のワークツリーでは `test_scenario_comparison.py` が落ちる:
+>
+> ```
+> FileNotFoundError: Parquet master cache files not found at ...\data\parquet_master!
+> ```
+>
+> `preload_data()` を通る経路はワークツリー自身の `data/parquet_master` を見にいくため、
+> `--mode read`（`config.local.toml` を書くだけ）では足りない。
+> **コードの不具合と紛らわしいので、テストの赤を見たらまずプロビジョニングのモードを疑う。**
 
 `--mode write` の内訳:
 
@@ -567,3 +578,4 @@ error: failed to delete 'D:/.../.claude/worktrees/<name>': Permission denied
 - 2026-08-24: §6 を新設（欠番だった） — `.bat` にマルチバイト文字を書かない（次の行が飛ぶ）、`schtasks /create` は空コマンドでも SUCCESS を返すので読み戻して検証する、同一行での `%errorlevel%` 展開。週次メンテナンスが3週間実行されていなかった件の再発防止
 - 2026-09-03: §1.1 / §1.2 を新設 — Bash のヒアドキュメントを `<<EOF` とクォート無しで書くと本文中のインラインコードがコマンド置換として実行され、**エラーなく Markdown 本文が消える**（実例つき）。作業コピーが CRLF・index が LF のため、`newline=""` で読むと改行を含むアンカーが黙って一致しなくなる件も併記
 - 2026-09-03: §10.3 を修正 — バックテスト／最適化は「読むだけ」だが `optimization_runner` が冒頭で `init_db()` を呼ぶため `--mode read` では `DataNotProvisionedError` で起動できない。`--light` は `stocktool.db` を作らない点も明記
+- 2026-09-04: §10.3 に追記 — `pytest backend/tests/` 全体もワークツリーでは `--mode write` が要る（`--mode read` だと `test_scenario_comparison.py` が `Parquet master cache files not found` で落ちる）

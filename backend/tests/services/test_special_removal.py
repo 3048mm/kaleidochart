@@ -449,25 +449,11 @@ class TestTOMLMigration:
                     f"Move it to [{section}.filters] as a boolean key."
                 )
 
-    def test_a_only_toml_no_special(self):
-        """screener_presets_A_only.toml should not contain any `special` key."""
-        import tomllib
-        toml_path = r"d:\My Documents\Programing\stocktool\data\screener_presets_A_only.toml"
-        with open(toml_path, "rb") as f:
-            data = tomllib.load(f)
-
-        for preset in data.get("rise", []):
-            assert "special" not in preset
-
-    def test_b_only_toml_no_special(self):
-        """screener_presets_B_only.toml should not contain any `special` key."""
-        import tomllib
-        toml_path = r"d:\My Documents\Programing\stocktool\data\screener_presets_B_only.toml"
-        with open(toml_path, "rb") as f:
-            data = tomllib.load(f)
-
-        for preset in data.get("rise", []):
-            assert "special" not in preset
+    # `screener_presets_A_only.toml` / `_B_only.toml` を検査していた2件は
+    # 2026-09-04 に削除した。どちらも **git 管理外のローカル生成物**で、
+    # バックアップにもワークツリーにも残っておらず復元できないため、
+    # テストとして成立しなくなった（`doc/issue_list.md` の該当エントリ参照）。
+    # 絶対パス（`d:\My Documents\...`）直書きでワークツリー隔離も破っていた。
 
     def test_scenario_runner_no_special_expansion(self):
         """scenario_runner should not contain special expansion logic."""
