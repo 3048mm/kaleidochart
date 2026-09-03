@@ -68,7 +68,7 @@ class RequiredColumns:
 # 'max_avg_hits_per_day' は 'min_avg_hits_per_day' の対になる制御キーとして backtest_config.toml
 # で実際に使われているが、旧 METADATA_KEYS には非対称に欠落していたため、この集約で補う。
 METADATA_KEYS: frozenset = frozenset({
-    'id', 'name', 'subtitle', 'subname', 'description', 'group', 'filters', 'use_hysteresis',
+    'id', 'name', 'subtitle', 'subname', 'description', 'backtest', 'group', 'filters', 'use_hysteresis',
     'max_hits_per_day', 'sort_column', 'sort_ascending', 'expression', '_use_hysteresis',
     'min_avg_hits_per_day', 'max_avg_hits_per_day', 'min_hit_rate_pct', 'max_allowed_dd',
     'use_vxv_vix_hysteresis', 'vxv_vix_hysteresis_type',
