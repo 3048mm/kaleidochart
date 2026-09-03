@@ -701,6 +701,55 @@ min_market_cap     = { type = "categorical", choices = [1e8, 3e8, 1e9, 3e9] }
 
 
 # =============================================================
+# H3b: H3 の検出件数ゲートを緩めて「もっと締めた領域」を評価できるようにした版
+#
+# H3（200トライアル）の結果、スコア上位が min_adr_pct_21 の上限 7.0 に 62%、
+# max_vcr が死に領域の直上 0.90 に張り付いた。実測すると両方とも
+# **「もっと締めたいが検出件数ゲートに阻まれている」**状態だった:
+#   adr 7.5 → 0.333件/日（生存） / 8.0 → 0.242（ゲート際） / 8.5 → 0.176（罰点）
+#   vcr 0.85 → 0.340 / 0.80 → 0.184（罰点）
+# 一方 min_rs_trend_s21 と min_market_cap の張り付きは**下方向に効かないだけ**で、
+# 緩めても件数が動かない（rs 0.90→0.75 で 0.451→0.454、mcap 1e8→0 で 0.443→0.451）。
+# したがって「範囲を広げる」より**ゲートを開けて締める方向を評価可能にする**のが本筋。
+#
+# min_avg_hits_per_day を E1（VCP ブレイクアウト＝稀なのが仕様）と同じ 0.05 に置く。
+# resolve_prune_floor と quality_gate はどちらも「戦略側がより低い値を宣言していれば
+# それを尊重する」流儀なので、この1行で罰点下限もゲート下限も 0.05 に下がる。
+#
+# **この study の目的は最良パラメータ探しではなく「締めるほど質が上がり続けるか」の確認。**
+# 検出が薄くなるぶん統計は粗くなるが、expectancy_lcb は標本数を織り込む（期待値 - 2SE）
+# ので、薄さゆえの見かけの良さは LCB 側で自動的に割り引かれる。
+# =============================================================
+[[strategy]]
+name = "H3b_structure_tlb_tight"
+description = "H3 の検出ゲートを緩め、収縮と値動きをより締めた領域を評価する"
+max_hits_per_day = 10
+sort_column = "rs_ratio_rank_e21"
+sort_ascending = false
+is_structure_trend_line_break = true
+# ベースライン = H3 の best trial 163（score 0.917 / Alpha +2.87%）
+min_adr_pct_21 = 7.0
+min_rs_trend_s21 = 0.925
+min_dist_21ema_pct = -0.5
+max_vcr = 0.90
+min_market_cap = 1e8
+# 検出ゲートを開ける（E1 と同じ値。この2行が H3 との唯一の設計差）
+min_avg_hits_per_day = 0.05
+min_hit_rate_pct = 0.3
+
+[strategy.optimization]
+# 上限 10.0 まで開ける（実測 0.071件/日。ゲート 0.05 の内側）
+min_adr_pct_21     = { type = "float", min = 2.0, max = 10.0, step = 0.5 }
+# 下限は 0.90 のまま。0.90 未満は件数が動かず（0.451→0.454）情報を持たない
+min_rs_trend_s21   = { type = "float", min = 0.90, max = 1.15, step = 0.025 }
+min_dist_21ema_pct = { type = "float", min = -3.0, max = 5.0, step = 0.5 }
+# 下限を 0.70 まで戻す（H3 では 0.80 未満が罰点だったが、ゲートを開けたので評価可能）
+max_vcr            = { type = "float", min = 0.70, max = 1.50, step = 0.05 }
+# 1e8 未満は候補が全期間で6件しか無く（$100M未満）、選択肢に足しても意味が無い
+min_market_cap     = { type = "categorical", choices = [1e8, 3e8, 1e9, 3e9] }
+
+
+# =============================================================
 # Optimization Evaluation Periods (Multi-period cross-validation)
 # =============================================================
 
