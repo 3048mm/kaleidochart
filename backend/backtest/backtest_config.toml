@@ -672,11 +672,15 @@ max_hits_per_day = 10
 sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
 is_structure_trend_line_break = true
-min_adr_pct_21 = 4.0
-min_rs_trend_s21 = 1.0
-min_dist_21ema_pct = 2.0
-max_vcr = 1.5
-min_market_cap = 3e8
+# 2026-09-03: 200トライアルの best trial 163 を反映（score 0.917 / Alpha +2.87% /
+# ホールドアウト LCB +1.17 / +1.50）。H3b（ゲート開放）と H3c（収縮を締める）は
+# どちらもホールドアウトで劣後した。詳細は
+# doc/completed/trend_line_break_optimization_plan.md §7-6 / §7-7
+min_adr_pct_21 = 7.0
+min_rs_trend_s21 = 0.925
+min_dist_21ema_pct = -0.5
+max_vcr = 0.90
+min_market_cap = 1e8
 # 流動性床は [general] が全戦略へ実行時注入するため戦略側には書かない
 # min_avg_hits_per_day / quality_gate_min_hits_per_day は書かない。
 # グローバル既定（1.0 / 0.3）で足りる（H1 が抱えた下限割れが H3 には無い）

@@ -169,3 +169,36 @@ source = "manual"
   is_theme_rs_trend_rank_s14_gt_s21 = true
   is_close_gt_ema63 = true
   is_rs_macd_hist_rising_21 = true
+
+
+# =============================================================
+# H3: Trend Line Break（カウンタートレンド線の上抜け）
+# =============================================================
+# 型1（最適化）の結論は doc/completed/trend_line_break_optimization_plan.md §6.4。
+#   Alpha +2.87%（E2 +1.12% 超・B5 +4.97% に次ぐ2位）
+#   ホールドアウト4期間中3期間で正（pooled LCB +1.17 / +1.50）
+#   ただし勝率 25.9% / in-sample LCB -0.90 と裾に依存する
+#
+# **型3 で確かめたいこと**: 型1で見えた「相場つき依存」が実運用条件で出るか。
+#   2020-02〜05（V字反発）で勝率 64.7% / 2022 のじり安で最大DD を作っている。
+#   MTS 連動の型3なら、じり安局面でポジションを絞れる分だけ改善するはず。
+#
+# **型1の DD -141.2% をそのまま持ち込まないこと。** あれは
+# 「生の合計%pt / avg_slots（期間平均 4.82）」で、シグナルが集中する戦略では
+# 分母が実態より小さくなる（同時保有の実測は中央値3・95%タイル14・最大30枠）。
+# 実効分母で割り直すと -23〜-49% 相当。型3の DD が本来の値。
+[[job]]
+name = "H3_tlb"
+strategy_code = "H3_structure_trend_line_break"
+source = "optuna"
+study_name = "H3_structure_trend_line_break"
+
+# 同じ戦略で保有数を絞った版。シグナルが集中する（最大30枠）ため、
+# 枠が埋まったときの挙動が既定8枠と変わるかを見る
+[[job]]
+name = "H3_tlb_narrow"
+strategy_code = "H3_structure_trend_line_break"
+source = "optuna"
+study_name = "H3_structure_trend_line_break"
+  [job.portfolio]
+  max_positions = 4
