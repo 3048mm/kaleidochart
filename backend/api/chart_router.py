@@ -8,7 +8,8 @@ import os, re, logging
 from db.models import Symbol, DailyPrice, Indicator, RelativeRank, MarketSignal, ThemeConstituent, Earning
 from api import schemas
 from api.deps import get_api_db, get_api_user_db
-from indicators.structure_pivot import DEFAULT_MAX_LEN, DEFAULT_MIN_LEN, find_structures
+from indicators.structure_pivot import (DEFAULT_MAX_LEN, DEFAULT_MIN_LEN,
+                                        find_counter_trends, find_structures)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -922,6 +923,34 @@ def _structure_to_dict(s, dates: List[str], fib_1st: float = DEFAULT_FIB_1ST,
     }
 
 
+#: レスポンスに載せるカウンター線の履歴上限。構造ピボットの履歴（フロント側 30本）と
+#: 揃える。`sp_counter` の非NULL率は 28.6% と高く、全部返すとペイロードが膨らむ
+COUNTER_HISTORY_LIMIT = 30
+
+
+def _counter_to_dict(c, dates: List[str]) -> Dict[str, Any]:
+    """カウンタートレンド線を、そのまま線分として描ける形にする。
+
+    `start_value` / `end_value` を**サーバ側で計算して返す**のが要点。
+    日付↔インデックスの対応はここにしか無いため、フロントで傾きから座標を
+    復元させると「営業日でない日を跨ぐとずれる」種類のバグを呼び込む。
+    """
+    return {
+        "a1_date": dates[c.a1_index],
+        "a1_price": c.a1_price,
+        "a2_date": dates[c.a2_index],
+        "a2_price": c.a2_price,
+        "start_date": dates[c.start_index],
+        "end_date": dates[c.end_index],
+        # 線分の両端の値。a1 から end まで引けば線全体が描ける
+        "a1_value": c.a1_price,
+        "start_value": c.value_at(c.start_index),
+        "end_value": c.value_at(c.end_index),
+        "slope": c.slope,
+        "is_current": c.is_current,
+    }
+
+
 def build_structure_pivot_response(
     symbol_id: int,
     db: Session,
@@ -951,6 +980,12 @@ def build_structure_pivot_response(
     structures = find_structures(high, low, close, min_len=min_len, max_len=max_len)
     items = [_structure_to_dict(s, dates, fib_1st, fib_tp1, fib_tp2) for s in structures]
 
+    # カウンタートレンド線。構造が成立していない期間にだけ引かれる（sp_pivot と排他）。
+    # 値は T3 の sp_counter と一致する（tmp/verify_counter_parity.py で 60銘柄・
+    # 45,708バー・6,733線分の不一致 0 を確認済み）
+    counters = find_counter_trends(high, low, close, min_len=min_len, max_len=max_len)
+    counter_items = [_counter_to_dict(c, dates) for c in counters[-COUNTER_HISTORY_LIMIT:]]
+
     return {
         "metadata": {
             "ticker": symbol.ticker,
@@ -960,9 +995,12 @@ def build_structure_pivot_response(
             "fib_tp1": fib_tp1,
             "fib_tp2": fib_tp2,
             "bars": len(dates),
+            "counter_history_limit": COUNTER_HISTORY_LIMIT,
         },
         "structures": items,
         "current": next((it for it in items if it["is_current"]), None),
+        "counters": counter_items,
+        "current_counter": next((it for it in counter_items if it["is_current"]), None),
     }
 
 

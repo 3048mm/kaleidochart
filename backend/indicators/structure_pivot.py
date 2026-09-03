@@ -378,18 +378,35 @@ def counter_trend_series(
     > バックフィル（全期間）が一致する。回帰テストは
     > `test_counter_trend.py::TestHistoryLengthStability`。
     """
+    return _counter_scan(high, low, close, min_len, max_len)[0]
+
+
+def _counter_scan(high, low, close, min_len: int, max_len: int):
+    """カウンタートレンドラインの走査（唯一の実装）。
+
+    Returns:
+        ``(line, a1_idx, a2_idx)``。いずれも長さ n の配列で、ラインが引かれない
+        バーは ``line`` が NaN、``a1_idx`` / ``a2_idx`` が -1。
+
+    `counter_trend_series`（バーごとのスカラー）と `find_counter_trends`
+    （アンカー付きの線分列）は**どちらもこの関数の結果から導く**。
+    `_scan_for_length` が `structure_pivot_series` と `find_structures` の
+    単一の走査であるのと同じ関係で、片方だけ直す事故を防ぐ。
+    """
     high = np.asarray(high, dtype=np.float64)
     low = np.asarray(low, dtype=np.float64)
     close = np.asarray(close, dtype=np.float64)
 
     n = high.shape[0]
     line = np.full(n, np.nan)
+    a1_idx = np.full(n, -1, dtype=np.int64)
+    a2_idx = np.full(n, -1, dtype=np.int64)
     if n == 0:
-        return line
+        return line, a1_idx, a2_idx
     if low.shape[0] != n or close.shape[0] != n:
         raise ValueError('high / low / close の長さが一致していません')
     if max_len < min_len or min_len < 1 or n < _min_bars_required(min_len):
-        return line
+        return line, a1_idx, a2_idx
 
     sp_pivot, _sp_hl = structure_pivot_series(high, low, close, min_len, max_len)
     active = ~np.isnan(sp_pivot)
@@ -438,5 +455,85 @@ def counter_trend_series(
             continue
 
         line[t] = high[a2] + best_slope * (t - a2)
+        a1_idx[t] = a1
+        a2_idx[t] = a2
 
-    return line
+    return line, a1_idx, a2_idx
+
+
+@dataclass(frozen=True)
+class CounterTrend:
+    """カウンタートレンドライン1本分。インデックスは入力配列の位置。
+
+    「1本」の単位は**アンカー組 (a1, a2) が同じ連続区間**。アンカーが入れ替われば
+    別の線として切る。区間内では値が完全な直線なので、線分として描いてよい。
+    """
+
+    a1_index: int
+    a1_price: float
+    """アンカー1（`limit_idx` までで価格が最大の高値ピボット）。"""
+
+    a2_index: int
+    a2_price: float
+    """アンカー2（`a1 < idx < limit_idx` で傾きが最大の高値ピボット）。"""
+
+    slope: float
+    """1バーあたりの値動き。アンカー1 が最高値なので構造上つねに 0 以下。"""
+
+    start_index: int
+    """このアンカー組で線が引かれ始めたバー。**必ず `a2_index` より後**
+    （確定遅延。`counter_trend_series` の NOTE 参照）。"""
+
+    end_index: int
+    """同じアンカー組が続いた最後のバー。"""
+
+    is_current: bool
+    """最終バーまで生きているか。"""
+
+    def value_at(self, index: int) -> float:
+        """バー `index` でのライン値。区間外でも直線を延長して返す。"""
+        return self.a2_price + self.slope * (index - self.a2_index)
+
+
+def find_counter_trends(
+    high: np.ndarray,
+    low: np.ndarray,
+    close: np.ndarray,
+    min_len: int = DEFAULT_MIN_LEN,
+    max_len: int = DEFAULT_MAX_LEN,
+) -> List['CounterTrend']:
+    """カウンタートレンドラインを**線分の列**として返す（チャート描画用）。
+
+    `counter_trend_series` と同じ `_counter_scan` を使うので、
+    各線分の区間内の値は series と厳密に一致する（`test_counter_trend.py`
+    の `TestFindCounterTrendsEquivalence` が縛っている）。
+
+    引かれるバーが無ければ空リストを返す（例外にしない）。チャートの一部なので、
+    線が出ないことで画面全体を落とさない。
+    """
+    line, a1_idx, a2_idx = _counter_scan(high, low, close, min_len, max_len)
+    n = line.shape[0]
+    if n == 0:
+        return []
+
+    high = np.asarray(high, dtype=np.float64)
+    segments: List[CounterTrend] = []
+    start = -1
+    for t in range(n + 1):
+        drawn = t < n and a1_idx[t] >= 0
+        same = (drawn and start >= 0
+                and a1_idx[t] == a1_idx[start] and a2_idx[t] == a2_idx[start])
+        if same:
+            continue
+        if start >= 0:
+            a1, a2 = int(a1_idx[start]), int(a2_idx[start])
+            segments.append(CounterTrend(
+                a1_index=a1, a1_price=float(high[a1]),
+                a2_index=a2, a2_price=float(high[a2]),
+                slope=(float(high[a2]) - float(high[a1])) / (a2 - a1),
+                start_index=start, end_index=t - 1,
+                is_current=(t == n),
+            ))
+        start = t if drawn else -1
+
+    return segments

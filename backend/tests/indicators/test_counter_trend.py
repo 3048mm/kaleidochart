@@ -16,8 +16,9 @@
 import numpy as np
 import pytest
 
-from indicators.structure_pivot import (counter_trend_series, pivot_strength_high,
-                                        pivot_strength_low, structure_pivot_series)
+from indicators.structure_pivot import (counter_trend_series, find_counter_trends,
+                                        pivot_strength_high, pivot_strength_low,
+                                        structure_pivot_series)
 
 
 # ============================================================
@@ -229,3 +230,140 @@ class TestHistoryLengthStability:
         cut = counter_trend_series(high[extra:], low[extra:], close[extra:])
         np.testing.assert_allclose(cut[warmup:], full[extra + warmup:],
                                    equal_nan=True, rtol=1e-9)
+
+
+# ============================================================
+# find_counter_trends — アンカー座標つきの線分列（チャート描画用）
+# ============================================================
+#
+# `counter_trend_series` はバーごとのスカラーしか返さないため、線分として
+# 描くのに必要な起点2点が取れない。`find_structures` ↔ `structure_pivot_series`
+# と同じ二層構造を作る。
+#
+# **最優先の制約: 既存の値を1つも変えないこと。** `counter_trend_series` は
+# 2026-08-29 に Pine 原文と照合して確定し、T3・スクリーナー・バックテストの
+# 3経路が同じ値を使っている。等価性テストを先頭に置く。
+
+class TestFindCounterTrendsEquivalence:
+    """新関数が既存 series と完全に一致すること（§2.2 の最優先制約）。"""
+
+    def test_segments_reproduce_series_values_exactly(self, downtrend):
+        """各線分の区間内で、直線の値が series と厳密に一致する。"""
+        high, low, close = downtrend
+        line = counter_trend_series(high, low, close, min_len=2, max_len=5)
+        segments = find_counter_trends(high, low, close, min_len=2, max_len=5)
+        assert segments, '線分が1本も返っていない'
+        for seg in segments:
+            for t in range(seg.start_index, seg.end_index + 1):
+                expected = seg.a2_price + seg.slope * (t - seg.a2_index)
+                assert line[t] == pytest.approx(expected, abs=1e-9), (
+                    f'bar {t}: series={line[t]} vs segment={expected}')
+
+    def test_segments_cover_every_non_nan_bar_exactly_once(self, downtrend):
+        """series が値を持つバーは、ちょうど1本の線分に覆われる。"""
+        high, low, close = downtrend
+        line = counter_trend_series(high, low, close, min_len=2, max_len=5)
+        segments = find_counter_trends(high, low, close, min_len=2, max_len=5)
+
+        covered = []
+        for seg in segments:
+            covered.extend(range(seg.start_index, seg.end_index + 1))
+        assert len(covered) == len(set(covered)), '線分の区間が重複している'
+        assert sorted(covered) == sorted(np.flatnonzero(~np.isnan(line)).tolist())
+
+    def test_returns_empty_when_series_is_all_nan(self):
+        """ラインが1本も引かれない入力では空リストを返す（例外にしない）。"""
+        n = 30
+        high = np.full(n, 60.0)
+        high[10] = 100.0
+        high[9] = high[11] = 80.0
+        low = np.linspace(58, 30, n)
+        assert find_counter_trends(high, low, high - 1.0) == []
+
+
+class TestCounterTrendAnchors:
+
+    def test_anchors_are_actual_pivot_highs(self, downtrend):
+        """アンカーの価格は、そのインデックスの高値そのもの。"""
+        high, low, close = downtrend
+        for seg in find_counter_trends(high, low, close, min_len=2, max_len=5):
+            assert seg.a1_price == high[seg.a1_index]
+            assert seg.a2_price == high[seg.a2_index]
+
+    def test_anchor1_precedes_anchor2(self, downtrend):
+        """アンカー2 はアンカー1 より後（原文の a1 < idx < limit_idx）。"""
+        high, low, close = downtrend
+        for seg in find_counter_trends(high, low, close, min_len=2, max_len=5):
+            assert seg.a1_index < seg.a2_index
+
+    def test_slope_matches_the_two_anchors(self, downtrend):
+        """傾きは2アンカーから決まる値と一致する。"""
+        high, low, close = downtrend
+        for seg in find_counter_trends(high, low, close, min_len=2, max_len=5):
+            expected = (seg.a2_price - seg.a1_price) / (seg.a2_index - seg.a1_index)
+            assert seg.slope == pytest.approx(expected, abs=1e-12)
+
+    def test_segment_starts_at_or_after_anchor2(self, downtrend):
+        """線が引かれ始めるのはアンカー2 の確定後。先読みしていないことの確認。"""
+        high, low, close = downtrend
+        for seg in find_counter_trends(high, low, close, min_len=2, max_len=5):
+            assert seg.start_index > seg.a2_index
+
+
+class TestCounterTrendSegmentation:
+
+    def test_new_segment_when_anchors_change(self, downtrend):
+        """アンカー組が変わったら別の線分に切れる（同じ組が連続することはない）。"""
+        high, low, close = downtrend
+        segments = find_counter_trends(high, low, close, min_len=2, max_len=5)
+        pairs = [(s.a1_index, s.a2_index) for s in segments]
+        for a, b in zip(pairs, pairs[1:]):
+            assert a != b, f'同じアンカー組 {a} が連続した線分に分かれている'
+
+    def test_segments_are_in_chronological_order(self, downtrend):
+        high, low, close = downtrend
+        segments = find_counter_trends(high, low, close, min_len=2, max_len=5)
+        for a, b in zip(segments, segments[1:]):
+            assert a.end_index < b.start_index
+
+    def test_is_current_marks_only_the_last_bar_segment(self, downtrend):
+        """最終バーまで生きている線分だけが is_current。"""
+        high, low, close = downtrend
+        line = counter_trend_series(high, low, close, min_len=2, max_len=5)
+        segments = find_counter_trends(high, low, close, min_len=2, max_len=5)
+        expected = not np.isnan(line[-1])
+        assert [s.is_current for s in segments].count(True) == (1 if expected else 0)
+        if expected:
+            assert segments[-1].is_current
+            assert segments[-1].end_index == len(high) - 1
+
+
+class TestFindCounterTrendsHistoryStability:
+    """`TestHistoryLengthStability` の線分版。
+
+    T3（SQLite 約500本）と Parquet バックフィル（全期間）で読む本数が違うため、
+    値が履歴長に依存すると2経路が静かに食い違う（§5.6 の実害）。
+    アンカー座標も同じ性質を持たなければならない。
+    """
+
+    @staticmethod
+    def _series(n, seed):
+        rng = np.random.default_rng(seed)
+        close = 100 + np.cumsum(rng.normal(0, 1.5, n))
+        high = close + rng.uniform(0.5, 2.0, n)
+        low = close - rng.uniform(0.5, 2.0, n)
+        return high, low, close
+
+    @pytest.mark.parametrize('seed', [0, 1, 2, 3, 4])
+    def test_last_segment_anchors_do_not_depend_on_history_length(self, seed):
+        full_h, full_l, full_c = self._series(1200, seed)
+        short = 400
+        seg_full = find_counter_trends(full_h, full_l, full_c)
+        seg_short = find_counter_trends(full_h[-short:], full_l[-short:], full_c[-short:])
+        if not seg_full or not seg_short:
+            pytest.skip('この乱数系列ではラインが引かれない')
+        a, b = seg_full[-1], seg_short[-1]
+        offset = len(full_h) - short
+        assert a.a1_index - offset == b.a1_index
+        assert a.a2_index - offset == b.a2_index
+        assert a.slope == pytest.approx(b.slope, abs=1e-9)
