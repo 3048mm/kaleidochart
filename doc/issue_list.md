@@ -475,7 +475,15 @@
 
 ## P2 — 中（体感改善・保守性・運用安全性）
 
-- [ ] **`max_dist_52w_high_pct` が `PARITY_CASES` に未登録で、本体のテストが常時 red（2026-09-01 発見）**
+- [x] **`max_dist_52w_high_pct` が `PARITY_CASES` に未登録で、本体のテストが常時 red（2026-09-01 発見・同日解決）**
+
+  > [!NOTE]
+  > **2026-09-01 解決済み。** 対応案 1 を採用し、`PARITY_CASES` に
+  > `"max_dist_52w_high_pct": -10.0` を追加した（`min_dist_52w_high_pct` と対称、
+  > フィクスチャの `dist_52w_high_pct` が hi=-1.0 / lo=-20.0 なので
+  > 全通過にも全落ちにもならない境界値）。
+  > `test_screener_parity.py` は **107 passed**。以下は経緯の記録。
+
   - **事象**: 本体チェックアウトで `pytest backend/tests/` を回すと 1 件だけ失敗する。
 
     ```

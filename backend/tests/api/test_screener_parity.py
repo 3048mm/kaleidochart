@@ -360,6 +360,7 @@ PARITY_CASES: dict = {
     "max_adr_pct_21": 3.5,
     "max_change_1d_pct": 0.0,
     "max_dist_21ema_pct": 0.0,
+    "max_dist_52w_high_pct": -10.0,
     "max_sma50_atr_mult": 3.5,
     "max_td9": 0,
     "max_vcr": 0.7,
