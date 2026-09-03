@@ -7,19 +7,29 @@ call venv\Scripts\activate.bat
 
 echo =========================================================
 echo   StockTool - Rebuild T3 (Indicators) Table
-echo   Syncing from Parquet and Re-calculating T3-T5
+echo   Recomputes T3/T4 on the Parquet master, then T5
 echo =========================================================
 echo.
+echo   NOTE: Stop the API server and the daily task first.
+echo   The pipeline lock will refuse to run alongside them.
+echo.
 
-:: 1. Sync SQL from Parquet Master to ensure starting from clean source
-echo Step 1: Restoring clean 2-year cache from Parquet Master to SQL DB...
-python backend/scripts/run_production_restore.py
+:: update_pipeline.py --rebuild-from T3 that does everything:
+::   1. recompute T3 on Parquet (full history per symbol)
+::   2. recompute T4 on Parquet
+::   3. restore the SQLite hot cache from Parquet
+::   4. recompute T5 and rotate
+::
+:: The previous version of this file ran run_production_restore.py first and
+:: then --rebuild-from T3. That is no longer needed: T3 now reads the Parquet
+:: master directly, so it always sees each symbol's full history
+:: (ETFs from 2010-04, individual names from 2018-04).
+python backend\scripts\update_pipeline.py --rebuild-from T3 --skip-fetch
 
 echo.
-:: 2. Re-calculate indicators (T3) and downstream (T4, T5)
-echo Step 2: Re-calculating T3 Indicators (skipping fetch)...
-python backend/scripts/update_pipeline.py --rebuild-from T3 --skip-fetch
+echo Running health check...
+python tools\db_health_check.py --all
 
 echo.
-echo === T3 REBUILD COMPLETED SUCCESSFULLY ===
+echo === T3 REBUILD COMPLETED ===
 pause
