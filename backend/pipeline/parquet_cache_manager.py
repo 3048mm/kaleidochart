@@ -331,6 +331,13 @@ def rotate_and_archive_to_parquet(db, db_path: str, logger: logging.Logger,
 
 # 全期間同期テーブルが旧世代のこの割合を下回ったら「置換」ではなく「和集合」に倒す。
 # 通常の削除（ダミー行の除去など）は数行〜数%なので影響しない。
+# SQLite ホットキャッシュが保持する日数。復元も purge もこの1つの値を見る。
+# 以前は復元が config の default_start_date(2018-04-01) で切っていて、
+# **復元 → 600万行 → purge で158万行へ削る（実測3.2時間）** という無駄が生じていた。
+# T3 の再計算が Parquet 基点になった（recompute_parquet_indicators.py）ため、
+# SQLite にホット期間より古い行を載せる理由はもう無い。
+HOT_WINDOW_DAYS = 730
+
 FULL_SYNC_SHRINK_RATIO = 0.5
 
 
@@ -402,9 +409,12 @@ def is_publishable_master(prices_rows: int, indicators_rows: int,
 
 
 def purge_sqlite_cache_older_than_2_years(db, db_path: str, logger: logging.Logger):
-    """
-    Deletes all DailyPrices, Indicators, and RelativeRanks older than 2 years from SQLite.
-    Performs VACUUM to physically reduce SQLite file size.
+    """SQLite から 730日より古い DailyPrice / Indicator / RelativeRank を削除する。
+
+    **VACUUM はしない。** ファイルサイズは縮まず、空きページが再利用されるだけ。
+    物理的な回収は週次メンテナンス（`weekly_maintenance.py`）へ移管済み
+    （下の "Reclaim SQLite unused pages" のコメント参照）。
+    docstring にあった "Performs VACUUM" は実装と食い違っていた。
     """
     logger.info("Initializing SQLite cache shrink (Daily Purge)...")
     t0 = time.time()
@@ -418,7 +428,7 @@ def purge_sqlite_cache_older_than_2_years(db, db_path: str, logger: logging.Logg
         return
         
     max_date = pd.to_datetime(max_date_str).date()
-    cutoff_date = max_date - timedelta(days=730)
+    cutoff_date = max_date - timedelta(days=HOT_WINDOW_DAYS)
     cutoff_str = cutoff_date.isoformat()
     
     logger.info(f"  Latest date in SQLite: {max_date_str}")
@@ -515,10 +525,33 @@ def bulk_insert_df_to_sqlite(engine, df: pd.DataFrame, table_name: str, logger: 
 
 
 def restore_sqlite_cache_from_parquet(db, db_path: str, logger: logging.Logger):
-    """
-    Physically deletes and rebuilds SQLite cache tables,
-    restoring only the latest 2 years from the Parquet master.
-    Optimized with PyArrow filters and native SQLite bulk insert.
+    """SQLite のキャッシュテーブルを削除し、Parquet マスタから作り直す。
+
+    **復元範囲はホット期間（直近 HOT_WINDOW_DAYS 日）のみ**（2026-09-03 変更）。
+
+    以前は `config.toml` の `data_collection.default_start_date`（2018-04-01）を
+    単一のカットオフにしていたが、T2 は2系統で取得している:
+
+        index_start_date   = "2010-04-01"   # レバレッジ / 市場 / 指標
+        default_start_date = "2018-04-01"   # 個別 / テーマ / セクタ
+
+    そのため `index_start_date` 側の 49 銘柄（SPY を含む）の 2010〜2018 が
+    SQLite に入らず、**この状態で T3 を再計算すると ETF だけ 2018 起点になって
+    本来の値と食い違う**という不整合があった。
+
+    ただし **T3 の再計算は Parquet 基点へ移した**ので（`recompute_parquet_indicators.py`）、
+    SQLite にホット期間より古い行を載せる理由はもう無い。むしろ載せると:
+
+      - 復元後 600万行 → purge で158万行へ削るのに実測 3.2時間かかる
+      - その状態で rotate すると SQLite 600万行 × Parquet 600万行のマージになり、
+        2026-09-01 に OOM して指標マスタが切り詰められた条件そのものになる
+
+    よって **ホット期間（`HOT_WINDOW_DAYS`）だけを復元する**。purge の閾値と同じ値を
+    見るので、復元直後に purge 対象の行が存在しない状態になる。
+
+    なお docstring にあった "restoring only the latest 2 years" は実装と
+    食い違っていた（実際は default_start_date 以降）。この誤記が
+    「復元すれば730日になる」という誤解を生んでいた。今回、実装を docstring に合わせた。
     """
     logger.info("Initializing SQLite Cache Restore from Parquet master...")
     t0 = time.time()
@@ -566,21 +599,12 @@ def restore_sqlite_cache_from_parquet(db, db_path: str, logger: logging.Logger):
     else:
         max_date = max_date_val
         
-    try:
-        import tomli
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        config_path = os.path.join(project_root, "config.toml")
-        with open(config_path, "rb") as f:
-            config = tomli.load(f)
-        default_start_date = config.get("data_collection", {}).get("default_start_date", "2018-04-01")
-        cutoff_date = pd.to_datetime(default_start_date).date()
-    except Exception as e:
-        logger.warning(f"Failed to load config.toml in restore_sqlite_cache_from_parquet, using default 2018-04-01: {e}")
-        cutoff_date = pd.to_datetime("2018-04-01").date()
-    cutoff_str = cutoff_date.isoformat()
+    # ホット期間だけを復元する（docstring 参照）。purge と同じ HOT_WINDOW_DAYS を見るので、
+    # 復元直後に purge 対象の行が無い＝復元→purge の往復(実測3.2時間)が不要になる。
+    cutoff_str = (max_date - timedelta(days=HOT_WINDOW_DAYS)).isoformat()
     
     logger.info(f"    Parquet Master Latest Date: {max_date.isoformat()}")
-    logger.info(f"    Restoring Cache Date Lookback: >= {cutoff_str}")
+    logger.info(f"    Restoring Cache Date Lookback: >= {cutoff_str} (ホット期間 {HOT_WINDOW_DAYS}日)")
     
     # Load non-historical dimension tables
     logger.info("    Loading symbols & theme constituents...")

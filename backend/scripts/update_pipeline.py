@@ -21,6 +21,56 @@ from logging.handlers import RotatingFileHandler
 
 import multiprocessing
 
+def _rebuild_t3_or_t4_from_parquet(level: str, logger) -> None:
+    """T3 / T4 の作り直しを **Parquet 基点**で行う。
+
+    ## なぜ SQLite 基点ではいけないか
+
+    T3 は SQLite の `daily_prices` の全行を入力にする（`t3_indicators.py` L22-24。
+    日付の絞り込みが無い）。SQLite はホット期間(730日)しか持たないため、
+    そのまま `--rebuild-from T3` を回すと**窓の先頭で遡り履歴が足りず、
+    `min_periods=1` の指標が「それらしい誤った値」を出す**。
+
+        2026-08-29  730日窓で --rebuild-from T3 を実行
+                    → 2024-09〜2025-08 の 772,526行が誤った値で上書きされた
+                       sma_200 の 77.7% が食い違い、ブルードットは 4,983件 → 0件
+
+    T4 も同じ理由で「SQLite にある日付しか順位を作れない」制約があり、
+    `recompute_parquet_ranks.py` が先に用意されていた（2026-08-05）。
+
+    ## 手順
+
+    Parquet には各銘柄の全履歴がある（ETF は 2010、個別は 2018）。そこで:
+
+        1. Parquet で T3 を全期間再計算し、新世代を publish
+        2. Parquet で T4 を全期間再計算し、新世代を publish
+        3. SQLite をホット期間ぶんだけ復元
+        4. T5（market_signals）を計算し直して rotate
+
+    `--category` は無視する（全銘柄を作り直す方が安全で、Parquet 基点なら
+    銘柄を絞る利点も無いため）。
+    """
+    from scripts import recompute_parquet_indicators, recompute_parquet_ranks
+    from scripts.run_production_restore import run_production_restore
+
+    if level == "T3":
+        logger.info("=== [1/4] Parquet の T3 を全期間再計算 ===")
+        recompute_parquet_indicators.run(dry_run=False,
+                                         chunk_size=recompute_parquet_indicators.DEFAULT_CHUNK_SIZE)
+    else:
+        logger.info("=== [1/4] T4 のみの作り直しのため T3 はスキップ ===")
+
+    logger.info("=== [2/4] Parquet の T4 を全期間再計算 ===")
+    recompute_parquet_ranks.run(dry_run=False)
+
+    logger.info("=== [3/4] SQLite をホット期間ぶん復元 ===")
+    if not run_production_restore():
+        raise RuntimeError("SQLite の復元に失敗しました。Parquet は更新済みなので、"
+                           " 復元だけやり直してください。")
+
+    logger.info("=== [4/4] T5 を再計算して rotate ===")
+
+
 def setup_pipeline_logging():
     log_dir = os.path.join(project_root, "logs")
     if not os.path.exists(log_dir):
@@ -100,11 +150,23 @@ if __name__ == "__main__":
 
         from pipeline.orchestrator import run_pipeline
 
+        # T3 / T4 の作り直しは Parquet 基点で行う（詳細は関数の docstring）。
+        # 旧来の SQLite 基点は 2026-08-29 に 772,526行を壊した経路なので使わない。
+        rebuild_from = args.rebuild_from
+        if rebuild_from and rebuild_from.upper() in ("T3", "T4"):
+            if selected_categories:
+                logger.warning("--rebuild-from %s では --category を無視し、全銘柄を作り直します"
+                               "（Parquet 基点のため銘柄を絞る利点がありません）", rebuild_from)
+                selected_categories = None
+            _rebuild_t3_or_t4_from_parquet(rebuild_from.upper(), logger)
+            # 上で T3/T4 は作り直し済み。残りは T5 の再計算と rotate
+            rebuild_from = "T5"
+
         run_pipeline(
             config=config,
             db_path=db_path,
             logger=logger,
-            rebuild_from=args.rebuild_from,
+            rebuild_from=rebuild_from,
             categories=selected_categories,
             skip_fetch=args.skip_fetch,
             skip_sync=args.skip_sync,
