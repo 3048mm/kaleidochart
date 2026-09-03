@@ -750,6 +750,58 @@ min_market_cap     = { type = "categorical", choices = [1e8, 3e8, 1e9, 3e9] }
 
 
 # =============================================================
+# H3c: 収縮（vcr）を締め、値動き（adr）を緩めて検出件数を確保する版
+#
+# H3b で「検出ゲートを開けて締める」を試した結果は**過学習**だった:
+#   in-sample スコア 0.917 → 6.589（44取引・0.068件/日）まで上がる一方、
+#   ホールドアウトの LCB が +1.17/+1.50 → **-1.24/-8.21** に崩壊した。
+#   検出件数ゲート 0.3件/日 は、この戦略に関しては正しく機能していた。
+#
+# そこで H3c は**ゲートを既定（0.3）に戻した上で**、探索空間を
+# 「vcr を締めて adr を緩める」側へずらす。vcr × adr 平面の実測（rs/dist/mcap は
+# H3 best 固定・件/日）:
+#
+#            adr2.0  adr3.0  adr4.0  adr5.0  adr6.0  adr7.0
+#   vcr0.65   0.157   0.116   0.071   0.056   0.039   0.025   ← 全域が罰点
+#   vcr0.70   0.384   0.281   0.182   0.131   0.091   0.056
+#   vcr0.75   0.821   0.582   0.398   0.281   0.201   0.108
+#   vcr0.80   1.522   1.042   0.696   0.492   0.346   0.193
+#   vcr0.90   3.574   2.525   1.665   1.102   0.742   0.443   ← H3 best は右下
+#
+# **同じ 0.4件/日 でも中身の違う動作点が複数ある**のがポイント:
+#   vcr0.90 × adr7.0 = 0.443（H3 best） / vcr0.75 × adr4.0 = 0.398
+#   vcr0.70 × adr2.0 = 0.384
+# H3 の探索空間は vcr 下限 0.80 だったので、この左上側を見ていない。
+# 下限を 0.65 まで下げて、ゲートに守られた状態で左上を探索させる。
+# =============================================================
+[[strategy]]
+name = "H3c_structure_tlb_contraction"
+description = "収縮を締めて値動きを緩め、検出件数を保ったまま収縮側のエッジを測る"
+max_hits_per_day = 10
+sort_column = "rs_ratio_rank_e21"
+sort_ascending = false
+is_structure_trend_line_break = true
+# ベースラインは新領域の等検出点（0.398件/日）を置く。H3 best（右下）ではなく
+# 左上から始めることで、TPE が最初から新領域を見る
+min_adr_pct_21 = 4.0
+min_rs_trend_s21 = 0.925
+min_dist_21ema_pct = -0.5
+max_vcr = 0.75
+min_market_cap = 1e8
+# 検出件数ゲートは**既定のまま**（H3b の過学習を繰り返さないための要）。
+# min_avg_hits_per_day / min_hit_rate_pct は意図的に書かない
+
+[strategy.optimization]
+min_adr_pct_21     = { type = "float", min = 2.0, max = 7.0, step = 0.5 }
+min_rs_trend_s21   = { type = "float", min = 0.90, max = 1.15, step = 0.025 }
+min_dist_21ema_pct = { type = "float", min = -3.0, max = 5.0, step = 0.5 }
+# ここが H3 との差。下限 0.80 → 0.65（vcr0.65 は全域罰点だが勾配を与えるため残す）、
+# 上限 1.50 → 0.95（H3 で 1.00 以上は劣化が確認済み。枠を無駄にしない）
+max_vcr            = { type = "float", min = 0.65, max = 0.95, step = 0.05 }
+min_market_cap     = { type = "categorical", choices = [1e8, 3e8, 1e9, 3e9] }
+
+
+# =============================================================
 # Optimization Evaluation Periods (Multi-period cross-validation)
 # =============================================================
 
