@@ -426,6 +426,15 @@ class EarningResponse(BaseModel):
 
 # --- Screener Presets / Meta ---
 
+class ScreenerBacktestStats(BaseModel):
+    """Pickup 系プリセットのバックテスト成績サマリ（TOML `[rise.backtest]` からの転記）。"""
+    win_rate: Optional[float] = None
+    expectancy_lcb: Optional[float] = None
+    port_cagr: Optional[float] = None
+    max_drawdown: Optional[float] = None
+    port_vs_spy: Optional[float] = None
+    total_trades: Optional[float] = None
+
 class ScreenerPresetItem(BaseModel):
     id: str
     name: str
@@ -434,6 +443,8 @@ class ScreenerPresetItem(BaseModel):
     group: str
     filters: dict = {}
     expression: Optional[str] = None
+    description: Optional[str] = None
+    backtest: Optional[ScreenerBacktestStats] = None
 
 class ScreenerPresetsResponse(BaseModel):
     rise: List[ScreenerPresetItem]

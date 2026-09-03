@@ -190,7 +190,7 @@ def test_scenario_runner_excludes_illiquid_symbols(mock_preload, mock_session, t
         '[[rise]]\n'
         'id = "liquidity_test"\n'
         'name = "liquidity_test"\n'
-        'group = "Check"\n\n'
+        'group = "Pickup"\n\n'
         '[rise.filters]\n'
         'min_market_cap = 1.0\n',
         encoding='utf-8'

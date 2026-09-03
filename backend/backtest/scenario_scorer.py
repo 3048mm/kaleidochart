@@ -6,7 +6,7 @@ class ScenarioScorer:
     Aggregates signals for a specific date, scores them based on the number of
     strategy hits, and resolves ties using a secondary metric (e.g., rs21_rank).
     """
-    def __init__(self, target_group_prefix: str = 'Rise - Check'):
+    def __init__(self, target_group_prefix: str = 'Rise - Pickup'):
         self.target_group_prefix = target_group_prefix
 
     def score_signals(self, signals_df: pd.DataFrame, date: pd.Timestamp) -> pd.DataFrame:

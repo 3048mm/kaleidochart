@@ -1,6 +1,6 @@
 # ============================================================
 # スクリーナー プリセット定義
-# 
+#
 # Optuna等で最適なパラメータが見つかった場合は、
 # このファイルの値を書き換えるだけでフロントエンドに即反映されます。
 #
@@ -24,6 +24,20 @@
 #   例: expression = "dist_sma50_atr > 3 or td9 == -9"
 #   対応演算子: >, >=, <, <=, ==, !=, and, or
 #   不正な式はログに記録され、条件から除外されます。
+#
+# 【プリセット共通フィールド】
+#   description        : ポップオーバー表示用の日本語説明文
+#   [rise.backtest]     : バックテストで実績検証済みの Pickup 系プリセットのみが持つ
+#                         成績サマリ（win_rate / expectancy_lcb / port_cagr /
+#                         max_drawdown / port_vs_spy / total_trades）。値は
+#                         backend/backtest/backtest_config.toml 側の検証結果からの
+#                         転記であり、このファイル単体では再計算されない。
+#
+# 【グループ分類（Rise 側）】
+#   Pickup  : 当日の値動きで拾う、バックテストで edge が検証済みの戦略
+#   Check   : 1st/2nd pivot・Trend Line Break・ブルードット・VCP など、
+#             当日ではなく数日後の推移を観察すべき構造的セットアップ（edge 未検証）
+#   Common  : 1D%・出来高等、検証済み edge を謳わない基本指標
 # ============================================================
 
 # 有効化する買い戦略(Rise)のID一覧。ここに登録されたIDの戦略のみがフロントエンド・バックテストの両方で使われます。
@@ -35,70 +49,56 @@ active_rise_ids = [
 ]
 
 # ───────────────────────────────────────────────────
-# Rise (買い目線) - Check
+# Rise (買い目線) - Pickup
 # ───────────────────────────────────────────────────
 
 [[rise]]
 id = "Theme RSRank Momentum"
 name = "Theme RSRank Momentum"
 subname = "Theme RSRank Momentum"
-group = "Check"
+group = "Pickup"
+description = "テーマのRSランクが上昇中(e21ランクが上位40%かつe21>e63)の中で、出来高急増を伴い1日+6%以上の急伸を見せた銘柄を検出。"
 use_hysteresis = false
 [rise.filters]
-min_change_1d_pct = 6.0 
-min_vol_surge_21 = 1.9000000000000001 
-min_adr_pct_21 = 6.0 
-max_sma50_atr_mult = 2.5 
-min_market_cap = 5e7 
-is_theme_rs_ratio_rank_e21_gt_e63 = true 
-min_rs_ratio_rank_e21 = 0.6000000000000001 
+min_change_1d_pct = 6.0
+min_vol_surge_21 = 1.9000000000000001
+min_adr_pct_21 = 6.0
+max_sma50_atr_mult = 2.5
+min_market_cap = 5e7
+is_theme_rs_ratio_rank_e21_gt_e63 = true
+min_rs_ratio_rank_e21 = 0.6000000000000001
 is_close_gt_ema63 = true
-# [backtest results]
-# alpha 3.993
-# avg_gain 4.2
-# avg_spy_gain 0.207
-# expectancy 4.2
-# expectancy_lcb 1.099
-# max_drawdown -57.526638694022374
-# port_cagr 147.62
-# port_total_return 936.56
-# port_vs_spy 144.82
-# port_vs_spy_total 929.19
-# spy_cagr 2.8
-# spy_total_return 7.37
-# total_trades 766
-# win_rate 35.900783289817234
+[rise.backtest]
+win_rate = 35.900783289817234
+expectancy_lcb = 1.099
+port_cagr = 147.62
+max_drawdown = -57.526638694022374
+port_vs_spy = 144.82
+total_trades = 766
 
 
 [[rise]]
 id = "Theme Leader"
 name = "Theme Leader"
 subname = "Theme Leader"
-group = "Check"
+group = "Pickup"
+description = "テーマRSランクが上位20%のテーマに属し、出来高急増(2.4倍以上)を伴って1日+3%以上上昇した銘柄を検出。"
 use_hysteresis = false
 [rise.filters]
-min_change_1d_pct = 3.0 
-min_vol_surge_21 = 2.4 
-min_adr_pct_21 = 5.0 
-max_sma50_atr_mult = 2.0 
-min_market_cap = 1e8 
-min_theme_rs_ratio_rank_e21 = 0.8 
+min_change_1d_pct = 3.0
+min_vol_surge_21 = 2.4
+min_adr_pct_21 = 5.0
+max_sma50_atr_mult = 2.0
+min_market_cap = 1e8
+min_theme_rs_ratio_rank_e21 = 0.8
 is_close_gt_ema63 = true
-# [backtest results]
-# alpha 3.925
-# avg_gain 4.132
-# avg_spy_gain 0.207
-# expectancy 4.132
-# expectancy_lcb 1.384
-# max_drawdown -58.892046688078715
-# port_cagr 148.27
-# port_total_return 943.59
-# port_vs_spy 145.47
-# port_vs_spy_total 936.21
-# spy_cagr 2.8
-# spy_total_return 7.37
-# total_trades 730
-# win_rate 36.57534246575342
+[rise.backtest]
+win_rate = 36.57534246575342
+expectancy_lcb = 1.384
+port_cagr = 148.27
+max_drawdown = -58.892046688078715
+port_vs_spy = 145.47
+total_trades = 730
 
 
 
@@ -106,124 +106,102 @@ is_close_gt_ema63 = true
 id = "RS MACD and Theme"
 name = "RS MACD and Theme"
 subname = "RS MACD and Theme"
-group = "Check"
+group = "Pickup"
+description = "テーマRSトレンドが強く(上位30%)、RS MACDヒストグラムがプラスかつ上昇中の銘柄が、出来高急増を伴い大幅上昇(1日+9%以上)したときに検出。"
 use_hysteresis = false
 [rise.filters]
-min_change_1d_pct = 9.0 
-min_dist_21ema_pct = 15.0 
-min_vol_surge_21 = 2.6 
-min_adr_pct_21 = 6.0 
-max_sma50_atr_mult = 4.5 
-min_market_cap = 1e7 
-min_rs_trend_rank_s21 = 0.7000000000000001 
-min_rs_macd_hist_21 = 0.0 
-min_theme_rs_trend_s21 = 0.9 
-is_theme_rs_trend_rank_s14_gt_s21 = true 
-is_close_gt_ema63 = true 
+min_change_1d_pct = 9.0
+min_dist_21ema_pct = 15.0
+min_vol_surge_21 = 2.6
+min_adr_pct_21 = 6.0
+max_sma50_atr_mult = 4.5
+min_market_cap = 1e7
+min_rs_trend_rank_s21 = 0.7000000000000001
+min_rs_macd_hist_21 = 0.0
+min_theme_rs_trend_s21 = 0.9
+is_theme_rs_trend_rank_s14_gt_s21 = true
+is_close_gt_ema63 = true
 is_rs_macd_hist_rising_21 = true
-
-# [backtest results]
-# alpha 2.518
-# avg_gain 2.504
-# avg_spy_gain -0.013
-# expectancy 2.504
-# expectancy_lcb -0.212
-# max_drawdown -77.70041807167917
-# port_cagr 93.27
-# port_total_return 447.05
-# port_vs_spy 90.47
-# port_vs_spy_total 439.68
-# spy_cagr 2.8
-# spy_total_return 7.37
-# total_trades 840
-# win_rate 39.04761904761905
+[rise.backtest]
+win_rate = 39.04761904761905
+expectancy_lcb = -0.212
+port_cagr = 93.27
+max_drawdown = -77.70041807167917
+port_vs_spy = 90.47
+total_trades = 840
 
 
 [[rise]]
 id = "RS Trend with Theme"
 name = "RS Trend with Theme"
 subname = "RS Trend with Theme"
-group = "Check"
+group = "Pickup"
+description = "テーマRSトレンドが強く、個別銘柄のRSトレンドがSPYを上回りつつ短期(s14)が中期(s21)をまだ下回る(加速余地がある)局面で、出来高急増を伴う上昇を検出。"
 use_hysteresis = false
 [rise.filters]
-min_change_1d_pct = 5.0 
-min_dist_21ema_pct = 0.0 
-min_vol_surge_21 = 2.0 
-min_adr_pct_21 = 6.0 
-max_sma50_atr_mult = 5.0 
-min_market_cap = 1e7 
-min_rs_trend_s21 = 1.1 
-min_theme_rs_trend_s21 = 0.9 
-is_rs_trend_s14_lt_s21 = true 
-is_theme_rs_trend_rank_s14_gt_s21 = true 
+min_change_1d_pct = 5.0
+min_dist_21ema_pct = 0.0
+min_vol_surge_21 = 2.0
+min_adr_pct_21 = 6.0
+max_sma50_atr_mult = 5.0
+min_market_cap = 1e7
+min_rs_trend_s21 = 1.1
+min_theme_rs_trend_s21 = 0.9
+is_rs_trend_s14_lt_s21 = true
+is_theme_rs_trend_rank_s14_gt_s21 = true
 is_close_gt_ema63 = true
-# [backtest results]
-# alpha 3.445
-# avg_gain 3.62
-# avg_spy_gain 0.175
-# expectancy 3.62
-# expectancy_lcb 0.38
-# max_drawdown -68.55782805908876
-# port_cagr 118.67
-# port_total_return 652.19
-# port_vs_spy 115.87
-# port_vs_spy_total 644.82
-# spy_cagr 2.8
-# spy_total_return 7.37
-# total_trades 695
-# win_rate 37.55395683453238
+[rise.backtest]
+win_rate = 37.55395683453238
+expectancy_lcb = 0.38
+port_cagr = 118.67
+max_drawdown = -68.55782805908876
+port_vs_spy = 115.87
+total_trades = 695
 
 
 [[rise]]
 id = "Momentum no exhaust"
 name = "Momentum no exhaust"
 subname = "Momentum no exhaust"
-group = "Check"
+group = "Pickup"
+description = "週間+8%・月間+23%以上の強いモメンタムを持ちながら、TD9カウントが6以下(まだ過熱していない)銘柄を、出来高急増を伴う上昇時に検出。"
 use_hysteresis = false
 [rise.filters]
-min_change_1w_pct = 8.0 
-min_change_1m_pct = 23.0 
-max_td9 = 6 
-min_vol_surge_21 = 2.5 
-max_sma50_atr_mult = 4.5 
+min_change_1w_pct = 8.0
+min_change_1m_pct = 23.0
+max_td9 = 6
+min_vol_surge_21 = 2.5
+max_sma50_atr_mult = 4.5
 min_market_cap = 1e8
 is_close_gt_sma50 = true
-# [backtest results]
-# alpha 2.677
-# avg_gain 2.896
-# avg_spy_gain 0.218
-# expectancy 2.896
-# expectancy_lcb 0.241
-# max_drawdown -55.75359510344244
-# port_cagr 78.86
-# port_total_return 347.98
-# port_vs_spy 76.07
-# port_vs_spy_total 340.61
-# spy_cagr 2.8
-# spy_total_return 7.37
-# total_trades 662
-# win_rate 37.46223564954683
+[rise.backtest]
+win_rate = 37.46223564954683
+expectancy_lcb = 0.241
+port_cagr = 78.86
+max_drawdown = -55.75359510344244
+port_vs_spy = 76.07
+total_trades = 662
 
 
 
 [[rise]]
 id = "rrg_improving_in"
 name = "RRG Improving In"
-group = "Check"
+group = "Pickup"
+description = "RRG(Relative Rotation Graph)でImproving象限に新規突入した銘柄を、出来高急増を伴う場合に検出。"
 # RRGは前日比較ロジックが必要な特殊プリセット（バックエンド実装）
 use_hysteresis = false
 [rise.filters]
 rrg_improving_in = true
-min_vol_surge_21 = 1.6 
-min_adr_pct_21 = 3.5 
-max_sma50_atr_mult = 5.0 
+min_vol_surge_21 = 1.6
+min_adr_pct_21 = 3.5
+max_sma50_atr_mult = 5.0
 min_market_cap = 1e8
-# [backtest results]
-# port_cagr 221.56
-# port_vs_spy 214.19
-# spy_cagr 7.37
-# total_trades 1390
-# win_rate 40.35971223021583
+[rise.backtest]
+win_rate = 40.35971223021583
+port_cagr = 221.56
+port_vs_spy = 214.19
+total_trades = 1390
 #------------------------------
 #rrg_leading_in = true
 #min_vol_surge_21 = 1.4
@@ -243,10 +221,113 @@ min_market_cap = 1e8
 #------------------------------
 
 [[rise]]
+id = "check_21ema"
+name = "21EMA Pullback"
+subtitle = "21EMA 押し目買い"
+group = "Pickup"
+description = "上昇トレンド(トレンドテンプレート適合)にありながら21EMA付近まで押し、出来高が枯れている(出来高急増率0.8倍以下)押し目買いのセットアップを検出。"
+[rise.filters]
+min_dist_21ema_pct = -4.0
+max_dist_21ema_pct = 0.5
+max_sma50_atr_mult = 2.0
+min_rs_ratio_rank_e21 = 0.5
+min_market_cap = 3e8
+is_trend_template = true
+max_vol_surge_21 = 0.8
+min_up_down_vol_ratio_50 = 1.5
+[rise.backtest]
+win_rate = 33.73287671232877
+port_cagr = 139.08
+port_vs_spy = 131.7
+total_trades = 2336
+
+[[rise]]
+id = "check_momentum99"
+name = "Momentum 99"
+subtitle = "RS Rank Top1% & 上昇トレンド"
+group = "Pickup"
+description = "RSランクが上位1%かつ上昇トレンド(トレンドテンプレート適合)の銘柄を検出。"
+[rise.filters]
+min_rs_ratio_rank_e21 = 0.99
+min_adr_pct_21 = 3.0
+max_sma50_atr_mult = 5.0
+min_market_cap = 3e8
+is_trend_template = true
+[rise.backtest]
+win_rate = 35.23027280727486
+port_cagr = 41.41
+port_vs_spy = 34.04
+total_trades = 3409
+
+
+# ───────────────────────────────────────────────────
+# Rise (買い目線) - Check
+# ───────────────────────────────────────────────────
+# 当日ではなく数日後の推移を観察すべき構造的セットアップ。
+# edge はまだ検証しておらず、Pickup とは異なりバックテスト成績は付与しない
+# （structure_pivot_screener_plan.md の実測により、これらをエントリー条件として
+# 使うと成績が悪化するケースがあることが分かっている＝観察用途に限定する）。
+
+[[rise]]
+id = "check_structure_pivot"
+name = "Structure Pivot Watch"
+subtitle = "1st pivot 接近"
+group = "Check"
+description = "構造ピボット(1st pivot)まで0〜5%以内に接近している銘柄を検出。ブレイクのエントリー条件としては非推奨(過去検証で逆効果)。数日後の推移を観察する用途。"
+[rise.filters]
+min_sp_dist_pivot_pct = 0.0
+max_sp_dist_pivot_pct = 5.0
+
+[[rise]]
+id = "check_2nd_break"
+name = "2nd Break"
+subtitle = "本ピボット上抜け"
+group = "Check"
+description = "構造ピボットの本ピボット(2nd break)を上抜けた銘柄を検出。edge検証は未実施のため観察用途。"
+[rise.filters]
+is_structure_2nd_break = true
+min_market_cap = 3e8
+
+[[rise]]
+id = "check_trend_line_break"
+name = "Trend Line Break"
+subtitle = "下降トレンドライン上抜け"
+group = "Check"
+description = "下降トレンドライン(カウンタートレンド線)を上抜けた銘柄を検出。edge検証は未実施のため観察用途。"
+[rise.filters]
+is_structure_trend_line_break = true
+min_market_cap = 3e8
+
+[[rise]]
+id = "check_vcp_breakout"
+name = "VCP Breakout"
+subtitle = "収縮ベースからのブレイク"
+group = "Check"
+description = "収縮した高値圏の土台から出来高を伴って大陽線でブレイクした銘柄を検出(VCPブレイクアウト)。個別銘柄シナリオでは実績が振るわなかった経緯があるため観察用途。"
+[rise.filters]
+is_vcp_breakout = true
+min_market_cap = 3e8
+
+[[rise]]
+id = "check_blue_dot"
+name = "Blue Dot Recent"
+subtitle = "RS新高値先行、直近点灯"
+group = "Check"
+description = "RSが株価に先行して52週新高値を更新する『ブルードット』が直近5営業日以内に点灯した銘柄を検出。単独でのedgeは未確認のため観察用途。"
+[rise.filters]
+max_rs_blue_dot_age = 5
+
+
+# ───────────────────────────────────────────────────
+# Rise (買い目線) - Common
+# ───────────────────────────────────────────────────
+
+[[rise]]
 id = "check_1d_gain"
 name = "1D% Gain"
 subname = "1日の上昇率上位"
-group = "Check"
+group = "Common"
+description = "1日の上昇率が上位の銘柄を検出する基本的なスクリーン。バックテストによるedge検証は行っていない。"
 use_hysteresis = false
 [rise.filters]
 min_change_1d_pct = 4.0
@@ -261,7 +342,8 @@ min_market_cap = 1e9
 id = "check_volume_surge"
 name = "Volume Surge"
 subname = "出来高急増"
-group = "Check"
+group = "Common"
+description = "出来高が急増している銘柄を検出する基本的なスクリーン。バックテストによるedge検証は行っていない。"
 [rise.filters]
 min_vol_surge_21 = 1.5
 min_vol_surge_rel_spy_21 = 1.2
@@ -269,50 +351,6 @@ min_change_1d_pct = 0.0
 min_adr_pct_21 = 4.0
 min_market_cap = 1e9
 max_sma50_atr_mult = 6.0
-
-
-[[rise]]
-id = "check_21ema"
-name = "21EMA Pullback"
-subtitle = "21EMA 押し目買い"
-group = "Check"
-[rise.filters]
-min_dist_21ema_pct = -4.0
-max_dist_21ema_pct = 0.5
-max_sma50_atr_mult = 2.0 
-min_rs_ratio_rank_e21 = 0.5 
-min_market_cap = 3e8
-is_trend_template = true
-max_vol_surge_21 = 0.8
-min_up_down_vol_ratio_50 = 1.5
-# [backtest results]
-# port_cagr 139.08
-# port_vs_spy 131.7
-# spy_cagr 7.37
-# total_trades 2336
-# win_rate 33.73287671232877
-
-[[rise]]
-id = "check_momentum99"
-name = "Momentum 99"
-subtitle = "RS Rank Top1% & 上昇トレンド"
-group = "Check"
-[rise.filters]
-min_rs_ratio_rank_e21 = 0.99
-min_adr_pct_21 = 3.0
-max_sma50_atr_mult = 5.0
-min_market_cap = 3e8
-is_trend_template = true
-# [backtest results]
-# port_cagr 41.41
-# port_vs_spy 34.04
-# spy_cagr 7.37
-# total_trades 3409
-# win_rate 35.23027280727486
-
-
-
-
 
 
 # ───────────────────────────────────────────────────
@@ -324,6 +362,7 @@ id = "climax_top"
 name = "Climax Top"
 subname = "クライマックストップ・過熱警戒"
 group = "Overhead sign"
+description = "SMA50乖離が3ATR超、またはTD9カウントが-9に達した過熱警戒シグナル。"
 expression = "sma50_atr_mult > 3 or td9 == -9"
 
 [[rise]]
@@ -331,6 +370,7 @@ id = "dist_sma50_atr_8"
 name = "SMA50/ATR%"
 subtitle = "> 8%"
 group = "Overhead sign"
+description = "SMA50からの乖離が8ATRを超える過熱警戒シグナル。"
 [rise.filters]
 min_sma50_atr_mult = 8.0
 
@@ -339,6 +379,7 @@ id = "td9_overhead"
 name = "TDR9"
 subtitle = ">= 8"
 group = "Overhead sign"
+description = "TD9カウントが8以上に達した過熱警戒シグナル。"
 [rise.filters]
 min_td9 = 8
 
@@ -350,6 +391,7 @@ min_td9 = 8
 id = "rrg_lagging_in"
 name = "RRG Lagging In"
 group = "Warning"
+description = "RRGでLagging象限に転落し、出来高を伴って下落した銘柄を検出する警戒シグナル。"
 [fall.filters]
 rrg_lagging_in = true
 max_change_1d_pct = -2.0
@@ -359,12 +401,14 @@ min_vol_surge_21 = 1.0
 id = "trend_breakdown"
 name = "Trend Breakdown"
 group = "Warning"
+description = "トレンドテンプレートから外れ、RSが劣化し、SMA50がSMA200を下回った下降トレンド転換の警戒シグナル。"
 expression = "is_trend_template == false and rs_ratio_e63 < -1.0 and sma_50 < sma_200"
 
 [[fall]]
 id = "high_vol_dist"
 name = "High Volume Distribution"
 group = "Warning"
+description = "出来高を伴う下落(ディストリビューション・デー)を検出する警戒シグナル。"
 [fall.filters]
 min_vol_surge_21 = 1.5
 max_change_1d_pct = -2.0
@@ -377,6 +421,7 @@ max_change_1d_pct = -2.0
 id = "oversold_rebound"
 name = "Oversold Rebound"
 group = "Rebound sign"
+description = "TD9カウントが+9かつRS比率が低い、反発の可能性があるシグナル。"
 expression = "td9 == 9 and rs_ratio_e14 < 0.2"
 
 [[fall]]
@@ -384,5 +429,6 @@ id = "td9_rebound"
 name = "TDR9"
 subtitle = "<= -8"
 group = "Rebound sign"
+description = "TD9カウントが-8以下に達した反発警戒シグナル。"
 [fall.filters]
 max_td9 = -8

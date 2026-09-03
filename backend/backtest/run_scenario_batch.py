@@ -136,11 +136,12 @@ def generate_preset_toml(strategies: list, toml_path: str):
         block += f'id = "{strategy_name}_opt"\n'
         block += f'name = "{strategy_name}_opt"\n'
         block += f'subname = "Optuna Best for {strategy_name}"\n'
-        # group は必ず "Check" にすること。戦略名は
+        # group は必ず "Pickup" にすること。戦略名は
         # f"{section.capitalize()} - {group} - {name}" で組まれ、
-        # SCENARIO_TARGET_PREFIX = 'Rise - Check' がスキャン対象を決めるため、
-        # ここがずれるとその戦略が黙ってスキャンされなくなる。
-        block += 'group = "Check"\n'
+        # SCENARIO_TARGET_PREFIX = 'Rise - Pickup' がスキャン対象を決めるため、
+        # ここがずれるとその戦略が黙ってスキャンされなくなる
+        # （2026-09-03 の Pickup/Check/Common 再編で "Check" から変更）。
+        block += 'group = "Pickup"\n'
         block += 'use_vxv_vix_hysteresis = true\n'
         block += 'vxv_vix_hysteresis_type = "vxv_vix_ema"\n'
         block += '\n[rise.filters]\n'
