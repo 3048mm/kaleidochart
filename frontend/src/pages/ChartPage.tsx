@@ -2,8 +2,8 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { createChart, IChartApi, ISeriesApi, CrosshairMode, SeriesMarker } from 'lightweight-charts';
-import { Symbol, ChartDataPoint, EarningData, ChartResponse, ChartSymbolMeta, StructurePivot } from '../types';
-import { buildStructureMarkers, buildStructureSegments, fetchStructurePivot } from '../api/structurePivot';
+import { Symbol, ChartDataPoint, EarningData, ChartResponse, ChartSymbolMeta, StructurePivot, CounterTrend } from '../types';
+import { STRUCTURE_HISTORY_LIMIT, buildStructureMarkers, buildStructureSegments, fetchStructurePivot } from '../api/structurePivot';
 import { appConfig } from '../config';
 import { RrgChart } from '../components/RrgChart';
 import { SymbolDataTable } from '../components/SymbolDataTable';
@@ -163,6 +163,10 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
     const [showSma50Atr, setShowSma50Atr] = useState(false);
     const [showStructurePivot, setShowStructurePivot] = useState(true);
     const [structures, setStructures] = useState<StructurePivot[]>([]);
+    // カウンタートレンド線。構造とは排他なので、構造が出ているときは null になる。
+    // 表示トグルは構造ピボットと共通（2026-09-03 ユーザー判断。排他なので分けても
+    // 片方が常に無反応に見えるだけ）
+    const [currentCounter, setCurrentCounter] = useState<CounterTrend | null>(null);
 
     const chartRef = useRef<IChartApi | null>(null);
     const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -219,13 +223,22 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
     useEffect(() => {
         if (!selected || !showStructurePivot) {
             setStructures([]);
+            setCurrentCounter(null);
             return;
         }
         let cancelled = false;
         fetchStructurePivot(selected.id, fullRange)
-            .then(list => { if (!cancelled) setStructures(list); })
+            .then(resp => {
+                if (cancelled) return;
+                setStructures(resp.structures);
+                setCurrentCounter(resp.current_counter ?? null);
+            })
             // 構造が出ないだけでチャート全体を落とさない
-            .catch(() => { if (!cancelled) setStructures([]); });
+            .catch(() => {
+                if (cancelled) return;
+                setStructures([]);
+                setCurrentCounter(null);
+            });
         return () => { cancelled = true; };
     }, [selected, fullRange, showStructurePivot]);
 
@@ -479,8 +492,9 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
         });
         structureSeriesRef.current = [];
 
-        if (showStructurePivot && structures.length > 0) {
-            const segments = buildStructureSegments(structures, data.map(d => d.time));
+        if (showStructurePivot && (structures.length > 0 || currentCounter)) {
+            const segments = buildStructureSegments(
+                structures, data.map(d => d.time), STRUCTURE_HISTORY_LIMIT, currentCounter);
             segments.forEach(seg => {
                 const series = chart.addLineSeries({
                     color: seg.color, lineWidth: seg.width, lineStyle: seg.style,
@@ -651,7 +665,7 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
         data, compareData, showVolume, showTd9, showBB, showRsDots, showSma50Atr,
         showSma21, showSma50, showSma63, showSma150, showSma200,
         showEma5, showEma21, showEma50, showEma63, showEma200,
-        showStructurePivot, structures
+        showStructurePivot, structures, currentCounter
     ]);
 
     const latest = data.length > 0 ? data[data.length - 1] : null;

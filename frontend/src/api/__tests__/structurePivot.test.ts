@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { StructurePivot } from '../../types'
+import { CounterTrend, StructurePivot } from '../../types'
 import { buildStructureMarkers, buildStructureSegments } from '../structurePivot'
 
 const make = (over: Partial<StructurePivot>): StructurePivot => ({
@@ -99,5 +99,69 @@ describe('buildStructureMarkers', () => {
             [make({ is_current: true, ll_date: '2099-01-01' })], ALL_DATES)
 
         expect(markers.map(m => m.text)).toEqual(['HL'])
+    })
+})
+
+// ---------------------------------------------------------------
+// カウンタートレンド線（構造が成立していない期間にだけ引かれる）
+// ---------------------------------------------------------------
+
+const makeCounter = (over: Partial<CounterTrend> = {}): CounterTrend => ({
+    // a1(=120) から a2(=115) へ下る線。1営業日あたり -5/1 ではなく
+    // インデックス差で決まるので、値はサーバが計算済みのものを使う
+    a1_date: '2026-04-01', a1_price: 120,
+    a2_date: '2026-04-10', a2_price: 115,
+    start_date: '2026-04-13', end_date: '2026-04-25',
+    a1_value: 120, start_value: 113, end_value: 110,
+    slope: -0.5, is_current: true,
+    ...over,
+})
+
+describe('buildStructureSegments — カウンタートレンド線', () => {
+    it('現在のカウンター線を、アンカー1 から終端までの傾いた線分として引く', () => {
+        const segments = buildStructureSegments([], ALL_DATES, undefined, makeCounter())
+
+        expect(segments).toHaveLength(1)
+        expect(segments[0]).toMatchObject({
+            role: 'current-counter',
+            from: '2026-04-01', fromValue: 120,
+            to: '2026-04-25', toValue: 110,
+        })
+        // 水平ではないこと（既存の水準線と違い傾きを持つ）
+        expect(segments[0].fromValue).not.toBe(segments[0].toValue)
+    })
+
+    it('アンカー2 で切らない（傾きを決める点であって終端ではない）', () => {
+        const [seg] = buildStructureSegments([], ALL_DATES, undefined, makeCounter())
+
+        expect(seg.to).not.toBe('2026-04-10')
+        expect(seg.to).toBe('2026-04-25')
+    })
+
+    it('カウンター線が無ければ線分も増えない', () => {
+        const withCounter = buildStructureSegments([make({ is_current: true })], ALL_DATES, undefined, makeCounter())
+        const without = buildStructureSegments([make({ is_current: true })], ALL_DATES, undefined, null)
+
+        expect(withCounter).toHaveLength(without.length + 1)
+        expect(without.some(s => s.role === 'current-counter')).toBe(false)
+    })
+
+    it('チャートに無い日付の線分は捨てる（既存の水準線と同じ扱い）', () => {
+        const outside = makeCounter({ a1_date: '2020-01-01', end_date: '2020-02-01' })
+
+        expect(buildStructureSegments([], ALL_DATES, undefined, outside)).toEqual([])
+    })
+
+    it('履歴のカウンター線は描かない（現在の1本だけ）', () => {
+        // 現在の線を渡さなければ、履歴があっても線分は生成されない
+        expect(buildStructureSegments([], ALL_DATES, undefined, null)).toEqual([])
+    })
+
+    it('オレンジの実線で、構造側の色とは混ざらない', () => {
+        const [counter] = buildStructureSegments([], ALL_DATES, undefined, makeCounter())
+        const structural = buildStructureSegments([make({ is_current: true })], ALL_DATES)
+
+        expect(counter.color).toBe('#ff8c42')
+        expect(structural.every(s => s.color !== counter.color)).toBe(true)
     })
 })

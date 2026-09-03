@@ -430,8 +430,35 @@ export interface StructurePivot {
     broken_at_confirmation: boolean
 }
 
+/** カウンタートレンド線 — 構造が成立していない期間に引かれる下向きの抵抗線。
+ *  `sp_pivot` とは排他なので、構造が生きている間は返らない。 */
+export interface CounterTrend {
+    /** アンカー1（最も高いピボット高値）。線の起点として描画に使う */
+    a1_date: string
+    a1_price: number
+    /** アンカー2（傾きを決めるピボット高値）。終端ではない */
+    a2_date: string
+    a2_price: number
+    /** 線が引かれ始めた日と、そのアンカー組が続いた最後の日 */
+    start_date: string
+    end_date: string
+    /** 各点でのライン値。**サーバ側で計算済み**（フロントで傾きから座標を
+     *  復元すると、営業日でない日を跨いだときにずれるため） */
+    a1_value: number
+    start_value: number
+    end_value: number
+    slope: number
+    is_current: boolean
+}
+
 export interface StructurePivotResponse {
-    metadata: { ticker: string; min_len: number; max_len: number; bars: number }
+    metadata: {
+        ticker: string; min_len: number; max_len: number; bars: number
+        counter_history_limit?: number
+    }
     structures: StructurePivot[]
     current: StructurePivot | null
+    /** 履歴（既定では描画しない。§4-Q1 のユーザー判断で「現在の線のみ」） */
+    counters?: CounterTrend[]
+    current_counter?: CounterTrend | null
 }

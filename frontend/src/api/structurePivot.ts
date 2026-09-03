@@ -1,5 +1,5 @@
 // frontend/src/api/structurePivot.ts
-import { StructurePivot, StructurePivotResponse } from '../types'
+import { CounterTrend, StructurePivot, StructurePivotResponse } from '../types'
 
 /** 描画する過去の構造ピボットの本数。増やすと線が増えて読みにくくなる */
 export const STRUCTURE_HISTORY_LIMIT = 30
@@ -10,6 +10,9 @@ const HISTORY_COLOR = 'rgba(255, 255, 255, 0.28)'
 //   1st = 黄（早いエントリー） / 2nd = 水色（本ピボット） / TP = 灰（利確目標）
 const FIB_1ST_COLOR = '#e0b000'
 const TP_COLOR = 'rgba(200, 200, 200, 0.75)'
+// カウンタートレンド線は「構造が無いときに出る別カテゴリ」なので、
+// 構造側（水色）とも 1st（黄）とも混ざらない色を当てる
+const COUNTER_COLOR = '#ff8c42'
 
 /** lightweight-charts の lineStyle（既存コードに合わせて数値で持つ） */
 const SOLID = 0
@@ -23,6 +26,7 @@ export type StructureSegmentRole =
     | 'current-1st'
     | 'current-tp1'
     | 'current-tp2'
+    | 'current-counter'
 
 export interface StructureSegment {
     from: string
@@ -41,14 +45,21 @@ export interface StructureMarker {
     color: string
 }
 
+/** レスポンス全体を返す。構造だけでなくカウンター線も要るようになったため
+ *  （以前は `structures` だけを返して `current` / `counters` を捨てていた）。 */
 export async function fetchStructurePivot(
     symbolId: number,
     fullRange: boolean,
-): Promise<StructurePivot[]> {
+): Promise<StructurePivotResponse> {
     const res = await fetch(`/api/chart/${symbolId}/structure_pivot?full_range=${fullRange}`)
     if (!res.ok) throw new Error(`structure_pivot: ${res.status}`)
     const json: StructurePivotResponse = await res.json()
-    return json.structures ?? []
+    return {
+        ...json,
+        structures: json.structures ?? [],
+        counters: json.counters ?? [],
+        current_counter: json.current_counter ?? null,
+    }
 }
 
 /**
@@ -65,6 +76,7 @@ export function buildStructureSegments(
     structures: StructurePivot[],
     dates: string[],
     historyLimit: number = STRUCTURE_HISTORY_LIMIT,
+    currentCounter: CounterTrend | null = null,
 ): StructureSegment[] {
     const times = new Set(dates)
     const lastDate = dates[dates.length - 1]
@@ -114,6 +126,18 @@ export function buildStructureSegments(
             })
         })
     })
+
+    // カウンタートレンド線（現在の1本だけ）。構造とは排他なので、これが出るときは
+    // 上の current-* は1本も無い。アンカー1 から線の終端まで**傾いた線分**として引く
+    // ——アンカー2 は傾きを決める点であって終端ではないので、そこで切らない。
+    // 履歴は描かない（2026-09-03 ユーザー判断。構造ピボットの履歴と同じく本数が増えて読めなくなるため）
+    if (currentCounter) {
+        push({
+            from: currentCounter.a1_date, fromValue: currentCounter.a1_value,
+            to: currentCounter.end_date, toValue: currentCounter.end_value,
+            color: COUNTER_COLOR, width: 2, style: SOLID, role: 'current-counter',
+        })
+    }
 
     return segments
 }
