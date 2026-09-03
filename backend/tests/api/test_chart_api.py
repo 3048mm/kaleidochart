@@ -146,6 +146,107 @@ def test_structure_pivot_unknown_symbol_returns_404(db_session):
     assert exc.value.status_code == 404
 
 
+# ---------------------------------------------------------------
+# カウンタートレンドライン（構造が成立していない期間に引かれる）
+# ---------------------------------------------------------------
+
+#: 高値が切り下がり、安値も切り下がり続ける＝ LL-HL 構造が成立しない系列。
+#: high と low を独立に置く必要があるため（`_seed_structure_prices` は high = low + 3 で
+#: 連動してしまい、ピボット高値が strength >= 2 で立たない）専用のシーダーを使う。
+#: 形は `test_counter_trend.py` の `downtrend` fixture と同じ。
+
+
+def _seed_downtrend_ohlc(session, n=60, peaks=((5, 100.0), (15, 90.0), (25, 80.0)),
+                         symbol_id=1, ticker="AAPL"):
+    """下降トレンド（高値が切り下がる）を high/low 独立に作って投入する。"""
+    import numpy as np
+
+    high = np.full(n, 60.0)
+    for idx, peak in peaks:
+        high[idx] = peak
+        high[idx - 1] = peak - 8
+        high[idx + 1] = peak - 8
+    i = np.arange(n, dtype=float)
+    # 安値は切り下げつつジグザグに。単調だとピボット安値が出来ず limit_idx が立たない
+    low = 58 - 0.45 * i + 3.0 * np.sin(i * 0.9)
+    close = high - 1.0
+
+    session.add(Symbol(id=symbol_id, ticker=ticker, name=ticker, category="個別", active=1))
+    for k in range(n):
+        session.add(DailyPrice(
+            symbol_id=symbol_id, date=_SP_BASE_DATE + timedelta(days=k),
+            open=float(close[k]), high=float(high[k]), low=float(low[k]),
+            close=float(close[k]), volume=1000,
+        ))
+    session.commit()
+    return session
+
+
+def test_structure_pivot_response_always_has_counter_keys(seed_structure_data):
+    """既存レスポンスにキーが増えただけで、構造側の形は変わらない。"""
+    resp = build_structure_pivot_response(symbol_id=1, db=seed_structure_data)
+
+    assert "counters" in resp and isinstance(resp["counters"], list)
+    assert "current_counter" in resp
+    assert {"metadata", "structures", "current"} <= set(resp)
+
+
+def test_counter_lines_are_drawn_when_no_structure(db_session):
+    """構造が立たない下降系列ではカウンター線が引かれる。"""
+    resp = build_structure_pivot_response(symbol_id=1, db=_seed_downtrend_ohlc(db_session))
+
+    assert resp["counters"], "カウンター線が1本も返っていない"
+    for c in resp["counters"]:
+        assert c["a1_date"] < c["a2_date"] < c["start_date"] <= c["end_date"]
+        assert c["slope"] <= 0.0
+
+
+def test_counter_line_endpoints_are_on_the_line(db_session):
+    """start_value / end_value が傾きと整合する（フロントに再計算させないための値）。"""
+    resp = build_structure_pivot_response(symbol_id=1, db=_seed_downtrend_ohlc(db_session))
+
+    assert resp["counters"]
+    for c in resp["counters"]:
+        assert c["a1_value"] == pytest.approx(c["a1_price"])
+        assert c["end_value"] <= c["start_value"] + 1e-9, "下向きの線になっていない"
+
+
+def test_current_counter_matches_the_flagged_entry(db_session):
+    resp = build_structure_pivot_response(symbol_id=1, db=_seed_downtrend_ohlc(db_session))
+
+    flagged = [c for c in resp["counters"] if c["is_current"]]
+    assert len(flagged) <= 1
+    assert resp["current_counter"] == (flagged[0] if flagged else None)
+
+
+def test_counter_and_structure_are_exclusive(seed_structure_data):
+    """構造が生きている間はカウンター線が引かれない（sp_pivot と排他）。"""
+    resp = build_structure_pivot_response(symbol_id=1, db=seed_structure_data)
+
+    if resp["current"] is not None:
+        assert resp["current_counter"] is None
+
+
+def test_counter_history_is_capped(db_session):
+    """履歴は COUNTER_HISTORY_LIMIT 本までに切る（ペイロード肥大の防止）。"""
+    from api.chart_router import COUNTER_HISTORY_LIMIT
+
+    n = 400
+    peaks = tuple((5 + 10 * k, 200.0 - 3.0 * k) for k in range((n - 12) // 10))
+    resp = build_structure_pivot_response(
+        symbol_id=1, db=_seed_downtrend_ohlc(db_session, n=n, peaks=peaks))
+
+    assert len(resp["counters"]) <= COUNTER_HISTORY_LIMIT
+
+
+def test_counter_empty_on_insufficient_data(db_session):
+    resp = build_structure_pivot_response(
+        symbol_id=1, db=_seed_structure_prices(db_session, [100, 99, 98]))
+
+    assert resp["counters"] == []
+    assert resp["current_counter"] is None
+
+
 def test_chart_data_exposes_structure_pivot_columns(seed_chart_data):
     """/chart のレスポンスに sp_pivot / sp_hl / sp_counter が含まれること。
 
