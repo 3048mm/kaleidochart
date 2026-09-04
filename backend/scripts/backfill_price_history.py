@@ -190,11 +190,33 @@ def verify_coverage(merged: pd.DataFrame, targets: list, start_date: str,
 
 
 def fetch_range(ticker: str, start: str, end: str) -> pd.DataFrame:
-    """yfinance から `[start, end]` を取得する。取れなければ空を返す。"""
+    """yfinance から `[start, end]` を取得する。取れなければ空を返す。
+
+    > [!IMPORTANT]
+    > **`ensure_ca_bundle()` を先に呼ぶこと。** TLS 傍受環境では `curl_cffi`
+    > （yfinance が使う）が独自の CA バンドルを見るため証明書を検証できず、
+    > **全銘柄が失敗する**。しかも yfinance はそれを
+    > `possibly delisted; no price data found` に畳むので、上流障害と区別がつかない
+    > （`data_collection/tls_trust.py` の docstring / `upstream-data-diagnosis` §2.1）。
+    >
+    > 2026-09-04 に本スクリプトで実際に踏んだ: 50銘柄すべてが 0 行を返し、
+    > GLTR / RING / PICK のような稼働中の ETF まで「上場廃止」と報告された。
+    > `data_collection/fetcher.py` は import 時にこれを呼んでいるが、
+    > 本スクリプトは fetcher を経由しないため自前で呼ぶ必要がある。
+    """
     import yfinance as yf
 
-    df = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=False,
-                     threads=False)
+    # **auto_adjust を指定しない（yfinance の既定 True）。** 既存パイプライン
+    # （data_collection/fetcher.py L46）が既定のまま呼んでいるので、そこに揃える。
+    #
+    # 2026-09-04 に auto_adjust=False（生の終値）で取得して失敗した:
+    # 既存は配当・分割を調整した値、充足分は生の値になり、接合部(2018-04-02)で
+    # 終値比の中央値が 0.898、409銘柄が±25%超の段差になった。高配当の REIT・BDC
+    # ほど乖離が大きく（KDP は特別配当の影響で比 0.13）、配当調整の不一致だった。
+    # scan_price_anomalies はこれを split_suspect ではなく market_wide と分類する
+    # （2018-04-02 が実際に -2.2% の下落日で紛れる）ため、**接合部の終値比を
+    # 直接測らないと見逃す**。
+    df = yf.download(ticker, start=start, end=end, progress=False, threads=False)
     if df is None or df.empty:
         return pd.DataFrame(columns=PRICE_COLS)
     if isinstance(df.columns, pd.MultiIndex):
@@ -213,6 +235,10 @@ def fetch_range(ticker: str, start: str, end: str) -> pd.DataFrame:
 
 def run(start_date: str, categories, apply: bool, sleep_sec: float) -> int:
     import tomli
+    # TLS 傍受環境で curl_cffi が証明書を検証できず全銘柄が失敗するのを防ぐ
+    # （fetch_range の docstring 参照）
+    from data_collection.tls_trust import ensure_ca_bundle
+    ensure_ca_bundle()
     from pipeline.parquet_cache_manager import (
         get_latest_master_files, get_parquet_master_dir, get_pointer_file_path,
         update_pointer_with_retry,

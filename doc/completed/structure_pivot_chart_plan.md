@@ -375,7 +375,10 @@ main を取り込み（49コミット・競合なし）、全テストを再実�
   > 型1バックテスト＋型3シナリオテストまで通して判断する**こと。
   > 20営業日の前向きリターンは代理指標に過ぎない。
 - Priority Mode の切り替え UI
-- ~~カウンタートレンドライン~~ — **実装済み（2026-08-29）。**
-  `sp_counter` として T3 に追加し、スクリーナー条件 `is_structure_trend_line_break` を新設。
-  **チャート描画への追加はしていない**（線を引く実装は未着手。値は DATA VIEW から見える）。
-  経緯は `doc/completed/structure_pivot_screener_plan.md` §5.6
+- ~~カウンタートレンドライン~~ — **完了（2026-08-29 T3 / 2026-09-04 チャート描画）。**
+  `sp_counter` として T3 に追加し、スクリーナー条件 `is_structure_trend_line_break` を新設
+  （経緯は `doc/completed/structure_pivot_screener_plan.md` §5.6）。
+  **チャート描画も 2026-09-04 に実装済み**（`find_counter_trends()` でアンカー2点を返し、
+  アンカー1 から終端まで傾いた線分として描く。オレンジ実線・現在の1本のみ・
+  トグルは構造ピボットと共通）。経緯は
+  `doc/completed/counter_trend_chart_plan.md`
