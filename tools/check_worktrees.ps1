@@ -1,6 +1,7 @@
 # Worktree / agent-branch inventory: shows unreflected work at a glance.
 #   - worktrees with uncommitted changes or commits not in main
 #   - stale worktree registrations (folder deleted)
+#   - unregistered leftovers (folder present, not in git worktree list)
 #   - agent branches (worktree-*) not yet merged / already merged into main
 #   - data provisioning state of each worktree (read / write / NOT provisioned)
 #   - phantom disk: parquet generations pinned by a worktree after production pruned them
@@ -92,6 +93,43 @@ foreach ($p in $wtPaths) {
             }
         }
     }
+}
+
+Write-Output ""
+Write-Output "=== Unregistered leftovers in .claude/worktrees ==="
+# A worktree removal that stops halfway leaves a real directory that
+# `git worktree list` does not know about, so every check above skips it:
+# they all iterate the registered list. Observed on 2026-09-01 with
+# `dataview-columns` (2.2 MB, no .git, no backend/). This section is the only
+# one that can see that class of residue.
+# Path comparison uses [IO.Path]::GetFullPath, which normalises separators to the
+# OS native form: `git worktree list` reports forward slashes while Get-ChildItem
+# reports backslashes, and a plain string compare would call every folder a leftover.
+$sep = [IO.Path]::DirectorySeparatorChar
+$wtRoot = Join-Path (Join-Path $mainRoot '.claude') 'worktrees'
+if (Test-Path $wtRoot) {
+    $registered = @{}
+    foreach ($p in $wtPaths) {
+        try { $registered[([IO.Path]::GetFullPath($p)).TrimEnd($sep).ToLower()] = $true } catch {}
+    }
+    $leftovers = @(Get-ChildItem $wtRoot -Directory -ErrorAction SilentlyContinue | Where-Object {
+        -not $registered.ContainsKey(([IO.Path]::GetFullPath($_.FullName)).TrimEnd($sep).ToLower())
+    })
+    if ($leftovers.Count -gt 0) {
+        foreach ($d in $leftovers) {
+            $bytes = (Get-ChildItem $d.FullName -Recurse -File -ErrorAction SilentlyContinue |
+                Measure-Object Length -Sum).Sum
+            $mb = [math]::Round($bytes / 1MB, 1)
+            $hasGit = Test-Path (Join-Path $d.FullName '.git')
+            $kind = if ($hasGit) { 'has .git but is not registered (registration pruned?)' } else { 'no .git: a worktree removal stopped partway' }
+            Write-Output ("[!] {0}  ({1} MB)  {2}" -f $d.Name, $mb, $kind)
+            Write-Output ("      Remove-Item -Recurse -Force '{0}'" -f $d.FullName)
+        }
+        Write-Output "    NOTE: use Remove-Item, not git worktree remove. Remove-Item does not"
+        Write-Output "          follow junctions; git worktree remove does (rules sec.11.3)."
+    } else { Write-Output "    (none)" }
+} else {
+    Write-Output "    (no .claude/worktrees directory)"
 }
 
 Write-Output ""

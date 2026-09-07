@@ -184,7 +184,7 @@
 - [x] 2. 3-A: `.agents/skills/` を `.claude` 側から同期、CLAUDE.md L184 の記述を実態に合わせる — 完了 2026-09-07。10本すべて差分なし
 - [x] 2b. 3-A: skill 本文をツール非依存に汎用化（`Antigravity` 参照 0 件）— 完了 2026-09-07
 - [x] 2c. 3-A: `tools/sync_skills.py` を新設し `check_worktrees.ps1` に組み込み、`.agents/skills/README.md` で正本を明示 — 完了 2026-09-07
-- [ ] 3. 3-B: `check_worktrees.ps1` に未登録ディレクトリ検出を追加
+- [x] 3. 3-B: `check_worktrees.ps1` に未登録ディレクトリ検出を追加 — 完了 2026-09-07。`dataview-columns` を検出できることを実測
 - [ ] 4. 3-B: worktree 撤収（§4-1 の判断後）＋ `dataview-columns` 残骸の削除＋マージ済みブランチ削除
 - [ ] 5. 3-C: CLAUDE.md「ツール呼び出しの書式」節を削除
 - [ ] 6. 3-C: rules §2 / §3 を削除、§1 を単純化、更新履歴に理由を記録
@@ -200,6 +200,11 @@
   `rs_dot_age_plan.md` と `t3_parquet_rebuild_plan.md` が `doc/completed/` へ移動され
   （ステージ済み・未コミット）、completed は 30 → 32 本、停留は `tax_rate_wiring_plan.md` の1本のみになった。
   §1 のベースライン表（棚卸し時点＝停留2本）はそのまま残す。3-E の検証行のみ現状に合わせて修正済み。
+- 2026-09-07: 3-B の検出ロジックで、パス比較に `-replace` を使うとバックスラッシュが
+  シェル経由の書き込みで潰れて不正な正規表現になった（2回発生）。
+  `[IO.Path]::GetFullPath()` による正規化に切り替え、**ソースからバックスラッシュを排除**して解決。
+  `git worktree list` は `/` 区切り、`Get-ChildItem` は `\` 区切りを返すため、
+  素朴な文字列比較では全フォルダが「未登録」と誤判定される点にも注意（コメントに記載済み）。
 
 ## 6. 検証プラン / 結果
 
@@ -209,7 +214,10 @@
 | 3-A | `python tools/sync_skills.py --check` | `Skills mirror in sync; frontmatter OK.` / exit 0 | ✅ 2026-09-07 期待どおり |
 | 3-A | フィクスチャで異常系（frontmatter 不備・未同期・孤児）を投入して `--check` | それぞれ検出し exit 1 | ✅ 2026-09-07 3種とも検出を確認 |
 | 3-A | `tools/check_worktrees.ps1` を実行 | 末尾に Skills mirror 節が出る | ✅ 2026-09-07 出力を確認 |
-| 3-B | `tools/check_worktrees.ps1` を実行 | 撤収済み worktree が消え、残骸が検出対象に入る | — |
+| 3-B | `tools/check_worktrees.ps1` を実行 | `=== Unregistered leftovers ===` 節に `dataview-columns` が出る | ✅ 2026-09-07 `no .git: a worktree removal stopped partway` と分類して検出 |
+| 3-B | 同上 | 登録済み13本は leftovers に出ない（誤検出なし） | ✅ 2026-09-07 検出は1件のみ |
+| 3-B | ワークツリーから実行した場合の `$mainRoot` 解決 | 本体チェックアウトを指し、パス正規化が一致する | ✅ 2026-09-07 ロジックを単体で実測 |
+| 3-B | 撤収後に `tools/check_worktrees.ps1` を実行 | 撤収済み worktree が消える | — （撤収は §4-1 待ち） |
 | 3-B | `data/parquet_master/` の世代数とサイズ | 本番側が無傷（ハードリンク削除の影響なし） | — |
 | 3-C | `grep -n "ツール呼び出しの書式" CLAUDE.md` | ヒットしない | — |
 | 3-D | `git add -A` を試行（deny されるはず） | ブロックされ、`logs/` に記録が残る | — |
