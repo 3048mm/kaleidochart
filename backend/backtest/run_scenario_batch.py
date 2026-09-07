@@ -376,9 +376,36 @@ def parse_args(argv=None):
         "--list-jobs", action="store_true",
         help="実行せず、scenario_batch_jobs.toml に定義済みのジョブ名一覧だけを表示して終了する。",
     )
+    parser.add_argument(
+        "--tax", type=float, default=None,
+        help="適用税率（率。0.2=20%%）。省略時は backtest_config.toml [general] "
+             "consider_tax を使う。税ありと税なしを比較したいときに、"
+             "本番設定を書き換えずに切り替えるためのもの。",
+    )
     args = parser.parse_args(argv)
     job_names = [n.strip() for n in args.jobs.split(",") if n.strip()] if args.jobs else None
-    return job_names, args.list_jobs
+    return job_names, args.list_jobs, args.tax
+
+
+def resolve_tax_rate(tax_override):
+    """適用税率を決める。`--tax` が優先、無ければ設定ファイル。
+
+    単位検証（率で指定。`> 1.0` はエラー）は `load_tax_rate()` に集約しているので、
+    CLI 値もそこへ通す。**元のバグは `consider_tax = 20.0`（＝2000%）という
+    単位の取り違えで、指定しても結果が1円も変わらなかった**というものだった。
+    CLI だけ検証を素通りさせると同じ穴が開く。
+
+    Args:
+        tax_override: `--tax` の値。`None` なら未指定。
+
+    Note:
+        判定は `is not None` で行うこと。`if tax_override:` にすると
+        **`--tax 0.0`（税なし）が「未指定」に化けて設定値が使われる**。
+        税あり・税なしの比較実測がこの挙動に依存している。
+    """
+    if tax_override is not None:
+        return load_tax_rate({"general": {"consider_tax": tax_override}})
+    return load_tax_rate()
 
 
 def main():
@@ -387,7 +414,7 @@ def main():
     db_path = os.path.join(project_root_here, "data", "optimization_trials.db")
     jobs_path = os.path.join(project_root_here, "data", "scenario_batch_jobs.toml")
 
-    job_names, list_jobs_only = parse_args()
+    job_names, list_jobs_only, tax_override = parse_args()
 
     all_jobs = load_scenario_batch_jobs(jobs_path)
     if not all_jobs:
@@ -418,9 +445,9 @@ def main():
     n_models = len(models)
     total_blocks = n_jobs * n_models  # 進捗表示・ETA 算出用の「job x model」単位数
 
-    # 税率は backtest_config.toml [general] consider_tax から解決する
+    # 税率は --tax があればそれ、無ければ backtest_config.toml [general] consider_tax
     # （jobs_path=scenario_batch_jobs.toml とは別ファイルなので混同しないこと）。
-    tax_rate = load_tax_rate()
+    tax_rate = resolve_tax_rate(tax_override)
 
     print("=" * 60)
     print(f"Scenario Batch: {n_jobs} jobs x {n_models} models x {num_runs} MC runs")
@@ -428,10 +455,12 @@ def main():
         print(f"  (--jobs 指定により {len(all_jobs)} 件中 {n_jobs} 件に絞り込み: {[j['name'] for j in jobs]})")
     print(f"Period: {start_date} to {end_date}")
     print(f"Jobs file: {jobs_path}")
+    tax_src = "--tax" if tax_override is not None else "backtest_config.toml"
     if tax_rate > 0.0:
-        print(f"  [Tax] 適用税率: {tax_rate * 100:.1f}% (consider_tax={tax_rate})")
+        print(f"  [Tax] 適用税率: {tax_rate * 100:.1f}% "
+              f"(consider_tax={tax_rate}, 出どころ={tax_src})")
     else:
-        print("  [Tax] 税なし (consider_tax=0.0)")
+        print(f"  [Tax] 税なし (consider_tax=0.0, 出どころ={tax_src})")
     print("=" * 60)
 
     # 失敗した run の出力先に「前回の結果」が残っているかを後で判定するための基準時刻

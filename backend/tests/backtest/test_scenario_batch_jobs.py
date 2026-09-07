@@ -12,6 +12,7 @@ from backend.backtest.run_scenario_batch import (
     format_elapsed,
     parse_args,
     resolve_job_strategy_specs,
+    resolve_tax_rate,
 )
 
 
@@ -265,21 +266,80 @@ def test_format_elapsed_hours():
 
 
 def test_parse_args_no_jobs_flag_means_all():
-    job_names, list_only = parse_args([])
+    job_names, list_only, tax = parse_args([])
     assert job_names is None
     assert list_only is False
+    assert tax is None, "--tax 未指定は None（設定ファイルの値を使う合図）"
 
 
 def test_parse_args_single_job():
-    job_names, _ = parse_args(["--jobs", "B1"])
+    job_names, _, _ = parse_args(["--jobs", "B1"])
     assert job_names == ["B1"]
 
 
 def test_parse_args_multiple_jobs_comma_separated():
-    job_names, _ = parse_args(["--jobs", "B1,B2, E1"])
+    job_names, _, _ = parse_args(["--jobs", "B1,B2, E1"])
     assert job_names == ["B1", "B2", "E1"]
 
 
 def test_parse_args_list_jobs_flag():
-    _, list_only = parse_args(["--list-jobs"])
+    _, list_only, _ = parse_args(["--list-jobs"])
     assert list_only is True
+
+
+# ---------------------------------------------------------------------------
+# --tax（2026-09-07 追加）
+#
+# 型3の並列 MC で税が効くことを実測するために足したオプション。
+# 本番の backtest_config.toml を書き換えずに 0.2 と 0.0 を比較できるようにする。
+#
+# **元のバグは「実行できたが効いていなかった」**（consider_tax=20.0 を指定しても
+# 結果が1円も変わらなかった）。単位の取り違えを二度と通さないよう、検証は
+# common_constraints.load_tax_rate() に集約して CLI 値にも同じ検査をかける。
+# ---------------------------------------------------------------------------
+def test_parse_args_tax_is_none_by_default():
+    _, _, tax = parse_args([])
+    assert tax is None
+
+
+def test_parse_args_tax_is_parsed_as_float():
+    _, _, tax = parse_args(["--tax", "0.2"])
+    assert tax == pytest.approx(0.2)
+
+
+def test_resolve_tax_rate_uses_override_when_given():
+    assert resolve_tax_rate(0.2) == pytest.approx(0.2)
+
+
+def test_resolve_tax_rate_treats_zero_as_tax_free_not_as_unset():
+    """`--tax 0.0` は「税なし」。設定ファイルへフォールバックしてはいけない。
+
+    0.2 と 0.0 の比較実測がこの挙動に依存している。`if tax_override:` のような
+    真偽判定にすると 0.0 が「未指定」に化けて、**税ありの設定値が使われ**、
+    比較が成立しないまま「変わらなかった」という誤った結論になる。
+    """
+    assert resolve_tax_rate(0.0) == 0.0
+
+
+def test_resolve_tax_rate_rejects_percent_notation():
+    """20.0（＝2000%）は単位の取り違え。元のバグと同じ形なので必ず落とす。"""
+    from backend.backtest.common_constraints import InvalidTaxRateError
+
+    with pytest.raises(InvalidTaxRateError):
+        resolve_tax_rate(20.0)
+
+
+def test_resolve_tax_rate_rejects_negative():
+    from backend.backtest.common_constraints import InvalidTaxRateError
+
+    with pytest.raises(InvalidTaxRateError):
+        resolve_tax_rate(-0.1)
+
+
+def test_resolve_tax_rate_falls_back_to_config_when_none():
+    """未指定なら backtest_config.toml の [general] consider_tax を読む。"""
+    with patch("backend.backtest.run_scenario_batch.load_tax_rate",
+               return_value=0.2) as m:
+        assert resolve_tax_rate(None) == pytest.approx(0.2)
+        m.assert_called_once_with()
+
