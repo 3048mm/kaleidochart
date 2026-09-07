@@ -181,7 +181,7 @@ Check `/api/system/info` (`is_production` flag) to confirm which environment you
 
 ## Project skills (`.claude/skills/`)
 
-Project-specific skills live in `.claude/skills/` (originals in `.agents/skills/` are kept for other AI tools). Invoke the relevant one before working on its domain:
+Project-specific skills live in `.claude/skills/` — **this is the single source of truth**. `.agents/skills/` is a mirror kept for other AI tools; sync it *from* `.claude/skills/` after editing a skill, never the other way round (it drifted 99 lines behind before 2026-09-07): `.\venv\Scripts\python.exe tools\sync_skills.py --apply`, and `--check` to detect drift (`tools/check_worktrees.ps1` runs the check as part of the inventory). Every `SKILL.md` needs **YAML frontmatter** (`---` / `name:` / `description:` / `---`); a `## Metadata` heading is not parsed, and the skill silently loses its trigger description and stops auto-invoking. Invoke the relevant one before working on its domain:
 
 - **sandbox-workflow** — mandatory before any DB schema / indicator / pipeline-logic change (sandbox isolation → verify → promote to production)
 - **pipeline-debugging** — diagnosing/repairing T1–T5 data inconsistencies (missing ranks, T2/T3 mismatch, stale data) — 手元側の問題

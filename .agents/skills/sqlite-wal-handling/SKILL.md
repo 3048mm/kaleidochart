@@ -123,8 +123,105 @@ SQLite を扱うコードを修正する際は、以下のチェックリスト�
 - [ ]  **すべての接続で `busy_timeout` が 5000ms 以上に設定されているか？**（未設定は厳禁）
 - [ ]  **`synchronous = NORMAL` になっているか？**（`FULL` だと書き込み時にフリーズしたようになります）
 - [ ]  **書き込みが発生するトランザクションは、`BEGIN IMMEDIATE` で開始されているか？**（デフォルトの `BEGIN` はデッドロックの元）
+- [ ]  **読み取り専用のセッションに `BEGIN IMMEDIATE` を適用していないか？**（SELECT が書き込みロックを要求してしまい、長時間バッチにブロックされて WAL の並行読み取りの利点が失われる。本プロジェクトでは `database.py` で読み取り用 `get_db()`＝DEFERRED と書き込み用 `get_write_db()`＝IMMEDIATE のエンジンを分離している）
+- [ ]  **BEGIN IMMEDIATE セッション（write セッション）内で以下の3つを実行していないか？**（2026-07-04 のパイプライン障害の実例。いずれも autobegin で「トランザクション内」になるため発火する）
+    1. `pd.read_sql(query, db.bind)` — pandas の新規接続も IMMEDIATE を発行し、自セッションの RESERVED ロックと**自己デッドロック**（busy_timeout まで無音ハング）。→ `db.commit()` 後に読み取りエンジン（`get_read_engine_for(db)`）で読む
+    2. `PRAGMA synchronous` の変更 — "Safety level may not be changed inside a transaction" → 接続確立時（connect イベント）でのみ設定
+    3. `VACUUM` — "cannot VACUUM from within a transaction" → `db.commit()` 後に素の `sqlite3.connect(db_path)` で実行
 - [ ]  **トランザクションは `with` ブロックや `finally` を使って、処理終了後ただちに `commit/rollback` または `close` されているか？**（開きっぱなしのリード接続は WAL チェックポイントを阻害します）
 - [ ]  **DBファイルが OneDrive 等の同期フォルダ配下にある場合は、環境上の警告メッセージを出すか、同期除外を推奨するドキュメントがあるか？**
 
+## 6. 「サーバーを止めたのにロックが解けない」の正体（2026-08-03 特定）
+
+**uvicorn を停止しても子プロセスが孤児として残り、DB ファイルハンドルを掴み続ける。**
+
+課題リストに2回「原因不明のタスクをキルしたら復旧した」と記録されていた事象の正体。
+
+```
+親 PID 10144（uvicorn）を停止  → 子 PID 29132 が孤児として残存
+Stop-Process / taskkill /F / 管理者権限          → いずれも Access is denied
+```
+
+### 厄介なのは「中間状態」になること
+
+| 操作 | 結果 |
+| :--- | :--- |
+| `BEGIN IMMEDIATE` | **成功する**（SQLite の書き込みロックは持っていない） |
+| `PRAGMA wal_checkpoint(TRUNCATE)` | **成功する**（読み取りロックも持っていない） |
+| `os.remove(db_path)` | **失敗する**（`WinError 32` ファイルハンドルを掴んでいる） |
+
+**「`BEGIN IMMEDIATE` が通るから DB は空いている」と判断すると誤る。**
+ファイル操作（削除・リネーム）を伴う処理は別途確認が要る。
+
+### 停止手順に組み込むこと
+
+```powershell
+# 親を止めた後、子プロセスが残っていないか必ず確認する
+Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
+    Select-Object ProcessId, ParentProcessId, CommandLine
+```
+
+`ParentProcessId` が既に存在しないプロセスが孤児。これを落とすまで
+「サーバーは止めたのにファイルが消せない」が続く。
+
+### WAL チェックポイントが恒常的に失敗する件（2026-08-07 真因訂正）
+
+> [!CAUTION]
+> **セッション経由で `PRAGMA wal_checkpoint` を実行してはいけない。**
+> `write_engine` は `begin` イベントで `BEGIN IMMEDIATE` を張るため、
+> `db.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))` は暗黙のトランザクションに入り、
+> SQLite が拒否する（`database table is locked`）。**他に誰も居なくても必ず失敗する。**
+
+2026-08-03 には「読み取り接続に阻まれている」と診断していたが、**それは主因ではなかった**。
+同じ処理を2経路で実行して切り分けた（2026-08-07）:
+
+```
+A. write セッションで PRAGMA   → 失敗 database table is locked
+B. 独立した生コネクションで     → 成功 (0, 0, 0) / WAL 11.6MB → 0
+```
+
+`uvicorn` を動かしたままでも B は成功する。**サーバーの有無ではなく実行経路の問題だった。**
+
+正しい実装（`pipeline/orchestrator.safe_wal_checkpoint`）:
+
+```python
+db.commit()                                   # 書き込みロックを解放してから
+raw = db.get_bind().raw_connection()          # 独立した生コネクション
+cur = raw.cursor()
+cur.execute("PRAGMA busy_timeout=3000")       # ← 必須。下記参照
+cur.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+busy, log_frames, checkpointed = cur.fetchone()
+```
+
+> [!WARNING]
+> **短い `busy_timeout` を必ず設定する。** `write_engine` は長時間バッチ用に
+> `timeout=3600` で作られており、その接続をそのまま使うと読み取りに阻まれたとき
+> **チェックポイントが最大1時間パイプラインを止める**（テストで実際にハングした）。
+> 回収は best-effort。待たずに諦めて次へ進む。
+
+### 読み取りに阻まれた場合：モードを変えても解決しない
+
+読み取りトランザクションが開いていると、**どのモードでも1フレームも回収できない**（実測）:
+
+```
+PASSIVE   busy=0 log=506  checkpointed=0   ← 成功に見えるが回収ゼロ
+FULL      busy=1 log=1012 checkpointed=0
+TRUNCATE  busy=1 log=1518 checkpointed=0
+```
+
+**`PASSIVE` に逃げてはいけない。** `busy=0` を返すので問題が見えなくなるだけ。
+TRUNCATE のまま `(busy, log, checkpointed)` を**数値でログに残す**。
+
+判定の注意点:
+- **`busy=0` でも `log > checkpointed` なら回収できていない**（成功扱いしない）
+- **SQLite は開始すらできないと `log=-1 checkpointed=-1` を返す**。
+  引き算すると「未回収 0 フレーム」になり回収できたように読めるので、明示的に区別する
+
+### 肥大化の検知
+
+ログの WARNING は流れて消える。実際 `-wal` 3.6GB になるまで誰も気づかなかった。
+**週次レポートに数値で残す**（`weekly_maintenance.classify_wal_size`、100MB 超で警告）。
+
+---
 ---
 このルールは、エージェントがプロジェクト内で SQLite / DB 関連の操作を行う際に最優先で適用されます。

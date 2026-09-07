@@ -1,12 +1,13 @@
-# Frontend UI/UX Refinement Skill
-
-## Metadata
+---
 name: frontend-uiux-refinement
-description: stocktool プロジェクトのフロントエンドを洗練させ、プレミアムなユーザー体験を提供するためのガイドライン。
+description: stocktool のフロントエンド（Vite + React + lightweight-charts）の UI/UX を洗練させるためのガイドライン。画面・パネル・チャートを新規作成する、既存画面の見た目や操作性を改善する、配色・余白・情報密度を判断する、といった場面で使う。このプロジェクト固有のデザイン方針を示す。
+---
+
+# Frontend UI/UX Refinement Skill
 
 ## Instructions
 
-あなたは Antigravity として、以下のガイドラインに従ってダッシュボードの UI/UX を向上させてください。
+以下のガイドラインに従って、ダッシュボードの UI/UX を向上させること。
 
 ### 1. デザイン美学の遵守
 - **プレミアム感の追求**: 単なる「動くもの」ではなく、一目見て「高品質」と感じられるデザインを目指します。

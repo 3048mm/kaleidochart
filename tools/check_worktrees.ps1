@@ -118,3 +118,17 @@ if ($merged) {
         }
     }
 } else { Write-Output "    (none)" }
+
+Write-Output ""
+Write-Output "=== Skills mirror (.claude/skills -> .agents/skills) ==="
+# Windows cannot share the two trees with a link (rules sec.11), so they are two
+# real copies and the drift is detected here instead. Also lints the YAML
+# frontmatter: a '## Metadata' heading is not parsed and the skill silently
+# stops auto-invoking (this happened to 2 skills before 2026-09-07).
+$py = Join-Path $mainRoot 'venv\Scripts\python.exe'
+$syncScript = Join-Path $root 'tools\sync_skills.py'
+if ((Test-Path $py) -and (Test-Path $syncScript)) {
+    & $py $syncScript --check --root $root | ForEach-Object { Write-Output "    $_" }
+} else {
+    Write-Output "    (skipped: venv python or tools/sync_skills.py not found)"
+}
