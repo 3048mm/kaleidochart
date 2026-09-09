@@ -43,6 +43,19 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -File \"$CLAUDE_PROJECT_DIR/tools/hooks/run_related_tests.ps1\"",
+            "timeout": 75,
+            "statusMessage": "related tests"
+          }
+        ]
+      }
     ]
   },
   "worktree": {

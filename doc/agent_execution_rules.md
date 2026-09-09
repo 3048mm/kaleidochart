@@ -450,6 +450,20 @@ if errorlevel 1 goto :fail
 
 ### 10.3 ワークツリーでのデータアクセス
 
+> [!IMPORTANT]
+> **プロビジョニング前のワークツリーでは pytest が1件だけ失敗する（環境要因・本当の回帰ではない）。**
+>
+> ```
+> backend/tests/backtest/test_scenario_comparison.py::test_run_comparison_generates_outputs
+> FileNotFoundError: Parquet master cache files not found
+> ```
+>
+> `data/` は git 管理外なのでワークツリーの `data/parquet_master/` が空であることが原因。
+> 本体チェックアウトでは通る。**この1件以外が落ちたら、それは本当の回帰。**
+> 下記のプロビジョニングを行えば解消する。
+> （2026-08 のスクリーナー統合作業で実測。件数を数え違えて「回帰した」と誤報告しないこと）
+
+
 ワークツリーの `data/` は git 管理の TOML 数件しか無い。**そのまま実行してもエラーにならず、
 空の DB が新規作成される**という罠があったため、2026-09-01 に
 「使う前にプロビジョニングする」方式へ変更した。
