@@ -5,9 +5,18 @@
 #   - agent branches (worktree-*) not yet merged / already merged into main
 #   - data provisioning state of each worktree (read / write / NOT provisioned)
 #   - phantom disk: parquet generations pinned by a worktree after production pruned them
-# See doc/agent_execution_rules.md sections 7 and 10.3.
+#   - skills mirror drift (.claude/skills -> .agents/skills) and frontmatter lint
+#   - stale plans in doc/in_progress (a development item nobody is carrying)
+# See doc/agent_execution_rules.md sections 7, 9, 10.3 and 11.3.
 # NOTE: keep this file ASCII-only. Windows PowerShell 5.1 reads BOM-less
 #       files as ANSI (CP932), and multibyte comments corrupt parsing.
+
+param(
+    # Days without an edit before a doc/in_progress plan is reported. 14 by
+    # default: work here is regularly interrupted for a week at a time, so a
+    # shorter window would cry wolf on items that are merely paused.
+    [int]$StaleDays = 14
+)
 
 $ErrorActionPreference = 'Continue'
 $root = Split-Path $PSScriptRoot -Parent
@@ -123,10 +132,11 @@ if (Test-Path $wtRoot) {
             $hasGit = Test-Path (Join-Path $d.FullName '.git')
             $kind = if ($hasGit) { 'has .git but is not registered (registration pruned?)' } else { 'no .git: a worktree removal stopped partway' }
             Write-Output ("[!] {0}  ({1} MB)  {2}" -f $d.Name, $mb, $kind)
-            Write-Output ("      Remove-Item -Recurse -Force '{0}'" -f $d.FullName)
+            Write-Output ("      tools/remove_worktree.ps1 {0}" -f $d.Name)
         }
-        Write-Output "    NOTE: use Remove-Item, not git worktree remove. Remove-Item does not"
-        Write-Output "          follow junctions; git worktree remove does (rules sec.11.3)."
+        Write-Output "    NOTE: always remove through tools/remove_worktree.ps1. It detaches"
+        Write-Output "          junctions first; a bare git worktree remove follows them and"
+        Write-Output "          deletes what they point at (rules sec.11.3, reproduced 2026-09-09)."
     } else { Write-Output "    (none)" }
 } else {
     Write-Output "    (no .claude/worktrees directory)"
@@ -152,7 +162,10 @@ if ($merged) {
         if ($dirtyByBranch[$b] -gt 0) {
             Write-Output "[!] $b  (worktree still has $($dirtyByBranch[$b]) uncommitted changes - do NOT delete yet)"
         } else {
-            Write-Output "    $b  -> git branch -d $b"
+            # remove_worktree.ps1 detaches junctions, removes the worktree and drops
+            # the branch in one safe step; plain `git branch -d` leaves the worktree.
+            $wtName = $b -replace '^worktree-', ''
+            Write-Output "    $b  -> tools/remove_worktree.ps1 $wtName -DeleteBranch"
         }
     }
 } else { Write-Output "    (none)" }
@@ -163,10 +176,33 @@ Write-Output "=== Skills mirror (.claude/skills -> .agents/skills) ==="
 # real copies and the drift is detected here instead. Also lints the YAML
 # frontmatter: a '## Metadata' heading is not parsed and the skill silently
 # stops auto-invoking (this happened to 2 skills before 2026-09-07).
-$py = Join-Path $mainRoot 'venv\Scripts\python.exe'
-$syncScript = Join-Path $root 'tools\sync_skills.py'
+$py = Join-Path (Join-Path $mainRoot 'venv') (Join-Path 'Scripts' 'python.exe')
+$syncScript = Join-Path (Join-Path $root 'tools') 'sync_skills.py'
 if ((Test-Path $py) -and (Test-Path $syncScript)) {
     & $py $syncScript --check --root $root | ForEach-Object { Write-Output "    $_" }
 } else {
     Write-Output "    (skipped: venv python or tools/sync_skills.py not found)"
+}
+
+Write-Output ""
+Write-Output "=== Stale plans in doc/in_progress (no edit for $StaleDays+ days) ==="
+# A plan file is the handoff document for an unfinished development item
+# (rules sec.9). One that stops being edited is an item nobody is carrying,
+# and nothing else in the workflow surfaces that. 14 days is the default
+# because work here is regularly interrupted for a week at a time.
+$inProgress = Join-Path (Join-Path $mainRoot 'doc') 'in_progress'
+if (Test-Path $inProgress) {
+    $cutoff = (Get-Date).AddDays(-$StaleDays)
+    $stale = @(Get-ChildItem $inProgress -File -Filter '*_plan.md' -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -ne '_TEMPLATE.md' -and $_.LastWriteTime -lt $cutoff } |
+        Sort-Object LastWriteTime)
+    if ($stale.Count -gt 0) {
+        foreach ($f in $stale) {
+            $days = [int]((Get-Date) - $f.LastWriteTime).TotalDays
+            Write-Output ("[!] {0}  (last edited {1} days ago, {2})" -f $f.Name, $days, $f.LastWriteTime.ToString('yyyy-MM-dd'))
+        }
+        Write-Output "    Finish it, or move it to doc/completed/ with the outcome recorded."
+    } else { Write-Output "    (none)" }
+} else {
+    Write-Output "    (no doc/in_progress directory)"
 }

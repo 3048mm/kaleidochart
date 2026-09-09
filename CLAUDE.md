@@ -8,10 +8,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - エラーメッセージの説明も日本語で行う
 - ドキュメントも日本語で生成する
 
-## ツール呼び出しの書式（AIエージェント向け・厳守）
-- ツール呼び出しは名前空間接頭辞付きの正規の書式で出力すること。接頭辞を欠いた壊れた書式は malformed として送信が弾かれ、ツールが実行されない。
-- malformed で弾かれたら、同じ書式のまま闇雲に再送しない。直近で成功したツール呼び出しの書式に合わせ、1呼び出しずつ確実に送り直す。
-
 ## エラーリトライ規律（AIエージェント向け・厳守）
 - **同一エラーで3回失敗したら打ち切る**（`doc/agent_execution_rules.md` §4）。打ち切り後はアプローチを変えるか、エラー内容を報告してユーザーの判断を仰ぐ。同じ呼び出しをそのまま再送することを禁止する。
 - **打ち切る前に既知の回避手段を引き、無ければ書き残す**（詳細は `doc/agent_execution_rules.md` §4.1）:
@@ -45,6 +41,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `git add` は**明示パスのみ**（`-A` / `.` 禁止）。
 - **データ（DB / Parquet）は git に乗らない** — アクセス方法・変更種別（A〜D、完了報告に必須記載）・merge 後の昇格は `doc/agent_execution_rules.md` §10 を参照。
 - 機械判定可能な違反（`git add -A`/`.`、force-push、main 宛 push、`--amend`、本体での commit）は PreToolUse フック `tools/hooks/git_guard.ps1` が自動でブロック/確認する。
+- **ワークツリーの撤収は `tools/remove_worktree.ps1` を通す**（素の `git worktree remove` はジャンクションを辿ってリンク先を全削除する。実測済み: `doc/agent_execution_rules.md` §11.3）。
 - 詳細: `doc/agent_execution_rules.md` §7。未取り込み作業の棚卸し: `tools/check_worktrees.ps1`
 
 ## Project overview
