@@ -673,6 +673,70 @@ VIX     9,265行  1990-01-02 〜   （472 KB）
 
 ---
 
+---
+
+## 6.2 分割の取りこぼしを機械的に検出する（`scan_split_consistency.py`）
+
+2026-09-04 の事故（上流を正解と仮定して MNST の正しいデータを壊した）を受けて
+作った検査。**報告のみで自動修正しない。**
+
+```powershell
+$env:PYTHONPATH="backend"
+.\venv\Scripts\python.exe backend\scripts\scan_split_consistency.py --years 2
+.\venv\Scripts\python.exe backend\scripts\scan_split_consistency.py --tickers MNST,APH
+```
+
+### 2つの検査
+
+**検査A: 上流の自己矛盾** — 上流が `splits` に記録している分割日で、
+上流自身の調整済み終値に段差が残っていないか。遡及適用済みなら段差は出ない。
+段差が `1/factor` と一致すれば「**知っているのに適用できていない**」（MNST 型）。
+
+**検査B: 手元と上流のスケール乖離** — 重複期間の `手元/上流` の中央値。
+分割比に一致すれば `split_suspect`、一致しないが乖離が大きければ `divergent`。
+`auto_adjust=True` で配当調整も入るため、**配当銘柄の緩やかな乖離は正常**。
+
+> [!IMPORTANT]
+> **「分割比に一致しない」ことは「正常」の証明ではない。** `VISN` は比 1.7541 で
+> 分割比ではなかったが、実際に手元が古かった（2026年の特別分配が効いていた）。
+
+### 実測（2026-09-09〜10 / 2,956銘柄）
+
+**本物のデータ破損を2件検出した**（週次の `scan_price_anomalies.py` は見逃していた）:
+
+```
+IESC  2026-08-24 ×2.0  手元/上流=2.0000  → 過去分に ×0.5 を適用して解消
+WLFC  2026-07-21 ×3.0  手元/上流=3.0208  → 過去分に ×1/3 を適用して解消
+```
+
+`upstream-data-diagnosis` §6 限界3（日次の差分取得では過去の調整が反映されない）の実例。
+
+### 設計上の勘所（作り直すとき用）
+
+1. **株式配当（factor ≈ 1.0x）は段差で判定できない。** `factor=1.01` だと
+   「未適用（jump≈0.990）」と「適用済み（jump≈1.0）」が許容幅の中で重なる。
+   初版はこれで **16件を誤検出**した（`SCCO` 7件 / `TR` 2件 等、いずれも株式配当）。
+   `MIN_DISCRIMINABLE_GAP = 0.15` で識別できない領域は判定を放棄する
+2. **保有期間外の分割はスキャンしない。** 上流の古い履歴の問題で手元に影響しない。
+   ただし**スキップ件数と内訳を必ず出力する**（黙って落とすと「検出0件」が
+   健全なのか空振りなのか区別できなくなる）
+3. **対象期間は2年で足りる**（実測）。全期間にしても検査Bの検出は増えず、
+   保有期間外の対応不能な警告が増えて実行時間が2.4倍になるだけ
+
+### 週次には入れていない
+
+誤検出率が未知のまま入れると警告が常態化して読まれなくなるため、
+単体運用で精度を確かめる段階。組み込む場合の設計は
+`doc/completed/split_consistency_scan_plan.md` §3.4 に残してある。
+
+### この検査で塞げない範囲
+
+**上流が分割記録すら持っていない銘柄は原理的に検出できない**（検査Aは記録された
+分割日を起点にするため）。§6 限界1 の `SOXS` / `UAVS` など299件が該当する。
+そこは外部の一次情報（§6.1 の CBOE のような経路）が要る。
+
+---
+
 ## 7. やってはいけないこと
 
 **完全再構築で上書きしない。**
@@ -736,6 +800,7 @@ def probe(tk):
 - `backend/scripts/restore_truncated_symbol_history.py` — 旧世代からの履歴復元
 - `backend/scripts/archive_parquet_master.py` — 再構築前の退避
 - `backend/scripts/rename_symbol.py` — 改称の反映
+- `backend/scripts/scan_split_consistency.py` — 分割の取りこぼしを検出（§6.2・報告のみ）
 - `backend/scripts/backfill_vix_from_cboe.py` — VIX 系の欠損を CBOE の一次情報で埋める（§6.1・追記専用）
 - `backend/scripts/resync_price_scale.py` — 上流が再調整した価格に既存行を追随させる（**上流が正しいと確認してから使う**）
 - `backend/scripts/weekly_maintenance.py` — 鮮度監査・アノマリー検出
