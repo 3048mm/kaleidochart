@@ -152,3 +152,69 @@ def test_post_comparison_run(client, monkeypatch):
     assert resp.status_code == 200
     assert resp.json()["status"] == "running" or resp.json()["status"] == "started"
     assert len(called_args) == 1
+
+
+# ---------------------------------------------------------------------------
+# refresh_cache のクエリパラメータ露出に関する回帰テスト
+#
+# 背景（issue_list P2 / 2026-09-09 削除）:
+# このエンドポイントは refresh_cache: bool = False をクエリパラメータとして受け取り、
+# preload_data まで通していた。そのため **?refresh_cache=true を付けた1回の HTTP
+# リクエストで本番 Parquet のローテートが走った**。ローテートは旧世代とのマージを伴う
+# 書き込み処理で、Web リクエストから起動できてよいものではない（architecture.md §11.2）。
+# 再生成の入口は CLI の --refresh-cache だけにする。
+# ---------------------------------------------------------------------------
+COMPARISON_RUN_PATH_SUFFIX = "/backtest/comparison/run"
+
+
+def _comparison_run_query_params(app_obj):
+    """OpenAPI から比較実行エンドポイントのクエリパラメータ名を取り出す。"""
+    schema = app_obj.openapi()
+    for path, methods in schema["paths"].items():
+        if path.endswith(COMPARISON_RUN_PATH_SUFFIX) and "post" in methods:
+            return {p["name"] for p in methods["post"].get("parameters", [])
+                    if p.get("in") == "query"}
+    raise AssertionError(f"エンドポイントが見つからない: *{COMPARISON_RUN_PATH_SUFFIX}")
+
+
+def test_comparison_run_does_not_expose_refresh_cache():
+    """HTTP の口に refresh_cache が出ていないこと。"""
+    params = _comparison_run_query_params(app)
+    assert "refresh_cache" not in params, (
+        "refresh_cache がクエリパラメータとして復活している。"
+        "Web リクエストから本番 Parquet のローテートを起動できてはいけない")
+    # 他のパラメータは消していないことも確認（削りすぎの検出）
+    assert {"start_date", "end_date", "use_vxv_vix"} <= params
+
+
+def test_bg_run_comparison_takes_no_refresh_cache():
+    """バックグラウンド関数側にも引数として残っていないこと。"""
+    import inspect
+
+    import api.backtest_router
+    sig = inspect.signature(api.backtest_router._bg_run_comparison)
+    assert "refresh_cache" not in sig.parameters
+
+
+def test_unknown_refresh_cache_query_is_ignored(client, monkeypatch):
+    """?refresh_cache=true を付けて叩いても、無視されて通常どおり起動すること。
+
+    FastAPI は未知のクエリパラメータを無視するため 400 にはならない。
+    「エラーにならずに再生成もされない」ことが期待する挙動。
+    """
+    import api.backtest_router
+    monkeypatch.setitem(api.backtest_router._comparison_run_status, "status", "idle")
+
+    called_kwargs = []
+    monkeypatch.setattr(api.backtest_router, "_bg_run_comparison",
+                        lambda *a, **k: called_kwargs.append(k))
+
+    resp = client.post(
+        "/api/backtest/comparison/run",
+        params={"start_date": "2025-01-01", "end_date": "2025-04-01",
+                "refresh_cache": "true"},
+    )
+
+    assert resp.status_code == 200
+    assert len(called_kwargs) == 1
+    assert "refresh_cache" not in called_kwargs[0],         "クエリの refresh_cache がバックグラウンド処理まで届いている"
