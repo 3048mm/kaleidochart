@@ -1243,7 +1243,6 @@ def _bg_run_comparison(
     min_score: int,
     stop_loss_pct: float,
     profit_target_pct: float,
-    refresh_cache: bool,
     use_vxv_vix: bool
 ):
     global _comparison_run_status
@@ -1265,7 +1264,8 @@ def _bg_run_comparison(
             min_score=min_score,
             stop_loss_pct=stop_loss_pct,
             profit_target_pct=profit_target_pct,
-            refresh_cache=refresh_cache,
+            # refresh_cache は渡さない（run_comparison 側の既定 False を使う）。
+            # 理由はエンドポイント側のコメントを参照。
             use_vxv_vix=use_vxv_vix
         )
         _comparison_run_status = {"status": "completed"}
@@ -1282,12 +1282,22 @@ def run_scenario_comparison(
     min_score: int = 2,
     stop_loss_pct: float = -0.08,
     profit_target_pct: float = 0.20,
-    refresh_cache: bool = False,
     use_vxv_vix: bool = False,
     background_tasks: BackgroundTasks = None
 ):
     """
     Triggers the side-by-side market regime comparison test as a background task.
+
+    ## `refresh_cache` を受け付けない（2026-09-09 削除）
+
+    以前はクエリパラメータ `refresh_cache` を受け取り `preload_data` まで通していたため、
+    **`?refresh_cache=true` を付けた1回の HTTP リクエストで本番 Parquet のローテートが
+    走った**。ローテートは旧世代とのマージを伴う書き込み処理で、Web リクエストから
+    起動できてよいものではない（`architecture.md` §11.2）。
+    Parquet マスタの再生成は CLI の `--refresh-cache` だけを入口とする。
+
+    フロント側（`frontend/src/api/backtest.ts` の `runScenarioComparison`）は
+    このパラメータを送っていなかったため、削除による画面への影響は無い。
     """
     global _comparison_run_status
     if _comparison_run_status["status"] == "running":
@@ -1307,7 +1317,6 @@ def run_scenario_comparison(
         min_score=min_score,
         stop_loss_pct=stop_loss_pct,
         profit_target_pct=profit_target_pct,
-        refresh_cache=refresh_cache,
         use_vxv_vix=use_vxv_vix
     )
     _comparison_run_status = {"status": "running"}

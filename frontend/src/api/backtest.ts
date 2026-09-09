@@ -239,7 +239,9 @@ export async function runScenarioComparison(params: {
   min_score?: number;
   stop_loss_pct?: number;
   profit_target_pct?: number;
-  refresh_cache?: boolean;
+  // refresh_cache は 2026-09-09 に API から削除した。
+  // Web リクエストから本番 Parquet のローテートを起動できてはいけないため
+  // （doc/architecture.md §11.2）。再生成は CLI の --refresh-cache のみ。
   use_vxv_vix?: boolean;
 }): Promise<{ status: string; message: string }> {
   const query = new URLSearchParams();

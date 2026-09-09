@@ -13,7 +13,17 @@
 
 ## P1 — 高（正確性・データ保全。P0 の次）
 
-- [ ] 🔴 **分割・統合の「適用」はあるが「検証」の仕組みが無い（2026-09-04 発見）**
+- [ ] 🟡 **分割・統合の検証手段 — 第1段階完了 / 第3段階（独立ソース）が未着手**（2026-09-04 発見 / 2026-09-10 一部対応）
+  - **第1・2段階は完了**: `backend/scripts/scan_split_consistency.py` で
+    上流の自己矛盾と手元/上流のスケール乖離を検出できるようになった。
+    2,956銘柄で**本物のデータ破損2件（`IESC` / `WLFC`）を検出し補正済み**、誤検出0件。
+    詳細: `doc/completed/split_consistency_scan_plan.md` /
+    `.claude/skills/upstream-data-diagnosis/SKILL.md` §6.2
+  - **残るのは第3段階**: 上流が分割記録**自体**を持たないケース（`SOXS` / `UAVS` 等299件）は
+    原理的に検出できない。外部の独立ソースが要る。2026-09-07 に GoogleFinance と
+    moomoo を比較し **moomoo 推奨**（復権区分を明示的に選べる点が決定的）。
+    ただし **US 市場の履歴に市場データ契約が要るかが未確認**。
+  - **副次的に判明**: `scan_price_anomalies.py` の分類が分割を隠している（下記の別項）
   - **事象**: 分割・併合の検出と適用は yfinance の `splits` と SEC EDGAR で組んであるが、
     **適用結果が正しいかを独立に検証する手段が無い**。参照先が実質 yfinance 単独なので、
     上流が壊れているケースを構造的に検出できない。
@@ -624,9 +634,76 @@
   - 一覧: `data/maintenance_reports/backfill_shortfall_20260904_092107.csv`
   - **この精査で上の `min_periods=1` の影響範囲が定量化された**（同じ実測データ）。
 
+- [ ] 🔴 **`scan_price_anomalies.py` の分類が分割を隠している（2026-09-09 発見）**
+  - **事象**: 段差の**検出はできている**が、分類で捨てている。
+    2026-09-10 に補正した `IESC` / `WLFC` は**どちらもレポートに入っていた**:
+
+    ```
+    IESC  2026-08-24  ratio=0.4731  same_day_count=4  → market_wide
+    WLFC  2026-07-20  ratio=0.3294  same_day_count=1  → real_move
+    ```
+
+  - **`market_wide` の正体**: 2026-08-24 に飛んだ4銘柄を調べたところ、
+    **無関係な分割が重なっただけ**だった。
+
+    | 銘柄 | 比 | 分割記録 |
+    | :--- | ---: | :--- |
+    | `AVB` | 0.370 | **2026-08-17 ×2.793** |
+    | `IESC` | 0.473 | **2026-08-24 ×2.0** |
+    | `FLZH` | 0.228 | なし |
+    | `FBDT` | 0.514 | なし |
+
+    `AVB`（AvalonBay、大型REIT）が1日で63%下落することはない。
+    **`MARKET_WIDE_MIN_SYMBOLS = 4` は、同日に4件の分割が重なると全部を
+    「市場全体の動き」として消す。**
+
+  - **同じ失敗を過去にもしている**: 2026-09-04 の `auto_adjust=False` 事故で
+    2018-04-02（実際に -2.2% の日）が `market_wide` に分類され、409銘柄の
+    系統的な段差を素通りさせた。**分類の型が同じ。**
+
+  - **分類の偏り**（全1,357件）:
+
+    ```
+    low_liquidity    613
+    real_move        475
+    market_wide      220
+    virtual           48
+    split_suspect      1   ← 1件だけ
+    ```
+
+    直近1年で **比 0.6未満 / 1.8超なのに `market_wide` か `real_move` で
+    落とされたものが118件**ある。
+
+  - **根本原因**: **分類器が分割メタデータを一切見ていない。** 「その日に分割記録が
+    あるか」を参照すれば `IESC` も `WLFC` も `AVB` も即座に分割と分かる。
+    比の大きさと同日件数だけで判断しているため、分割と実際の値動きを区別できない。
+
+  - **対応案**: `classify_price_jump()` に分割記録を渡し、分割日に一致する段差は
+    `market_wide` / `real_move` より優先して `split_suspect` にする。
+    `scan_split_consistency.py` が同じ判定をしているので、実装を共有できる。
+
+  - **暫定**: 原因が分かったので**あちらの `market_wide` / `real_move` を
+    「正常」と読んではいけない**。分割の疑いは `scan_split_consistency.py` で見る。
+
+  - **関連**: `backend/scripts/scan_price_anomalies.py`,
+    `backend/indicators/price_anomaly.py`, `backend/scripts/scan_split_consistency.py`
+
 ## P2 — 中（体感改善・保守性・運用安全性）
 
-- [ ] 🟠 **`refresh_cache` が FastAPI のクエリパラメータとして外部に露出している（2026-09-09 発見）**
+- [x] 🟠 **`refresh_cache` が FastAPI のクエリパラメータとして外部に露出している（2026-09-09 発見・同日解決）**
+
+  > [!NOTE]
+  > **2026-09-09 解決済み。** 対応案どおりエンドポイントから `refresh_cache` を削除した。
+  > `run_scenario_comparison()` / `_bg_run_comparison()` の引数と、`run_comparison()` への
+  > 受け渡しを除去（`run_comparison` 自身の既定 `False` を使う）。
+  > `scenario_runner.py` の CLI `--refresh-cache` は**再生成の唯一の入口として残す**。
+  > フロントの型定義（`frontend/src/api/backtest.ts`）からも該当フィールドを削除した
+  > （`runScenarioComparison` は呼び出し箇所ゼロのデッドコードのままにしてある）。
+  >
+  > 回帰テスト3件（`backend/tests/api/test_scenario_comparison_api.py`）:
+  > ①OpenAPI にクエリパラメータとして出ていない ②`_bg_run_comparison` の引数に無い
+  > ③`?refresh_cache=true` を付けても**エラーにならず、かつ後段まで届かない**
+  > （FastAPI は未知のクエリを無視するため 400 にはならない。「無視される」ことを固定する）。
   - `backend/api/backtest_router.py:1285` のレジーム比較エンドポイントは
     `refresh_cache: bool = False` を**クエリパラメータとして受け付け**、`BackgroundTasks` 経由で
     `preload_data` へ渡す。つまり **`?refresh_cache=true` を付けた1回の HTTP リクエストで
