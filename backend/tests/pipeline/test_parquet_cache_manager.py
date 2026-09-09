@@ -659,3 +659,181 @@ class TestMergeTimeseriesTable:
         sql = pd.DataFrame([{"symbol_id": 1, "date": "2020-01-01", "v": 1.0}])
         out = merge_timeseries_table("indicators", ["symbol_id", "date"], sql, None, logger)
         assert len(out) == 1
+
+
+# ---------------------------------------------------------------------------
+# ポインタ読み込み失敗の fail-loud 化に関する回帰テスト
+#
+# 背景（issue_list P1 / 2026-09-01 発見・2026-09-09 対応）:
+# get_latest_master_files() は「ポインタが存在しない（＝初回。正常）」と
+# 「存在するが読めない（BOM・JSON破損・権限）」を、どちらも警告なしの None で返していた。
+# rotate_and_archive_to_parquet() はこの戻り値でマージ元の旧 Parquet を決めるため、
+# None になると old_paths が空 → 旧世代を読まずに SQLite の内容だけで新世代を公開する。
+# SQLite はホットキャッシュ（直近730日）しか持たないので、7年超の履歴を失った世代が
+# 無警告で公開される。
+#
+# 実際に踏んだ例: latest_master.json を PowerShell で書き換えて BOM が付き、
+# json.load() が `Unexpected UTF-8 BOM` を投げた（2026-08-30）。
+#
+#   ValueError: Unexpected UTF-8 BOM (decode using utf-8-sig)
+#
+# 同型の激減は 2026-07-30 の再構築でも起きている（fx_rates 7,711行 → 22行）。
+# ---------------------------------------------------------------------------
+import glob as _glob
+
+
+BOM_BYTES = bytes([0xEF, 0xBB, 0xBF])
+
+
+def _corrupt_pointer_with_bom(pointer_file):
+    """PowerShell の Set-Content 相当。UTF-8 BOM を付けて json.load() を落とす。"""
+    with open(pointer_file, "rb") as f:
+        raw = f.read()
+    with open(pointer_file, "wb") as f:
+        f.write(BOM_BYTES + raw)
+
+
+def _count_generations(parquet_dir):
+    return len(_glob.glob(os.path.join(parquet_dir, "prices_*.parquet")))
+
+
+def test_get_latest_master_files_returns_none_when_pointer_absent(tmp_path):
+    """ポインタが存在しない（真の初回）は従来どおり None。例外にはしない。"""
+    from pipeline.parquet_cache_manager import get_latest_master_files
+    missing = str(tmp_path / "parquet_master" / "latest_master.json")
+    assert get_latest_master_files(missing) is None
+    assert get_latest_master_files(missing, strict=True) is None
+
+
+def test_get_latest_master_files_logs_error_when_unreadable(tmp_path, caplog):
+    """読めないポインタは、既定モードでも黙って None を返さずエラーログを出すこと。"""
+    from pipeline.parquet_cache_manager import get_latest_master_files
+    pointer = tmp_path / "latest_master.json"
+    pointer.write_bytes(BOM_BYTES + b'{"prices": "x.parquet"}')
+
+    with caplog.at_level(logging.ERROR):
+        result = get_latest_master_files(str(pointer))
+
+    assert result is None, "既定モードの戻り値は従来どおり None（呼び出し側 30箇所超の互換）"
+    assert caplog.records, "読み込み失敗が無警告で握り潰されている"
+    assert any("latest_master" in r.getMessage() or str(pointer) in r.getMessage()
+               for r in caplog.records)
+
+
+def test_get_latest_master_files_raises_when_unreadable_and_strict(tmp_path):
+    """strict=True では「存在するが読めない」を例外にすること。"""
+    from pipeline.parquet_cache_manager import (
+        ParquetPointerUnreadableError, get_latest_master_files)
+    pointer = tmp_path / "latest_master.json"
+    pointer.write_bytes(BOM_BYTES + b'{"prices": "x.parquet"}')
+
+    with pytest.raises(ParquetPointerUnreadableError):
+        get_latest_master_files(str(pointer), strict=True)
+
+
+def test_rotate_aborts_when_pointer_unreadable_instead_of_truncating(tmp_path):
+    """【本命の再現】ポインタが壊れた状態でローテートしても履歴を切り詰めないこと。
+
+    修正前はここで新世代が「直近ホット期間だけ」の内容で公開され、
+    2020-01-02 の履歴が失われていた（警告も出ない）。
+    """
+    parquet_dir = tmp_path / "parquet_master"
+    os.makedirs(parquet_dir, exist_ok=True)
+    db_file, engine = _make_db_with_data(
+        tmp_path, [(1, "SPY", "NYSEARCA", "市場", 1)], [])
+    Session = sessionmaker(bind=engine)
+
+    conn = sqlite3.connect(db_file)
+    conn.execute("INSERT INTO daily_prices (symbol_id, date, close) VALUES (1,'2020-01-02',100.0)")
+    conn.commit()
+    conn.close()
+
+    db = Session()
+    rotate_and_archive_to_parquet(db, db_file, logger, require_non_empty=False)
+    db.close()
+
+    from pipeline.parquet_cache_manager import (
+        ParquetPointerUnreadableError, get_latest_master_files,
+        get_parquet_master_dir, get_pointer_file_path)
+    pointer = get_pointer_file_path(get_parquet_master_dir(db_file))
+    before = get_latest_master_files(pointer)
+    assert set(pd.read_parquet(before["prices"])["date"].astype(str)) == {"2020-01-02"}
+    gen_before = _count_generations(str(parquet_dir))
+
+    # ホットキャッシュのパージを模して古い行を消す（＝SQLite には履歴が無い状態）
+    conn = sqlite3.connect(db_file)
+    conn.execute("DELETE FROM daily_prices WHERE date='2020-01-02'")
+    conn.execute("INSERT INTO daily_prices (symbol_id, date, close) VALUES (1,'2026-01-05',500.0)")
+    conn.commit()
+    conn.close()
+
+    # ポインタを壊す（PowerShell 由来の BOM 混入を再現）
+    _corrupt_pointer_with_bom(pointer)
+
+    db = Session()
+    with pytest.raises(ParquetPointerUnreadableError):
+        rotate_and_archive_to_parquet(db, db_file, logger, require_non_empty=False)
+    db.close()
+
+    assert _count_generations(str(parquet_dir)) == gen_before,         "マージ元が特定できないのに新世代が生成された（切り詰めが公開されうる）"
+    engine.dispose()
+
+
+def test_rotate_aborts_when_pointer_missing_but_parquet_files_exist(tmp_path):
+    """ポインタが「消えた」ケースも止めること。
+
+    「初回だから旧世代が無い」と「ポインタだけ消えた／壊れた」は、ポインタの
+    有無だけでは区別できない。実ファイルの有無で照合する。
+    """
+    parquet_dir = tmp_path / "parquet_master"
+    os.makedirs(parquet_dir, exist_ok=True)
+    db_file, engine = _make_db_with_data(
+        tmp_path, [(1, "SPY", "NYSEARCA", "市場", 1)], [])
+    Session = sessionmaker(bind=engine)
+
+    conn = sqlite3.connect(db_file)
+    conn.execute("INSERT INTO daily_prices (symbol_id, date, close) VALUES (1,'2020-01-02',100.0)")
+    conn.commit()
+    conn.close()
+
+    db = Session()
+    rotate_and_archive_to_parquet(db, db_file, logger, require_non_empty=False)
+    db.close()
+
+    from pipeline.parquet_cache_manager import get_parquet_master_dir, get_pointer_file_path
+    pointer = get_pointer_file_path(get_parquet_master_dir(db_file))
+    gen_before = _count_generations(str(parquet_dir))
+    os.remove(pointer)
+
+    db = Session()
+    with pytest.raises(RuntimeError):
+        rotate_and_archive_to_parquet(db, db_file, logger, require_non_empty=False)
+    db.close()
+
+    assert _count_generations(str(parquet_dir)) == gen_before,         "旧世代の実体が残っているのに『初回』として新世代を公開した"
+    engine.dispose()
+
+
+def test_rotate_succeeds_on_true_first_run(tmp_path):
+    """真の初回（parquet_dir に実体が無い）は従来どおり成功すること（退行防止）。"""
+    parquet_dir = tmp_path / "parquet_master"
+    os.makedirs(parquet_dir, exist_ok=True)
+    db_file, engine = _make_db_with_data(
+        tmp_path, [(1, "SPY", "NYSEARCA", "市場", 1)], [])
+    Session = sessionmaker(bind=engine)
+
+    conn = sqlite3.connect(db_file)
+    conn.execute("INSERT INTO daily_prices (symbol_id, date, close) VALUES (1,'2026-01-05',500.0)")
+    conn.commit()
+    conn.close()
+
+    db = Session()
+    rotate_and_archive_to_parquet(db, db_file, logger, require_non_empty=False)
+    db.close()
+
+    from pipeline.parquet_cache_manager import (
+        get_latest_master_files, get_parquet_master_dir, get_pointer_file_path)
+    files = get_latest_master_files(get_pointer_file_path(get_parquet_master_dir(db_file)))
+    assert files is not None
+    assert len(pd.read_parquet(files["prices"])) == 1
+    engine.dispose()

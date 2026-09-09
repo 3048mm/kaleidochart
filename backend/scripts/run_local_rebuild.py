@@ -68,10 +68,15 @@ def run_local_rebuild(category=None):
     # 2. Get latest Parquet Master files
     parquet_dir = get_parquet_master_dir(prod_db_path)
     pointer_file = get_pointer_file_path(parquet_dir)
-    latest_files = get_latest_master_files(pointer_file)
-    
+    # strict=True: 「ポインタが存在するのに読めない」を「無い」と混同しない
+    # （読めないだけなのに「パイプラインを回せ」と案内すると、原因に辿り着けない）
+    latest_files = get_latest_master_files(pointer_file, strict=True)
+
     if not latest_files:
-        logger.error("❌ Critical: No active Parquet master file pointer found! Run refresh_All.bat first.")
+        logger.error(
+            f"❌ Critical: Parquet 世代ポインタが見つかりません: {pointer_file}\n"
+            f"   先に run\\run_daily_update.bat（または python backend/scripts/update_pipeline.py）を"
+            f"1回実行してマスタを生成してください。")
         return False
         
     logger.info("2. Loading full-history Prices & Symbols from Parquet master (No internet download)...")

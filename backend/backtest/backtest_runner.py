@@ -110,19 +110,29 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
     pointer_file = get_pointer_file_path(parquet_dir)
     
     # 2. Get latest Parquet files pointer
-    latest_files = get_latest_master_files(pointer_file)
-    if not latest_files or refresh_cache:
-        log("  Master Parquet cache not found or refresh requested. Generating initial Parquet master from SQLite...")
-        try:
-            from backend.db import database
-            with database.get_db() as db:
-                rotate_and_archive_to_parquet(db, db_path, logging.getLogger())
-            latest_files = get_latest_master_files(pointer_file)
-        except Exception as e:
-            log(f"  Error: Failed to dynamically generate initial Parquet master: {e}")
-            
+    #
+    #    暗黙の自動再生成は行わない（2026-09-09）。
+    #    旧実装は「ポインタが読めない」というだけで rotate_and_archive_to_parquet() を呼び、
+    #    **読み取り専用のはずのバックテストが本番 Parquet を書き換えていた**。
+    #    ローテートは旧世代とのマージを伴うため、ポインタが壊れていると
+    #    SQLite のホット期間（730日）だけの世代を公開して全期間履歴を失う経路になる。
+    #    再生成の入口は明示指定（--refresh-cache）だけに絞る。
+    if refresh_cache:
+        log("  Refresh requested. Regenerating Parquet master from SQLite...")
+        # 失敗をログだけにして先へ進まない。旧実装は例外を握り潰したうえで
+        # 後段の「ファイルが無い」という**誤誘導のメッセージ**に化けていた
+        # （実際にはファイルは存在し、読めなかっただけ）。
+        from backend.db import database
+        with database.get_db() as db:
+            rotate_and_archive_to_parquet(db, db_path, logging.getLogger())
+
+    # strict=True: 「ポインタが存在するのに読めない」を「無い」と混同しない
+    latest_files = get_latest_master_files(pointer_file, strict=True)
+
     if not latest_files:
-        raise FileNotFoundError(f"Parquet master cache files not found at {parquet_dir}! Please run the pipeline once to generate it.")
+        raise FileNotFoundError(
+            f"Parquet master cache files not found at {parquet_dir}!\n"
+            f"  パイプラインを1回実行してマスタを生成するか、--refresh-cache を付けて実行してください。")
         
     log(f"Loading data from Parquet Master cache: {pathlib.Path(latest_files['prices']).name} ...")
     
