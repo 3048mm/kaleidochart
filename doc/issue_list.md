@@ -74,7 +74,39 @@
   - 関連: `backend/scripts/resync_price_scale.py`, `backend/scripts/adjust_symbol_split.py`,
     `backend/scripts/scan_price_anomalies.py`, `.claude/skills/upstream-data-diagnosis/SKILL.md`
 
-- [ ] 🔴 **`get_latest_master_files()` が読み込み失敗を握り潰し、Parquet の全期間履歴を捨てる経路がある（2026-09-01 発見）**
+- [x] 🔴 **`get_latest_master_files()` が読み込み失敗を握り潰し、Parquet の全期間履歴を捨てる経路がある（2026-09-01 発見 / 2026-09-09 解決）**
+
+  > [!NOTE]
+  > **2026-09-09 解決済み。対応案 1・2・3 をすべて実施した。**
+  > 計画書: `doc/in_progress/parquet_pointer_fail_loud_plan.md`（main への取り込み後に `doc/completed/` へ移動する）
+  >
+  > - **対応案1**: `get_latest_master_files(pointer_file, *, strict=False)` を新設し、
+  >   「存在しない（初回。正常）」と「存在するが読めない」を分離した。後者は
+  >   `strict=True` で `ParquetPointerUnreadableError`、既定でも `logger.error` を必ず出す。
+  >   既定値を変えていないので、読み取り専用の呼び出し 30箇所超（`chart_router` は
+  >   SQLite にフォールバックする）は無変更で動く。10ms のリトライは維持。
+  > - **対応案2**: `rotate_and_archive_to_parquet()` に2段ガード。①`strict=True` で呼ぶ
+  >   ②ポインタが「無い」場合も `prices_*.parquet` が実在するなら中止する。
+  >   ②は「ポインタだけ消えた」ケース（①では止まらない）を拾う本命のガード。
+  > - **対応案3**（ユーザー判断で本対応に含めた）: `preload_data()` の**暗黙の**自動再生成を廃止。
+  >   ポインタが読めないというだけで書き込みへ入る経路を消し、`--refresh-cache` の
+  >   明示指定だけを再生成の入口に残した。例外の握り潰しもやめたので、
+  >   「ファイルは実在するのに『無い』と言う」誤誘導メッセージも解消。
+  >
+  > **起票時の未検証事項（実際に切り詰めが起きるところまで再現していない）も消化した**。
+  > `test_rotate_aborts_when_pointer_unreadable_instead_of_truncating` が実関数で
+  > 「ホット期間のパージ → ポインタに BOM 混入 → 再ローテート」を辿り、修正前は履歴を
+  > 失った世代が公開されることを確認。sandbox 実データ（prices 6,739,935行）でも
+  > 6/6 PASS で世代・行数とも不変（`tmp/verify_pointer_guard_sandbox.py`）。
+  >
+  > **誤爆しないことも実測済み**: 正規の完全再構築は `archive_parquet_master.py` が
+  > `parquet_master/` ごと改名するため、②のガードには掛からない。
+  > `deploy_after_merge` / `provision_worktree_data` はファイルコピー直後に同一プロセスで
+  > ポインタを書くため、途中状態でローテートが走る窓が無い。
+  >
+  > **派生して見つかった未対応**（別 issue 化。下記 P2 参照）:
+  > `backtest_router.py` の `refresh_cache` クエリパラメータ露出、
+  > `rebuild_backtest_data.py` の rotate 失敗握り潰し。
   - **事象**: `pipeline/parquet_cache_manager.py` の `get_latest_master_files()` は、
     ポインタ（`latest_master.json`）が読めなかったときに**ログを一切出さずに `None` を返す**。
     「ファイルが存在しない」と「存在するが読めない」が呼び出し側から区別できない。
@@ -593,6 +625,27 @@
   - **この精査で上の `min_periods=1` の影響範囲が定量化された**（同じ実測データ）。
 
 ## P2 — 中（体感改善・保守性・運用安全性）
+
+- [ ] 🟠 **`refresh_cache` が FastAPI のクエリパラメータとして外部に露出している（2026-09-09 発見）**
+  - `backend/api/backtest_router.py:1285` のレジーム比較エンドポイントは
+    `refresh_cache: bool = False` を**クエリパラメータとして受け付け**、`BackgroundTasks` 経由で
+    `preload_data` へ渡す。つまり **`?refresh_cache=true` を付けた1回の HTTP リクエストで
+    本番 Parquet のローテートが走る**。
+  - **既定は `False` なので通常の画面操作では発火しない**。またポインタ fail-loud 化
+    （2026-09-09）により、壊れた世代が公開されることは無くなった。残っているのは
+    「Web リクエストが本番マスタを書き換えられる」という構造そのもの。
+  - **フロントは呼んでいない**: `frontend/src/api/backtest.ts:234` の
+    `runScenarioComparison()` は `refresh_cache` を送れる定義だが、**この関数の呼び出しが
+    フロントに1つも無い**（デッドコード）。パラメータを削除しても UI に影響しない。
+  - **対応案**: エンドポイントから `refresh_cache` を落とす（再生成は CLI だけの操作にする）。
+
+- [ ] 🟠 **`rebuild_backtest_data.py` が Parquet アーカイブ失敗を握り潰したままパージへ進む（2026-09-09 発見）**
+  - `backend/scripts/rebuild_backtest_data.py:125-128` は `rotate_and_archive_to_parquet()` の
+    例外を `logger.error` だけで飲み込み、そのまま `purge_sqlite_cache_older_than_2_years()` を実行する。
+  - **アーカイブに失敗したのに SQLite の古いレコードを消す**という最悪の順序。
+    コールドマスタに書けていない状態でホットキャッシュを削るので、履歴の逃げ場が無くなる。
+  - **対応案**: 例外を握り潰さず中断する（アーカイブ成功を前提条件にしてからパージする）。
+  - 関連: 2026-09-09 のポインタ fail-loud 化（同型の「握り潰し」を塞いだ対応）。
 
 - [ ] 🟡 **エージェント実行中の「見返し」がワークフローに無い — 二次検証の段の新設（2026-09-07 起票）**
   - **背景**: ハーネス／ループ観点の棚卸し（診断カルテ: https://claude.ai/code/artifact/334d29c0-f8db-49cd-ac7f-c6d31c281e61 ）で、

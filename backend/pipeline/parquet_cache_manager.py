@@ -50,8 +50,46 @@ def update_pointer_with_retry(pointer_file: str, new_files_dict: dict, logger: l
     logger.error("Failed to update latest_master.json pointer after max retries due to lock contention.")
     return False
 
-def get_latest_master_files(pointer_file: str) -> dict | None:
-    """Safely reads the latest Parquet master files path dict from pointer."""
+class ParquetPointerUnreadableError(RuntimeError):
+    """latest_master.json が存在するのに読めなかった（BOM 混入・JSON 破損・権限など）。
+
+    「ポインタが無い（初回。正常）」と混同すると、呼び出し側が旧世代を
+    「存在しない」と誤認して履歴を捨てるため、別物として扱う。
+    """
+
+
+def get_latest_master_files(pointer_file: str, *, strict: bool = False) -> dict | None:
+    """Safely reads the latest Parquet master files path dict from pointer.
+
+    ## 「無い」と「読めない」を区別する（2026-09-09）
+
+    旧実装は、ポインタが**存在しない**場合と**存在するが読めない**場合を、どちらも
+    警告なしの `None` で返していた。`rotate_and_archive_to_parquet()` はこの戻り値で
+    マージ元の旧 Parquet を決めるため、`None` になると `old_paths` が空になり、
+    **旧世代を読まずに SQLite の内容だけで新世代を公開する**。SQLite はホット
+    キャッシュ（直近730日）しか持たないので、7年超の履歴を失った世代が無警告で公開される。
+
+    実際に踏んだ例: `latest_master.json` を PowerShell で書き換えて BOM が付き、
+    `json.load()` が落ちた（2026-08-30）。
+
+        ValueError: Unexpected UTF-8 BOM (decode using utf-8-sig)
+
+    10ms のリトライは `os.replace` 中の `PermissionError`（Windows）を吸収する
+    正当な設計なので残す。変えたのは**リトライしても駄目だった後**の扱い。
+
+    Args:
+        strict: True なら「存在するが読めない」を `ParquetPointerUnreadableError` に
+            する。データを壊しうる**書き込み経路**（ローテート）で使う。
+            False（既定）でも `logger.error` は必ず出す。読み取り専用の経路
+            （`chart_router` は SQLite にフォールバックする）を巻き添えにしないため、
+            既定は従来どおり `None` を返す。
+
+    Returns:
+        ポインタが存在しない場合は `None`（初回。正常系）。
+
+    Raises:
+        ParquetPointerUnreadableError: `strict=True` で、存在するのに読めなかった場合。
+    """
     if not os.path.exists(pointer_file):
         return None
     try:
@@ -63,7 +101,13 @@ def get_latest_master_files(pointer_file: str) -> dict | None:
         try:
             with open(pointer_file, 'r', encoding='utf-8') as f:
                 return json.load(f)
-        except Exception:
+        except Exception as e:
+            msg = (f"Parquet 世代ポインタが存在するのに読めません: {pointer_file} ({type(e).__name__}: {e})。"
+                   f" BOM 混入・JSON 破損・権限を確認してください"
+                   f"（PowerShell で書き換えると BOM が付きます。agent_execution_rules.md §5.1）。")
+            if strict:
+                raise ParquetPointerUnreadableError(msg) from e
+            logging.getLogger(__name__).error(msg)
             return None
 
 def clean_old_parquet_versions(parquet_dir: str, logger: logging.Logger, keep_count=2):
@@ -216,7 +260,30 @@ def rotate_and_archive_to_parquet(db, db_path: str, logger: logging.Logger,
         'fx': os.path.join(parquet_dir, f"fx_rates_{timestamp}.parquet"),
     }
     
-    latest_pointers = get_latest_master_files(pointer_file)
+    # --- マージ元不明なら公開しない（fail-loud ガード / 2026-09-09） ----------
+    #   ここで旧世代のパスを取り違えると old_paths が空になり、merge_timeseries_table が
+    #   「初回（旧世代なし）」と判断して SQLite の内容だけを返す。SQLite はホット期間
+    #   （730日）しか持たないので、7年超の履歴を失った世代がそのまま公開される。
+    #   is_publishable_master / merge_timeseries_table と同じ思想で、
+    #   **マスタを壊すくらいなら公開しない**。
+    #
+    #   1) ポインタが「存在するのに読めない」 → strict=True で例外
+    #   2) ポインタが「存在しない」のに実体（prices_*.parquet）がある → 例外
+    #      「初回だから旧世代が無い」と「ポインタだけ消えた／壊れた」は、ポインタの
+    #      有無だけでは区別できない。実ファイルの有無で照合する。
+    #      正規の完全再構築は archive_parquet_master.py が parquet_master/ ごと
+    #      改名するため、この状態にはならない（誤爆しないことを 2026-09-09 に実測）。
+    latest_pointers = get_latest_master_files(pointer_file, strict=True)
+    if not latest_pointers:
+        orphan_prices = glob.glob(os.path.join(parquet_dir, "prices_*.parquet"))
+        if orphan_prices:
+            raise ParquetPointerUnreadableError(
+                f"世代ポインタ {pointer_file} がありませんが、Parquet の実体が "
+                f"{len(orphan_prices)} 件残っています。マージ元を特定できないため中止します"
+                f"（このまま続けると SQLite のホット期間だけの世代を公開し、全期間履歴を失います）。"
+                f" 完全再構築なら backend/scripts/archive_parquet_master.py で "
+                f"parquet_master/ ごと退避してから実行してください。")
+
     # 自己デッドロック防止: commit してロック解放後、読み取りエンジンで全量読み込む
     # （db.bind = write エンジン経由の read_sql は BEGIN IMMEDIATE で自セッションと衝突する）
     db.commit()
