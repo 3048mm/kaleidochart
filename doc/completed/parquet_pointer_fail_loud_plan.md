@@ -1,8 +1,8 @@
 # Parquet ポインタ読み込み失敗の fail-loud 化 計画書
 
-- **ステータス**: 🚧 実装完了・取り込み待ち（2026-09-09）— コミット `bba8118`（実装＋テスト＋issue更新）/ `a019d09`（architecture.md）
+- **ステータス**: ✅ 完了 — **ポインタが読めない／消えた状態でのローテートを停止させ、Parquet 全期間履歴が直近730日に切り詰められる無警告の経路を塞いだ**（`bba8118` 実装＋テスト＋issue更新 / `a019d09` architecture.md / main へは `829f145` でマージ）
 - **実施者**: AI エージェント (Claude Opus 5) — オーケストレーター
-- **開始日**: 2026-09-09 / **完了日**: —
+- **開始日**: 2026-09-09 / **完了日**: 2026-09-09
 - **作業ブランチ**: `fix/parquet-pointer-fail-loud`（ワークツリー `.claude/worktrees/parquet-pointer-fail-loud`）
 - **対象 issue / 関連ドキュメント**: `doc/issue_list.md` P1「`get_latest_master_files()` が読み込み失敗を握り潰し、Parquet の全期間履歴を捨てる経路がある（2026-09-01 発見）」／
   `doc/completed/worktree_data_provisioning_plan.md` §7-2 ／ `doc/agent_execution_rules.md` §5.1・§5.2
@@ -188,7 +188,7 @@ issue 起票時から**穴が一段狭まっている**ことを確認した。�
       派生課題2件（§7-3 / §7-4）を P2 に起票
 - [x] `doc/architecture.md` §11.2 に「マージ元不明なら公開しない」を項目5として追記。
       `agent_execution_rules.md` は §5.1（BOM）で既にカバー済みのため追記不要と判断
-- [ ] 本計画書を `doc/completed/` へ移動（**main への取り込み後**）
+- [x] 本計画書を `doc/completed/` へ移動（main へのマージ `829f145` 後に実施）
 
 ### 作業中メモ
 
@@ -354,6 +354,6 @@ emove_worktree.ps1 parquet-pointer-fail-loud -DeleteBranch
 
 - **変更種別: D**（コード・ドキュメントのみ）。データ形状もスキーマも変えないため、
   `tools/deploy_after_merge.ps1` によるデータ昇格は**不要**。
-- 本計画書（`doc/in_progress/parquet_pointer_fail_loud_plan.md`）は**本体チェックアウト側**に
-  ステージ済み（本体ではコミットしない規約のためユーザーがコミットする）。
-  取り込み後に `doc/completed/` へ移動する。
+- **実施済み（2026-09-09）**: ユーザーが `git merge --no-ff` で取り込み（`829f145`）、
+  `tools/remove_worktree.ps1 parquet-pointer-fail-loud -DeleteBranch` でワークツリーを撤収。
+  本計画書は `doc/completed/` へ移動した。

@@ -78,7 +78,7 @@
 
   > [!NOTE]
   > **2026-09-09 解決済み。対応案 1・2・3 をすべて実施した。**
-  > 計画書: `doc/in_progress/parquet_pointer_fail_loud_plan.md`（main への取り込み後に `doc/completed/` へ移動する）
+  > 計画書: `doc/completed/parquet_pointer_fail_loud_plan.md`
   >
   > - **対応案1**: `get_latest_master_files(pointer_file, *, strict=False)` を新設し、
   >   「存在しない（初回。正常）」と「存在するが読めない」を分離した。後者は
