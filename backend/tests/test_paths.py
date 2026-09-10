@@ -248,6 +248,38 @@ class TestProdDataRoot:
         assert paths.get_prod_data_root(root) is None
 
 
+class TestRequireProdDataRoot:
+    """`get_prod_data_root()` が `None` を許すのは「無くても異常ではない」場面向け。
+
+    本番を読むこと自体が目的の監査ツール（`scan_price_anomalies.py` /
+    `scan_split_consistency.py`）にとって `None` は続行不能なエラーであり、
+    未プロビジョニングのワークツリーで気づかず本番の相対パスへフォールバックする
+    のを防ぐ（2026-09-10 発見・2026-09-11 対応）。
+    """
+
+    def test_main_checkout_returns_prod_root(self, tmp_path):
+        prod = tmp_path / "prod_data"
+        prod.mkdir()
+        root = make_repo(
+            tmp_path, worktree=False,
+            config_toml=f'[system]\ndb_path = "{(prod / "stocktool.db").as_posix()}"\n')
+        assert same(paths.require_prod_data_root(root), str(prod))
+
+    def test_provisioned_worktree_returns_prod_root(self, tmp_path):
+        prod = tmp_path / "prod"
+        prod.mkdir()
+        root = make_repo(
+            tmp_path, worktree=True,
+            config_local_toml=f'[data]\nprod_root = "{prod.as_posix()}"\n')
+        assert same(paths.require_prod_data_root(root), str(prod))
+
+    def test_unprovisioned_worktree_raises_with_recovery_hint(self, tmp_path):
+        root = make_repo(tmp_path, worktree=True)
+        with pytest.raises(paths.DataNotProvisionedError) as exc:
+            paths.require_prod_data_root(root)
+        assert "provision_worktree_data" in str(exc.value)
+
+
 # --- 個別パス -------------------------------------------------------------
 
 class TestConcretePaths:

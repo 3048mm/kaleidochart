@@ -38,6 +38,8 @@ for _p in (project_root, backend_dir):
 
 from data_collection.split_records import (  # noqa: E402
     DEFAULT_FILENAME,
+    STALE_AFTER_DAYS,
+    is_stale,
     load_split_records,
     resolve_default_path,
     save_split_records,
@@ -170,3 +172,63 @@ def test_split_map_returns_ticker_to_pairs():
 def test_split_map_of_none_is_empty():
     """記録が無ければ空。**呼び出し側に None 分岐を強いない。**"""
     assert split_map(None) == {}
+
+
+# ---------------------------------------------------------------------------
+# 鮮度（is_stale） — 誰も監視していなかった問題への対応
+#
+# ## なぜ要るか
+#
+# `split_records.json` は `scan_split_consistency.py` を**手で回したときだけ**
+# 更新される。古いまま放置されると、価格アノマリーの分類が「照合したつもり」に
+# なる。**カバー期間の右端（直近側）は生成時点で固定される**ため、時間が経つほど
+# 「直近の分割が拾えていない」範囲が広がる（`doc/issue_list.md` P2 2026-09-10 起票）。
+#
+# `STALE_AFTER_DAYS` は暫定値（根拠なし。`MARKET_WIDE_MIN_SYMBOLS` と同じ扱い＝
+# 運用しながら調整する）。
+# ---------------------------------------------------------------------------
+from datetime import datetime, timedelta  # noqa: E402
+
+
+def _records(generated_at: str) -> dict:
+    return {"generated_at": generated_at, "start": "2024-01-01", "years": 2,
+           "tickers_fetched": 10, "failed": [], "splits": {}}
+
+
+def test_freshly_generated_is_not_stale():
+    now = datetime(2026, 9, 11, 12, 0, 0)
+    records = _records((now - timedelta(days=1)).isoformat(timespec="seconds"))
+    assert is_stale(records, now=now) is False
+
+
+def test_older_than_threshold_is_stale():
+    now = datetime(2026, 9, 11, 12, 0, 0)
+    generated = now - timedelta(days=STALE_AFTER_DAYS + 1)
+    records = _records(generated.isoformat(timespec="seconds"))
+    assert is_stale(records, now=now) is True
+
+
+def test_exactly_at_threshold_is_not_stale():
+    """境界値。ちょうど `STALE_AFTER_DAYS` 日前はまだ許容する。"""
+    now = datetime(2026, 9, 11, 12, 0, 0)
+    generated = now - timedelta(days=STALE_AFTER_DAYS)
+    records = _records(generated.isoformat(timespec="seconds"))
+    assert is_stale(records, now=now) is False
+
+
+def test_missing_generated_at_is_stale():
+    """**判定できない = 古いと同じ扱い。** 「新鮮」に丸めない。"""
+    assert is_stale({"start": "2024-01-01"}) is True
+
+
+def test_malformed_generated_at_is_stale():
+    """壊れた日時文字列で例外にしない。判定不能として stale 側に倒す。"""
+    assert is_stale({"generated_at": "not-a-date"}) is True
+
+
+def test_default_now_is_real_time():
+    """`now` を省略したら実時刻を使う（呼び出し側にテスト用引数を強制しない）。"""
+    fresh = _records(datetime.now().isoformat(timespec="seconds"))
+    assert is_stale(fresh) is False
+    old = _records((datetime.now() - timedelta(days=365)).isoformat(timespec="seconds"))
+    assert is_stale(old) is True

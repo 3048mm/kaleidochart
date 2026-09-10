@@ -65,9 +65,9 @@ for _p in (_project_root, _backend_dir):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-import tomli  # noqa: E402
 import yfinance as yf  # noqa: E402
 
+import paths  # noqa: E402
 from data_collection.split_records import (  # noqa: E402
     resolve_default_path,
     save_split_records,
@@ -259,24 +259,28 @@ def should_save_records(tickers, records_path) -> bool:
     return not tickers or bool(records_path)
 
 
-def resolve_db_path() -> str:
-    """`config.toml` の `system.db_path` を返す。
+def resolve_prod_db_path() -> str:
+    """本番の `stocktool.db` パスを返す（**読み取り専用参照**）。
 
-    > [!IMPORTANT]
-    > **相対パス（`"data/stocktool.db"`）を直書きしない。**
-    > ワークツリーから実行するとカレントディレクトリ基準で解決され、
-    > ワークツリー自身の空の `data/` を見にいって
-    > 「`latest_master.json` を解決できません」で止まる（2026-09-10 実測）。
-    > `config.toml` は本番の絶対パスを持つので、`scan_price_anomalies.py` と
-    > 同じ導出にそろえる。
+    以前は `config.toml` を直読みしており（相対パス直書きの前科もあった —
+    2026-09-10 に一度そちらへ寄せたが、それも `paths.py` を通らない点は
+    直っていなかった）、未プロビジョニングのワークツリーでも気づかず
+    「たまたま存在する」本番の絶対パスへフォールバックしていた
+    （2026-09-10 発見・2026-09-11 対応）。
+
+    このスクリプトは意図的に `STOCKTOOL_ENV=sandbox` を無視し、常に本番の
+    Parquet マスタを見る（`scan_price_anomalies.py` と同じ方針。
+    sandbox 相手に「分割の取りこぼしなし」と誤診しないため）。
     """
-    with open(os.path.join(_project_root, "config.toml"), "rb") as f:
-        return tomli.load(f)["system"]["db_path"]
+    return os.path.join(paths.require_prod_data_root(),
+                        paths.DB_FILENAMES["stocktool"])
 
 
-def load_targets(tickers: list[str] | None) -> pd.DataFrame:
+def load_targets(tickers: list[str] | None,
+                 db_path: str | None = None) -> pd.DataFrame:
     """検査対象の銘柄を Parquet マスタから取る（仮想テーマは除外）。"""
-    pointer = get_pointer_file_path(get_parquet_master_dir(resolve_db_path()))
+    db_path = db_path or resolve_prod_db_path()
+    pointer = get_pointer_file_path(get_parquet_master_dir(db_path))
     cur = get_latest_master_files(pointer)
     if not cur:
         raise RuntimeError("latest_master.json を解決できません。")
@@ -325,7 +329,10 @@ def run(tickers=None, years=DEFAULT_YEARS, report_dir=None,
     ensure_ca_bundle()
     start = (datetime.now() - timedelta(days=int(365.25 * years))).strftime("%Y-%m-%d")
 
-    targets, cur = load_targets(tickers)
+    # 1回だけ解決して使い回す（`db_path` は分割記録の既定パス・
+    # `report_dir` の既定値の導出にも共有する）。
+    db_path = resolve_prod_db_path()
+    targets, cur = load_targets(tickers, db_path)
     print("=" * 74)
     print(f"分割整合スキャン  {len(targets):,}銘柄 / {start} 以降 / years={years}")
     print("**報告のみ。データは一切変更しない。**")
@@ -415,7 +422,7 @@ def run(tickers=None, years=DEFAULT_YEARS, report_dir=None,
         print("    保存したい場合は --records-out <path> を明示すること。")
     else:
         records_path = save_split_records(
-            records_path or resolve_default_path(resolve_db_path()), all_splits,
+            records_path or resolve_default_path(db_path), all_splits,
             start=start, years=years, tickers_fetched=checked, failed=failed)
         print(f"\n  分割記録: {len(all_splits):,}銘柄 / {n_pairs:,}件 → {records_path}")
         print(f"    カバー期間: {start} 以降（これより前の分割は記録されていない）")
@@ -436,8 +443,12 @@ def run(tickers=None, years=DEFAULT_YEARS, report_dir=None,
         print("\n  先頭20件:")
         print(df.head(20).to_string(index=False))
 
+        # `_project_root`（`__file__` 起点）は使わない。ワークツリーでは
+        # 空の `data/` を指してしまう——`db_path`（本番のみ・paths.py 経由）と
+        # 同じ階層から導出する（2026-09-11 発見・対応。実害はゼロだったが、
+        # `findings` が出る実行では気づかず書いていた可能性がある）。
         report_dir = report_dir or os.path.join(
-            _project_root, "data", "maintenance_reports")
+            os.path.dirname(os.path.abspath(db_path)), "maintenance_reports")
         os.makedirs(report_dir, exist_ok=True)
         path = os.path.join(
             report_dir, f"split_consistency_{datetime.now():%Y%m%d_%H%M%S}.csv")

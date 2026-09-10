@@ -29,12 +29,13 @@ import pandas as pd
 
 _this_dir = os.path.dirname(os.path.abspath(__file__))
 _backend_dir = os.path.dirname(_this_dir)
-_project_root = os.path.dirname(_backend_dir)
 if _backend_dir not in sys.path:
     sys.path.insert(0, _backend_dir)
 
-import tomli  # noqa: E402
+import paths  # noqa: E402
 from data_collection.split_records import (  # noqa: E402
+    STALE_AFTER_DAYS,
+    is_stale,
     load_split_records,
     resolve_default_path,
     split_map,
@@ -200,11 +201,14 @@ def _print_rows(sub: pd.DataFrame, limit: int) -> None:
 
 
 def report_split_coverage(df: pd.DataFrame, records: dict | None,
-                          records_path: str) -> None:
+                          records_path: str, *, now=None) -> None:
     """分割記録のカバー範囲を出す。**沈黙しないための段。**
 
     記録が古い / 無い状態で従来分類を返すと、ゲートがあるように見えて
     何も見ていない状態になる。「見ていない件数」を必ず数字で出す。
+
+    Args:
+        now: 鮮度判定の基準時刻。省略時は実時刻（テストで固定するための引数）。
     """
     print("--- 分割記録 ---")
     if not records:
@@ -221,6 +225,14 @@ def report_split_coverage(df: pd.DataFrame, records: dict | None,
           f" / 検査 {records.get('tickers_fetched', 0):,}銘柄")
     print(f"  記録: {n_tickers:,}銘柄 / {n_pairs:,}件")
     print(f"  カバー期間: {start} 以降")
+
+    # **手で回したときだけ更新される記録**が古いまま放置されると、
+    # 「照合したつもり」になる。閾値は data_collection.split_records の
+    # STALE_AFTER_DAYS に集約している（暫定値。運用しながら調整する）。
+    if is_stale(records, now=now):
+        print(f"  ⚠ **古い（{STALE_AFTER_DAYS}日超）。直近の分割を拾えていない"
+              f"可能性がある**")
+        print("     再生成: backend/scripts/scan_split_consistency.py --years 2")
 
     if start:
         outside = int((df["date"].astype(str) < start).sum())
@@ -320,9 +332,14 @@ def report(df: pd.DataFrame, out_dir: str, records: dict | None = None,
 
 
 def run(out_dir: str | None, splits_path: str | None = None):
-    with open(os.path.join(_project_root, "config.toml"), "rb") as f:
-        config = tomli.load(f)
-    db_path = config["system"]["db_path"]
+    # **本番のみ・読み取り専用参照**（paths.py が唯一の権威。rules §10.3）。
+    # 以前は `config.toml` を直読みしており、未プロビジョニングのワークツリーでも
+    # 気づかず「たまたま存在する」本番の絶対パスへフォールバックしていた
+    # （2026-09-10 発見・2026-09-11 対応）。このスクリプトは全期間 Parquet を
+    # 直読みする監査ツールで、意図的に STOCKTOOL_ENV=sandbox を無視し常に
+    # 本番データを見る（sandbox 相手に「異常なし」と誤診しないため）。
+    db_path = os.path.join(paths.require_prod_data_root(),
+                           paths.DB_FILENAMES["stocktool"])
 
     # 分割記録は「無ければ従来分類」。**ただし黙って通さない**（report が出す）。
     # 壊れていれば load_split_records が例外を投げる（握り潰さない）。

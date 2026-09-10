@@ -323,6 +323,57 @@ class TestWeeklyMaintenanceAudits:
         # `resolve_report_dir` が 2026-07-29 に踏んだのと同じ型の事故を避ける）
         assert sr["path"].endswith("split_records.json")
         assert "maintenance_reports" in sr["path"]
+        assert "stale" in sr
+
+    def test_stale_split_records_are_flagged(self, setup_audit_db, monkeypatch):
+        """**古い分割記録を黙って新鮮なものとして使わない**（`doc/issue_list.md` P2）。
+
+        `split_records.json` は手で回したときだけ更新される。放置すると
+        「照合したつもり」になるので、レポートで気づけるようにする。
+        """
+        import data_collection.split_records as sr_mod
+
+        old = {"generated_at": "2020-01-01T00:00:00", "start": "2018-01-01",
+              "years": 2, "tickers_fetched": 10, "failed": [], "splits": {}}
+        monkeypatch.setattr(sr_mod, "load_split_records", lambda _path: old)
+
+        db = setup_audit_db
+        d_old, d_new = date(2026, 7, 14), date(2026, 7, 15)
+        db.add_all([
+            DailyPrice(symbol_id=1, date=d_old, open=100, high=100, low=100,
+                       close=100, volume=100),
+            DailyPrice(symbol_id=1, date=d_new, open=40, high=40, low=40,
+                       close=40, volume=100),
+        ])
+        db.commit()
+
+        report = audit_and_fix_weekly(db, dry_run=True)
+
+        assert report["split_records"]["stale"] is True
+
+    def test_fresh_split_records_are_not_flagged(self, setup_audit_db, monkeypatch):
+        """新鮮な記録では警告しない（誤検出しない）。"""
+        import data_collection.split_records as sr_mod
+        from datetime import datetime as _dt
+
+        fresh = {"generated_at": _dt.now().isoformat(timespec="seconds"),
+                "start": "2024-01-01", "years": 2, "tickers_fetched": 10,
+                "failed": [], "splits": {}}
+        monkeypatch.setattr(sr_mod, "load_split_records", lambda _path: fresh)
+
+        db = setup_audit_db
+        d_old, d_new = date(2026, 7, 14), date(2026, 7, 15)
+        db.add_all([
+            DailyPrice(symbol_id=1, date=d_old, open=100, high=100, low=100,
+                       close=100, volume=100),
+            DailyPrice(symbol_id=1, date=d_new, open=40, high=40, low=40,
+                       close=40, volume=100),
+        ])
+        db.commit()
+
+        report = audit_and_fix_weekly(db, dry_run=True)
+
+        assert report["split_records"]["stale"] is False
 
     def test_broken_split_records_do_not_abort_the_audit(self, setup_audit_db,
                                                          monkeypatch):

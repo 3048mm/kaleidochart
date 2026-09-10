@@ -185,6 +185,31 @@ def get_prod_data_root(repo_root: str | None = None) -> str | None:
     return None
 
 
+def require_prod_data_root(repo_root: str | None = None) -> str:
+    """本番 data ルートを返す。未設定なら復旧手順つきで即死する。
+
+    `get_prod_data_root()` が `None` を許すのは「本番がどこか分からなくても
+    それ自体は異常ではない」場面（`is_production()` の判定・`ensure_writable()`
+    のガード等）向け。**本番を読むこと自体が目的の監査ツール**
+    （`scripts/scan_price_anomalies.py` / `scripts/scan_split_consistency.py`）
+    にとっては `None` は続行不能なエラーで、ここを経由せず `config.toml` を
+    直接読んでいたために、未プロビジョニングのワークツリーでも気づかず
+    「たまたま存在する」本番の絶対パスへフォールバックしていた
+    （2026-09-10 発見・2026-09-11 対応）。
+    """
+    root = repo_root or get_repo_root()
+    prod_root = get_prod_data_root(root)
+    if prod_root:
+        return prod_root
+    raise DataNotProvisionedError(
+        "本番 data の場所が分かりません。\n"
+        "  このツールは本番データを読むこと自体が目的なので、\n"
+        "  ワークツリーでは明示的なプロビジョニングが必要です:\n"
+        f"    {_PROVISION_CMD}\n"
+        "  もしくは本体チェックアウトから実行してください。"
+    )
+
+
 def is_production(repo_root: str | None = None) -> bool:
     """いま書き込み先として見ている data ルートが本番かどうか。"""
     root = repo_root or get_repo_root()

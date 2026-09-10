@@ -259,8 +259,8 @@ def audit_and_fix_weekly(db, dry_run: bool) -> dict:
     import pandas as pd
     from indicators.calculate import calculate_indicators
     from indicators.fx_calendar import is_fx_trading_day
-    from data_collection.split_records import (load_split_records, resolve_default_path,
-                                                split_map)
+    from data_collection.split_records import (is_stale, load_split_records,
+                                                resolve_default_path, split_map)
     from indicators.price_anomaly import (classify_price_jump, count_real_symbols_per_day,
                                           find_matching_split, is_anomalous_ratio)
 
@@ -480,6 +480,10 @@ def audit_and_fix_weekly(db, dry_run: bool) -> dict:
             "start": (_records or {}).get("start", ""),
             "tickers": len(splits),
             "error": _error,
+            # 「手で回したときだけ更新される」記録が古いまま放置されると、
+            # 「照合したつもり」になる（doc/issue_list.md P2 2026-09-10 起票）。
+            # 記録が無い場合は判定不能ではなく True 側に倒す（is_stale の仕様）。
+            "stale": is_stale(_records) if _records else True,
         }
 
         # 旧実装は銘柄ごとにクエリを投げる N+1 だった。1本にまとめる。
@@ -828,6 +832,10 @@ def write_maintenance_report(report: dict, dry_run: bool, db_path: str | None = 
             f.write(f"  [split records] {_sr.get('tickers', 0)} tickers,"
                     f" covering {_sr.get('start', '?')} onward"
                     f" (fetched {_sr.get('generated_at', '?')})\n")
+            if _sr.get("stale"):
+                f.write("    STALE: last fetched too long ago - recent splits may"
+                        " be missed. Regenerate:"
+                        " backend/scripts/scan_split_consistency.py --years 2\n")
         else:
             f.write("  [split records] NONE - classified WITHOUT split metadata.\n")
             if _sr.get("error"):

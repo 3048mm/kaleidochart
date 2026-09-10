@@ -302,3 +302,34 @@ def test_failed_tickers_are_reported(capsys):
                "splits": {}}
     report_split_coverage(IESC_ROW, records, "X/split_records.json")
     assert "取得できなかった銘柄: 2 件" in capsys.readouterr().out
+
+
+def test_stale_records_are_warned_loudly(capsys):
+    """**古い分割記録を黙って新鮮なものとして使わない**（`doc/issue_list.md` P2）。
+
+    `split_records.json` は手で回したときだけ更新される。放置すると
+    「照合したつもり」になるので、閾値を超えたら警告する。
+    """
+    from datetime import datetime
+    from scripts.scan_price_anomalies import report_split_coverage
+
+    records = {"generated_at": "2026-01-01T00:00:00", "start": "2024-01-01",
+               "years": 2, "tickers_fetched": 10, "failed": [], "splits": {}}
+    report_split_coverage(IESC_ROW, records, "X/split_records.json",
+                          now=datetime(2026, 9, 11))
+    printed = capsys.readouterr().out
+    assert "古い" in printed or "STALE" in printed.upper()
+    assert "scan_split_consistency" in printed, "更新方法が案内されていない"
+
+
+def test_fresh_records_are_not_warned(capsys):
+    """新鮮な記録では警告を出さない（誤検出しない）。"""
+    from datetime import datetime
+    from scripts.scan_price_anomalies import report_split_coverage
+
+    records = {"generated_at": "2026-09-10T20:00:00", "start": "2024-09-11",
+               "years": 2, "tickers_fetched": 10, "failed": [], "splits": {}}
+    report_split_coverage(IESC_ROW, records, "X/split_records.json",
+                          now=datetime(2026, 9, 11))
+    printed = capsys.readouterr().out
+    assert "古い" not in printed
