@@ -452,7 +452,30 @@ def add_theme_member(
     body: ThemeMemberCreate,
     db: Session = Depends(_get_write_db),
 ):
-    """テーマに構成銘柄を追加"""
+    """テーマに構成銘柄を追加
+
+    `theme_members` は文字列参照で `symbols_master` への DB 制約が効かない。
+    実在しないティッカーを登録すると、翌日の T1 同期
+    （`universe_sync._check_integrity`）が `UniverseIntegrityError` で落ち、
+    **日次パイプライン全体が止まる**（2026-09-10 に `HARK`（`HAWK` のタイポ）と
+    `CCXI`（未登録）で実際に発生。気づくのが最大1日後になっていた）。
+    登録した本人が、登録した瞬間に気づけるよう追加時点で弾く。
+    """
+    if not db.query(SymbolMaster).filter(SymbolMaster.ticker == ticker).first():
+        raise HTTPException(
+            status_code=422,
+            detail=f"テーマ {ticker} が symbols_master に存在しません。"
+                   "先に銘柄として登録してください。",
+        )
+    if not db.query(SymbolMaster).filter(
+        SymbolMaster.ticker == body.member_ticker
+    ).first():
+        raise HTTPException(
+            status_code=422,
+            detail=f"{body.member_ticker} が symbols_master に存在しません。"
+                   "先に銘柄として登録してください（タイポの可能性があります）。",
+        )
+
     existing = (
         db.query(ThemeMember)
         .filter(

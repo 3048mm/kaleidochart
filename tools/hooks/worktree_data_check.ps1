@@ -9,7 +9,14 @@
 #       PowerShell 5.1 reads BOM-less files as ANSI (CP932) and multibyte text
 #       corrupts parsing. Same rule as git_guard.ps1.
 
-$raw = [Console]::In.ReadToEnd()
+# Read stdin as UTF-8 EXPLICITLY, not via [Console]::In: that decodes with the
+# console ANSI codepage (CP932 here) and mis-decoding swallows backslashes, which
+# breaks the JSON and drops us into the catch below -- silently falling back to
+# Get-Location. See doc/agent_execution_rules.md section 12.
+$stdin = [Console]::OpenStandardInput()
+$reader = New-Object System.IO.StreamReader($stdin, (New-Object System.Text.UTF8Encoding($false)))
+$raw = $reader.ReadToEnd()
+$reader.Dispose()
 $cwd = $null
 try {
     $j = $raw | ConvertFrom-Json

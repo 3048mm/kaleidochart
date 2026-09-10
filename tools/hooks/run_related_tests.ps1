@@ -21,7 +21,20 @@
 
 $TimeoutSeconds = 60
 
-$raw = [Console]::In.ReadToEnd()
+# Read stdin as UTF-8 EXPLICITLY. Do not use [Console]::In.ReadToEnd(): it decodes
+# with the console's ANSI codepage (CP932 here), and CP932 mis-decoding swallows
+# backslashes -- the second byte of many kana/kanji is 0x5C. That turns the JSON
+# newline escape into a bare letter n, breaks the string structure, and then
+# ConvertFrom-Json throws:
+#   PARSE FAILED: ':' ... '}' ... (3199)
+# The hook then exits 0 and stays completely silent. Because CLAUDE.md requires
+# Japanese comments, essentially every backend edit payload contains Japanese, so
+# this made the hook a no-op in live use while hand-made ASCII test payloads on
+# stdin kept passing. Diagnosed 2026-09-10 (see doc/agent_execution_rules.md).
+$stdin = [Console]::OpenStandardInput()
+$reader = New-Object System.IO.StreamReader($stdin, (New-Object System.Text.UTF8Encoding($false)))
+$raw = $reader.ReadToEnd()
+$reader.Dispose()
 try { $j = $raw | ConvertFrom-Json } catch { exit 0 }
 
 $filePath = $j.tool_input.file_path

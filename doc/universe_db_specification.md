@@ -74,6 +74,14 @@ graph LR
 **ティッカー文字列で結合している**点に注意。改称時は `rename_symbol.py` が
 `theme_ticker` / `member_ticker` の両方を連動更新します。
 
+**API 経由の追加（`POST /universe/themes/{ticker}/members`）は `symbols_master`
+への実在チェックを行い、未登録ティッカーは 422 で拒否します**（2026-09-10 追加）。
+`theme_members` に DB 制約が無いため、実在しないティッカーが混入すると翌日の
+T1 同期（`universe_sync._check_integrity`）が `UniverseIntegrityError` で
+デイリーパイプライン全体を止めてしまう（`HARK`→`HAWK` タイポ、`CCXI` 未登録の
+実例あり）。直接 ORM で `theme_members` に書き込む場合はこのチェックを経由しない
+ため、書き込み後に `_check_integrity()` を呼んで確認すること。
+
 ### 2.3 `ticker_history`（16行）
 
 改称の記録。**`user_data.db` の自動追随がこれを引きます**（§5）。

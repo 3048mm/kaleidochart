@@ -21,7 +21,18 @@
 # NOTE: never Write-Output anything but the decision JSON. Anything else on
 #       stdout is parsed as the hook result and breaks the contract.
 
-$raw = [Console]::In.ReadToEnd()
+# Read stdin as UTF-8 EXPLICITLY. [Console]::In decodes with the console's ANSI
+# codepage (CP932 here); CP932 mis-decoding swallows backslashes (the second byte
+# of many kana/kanji is 0x5C), which breaks the JSON escapes and makes
+# ConvertFrom-Json throw. The catch below then exits 0 -- and for THIS hook that
+# means a dangerous command is waved through. Measured 2026-09-10:
+#   git add -A                                        -> parsed, denied
+#   git commit -m "<japanese>" && git add -A          -> parse failed, ALLOWED
+# See doc/agent_execution_rules.md section 12.
+$stdin = [Console]::OpenStandardInput()
+$reader = New-Object System.IO.StreamReader($stdin, (New-Object System.Text.UTF8Encoding($false)))
+$raw = $reader.ReadToEnd()
+$reader.Dispose()
 try { $j = $raw | ConvertFrom-Json } catch { exit 0 }
 $cmd = $j.tool_input.command
 if (-not $cmd) { exit 0 }
