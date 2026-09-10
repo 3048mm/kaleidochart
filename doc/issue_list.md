@@ -634,7 +634,37 @@
   - 一覧: `data/maintenance_reports/backfill_shortfall_20260904_092107.csv`
   - **この精査で上の `min_periods=1` の影響範囲が定量化された**（同じ実測データ）。
 
-- [ ] 🔴 **`scan_price_anomalies.py` の分類が分割を隠している（2026-09-09 発見）**
+- [x] 🔴 **`scan_price_anomalies.py` の分類が分割を隠している（2026-09-09 発見 / 2026-09-10 解決）**
+
+  > [!NOTE]
+  > **2026-09-10 解決済み。** 対応案どおり `classify_price_jump()` に分割記録を渡し、
+  > 優先順位を `virtual` > **`split_match`** > `market_wide` > `low_liquidity` > … に変えた。
+  > 詳細: `doc/completed/split_aware_anomaly_classification_plan.md`
+  >
+  > **判定は「日付が ±10日以内 **AND** 比が `1/factor` に一致（許容8%）」の AND。**
+  > 日付だけでは分割日に重なった本物の急落を拾い、比だけでは 1:2 前後で暴落と区別できない。
+  >
+  > **前提が1つ崩れていた**: issue は「`scan_split_consistency.py` が同じ判定をしているので
+  > 実装を共有できる」と書いていたが、**共有できる保存済みデータが存在しなかった**
+  > （DB にも Parquet にも splits 列は無く、同スクリプトが毎回 yfinance から取得して
+  > 使い捨てていた）。そこで `data_collection/split_records.py` を新設し、
+  > 既存フェッチの副産物として `data/maintenance_reports/split_records.json` に残す形にした。
+  > **追加のネットワーク費用はゼロ。**
+  >
+  > **実測（2026-09-10）**:
+  > - 分割記録: 2,984銘柄を検査 → 145銘柄 / 172件 / 取得失敗0件（カバー 2024-09-10 以降）
+  > - **補正前レポート（1,357件）に対して `IESC` / `WLFC` の2件だけが一致・誤検出0件**
+  > - **現行データでは0件** — 破損は 2026-09-10 に補正済みで、拾うべきものが残っていない
+  > - 識別可能な分割152件のうち **145件は近傍に段差なし＝上流が正しく適用している**
+  >
+  > **`AVB` の7日ずれ（下記本文）は検証できなかった。** `active = 0` で退役済みのため
+  > ユニバースに無い。実測のずれは `IESC` 0日 / `WLFC` 1日で、**窓幅の感度は ±1〜±60 で平坦**
+  > だった（効いているのは比の許容幅 0.08 のほう。0.05 だと `IESC` を取り逃す）。
+  >
+  > **副産物**: 「分割の近傍だが比が一致しない」8件を報告専用で出すようにした
+  > （`find_nearby_split()`）。うち `STKH`（2026-07-27 ×1:3 に対し段差 2.6667＝11%外れ）は
+  > **yfinance だけでは決着しない**。第3段階（独立ソース）の材料。
+
   - **事象**: 段差の**検出はできている**が、分類で捨てている。
     2026-09-10 に補正した `IESC` / `WLFC` は**どちらもレポートに入っていた**:
 
@@ -689,6 +719,38 @@
     `backend/indicators/price_anomaly.py`, `backend/scripts/scan_split_consistency.py`
 
 ## P2 — 中（体感改善・保守性・運用安全性）
+
+- [ ] 🟠 **監査スクリプト2本が `backend/paths.py` を通さず、ワークツリーのプロビジョニングが効かない（2026-09-10 発見）**
+  - **事象**: `backend/scripts/scan_price_anomalies.py` と
+    `backend/scripts/scan_split_consistency.py` は `config.toml` の `system.db_path`
+    （本番の絶対パス）を直読みしており、**`backend/paths.py` を一切通らない**。
+    rules §10.3「パス解決は `backend/paths.py` が唯一の権威」に反する。
+  - **実害（軽微だが実在）**:
+    - `--mode read` のワークツリーから実行しても**本番 data を読む**（読み取りなので害は無い）
+    - **`--out` を指定し忘れると本番の `data/maintenance_reports/` に書く**。
+      2026-09-10 に実際に踏んだ（3銘柄だけの `split_records.json` を本番に書き、削除して復旧）
+    - `STOCKTOOL_ENV=sandbox` も効かない
+  - **経緯**: `scan_split_consistency.py` は `get_parquet_master_dir("data/stocktool.db")` と
+    **相対パスを直書き**しており、ワークツリーからは空の `data/` を見て
+    「`latest_master.json` を解決できません」で止まっていた。
+    2026-09-10 に `config.toml` 基準へそろえて動くようにしたが、
+    **`paths.py` を通す本来の形にはしていない**。
+  - **対応案**: 両スクリプトの db_path 解決を `paths.get_db_path("stocktool")` /
+    `paths.get_prod_parquet_master_dir()` 経由にし、出力先も `paths` から解決する。
+  - **関連**: `doc/completed/split_aware_anomaly_classification_plan.md` §7-1
+
+- [ ] 🟡 **分割記録（`split_records.json`）の鮮度を誰も監視していない（2026-09-10 起票）**
+  - `data/maintenance_reports/split_records.json` は
+    `scan_split_consistency.py` を**手で回したときだけ**更新される。
+    週次メンテにも日次更新にも組み込まれていない。
+  - 古いまま放置されると、価格アノマリーの分類が「照合したつもり」になる。
+    レポートには `generated_at` とカバー期間を出しているが、
+    **古さの閾値判定は入れていない**（人間が日付を見て気づくしかない）。
+  - **対応案**: 週次メンテに `scan_split_consistency.py` を組み込むか、
+    レポート側で「N日以上古い」を警告にする。前者のほうが根本的。
+  - **注意**: 現在のカバーは直近2年のみで、**アノマリー1,226件のうち904件（74%）が
+    カバー期間外**。長期版（`--years 10`）を1回作るかも併せて判断する。
+  - **関連**: `doc/completed/split_aware_anomaly_classification_plan.md` §8
 
 - [x] 🟠 **`refresh_cache` が FastAPI のクエリパラメータとして外部に露出している（2026-09-09 発見・同日解決）**
 

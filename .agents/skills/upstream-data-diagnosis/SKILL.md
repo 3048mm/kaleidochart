@@ -306,11 +306,43 @@ EDGAR の `formerNames` や合併の適時開示で裏が取れる。
 ### 4.2 分類の実装（`indicators/price_anomaly.py`）
 
 ```powershell
-python backend/scripts/scan_price_anomalies.py   # Parquet 全期間・SQLite 接続ゼロ
+# 1. 分割記録を取る（yfinance。数分。無くても動くが、あると精度が上がる）
+python backend/scripts/scan_split_consistency.py --years 2
+# 2. 分類する（Parquet 全期間・SQLite 接続ゼロ。上の記録を自動で読む）
+python backend/scripts/scan_price_anomalies.py
 ```
 
-優先順位は **virtual > market_wide > low_liquidity > split/undecided/real**。
+優先順位は **virtual > `split_match` > market_wide > low_liquidity > split/undecided/real**。
 「分割か？」を当てにいくのではなく、**明らかにノイズであるものを除く**。
+ただし**上流が記録している分割との一致だけは別格**で、他のノイズ判定を上書きする。
+
+#### 分割記録との照合（2026-09-10 追加）
+
+**`MARKET_WIDE_MIN_SYMBOLS = 4` は「同日に4件の分割が重なると全部を市場全体の動きとして
+消す」。** これで本物の破損2件（`IESC` / `WLFC`）がレポートに入っていながら捨てられていた。
+
+判定は **AND**（`find_matching_split()`）:
+
+1. 記録された分割日が段差の日付から **±10日以内**（`SPLIT_DATE_WINDOW_DAYS`）
+2. 比が **`1/factor` に一致**（許容 8% ＝ `SPLIT_JUMP_TOLERANCE`）
+
+| 外してはいけない点 | 理由 |
+| :--- | :--- |
+| **日付だけで断定しない** | 分割日に本物の急落が重なることがある。実測8件が「近傍だが比が不一致」 |
+| **比だけで断定しない** | 1:2 前後の比は暴落と区別できない（§4.2 の代金比と同じ理由） |
+| **`factor ≈ 1.0`（株式配当）は判定しない** | 「未適用（`1/factor`）」と「適用済み（1.0）」が重なる。`MIN_DISCRIMINABLE_GAP = 0.15` |
+| **日付の厳密一致にしない** | `WLFC` は段差 2026-07-20 / 上流の記録 2026-07-21 で**1日ずれる** |
+
+> [!IMPORTANT]
+> **記録が無ければ「分割記録なし」と明示され、従来分類にフォールバックする。**
+> その状態のレポートで `market_wide` / `real_move` を「正常」と読んではいけない。
+> 記録は**直近2年ぶんしか無い**（2026-09-10 時点でアノマリー1,226件中904件が
+> カバー期間外）。カバー期間外の件数もレポートに出るので必ず見ること。
+
+**「近傍だが比が一致しない」は要対応にしない（報告のみ）。** 2026-09-10 実測で8件。
+大半は桁違いに外れており「分割は適用済みで別途本物の値動きがあった」と読めるが、
+`STKH`（2026-07-27 ×1:3 に対し段差 2.6667＝**11%外れ**）だけは際どく、
+**yfinance だけでは決着しない**（§6.1 の独立ソースの領分）。
 
 実装で外してはいけない点が3つある。いずれもテストで固定済み。
 

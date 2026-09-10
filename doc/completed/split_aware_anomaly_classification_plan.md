@@ -1,8 +1,8 @@
 # 価格アノマリー分類に分割メタデータを渡す 計画書
 
-- **ステータス**: 🚧 進行中（§4 は 2026-09-10 に全件合意済み）
+- **ステータス**: ✅ 完了 — 分割記録との照合を分類器に組み込み、`market_wide` / `low_liquidity` より優先させた。補正前レポート1,357件に対し既知の破損2件のみを誤検出0で拾えることを実測で確認
 - **実施者**: AI エージェント（Claude Opus 5）＋ ユーザー
-- **開始日**: 2026-09-10 / **完了日**: —
+- **開始日**: 2026-09-10 / **完了日**: 2026-09-10
 - **作業ブランチ**: `feat/split-aware-anomaly`（`.claude/worktrees/split-aware-anomaly`・`--mode read`）
 - **対象 issue / 関連ドキュメント**:
   - `doc/issue_list.md` P1 🔴「`scan_price_anomalies.py` の分類が分割を隠している（2026-09-09 発見）」
@@ -199,17 +199,16 @@ D-2 リファクタリング（スクリーナー特殊フィルタの二重実�
       — 完了 2026-09-10。**テストが1件も無かったので新規に7件足した**
 - [x] 8. `weekly_maintenance.py` を同じ共通関数に繋ぐ（3-D / 3-E）— 完了 2026-09-10
 - [x] 9. 全期間スキャンを再実行し、§6 の before/after を記入 — 完了 2026-09-10
-- [ ] 10. `doc/issue_list.md` の該当項目を解決済みに更新、`.claude/skills/upstream-data-diagnosis/SKILL.md`
-      §6.2 に分類の優先順位を追記
-- [ ] 11. 本計画書を `doc/completed/` へ移動
+- [x] 10. `doc/issue_list.md` の該当項目を解決済みに更新（＋作業中に見つかった2件を新規起票）、
+      `.claude/skills/upstream-data-diagnosis/SKILL.md` §4.2 に照合の手順と限界を追記
+      （`.agents/skills/` へ同期済み）— 完了 2026-09-10
+- [x] 11. 本計画書を `doc/completed/` へ移動 — 完了 2026-09-10
 
 ### 作業中メモ
 
-**残りは 10・11 のみ。** 実装・テスト・実測は完了しコミット済み
-（ブランチ `feat/split-aware-anomaly`）。
-
-**追加で1点、計画外の変更を入れた**（§7-3）: `find_nearby_split()`（報告専用）。
-「分割の近傍だが比が一致しない」8件を捨てずに出す。分類は変えない。
+なし（完了）。**merge 前に本体で `pytest backend/tests/` を1回通すこと**
+（ワークツリー `--mode read` では `test_scenario_comparison.py` が環境要因で落ちるため、
+本体での全 green を最終確認としたい）。
 
 ## 6. 検証プラン / 結果
 
