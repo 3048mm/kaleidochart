@@ -315,3 +315,26 @@ class TestRegressionOf20260904:
                 flagged.append(ticker)
         assert flagged == ["MNST", "APH", "RUSHA", "VISN"], (
             f"検出された銘柄が想定と違う: {flagged}")
+
+
+class TestShouldSaveRecords:
+    """`--tickers` で絞った実行が全ユニバースの記録を潰さないこと。
+
+    docstring も SKILL も `--tickers MNST,APH` をスポット確認の書式として
+    案内している。それで既定パスへ書くと**全ユニバースの記録が数銘柄ぶんに
+    置き換わり**、以後の価格アノマリー分類が分割メタデータ無しに逆戻りする
+    （2026-09-11 のレビューで発覚）。
+    """
+
+    def test_full_universe_run_saves(self):
+        from scripts.scan_split_consistency import should_save_records
+        assert should_save_records(None, None) is True
+
+    def test_ticker_filtered_run_does_not_overwrite_default(self):
+        from scripts.scan_split_consistency import should_save_records
+        assert should_save_records(["MNST", "APH"], None) is False
+
+    def test_explicit_output_is_honoured_even_when_filtered(self):
+        """書き先を明示しているなら、分かって指定しているので保存する。"""
+        from scripts.scan_split_consistency import should_save_records
+        assert should_save_records(["MNST"], "tmp/spot.json") is True

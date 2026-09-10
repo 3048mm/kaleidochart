@@ -201,6 +201,74 @@ def test_nearby_but_mismatched_split_is_kept_for_reporting():
 
 
 # ---------------------------------------------------------------------------
+# report / _print_rows — **出力まで通すテスト**
+#
+# 分類までしかテストしていなかったため、レポート出力に実害のあるバグを通した
+# （2026-09-11 のレビューで発覚）。`split_days_off` は未一致行があると float64 に
+# なり、`f"{off:+d}"` が `ValueError: Unknown format code 'd'` で落ちる。
+# **CSV とスナップショットの書き出し前に死ぬのでスキャン結果が丸ごと失われる。**
+# しかも落ちる条件は「ずれが0日でない一致行がある」= 本機能が狙った WLFC そのもの。
+# ---------------------------------------------------------------------------
+MIXED = pd.DataFrame([
+    # 一致する行（ずれ1日）。これが float 化の引き金を引く
+    {"ticker": "WLFC", "date": "2026-07-20", "prev_close": 180.0,
+     "close": 59.3, "ratio": 0.3294, "adv21": 3.0e7,
+     "dv_ratio": 3.5, "dv_vs_adv": 3.5, "same_day_count": 1},
+    # 一致しない行。`split_days_off` に NaN が入り、列全体が float64 になる
+    {"ticker": "GOOD", "date": "2020-03-09", "prev_close": 100.0,
+     "close": 55.0, "ratio": 0.55, "adv21": 5.0e7,
+     "dv_ratio": 2.5, "dv_vs_adv": 2.5, "same_day_count": 1},
+])
+MIXED_SPLITS = {"WLFC": [("2026-07-21", 3.0)]}
+
+
+def test_print_rows_survives_float_days_off(capsys):
+    """**回帰テスト。** 未一致行が混ざっても一致行を出力できる。"""
+    from scripts.scan_price_anomalies import _print_rows
+
+    out = classify(MIXED.copy(), MIXED_SPLITS)
+    _print_rows(out[out["classification"] == "split_suspect"], limit=5)
+    printed = capsys.readouterr().out
+    assert "WLFC" in printed
+    assert "+1日" in printed, f"ずれの表示が壊れている: {printed}"
+
+
+def test_report_writes_csv_even_with_matched_rows(tmp_path, capsys):
+    """**レポート全体が最後まで通ること。** CSV とスナップショットが残る。
+
+    ここが落ちると、検出結果そのものが失われる（例外はレポート本文の途中で出るため、
+    後段の `to_csv` / スナップショット保存に到達しない）。
+    """
+    from scripts.scan_price_anomalies import report
+
+    out = classify(MIXED.copy(), MIXED_SPLITS)
+    out["category"] = "個別"
+    report(out, str(tmp_path), records=None, records_path="X.json")
+
+    csv_path = tmp_path / "price_anomalies.csv"
+    assert csv_path.exists(), "CSV が書かれていない"
+    written = pd.read_csv(csv_path)
+    assert set(written["ticker"]) == {"WLFC", "GOOD"}
+    assert (tmp_path / "price_anomalies_snapshot.json").exists()
+
+
+def test_low_liquidity_split_is_listed_in_its_own_section(capsys):
+    """低流動の要対応は後段にまとめて出す（隠さない・§4-3）。"""
+    from scripts.scan_price_anomalies import report
+
+    df = MIXED.copy()
+    df.loc[df["ticker"] == "WLFC", ["prev_close", "close", "adv21"]] = [
+        1.0, 0.33, 100.0]
+    out = classify(df, MIXED_SPLITS)
+    out["category"] = "個別"
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        report(out, d, records=None, records_path="X.json")
+    printed = capsys.readouterr().out
+    assert "うち低流動 1 件" in printed, printed
+
+
+# ---------------------------------------------------------------------------
 # report_split_coverage — **沈黙しない**ための段
 # ---------------------------------------------------------------------------
 def test_missing_records_are_reported_loudly(capsys):

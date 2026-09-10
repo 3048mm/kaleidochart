@@ -318,10 +318,44 @@ class TestWeeklyMaintenanceAudits:
         assert "split_records" in report, "カバー状況が報告に無い"
         sr = report["split_records"]
         assert set(sr) >= {"path", "available", "generated_at", "start", "tickers"}
+        assert "error" in sr
         # 他の監査レポートと同じ置き場を見ていること（本番のパスを直書きしない。
         # `resolve_report_dir` が 2026-07-29 に踏んだのと同じ型の事故を避ける）
         assert sr["path"].endswith("split_records.json")
         assert "maintenance_reports" in sr["path"]
+
+    def test_broken_split_records_do_not_abort_the_audit(self, setup_audit_db,
+                                                         monkeypatch):
+        """**壊れた分割記録で週次メンテ全体を止めない**（2026-09-11 のレビュー指摘）。
+
+        `load_split_records` は fail-loud（意図どおり）だが、ここは既に DB 修正を
+        コミットした後。例外を通すとレポート出力・SEC 突合・IPO スキャンが
+        丸ごとスキップされる。**記録の破損より監査の停止のほうが重い。**
+        握り潰さず、報告に理由を載せて先へ進むこと。
+        """
+        import data_collection.split_records as sr_mod
+
+        def _boom(_path):
+            raise ValueError("分割記録 X を JSON として読めません: boom")
+
+        monkeypatch.setattr(sr_mod, "load_split_records", _boom)
+
+        db = setup_audit_db
+        d_old, d_new = date(2026, 7, 14), date(2026, 7, 15)
+        db.add_all([
+            DailyPrice(symbol_id=1, date=d_old, open=100, high=100, low=100,
+                       close=100, volume=100),
+            DailyPrice(symbol_id=1, date=d_new, open=40, high=40, low=40,
+                       close=40, volume=100),
+        ])
+        db.commit()
+
+        report = audit_and_fix_weekly(db, dry_run=True)      # 例外が出ないこと
+
+        assert report["split_records"]["available"] is False
+        assert "boom" in report["split_records"]["error"], "理由が報告に残っていない"
+        # 監査そのものは最後まで走っていること（後段の項目が埋まっている）
+        assert "fx_weekend_rows" in report
 
     def test_detect_fx_weekend_rows(self, setup_audit_db):
         """為替に存在しないはずの土日行を検出し、fix モードで除去する（第3層）。

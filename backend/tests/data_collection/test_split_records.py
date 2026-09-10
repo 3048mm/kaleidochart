@@ -94,6 +94,23 @@ def test_save_writes_utf8_without_bom_and_lf(tmp_path):
     json.loads(raw.decode("utf-8"))                 # 素直に読めること
 
 
+def test_save_is_atomic_and_leaves_no_temp_file(tmp_path):
+    """**一時ファイル経由で差し替える。**
+
+    直接上書きすると書き込み中断で切り詰まった JSON が残る。読み出しは fail-loud
+    なので、そうなると価格アノマリー・週次メンテの両方が手動削除まで止まる。
+    """
+    path = str(tmp_path / DEFAULT_FILENAME)
+    save_split_records(path, SAMPLE, start="2024-09-11", years=2,
+                       tickers_fetched=1, failed=[])
+    save_split_records(path, {"NEW": [("2026-01-01", 2.0)]}, start="2025-01-01",
+                       years=1, tickers_fetched=1, failed=[])
+
+    assert not os.path.exists(path + ".tmp"), "一時ファイルが残っている"
+    got = load_split_records(path)
+    assert set(got["splits"]) == {"NEW"}, "差し替えになっていない"
+
+
 def test_save_creates_parent_directory(tmp_path):
     """出力先ディレクトリが無くても保存できる。"""
     path = str(tmp_path / "nested" / "dir" / DEFAULT_FILENAME)

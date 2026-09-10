@@ -183,7 +183,14 @@ def _print_rows(sub: pd.DataFrame, limit: int) -> None:
         dv = "-" if r.dv_ratio is None or pd.isna(r.dv_ratio) else f"{r.dv_ratio:.2f}"
         sp = ""
         if getattr(r, "split_date", "") :
-            off = getattr(r, "split_days_off", 0) or 0
+            # **必ず int に落とす。** 未一致行が1つでもあると `split_days_off` に
+            # NaN が入って列全体が float64 になり、`{off:+d}` が
+            # `ValueError: Unknown format code 'd'` で落ちる。
+            # しかも落ちる条件は「ずれが0日でない一致行がある」＝本機能が狙った
+            # `WLFC`（+1日）そのもので、**CSV とスナップショットの書き出し前に
+            # 死ぬためスキャン結果が丸ごと失われる**（2026-09-11 のレビューで発覚）。
+            off = getattr(r, "split_days_off", 0)
+            off = 0 if off is None or pd.isna(off) else int(off)
             sp = (f"{r.split_date} ×{r.split_factor:g}"
                   + (f"（{off:+d}日）" if off else ""))
         print(f"{r.ticker:<8}{r.date:<12}{r.prev_close:>10.2f}{r.close:>10.2f}"
@@ -269,7 +276,10 @@ def report(df: pd.DataFrame, out_dir: str, records: dict | None = None,
             continue
         # 要対応は「実売買しうる水準」から先に読ませる。**低流動ぶんも隠さない**
         # （分類では握り潰さず、読む順だけを変える。§4-3）
-        thin = sub["below_liquidity_floor"] if "below_liquidity_floor" in sub else False
+        # フォールバックも Series にする。スカラー `False` だと `~False == -1` に
+        # なり `KeyError: -1` で落ちる（守ろうとした経路自体が壊れていた）
+        thin = (sub["below_liquidity_floor"] if "below_liquidity_floor" in sub
+                else pd.Series(False, index=sub.index))
         main, low = sub[~thin], sub[thin]
         head = f"\n=== {CLASS_LABEL[c]} — 全 {len(sub)} 件"
         print(head + (f"（うち低流動 {len(low)} 件）===" if len(low) else " ==="))

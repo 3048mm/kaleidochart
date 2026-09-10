@@ -245,6 +245,20 @@ def compare_scale(mine: pd.DataFrame, upstream: pd.DataFrame,
 
 # --- 取得と実行 -----------------------------------------------------------
 
+def should_save_records(tickers, records_path) -> bool:
+    """取得した分割記録を保存してよいか。
+
+    **`--tickers` で絞った実行は既定の保存先を上書きしない。**
+    docstring も `upstream-data-diagnosis` SKILL も `--tickers MNST,APH` を
+    スポット確認の書式として案内しているが、それで既定パスへ書くと
+    **全ユニバースの記録が数銘柄ぶんに置き換わり**、以後の価格アノマリー分類が
+    分割メタデータ無しに逆戻りする（2026-09-11 のレビューで発覚）。
+
+    明示的に `--records-out` を指定した場合は、書き先を分かって指定しているので保存する。
+    """
+    return not tickers or bool(records_path)
+
+
 def resolve_db_path() -> str:
     """`config.toml` の `system.db_path` を返す。
 
@@ -386,12 +400,25 @@ def run(tickers=None, years=DEFAULT_YEARS, report_dir=None,
 
     # 取得した分割記録を保存する（検出ゼロでも保存する。
     # 「分割が無かった」ことも価格アノマリーの分類に要る情報）
-    records_path = save_split_records(
-        records_path or resolve_default_path(resolve_db_path()), all_splits,
-        start=start, years=years, tickers_fetched=checked, failed=failed)
+    #
+    # > [!IMPORTANT]
+    # > **`--tickers` で絞った実行は既定の保存先を上書きしない。**
+    # > docstring も SKILL.md も `--tickers MNST,APH` をスポット確認の書式として
+    # > 案内しているが、それで既定パスへ書くと**全ユニバースの記録が数銘柄ぶんに
+    # > 置き換わり**、以後の価格アノマリー分類が分割メタデータ無しに逆戻りする
+    # > （2026-09-11 のレビューで発覚）。明示的に `--records-out` を指定した場合だけ書く。
     n_pairs = sum(len(v) for v in all_splits.values())
-    print(f"\n  分割記録: {len(all_splits):,}銘柄 / {n_pairs:,}件 → {records_path}")
-    print(f"    カバー期間: {start} 以降（これより前の分割は記録されていない）")
+    if not should_save_records(tickers, records_path):
+        print(f"\n  分割記録: {len(all_splits):,}銘柄 / {n_pairs:,}件"
+              f"（**保存しない** — `--tickers` で絞った実行のため）")
+        print("    全ユニバースの記録を部分的な結果で上書きしないための措置。")
+        print("    保存したい場合は --records-out <path> を明示すること。")
+    else:
+        records_path = save_split_records(
+            records_path or resolve_default_path(resolve_db_path()), all_splits,
+            start=start, years=years, tickers_fetched=checked, failed=failed)
+        print(f"\n  分割記録: {len(all_splits):,}銘柄 / {n_pairs:,}件 → {records_path}")
+        print(f"    カバー期間: {start} 以降（これより前の分割は記録されていない）")
 
     # 黙って落とさない。何を見なかったかを必ず出す
     if skipped_out_of_range:

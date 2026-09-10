@@ -399,6 +399,30 @@ HINT: remove __pycache__ / .pyc files and/or use a unique basename
 `available` は環境で変わる値でコードの契約ではない。
 「報告に載ること」と「監査レポートと同じ置き場を見ること」を固定する形に直した。
 
+### 7-6. merge 後の `/code-review` で5件（うち1件は重大）— 2026-09-11
+
+**テストが `classify()` までしか触れておらず、レポート出力（`report()` / `_print_rows()`）が
+未検証だった。** そこに実害のあるバグが1件あった。
+
+| # | 箇所 | 重大度 | 内容 |
+| :--- | :--- | :--- | :--- |
+| 1 | `scan_price_anomalies.py:188` | **重大** | `f"{off:+d}"` が float64 の `split_days_off` に当たり `ValueError`。**CSV とスナップショットの書き出し前に落ちるのでスキャン結果が丸ごと失われる** |
+| 2 | `scan_split_consistency.py` | 中 | `--tickers` 実行が既定の `split_records.json` を上書きし、**全ユニバースの記録が数銘柄ぶんに置き換わる** |
+| 3 | `weekly_maintenance.py` | 中 | `load_split_records` の `ValueError` 未捕捉。**DB 修正コミット後に週次メンテ全体が中断** |
+| 4 | `split_records.py` | 中 | 直接上書きのため、書き込み中断で切り詰まった JSON が残る |
+| 5 | `scan_price_anomalies.py` | 低 | `sub[~thin]` のフォールバックが `~False == -1` で `KeyError` |
+
+**#1 の条件は「ずれが0日でない一致行がある」＝本機能が狙った `WLFC`（+1日）そのもの。**
+未一致行が1つでもあると `split_days_off` に NaN が入って列が float64 になる。
+単体行のテストでは `int64` のままなので**再現しない**。本番で `split_suspect` が
+0件だったため実行時にも露見しなかった。
+
+**教訓**: 「分類が正しいか」だけを見て「**結果が読み手に届くか**」を見ていなかった。
+出力まで通す `report()` レベルのテストを3件追加した
+（`_print_rows` の float 耐性 / CSV が最後まで書かれること / 低流動の内訳表示）。
+
+修正はすべてブランチ `fix/split-anomaly-report-crash` で対応済み。
+
 ## 8. スコープ外・残作業
 
 - **上流が分割記録を持たないケースの検出**（`doc/issue_list.md` P1 🟡 第3段階）。本計画では扱わない。

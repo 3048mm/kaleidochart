@@ -461,7 +461,17 @@ def audit_and_fix_weekly(db, dry_run: bool) -> dict:
         _audited_db = getattr(getattr(db.bind, "url", None), "database", None)
         _records_path = resolve_default_path(
             _audited_db or os.path.join(project_root, "data", "stocktool.db"))
-        _records = load_split_records(_records_path)
+        # **壊れた記録で週次メンテ全体を止めない。**
+        # `load_split_records` は fail-loud（意図どおり）だが、ここは既に DB 修正を
+        # コミットした後で、例外を通すとレポート出力・SEC 突合・IPO スキャンが
+        # 丸ごとスキップされる。**記録の破損より監査の停止のほうが重い。**
+        # 握り潰さず、報告に理由を載せて先へ進む（2026-09-11 のレビューで発覚）。
+        _records, _error = None, ""
+        try:
+            _records = load_split_records(_records_path)
+        except ValueError as e:
+            _error = str(e)
+            logger.error(f"分割記録を読めませんでした（分類は分割メタデータ無しで続行）: {e}")
         splits = split_map(_records)
         report["split_records"] = {
             "path": _records_path,
@@ -469,6 +479,7 @@ def audit_and_fix_weekly(db, dry_run: bool) -> dict:
             "generated_at": (_records or {}).get("generated_at", ""),
             "start": (_records or {}).get("start", ""),
             "tickers": len(splits),
+            "error": _error,
         }
 
         # 旧実装は銘柄ごとにクエリを投げる N+1 だった。1本にまとめる。
@@ -819,6 +830,8 @@ def write_maintenance_report(report: dict, dry_run: bool, db_path: str | None = 
                     f" (fetched {_sr.get('generated_at', '?')})\n")
         else:
             f.write("  [split records] NONE - classified WITHOUT split metadata.\n")
+            if _sr.get("error"):
+                f.write(f"    UNREADABLE: {_sr['error']}\n")
             f.write("    Splits on the jump date may be hidden as market_wide / real_move.\n")
             f.write("    Generate: backend/scripts/scan_split_consistency.py --years 2\n")
         if report["split_anomalies"]:

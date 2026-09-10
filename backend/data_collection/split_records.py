@@ -82,10 +82,15 @@ def save_split_records(path: str, splits: dict, *, start: str, years: float,
                    for t, pairs in (splits or {}).items() if pairs},
     }
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    # **一時ファイルへ書いてから差し替える。** 直接上書きすると、書き込み中の
+    # 中断（Ctrl+C・電源断）で**切り詰まった JSON が残る**。読み出しは fail-loud
+    # なので、そうなると価格アノマリー・週次メンテの両方が手動削除まで止まる。
+    tmp = f"{path}.tmp"
     # BOM を付けない・改行は LF（Windows の既定 CRLF に流されない）
-    with open(path, "w", encoding="utf-8", newline="\n") as f:
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
         json.dump(payload, f, ensure_ascii=False, indent=1)
         f.write("\n")
+    os.replace(tmp, path)      # 同一ボリューム内なら原子的
     return path
 
 
