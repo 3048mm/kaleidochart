@@ -160,11 +160,11 @@ class MoomooClient:
     def _to_code(ticker: str) -> str:
         """米国株のみサポート。`AAPL` → `US.AAPL`。
 
-        既に市場プレフィックス（`US.` 等）が付いている場合はそのまま通す
-        （将来の多市場対応時の後方互換）。
+        本プロジェクトの対象は米国株のみ（`doc/architecture.md`）。多市場対応は
+        現時点で要件が無いため、`.`混入ティッカーの誤判定を避けるためにも
+        常に `US.` を付ける単純な実装にする（YAGNI。必要になったら市場を
+        明示引数で受け取る形に変える）。
         """
-        if "." in ticker:
-            return ticker
         return f"{US_MARKET_PREFIX}{ticker}"
 
     def get_rehab(self, ticker: str):
@@ -221,6 +221,7 @@ class MoomooClient:
                 "window_sec": self.rate_limiter.window_sec,
             },
             "history_kl_quota": None,
+            "history_kl_quota_error": None,
         }
         try:
             ctx = self._ensure_connected()
@@ -232,4 +233,9 @@ class MoomooClient:
         if ret == 0:
             used, remain, _detail = data
             status["history_kl_quota"] = {"used": used, "remain": remain}
+        else:
+            # 接続はできているがクォータ照会自体が失敗したケース。`history_kl_quota: None`
+            # のままだと「未接続」や「正常に0件」と見分けがつかなくなるため、
+            # エラー内容を別フィールドで残す（フェイルラウド。黙って揉み消さない）。
+            status["history_kl_quota_error"] = str(data)
         return status

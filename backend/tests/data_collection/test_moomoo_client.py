@@ -102,10 +102,22 @@ def test_get_rehab_applies_us_prefix():
     assert fake.rehab_calls == ["US.AAPL"]
 
 
-def test_get_rehab_passes_through_existing_market_prefix():
+def test_get_rehab_always_prefixes_us_market():
+    """本プロジェクトの対象は米国株のみ。市場プレフィックスの自動判定はしない（YAGNI）。"""
     c, fake, _ = _client()
-    c.get_rehab("HK.00700")
-    assert fake.rehab_calls == ["HK.00700"]
+    c.get_rehab("BRK-B")
+    assert fake.rehab_calls == ["US.BRK-B"]
+
+
+def test_get_rehab_prefixes_even_tickers_containing_a_dot():
+    """以前は `.` を含むティッカーをプレフィックスなしで素通ししていた分岐を削除したことの回帰確認。
+
+    `.` の有無で分岐しない単純な実装になったことを、まさにその分岐が発火していた
+    入力（ドット入りティッカー）で確認する。
+    """
+    c, fake, _ = _client()
+    c.get_rehab("BRK.B")
+    assert fake.rehab_calls == ["US.BRK.B"]
 
 
 def test_get_rehab_returns_data_on_success():
@@ -211,6 +223,21 @@ def test_usage_status_reports_history_kl_quota_when_connected():
     status = c.usage_status()
     assert status["connected"] is True
     assert status["history_kl_quota"] == {"used": 5, "remain": 295}
+    assert status["history_kl_quota_error"] is None
+
+
+def test_usage_status_surfaces_quota_query_failure_instead_of_silently_dropping_it():
+    """接続はできているがクォータ照会自体が失敗したケースを握り潰さない。
+
+    `history_kl_quota: None` のままだと「未接続」「正常に0件」と見分けがつかない
+    （フェイルラウド逸脱）ため、専用フィールドでエラー内容を残す。
+    """
+    c, fake, _ = _client()
+    fake.quota_response = (-1, "quota query failed")
+    status = c.usage_status()
+    assert status["connected"] is True
+    assert status["history_kl_quota"] is None
+    assert status["history_kl_quota_error"] == "quota query failed"
 
 
 def test_usage_status_does_not_raise_when_opend_not_running():

@@ -129,3 +129,42 @@ def split_map(records: dict | None) -> dict:
         return {}
     return {t: [(str(d), float(f)) for d, f in pairs]
             for t, pairs in (records.get("splits") or {}).items()}
+
+
+# `split_records.json` は `scan_split_consistency.py` を**手で回したときだけ**
+# 更新される（週次メンテにも日次更新にも組み込まれていない）。古いまま
+# 放置されると、**カバー期間の右端（直近側）は生成時点で固定される**ため、
+# 時間が経つほど「直近の分割が拾えていない」範囲が広がる
+# （`doc/issue_list.md` P2 2026-09-10 起票）。
+#
+# > [!IMPORTANT]
+# > **この数値に確たる根拠は無い**（`MARKET_WIDE_MIN_SYMBOLS` と同じ扱い＝
+# > 運用しながら調整する前提の暫定値。2026-09-11 設定）。
+STALE_AFTER_DAYS = 14
+
+
+def is_stale(records: dict, *, now: datetime | None = None,
+            max_age_days: int = STALE_AFTER_DAYS) -> bool:
+    """分割記録が古すぎて信用できないか。
+
+    `generated_at` からの経過日数で判定する純関数（I/O なし）。
+
+    Args:
+        records: `load_split_records()` の戻り値（`None` は呼び出し側で
+            別扱いする前提。ここには渡さない）。
+        now: 判定時刻。省略時は実時刻。
+
+    Returns:
+        `generated_at` が無い・壊れている・閾値を超えている場合は `True`。
+        **判定できない場合を「新鮮」に丸めない**——記録が無いのを黙って
+        通すのと同じ失敗の型になる。
+    """
+    generated_at = records.get("generated_at")
+    if not generated_at:
+        return True
+    try:
+        generated = datetime.fromisoformat(generated_at)
+    except ValueError:
+        return True
+    now = now or datetime.now()
+    return (now - generated).days > max_age_days
