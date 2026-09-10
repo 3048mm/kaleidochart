@@ -44,6 +44,7 @@ from indicators.price_anomaly import (  # noqa: E402
     classify_price_jump,
     count_real_symbols_per_day,
     find_matching_split,
+    find_nearby_split,
     is_anomalous_ratio,
     is_below_liquidity_floor,
 )
@@ -138,10 +139,13 @@ def classify(anomalies: pd.DataFrame, splits: dict | None = None) -> pd.DataFram
     out = anomalies.copy()
     out["dv_ratio"] = out["dv_ratio"].where(out["dv_ratio"].notna(), None)
 
-    matches, classes = [], []
+    matches, classes, nearby = [], [], []
     for r in out.itertuples():
         m = find_matching_split(r.ticker, str(r.date)[:10], r.ratio, splits)
         matches.append(m)
+        # 一致しなかったが近傍に分割がある組は**捨てずに数える**（報告専用）
+        nearby.append(None if m else
+                      find_nearby_split(r.ticker, str(r.date)[:10], splits))
         classes.append(classify_price_jump({
             "ticker": r.ticker, "ratio": r.ratio, "prev_close": r.prev_close,
             "adv21": None if pd.isna(r.adv21) else r.adv21,
@@ -155,6 +159,11 @@ def classify(anomalies: pd.DataFrame, splits: dict | None = None) -> pd.DataFram
     out["split_date"] = [m["split_date"] if m else "" for m in matches]
     out["split_factor"] = [m["factor"] if m else None for m in matches]
     out["split_days_off"] = [m["days_off"] if m else None for m in matches]
+    # 「近いが比が合わない」= 判断の分かれ目。分類には使わない（報告専用）
+    out["nearby_split"] = [f"{n['split_date']} x{n['factor']:g}" if n else ""
+                           for n in nearby]
+    out["nearby_expected_ratio"] = [n["expected_ratio"] if n else None
+                                    for n in nearby]
     # 分類は変えないが、要対応の読む順を決めるのに使う（§4-3）
     out["below_liquidity_floor"] = [
         is_below_liquidity_floor(r.prev_close, r.ratio,
@@ -214,6 +223,22 @@ def report_split_coverage(df: pd.DataFrame, records: dict | None,
     if failed:
         print(f"  取得できなかった銘柄: {len(failed):,} 件"
               f"（例: {', '.join(map(str, failed[:5]))}）")
+
+    # 「近いが比が合わない」= 判断の分かれ目。**捨てずに出す。**
+    # 分割日に実際の値動きが重なっただけとも、分割が中途半端に効いているとも読める。
+    # yfinance だけでは決着しない（`doc/issue_list.md` P1 第3段階の領分）。
+    if "nearby_split" in df.columns:
+        near = df[(df["nearby_split"] != "") & (df["split_date"] == "")]
+        if not near.empty:
+            print(f"\n  --- 分割の近傍だが比が一致しない: {len(near)} 件"
+                  f"（要対応にはしない。独立ソースでの確認が要る）---")
+            for r in near.sort_values("date", ascending=False).head(15).itertuples():
+                gap = abs(r.ratio - r.nearby_expected_ratio) / r.nearby_expected_ratio
+                print(f"    {r.ticker:<6} {r.date}  段差 {r.ratio:.4f} / "
+                      f"記録 {r.nearby_split}（期待比 {r.nearby_expected_ratio:.4f}・"
+                      f"{gap*100:.0f}% 外れ）")
+            if len(near) > 15:
+                print(f"    …他 {len(near)-15} 件")
     print()
 
 
@@ -258,7 +283,7 @@ def report(df: pd.DataFrame, out_dir: str, records: dict | None = None,
     cols = ["ticker", "date", "category", "prev_close", "close", "ratio",
             "dv_ratio", "dv_vs_adv", "adv21", "same_day_count", "classification",
             "split_date", "split_factor", "split_days_off",
-            "below_liquidity_floor"]
+            "nearby_split", "nearby_expected_ratio", "below_liquidity_floor"]
     cols = [c for c in cols if c in df.columns]
     csv_path = os.path.join(out_dir, "price_anomalies.csv")
     df.sort_values(["classification", "date"])[cols].to_csv(

@@ -437,6 +437,30 @@ def test_virtual_still_wins_over_split_match():
     assert classify_price_jump(r) == "virtual"
 
 
+def test_nearby_split_is_found_even_when_ratio_disagrees():
+    """`STKH` — 比が11%外れて一致にはならないが、**近傍にあることは報告する**。
+
+    分割 2026-07-27 ×1:3（期待比 3.0）に対し、翌日の段差は 2.6667。
+    「分割日に11%下げただけ」とも「分割が中途半端に効いている」とも読め、
+    yfinance だけでは決着しない。捨てずに人間へ渡す。
+    """
+    from indicators.price_anomaly import find_nearby_split
+
+    splits = {"STKH": [("2026-07-27", 1 / 3)]}
+    assert find_matching_split("STKH", "2026-07-28", 2.6667, splits) is None
+    near = find_nearby_split("STKH", "2026-07-28", splits)
+    assert near is not None
+    assert near["days_off"] == -1
+    assert round(near["expected_ratio"], 4) == 3.0
+
+
+def test_nearby_split_ignores_stock_dividends():
+    """報告専用の経路でも、識別できない帯（株式配当）は拾わない。"""
+    from indicators.price_anomaly import find_nearby_split
+
+    assert find_nearby_split("SCCO", "2026-05-01", SPLITS) is None
+
+
 def test_without_split_match_behaviour_is_unchanged():
     """**後方互換。** `split_match` を渡さなければ従来どおり。
 

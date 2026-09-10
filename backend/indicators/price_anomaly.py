@@ -224,6 +224,49 @@ def find_matching_split(ticker: str, date: str, ratio: float | None,
     return best
 
 
+def find_nearby_split(ticker: str, date: str, split_records: dict | None, *,
+                      window_days: int = SPLIT_DATE_WINDOW_DAYS) -> dict | None:
+    """近傍に分割記録があるか**だけ**を見る（比は問わない）。**報告専用。**
+
+    `find_matching_split()` は「日付が近い AND 比が `1/factor` に一致」で判定するが、
+    **比だけが外れた組を黙って捨てると、判断の分かれ目が見えなくなる**。
+
+    2026-09-10 の全期間実測では、識別可能な分割152件のうち145件は近傍に段差が無く
+    （＝上流が正しく適用している）、残る7件は近傍に段差があるのに比が合わなかった。
+    最も際どいのは `STKH`（分割 2026-07-27 ×1:3 で期待比 3.0 に対し段差 2.6667＝11%外れ）。
+    分割日に11%下げただけとも、分割が中途半端に効いているとも読める。
+    **yfinance だけでは決着しない**（独立ソースの領分＝`doc/issue_list.md` P1 第3段階）。
+
+    分類は変えない。件数と明細を出して人間に渡すためだけに使う。
+    """
+    if not split_records or not ticker or not date:
+        return None
+    pairs = split_records.get(ticker)
+    if not pairs:
+        return None
+    try:
+        target = _to_ordinal(date)
+    except ValueError:
+        return None
+
+    best = None
+    for split_date, factor in pairs:
+        if not factor or factor <= 0:
+            continue
+        if abs(1.0 / factor - 1.0) < MIN_DISCRIMINABLE_GAP:
+            continue                      # 株式配当は段差で識別できない
+        try:
+            days_off = _to_ordinal(str(split_date)) - target
+        except ValueError:
+            continue
+        if abs(days_off) > window_days:
+            continue
+        if best is None or abs(days_off) < abs(best["days_off"]):
+            best = {"split_date": str(split_date), "factor": float(factor),
+                    "expected_ratio": 1.0 / factor, "days_off": days_off}
+    return best
+
+
 def _to_ordinal(date_str: str) -> int:
     """``YYYY-MM-DD`` を日数に直す（差分を取るためだけの内部関数）。"""
     return _date(int(date_str[0:4]), int(date_str[5:7]),

@@ -287,12 +287,21 @@ class TestWeeklyMaintenanceAudits:
         assert hits, f"分割の疑いが報告されていない: {report['split_anomalies']}"
         assert hits[0]["classification"] == "split_suspect"
 
-    def test_missing_split_records_are_recorded_not_silent(self, setup_audit_db):
-        """分割記録が無いことを**レポートに残す**（`doc/issue_list.md` P1）。
+    def test_split_record_coverage_is_recorded_not_silent(self, setup_audit_db):
+        """分割記録のカバー状況を**レポートに残す**（`doc/issue_list.md` P1）。
 
         記録が無いまま従来分類を返すと、分割日と一致する段差が
         `market_wide` / `real_move` に化けたまま「異常なし」に見える。
-        一時 DB の隣に記録は無いので、ここでは必ず未取得になる。
+        だから「取れたか / どの期間か」を必ず報告へ載せる。
+
+        > [!NOTE]
+        > **「記録が無いこと」を期待値にしない。** `available` は隣に
+        > `split_records.json` があるかで変わる環境依存の値で、コードの契約ではない
+        > （最初そう書いてスイート実行時だけ落ちた）。
+        > **このフィクスチャはインメモリ DB なので `db.bind.url.database` は `None`**
+        > になり、実装は `resolve_report_dir(None)` と同じくプロジェクトの
+        > `data/` へフォールバックする。ここで固定するのは
+        > **報告に載ること**と**監査レポートと同じ置き場を見ること**の2点。
         """
         db = setup_audit_db
         d_old, d_new = date(2026, 7, 14), date(2026, 7, 15)
@@ -307,10 +316,12 @@ class TestWeeklyMaintenanceAudits:
         report = audit_and_fix_weekly(db, dry_run=True)
 
         assert "split_records" in report, "カバー状況が報告に無い"
-        assert report["split_records"]["available"] is False
-        assert report["split_records"]["tickers"] == 0
-        # **監査対象 DB の隣**を見ていること（本番の記録を掴まない）
-        assert "maintenance_reports" in report["split_records"]["path"]
+        sr = report["split_records"]
+        assert set(sr) >= {"path", "available", "generated_at", "start", "tickers"}
+        # 他の監査レポートと同じ置き場を見ていること（本番のパスを直書きしない。
+        # `resolve_report_dir` が 2026-07-29 に踏んだのと同じ型の事故を避ける）
+        assert sr["path"].endswith("split_records.json")
+        assert "maintenance_reports" in sr["path"]
 
     def test_detect_fx_weekend_rows(self, setup_audit_db):
         """為替に存在しないはずの土日行を検出し、fix モードで除去する（第3層）。
