@@ -259,9 +259,11 @@ def audit_and_fix_weekly(db, dry_run: bool) -> dict:
     import pandas as pd
     from indicators.calculate import calculate_indicators
     from indicators.fx_calendar import is_fx_trading_day
+    from data_collection.split_records import (load_split_records, resolve_default_path,
+                                                split_map)
     from indicators.price_anomaly import (classify_price_jump, count_real_symbols_per_day,
-                                          is_anomalous_ratio)
-    
+                                          find_matching_split, is_anomalous_ratio)
+
     report = {
         "stale_symbols": [],       # 退役候補 = delisted + no_history（後方互換のティッカー列）
         "delisted_symbols": [],    # (ticker, last_date, rows)
@@ -274,6 +276,7 @@ def audit_and_fix_weekly(db, dry_run: bool) -> dict:
         "fixed_indicators_count": 0,
         "split_anomalies": [],      # 要対応のみ（split_suspect / undecided）
         "anomaly_excluded": {},     # 除外した分類 → 件数
+        "split_records": {},        # 分割記録のカバー状況（無ければ空。**黙らない**）
         "fx_weekend_rows": [],     # (currency_pair, date, rate) — 為替に存在しないはずの土日行
     }
 
@@ -450,6 +453,24 @@ def audit_and_fix_weekly(db, dry_run: bool) -> dict:
     if active_symbol_ids and max_date:
         lookback_cutoff = max_date - timedelta(days=730)
 
+        # 分割記録（`scan_split_consistency.py` が生成）。無ければ従来の分類に
+        # なるが、**その事実をレポートに残す**（あるように見えて何も見ていない
+        # 状態を作らない）。壊れていれば load_split_records が例外を投げる。
+        # **監査対象 DB と同じ階層**から読む（`resolve_report_dir` と同じ理由。
+        # テストが一時 DB を渡したときに本番の記録を掴まないようにする）
+        _audited_db = getattr(getattr(db.bind, "url", None), "database", None)
+        _records_path = resolve_default_path(
+            _audited_db or os.path.join(project_root, "data", "stocktool.db"))
+        _records = load_split_records(_records_path)
+        splits = split_map(_records)
+        report["split_records"] = {
+            "path": _records_path,
+            "available": bool(_records),
+            "generated_at": (_records or {}).get("generated_at", ""),
+            "start": (_records or {}).get("start", ""),
+            "tickers": len(splits),
+        }
+
         # 旧実装は銘柄ごとにクエリを投げる N+1 だった。1本にまとめる。
         rows = (
             db.query(DailyPrice.symbol_id, DailyPrice.date,
@@ -485,17 +506,25 @@ def audit_and_fix_weekly(db, dry_run: bool) -> dict:
                 a["same_day_count"] = count_real_symbols_per_day(a)
 
                 for r in a.itertuples():
+                    # 上流が記録している分割と照合する。**これが無いと、分割日と
+                    # 一致する段差が market_wide / real_move に化ける**
+                    # （`doc/issue_list.md` P1。実例: IESC / WLFC）。
+                    m = find_matching_split(
+                        r.ticker, str(r.date)[:10], r.ratio, splits)
                     cls = classify_price_jump({
                         "ticker": r.ticker, "ratio": r.ratio, "prev_close": r.prev_close,
                         "adv21": None if pd.isna(r.adv21) else r.adv21,
                         "dv_ratio": None if pd.isna(r.dv_ratio) else r.dv_ratio,
                         "dv_vs_adv": None if pd.isna(r.dv_vs_adv) else r.dv_vs_adv,
                         "same_day_count": r.same_day_count,
+                        "split_match": m,
                     })
                     entry = {
                         "ticker": r.ticker, "date": r.date,
                         "prev_close": r.prev_close, "curr_close": r.close,
                         "ratio": r.ratio, "classification": cls,
+                        "split_date": m["split_date"] if m else "",
+                        "split_factor": m["factor"] if m else None,
                     }
                     # 要対応（分割の疑い・判定不能）だけを split_anomalies に載せる。
                     # それ以外は件数だけ残す（報告をノイズで埋めない）。
@@ -781,9 +810,22 @@ def write_maintenance_report(report: dict, dry_run: bool, db_path: str | None = 
         f.write("\n")
         
         f.write("5. Stock split / consolidation anomalies (price shift >= 40% drop or >= 80% spike):\n")
+        # 分割記録のカバー状況を先に出す。**無いまま分類すると、分割日と一致する
+        # 段差が market_wide / real_move に化ける**（doc/issue_list.md P1）。
+        _sr = report.get("split_records") or {}
+        if _sr.get("available"):
+            f.write(f"  [split records] {_sr.get('tickers', 0)} tickers,"
+                    f" covering {_sr.get('start', '?')} onward"
+                    f" (fetched {_sr.get('generated_at', '?')})\n")
+        else:
+            f.write("  [split records] NONE - classified WITHOUT split metadata.\n")
+            f.write("    Splits on the jump date may be hidden as market_wide / real_move.\n")
+            f.write("    Generate: backend/scripts/scan_split_consistency.py --years 2\n")
         if report["split_anomalies"]:
             for item in report["split_anomalies"]:
-                f.write(f"  - {item['ticker']} on {item['date']}: {item['prev_close']:.2f} -> {item['curr_close']:.2f} (Ratio: {item['ratio']:.2f})\n")
+                sp = (f" [split {item['split_date']} x{item['split_factor']:g}]"
+                      if item.get("split_date") else "")
+                f.write(f"  - {item['ticker']} on {item['date']}: {item['prev_close']:.2f} -> {item['curr_close']:.2f} (Ratio: {item['ratio']:.2f}){sp}\n")
         else:
             f.write("  None\n")
         f.write("\n")

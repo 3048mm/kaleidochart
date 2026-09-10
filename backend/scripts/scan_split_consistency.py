@@ -65,9 +65,18 @@ for _p in (_project_root, _backend_dir):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+import tomli  # noqa: E402
 import yfinance as yf  # noqa: E402
 
+from data_collection.split_records import (  # noqa: E402
+    resolve_default_path,
+    save_split_records,
+)
 from data_collection.tls_trust import ensure_ca_bundle  # noqa: E402
+from indicators.price_anomaly import (  # noqa: E402,F401  （再エクスポート）
+    MIN_DISCRIMINABLE_GAP,
+    SPLIT_JUMP_TOLERANCE,
+)
 from pipeline.parquet_cache_manager import (  # noqa: E402
     get_latest_master_files,
     get_parquet_master_dir,
@@ -76,19 +85,16 @@ from pipeline.parquet_cache_manager import (  # noqa: E402
 from scripts.scan_price_anomalies import use_utf8_stdout  # noqa: E402
 
 # --- 検査A ---------------------------------------------------------------
-# 段差が `1/factor` からどれだけ外れてよいか。分割日当日の値動きが乗るので
-# ぴったりにはならない（`BYND` は 30.10 / factor 30 = +0.3%）。
-SPLIT_JUMP_TOLERANCE = 0.08
-
-# 「未適用」と「適用済み」を段差で識別するには、`1/factor` が 1.0 から十分
-# 離れている必要がある。**株式配当（factor ≈ 1.0x）は識別できない。**
+# 段差の許容幅と、識別可能性の下限は `indicators/price_anomaly.py` に集約した
+# （価格アノマリーの分類器が同じ判定をするため。**同じ閾値を2箇所に書かない**）。
 #
-# 2026-09-09 の全ユニバース実測で、検出18件のうち16件がこの誤検出だった
-# （`SCCO` 7件 / `TR` 2件 / `METC` 2件 / `SNFCA` 2件 / `HON` / `J` / `LEN`。
-# いずれも 1.006〜1.061 の株式配当）。`factor=1.01` なら未適用の期待値
-# `0.990` と適用済みの `1.0` が許容幅の中で重なり、先に評価する未適用が常に
-# 当たっていた。**識別できない領域では判定を放棄する。**
-MIN_DISCRIMINABLE_GAP = 0.15
+#   SPLIT_JUMP_TOLERANCE  … 段差が `1/factor` からどれだけ外れてよいか
+#   MIN_DISCRIMINABLE_GAP … 株式配当（factor ≈ 1.0x）は段差では識別できない。
+#                           2026-09-09 の全ユニバース実測で、検出18件のうち
+#                           16件がこの誤検出だった
+#
+# 再エクスポートしているのは、既存のテスト・呼び出しが
+# `scripts.scan_split_consistency` 側の名前を参照しているため。
 
 # --- 検査B ---------------------------------------------------------------
 # よくある分割比。手元/上流の比がこれらに一致したら分割の取りこぼしを疑う。
@@ -239,9 +245,24 @@ def compare_scale(mine: pd.DataFrame, upstream: pd.DataFrame,
 
 # --- 取得と実行 -----------------------------------------------------------
 
+def resolve_db_path() -> str:
+    """`config.toml` の `system.db_path` を返す。
+
+    > [!IMPORTANT]
+    > **相対パス（`"data/stocktool.db"`）を直書きしない。**
+    > ワークツリーから実行するとカレントディレクトリ基準で解決され、
+    > ワークツリー自身の空の `data/` を見にいって
+    > 「`latest_master.json` を解決できません」で止まる（2026-09-10 実測）。
+    > `config.toml` は本番の絶対パスを持つので、`scan_price_anomalies.py` と
+    > 同じ導出にそろえる。
+    """
+    with open(os.path.join(_project_root, "config.toml"), "rb") as f:
+        return tomli.load(f)["system"]["db_path"]
+
+
 def load_targets(tickers: list[str] | None) -> pd.DataFrame:
     """検査対象の銘柄を Parquet マスタから取る（仮想テーマは除外）。"""
-    pointer = get_pointer_file_path(get_parquet_master_dir("data/stocktool.db"))
+    pointer = get_pointer_file_path(get_parquet_master_dir(resolve_db_path()))
     cur = get_latest_master_files(pointer)
     if not cur:
         raise RuntimeError("latest_master.json を解決できません。")
@@ -285,7 +306,8 @@ def fetch_batch(tickers: list[str], start: str) -> dict:
     return out
 
 
-def run(tickers=None, years=DEFAULT_YEARS, report_dir=None) -> dict:
+def run(tickers=None, years=DEFAULT_YEARS, report_dir=None,
+        records_path=None) -> dict:
     ensure_ca_bundle()
     start = (datetime.now() - timedelta(days=int(365.25 * years))).strftime("%Y-%m-%d")
 
@@ -301,6 +323,11 @@ def run(tickers=None, years=DEFAULT_YEARS, report_dir=None) -> dict:
 
     findings, checked, failed = [], 0, []
     skipped_out_of_range = []   # 保有期間外の分割。黙って落とさず件数を出す
+    # 取得した分割記録は**検出の有無に関わらず全件残す**。
+    # ここで捨てていたせいで、価格アノマリーの分類器が「その日に分割があったか」を
+    # 知らないまま段差を market_wide / real_move に落としていた
+    # （`doc/issue_list.md` P1・`data_collection/split_records.py` の docstring）。
+    all_splits: dict[str, list] = {}
     names = targets["ticker"].tolist()
     for i in range(0, len(names), BATCH_SIZE):
         chunk = names[i:i + BATCH_SIZE]
@@ -318,6 +345,8 @@ def run(tickers=None, years=DEFAULT_YEARS, report_dir=None) -> dict:
                 failed.append(t)
                 continue
             checked += 1
+            if rec["splits"]:
+                all_splits[t] = list(rec["splits"])
 
             mine = px[px["symbol_id"] == sid][["date", "close"]]
             our_first = mine["date"].min() if not mine.empty else None
@@ -354,6 +383,15 @@ def run(tickers=None, years=DEFAULT_YEARS, report_dir=None) -> dict:
 
     print("\n" + "=" * 74)
     print(f"検査 {checked:,}銘柄 / 検出 {len(findings)}件 / 取得失敗 {len(failed)}件")
+
+    # 取得した分割記録を保存する（検出ゼロでも保存する。
+    # 「分割が無かった」ことも価格アノマリーの分類に要る情報）
+    records_path = save_split_records(
+        records_path or resolve_default_path(resolve_db_path()), all_splits,
+        start=start, years=years, tickers_fetched=checked, failed=failed)
+    n_pairs = sum(len(v) for v in all_splits.values())
+    print(f"\n  分割記録: {len(all_splits):,}銘柄 / {n_pairs:,}件 → {records_path}")
+    print(f"    カバー期間: {start} 以降（これより前の分割は記録されていない）")
 
     # 黙って落とさない。何を見なかったかを必ず出す
     if skipped_out_of_range:
@@ -393,8 +431,10 @@ if __name__ == "__main__":
     p.add_argument("--tickers", default=None, help="対象を絞る（カンマ区切り）")
     p.add_argument("--years", type=float, default=DEFAULT_YEARS,
                    help=f"遡る年数（既定 {DEFAULT_YEARS}）")
+    p.add_argument("--records-out", default=None,
+                   help="分割記録 JSON の出力先（既定は data/maintenance_reports/）")
     a = p.parse_args()
     res = run([t.strip() for t in a.tickers.split(",")] if a.tickers else None,
-              a.years)
+              a.years, records_path=a.records_out)
     print(json.dumps({"checked": res["checked"],
                       "findings": len(res["findings"])}, ensure_ascii=False))

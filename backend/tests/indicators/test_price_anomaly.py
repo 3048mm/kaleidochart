@@ -35,7 +35,9 @@ for _p in (project_root, backend_dir):
 from indicators.price_anomaly import (  # noqa: E402
     ANOMALY_RATIO_HI,
     ANOMALY_RATIO_LO,
+    SPLIT_DATE_WINDOW_DAYS,
     classify_price_jump,
+    find_matching_split,
     is_anomalous_ratio,
 )
 
@@ -223,10 +225,11 @@ def test_real_price_moves(ticker, ratio, prev_close, note):
 
 
 def test_classification_priority_order():
-    """優先順位: virtual > market_wide > low_liquidity > split/real
+    """優先順位: virtual > **split_match** > market_wide > low_liquidity > split/real
 
     市場全体の日に低位株が動いても market_wide が優先される
-    （個別要因ではないため）。
+    （個別要因ではないため）。分割記録との一致だけがこれを上書きする
+    （下段「分割メタデータとの照合」を参照）。
     """
     r = _jump(ticker="PENNY", ratio=0.5, prev_close=1.0,
               adv21=100.0, same_day_count=30)
@@ -285,3 +288,161 @@ def test_bynd_is_classified_as_split_suspect_not_market_wide():
         "same_day_count": 1,      # 仮想テーマを除いた実数
     })
     assert cls == "split_suspect", f"BYND が {cls} に分類されている"
+
+
+# ---------------------------------------------------------------------------
+# 分割メタデータとの照合（find_matching_split）
+#
+# ## なぜ足したか
+#
+# 分類器は**分割記録を一切見ていなかった**ため、比の大きさと同日件数だけで
+# 判定していた。2026-09-10 に補正した本物の破損2件は、どちらもレポートに
+# 入っていながら捨てられていた（`doc/issue_list.md` P1）:
+#
+#     IESC  2026-08-24  ratio=0.4731  same_day_count=4  → market_wide
+#     WLFC  2026-07-20  ratio=0.3294  same_day_count=1  → real_move
+#
+# ## ケースはすべて上流の実記録から採っている
+#
+# 分割記録は 2026-09-10 に yfinance から実取得したもの:
+#
+#     IESC  2026-08-24 ×2.0    段差と**同日**
+#     WLFC  2026-07-21 ×3.0    段差（07-20）の**翌日** ← 日付の幅が要る証拠
+#     MNST  2026-08-11 ×2.0    上流が適用し損ねていた既知の事故銘柄
+# ---------------------------------------------------------------------------
+SPLITS = {
+    "IESC": [("2026-08-24", 2.0)],
+    "WLFC": [("2026-07-21", 3.0)],
+    "MNST": [("2026-08-11", 2.0)],
+    "SCCO": [("2026-05-01", 1.01)],      # 株式配当。段差では識別できない
+}
+
+
+def test_matches_split_on_the_same_day():
+    """`IESC` — 段差の日にそのまま分割記録がある。"""
+    m = find_matching_split("IESC", "2026-08-24", 0.473140, SPLITS)
+    assert m is not None
+    assert m["split_date"] == "2026-08-24"
+    assert m["factor"] == 2.0
+    assert m["days_off"] == 0
+
+
+def test_matches_split_recorded_one_day_later():
+    """`WLFC` — 上流の分割日は段差の**翌日**。厳密一致では取り逃す。"""
+    m = find_matching_split("WLFC", "2026-07-20", 0.329400, SPLITS)
+    assert m is not None, "1日のずれで取り逃している"
+    assert m["factor"] == 3.0
+    assert abs(m["days_off"]) == 1
+
+
+def test_reverse_split_is_matched():
+    """併合（factor<1）も同じ式で拾える。1:10 なら比は約10倍になる。"""
+    splits = {"WBX": [("2026-03-02", 0.05)]}
+    m = find_matching_split("WBX", "2026-03-02", 20.0, splits)
+    assert m is not None
+    assert m["factor"] == 0.05
+
+
+def test_no_match_when_ratio_disagrees_with_factor():
+    """**日付が合っても比が合わなければ一致にしない。**
+
+    分割日に本物の急落が重なることはある。日付だけで断定すると、
+    実際の値動きを分割として報告してしまう。
+    """
+    assert find_matching_split("IESC", "2026-08-24", 0.25, SPLITS) is None
+
+
+def test_no_match_outside_the_date_window():
+    """窓の外の分割は無関係。"""
+    far = "2026-10-01"      # 記録の 2026-08-24 から 30日以上
+    assert find_matching_split("IESC", far, 0.5, SPLITS) is None
+
+
+def test_date_window_boundary():
+    """窓の境界で挙動が切り替わる（±SPLIT_DATE_WINDOW_DAYS まで一致）。"""
+    from datetime import date, timedelta
+
+    base = date(2026, 8, 24)
+    inside = (base + timedelta(days=SPLIT_DATE_WINDOW_DAYS)).isoformat()
+    outside = (base + timedelta(days=SPLIT_DATE_WINDOW_DAYS + 1)).isoformat()
+    assert find_matching_split("IESC", inside, 0.5, SPLITS) is not None
+    assert find_matching_split("IESC", outside, 0.5, SPLITS) is None
+
+
+def test_stock_dividend_is_not_discriminable():
+    """`SCCO` — factor≈1.0 は「未適用」と「適用済み」が重なる。**判定を放棄する。**
+
+    `scan_split_consistency.py` の `MIN_DISCRIMINABLE_GAP` と同じ理由。
+    2026-09-09 の全ユニバース実測では、検出18件中16件がこの誤検出だった。
+    """
+    assert find_matching_split("SCCO", "2026-05-01", 0.99, SPLITS) is None
+
+
+def test_unknown_ticker_and_empty_records():
+    """記録が無いものは黙って一致にしない。"""
+    assert find_matching_split("AAPL", "2026-08-24", 0.5, SPLITS) is None
+    assert find_matching_split("IESC", "2026-08-24", 0.5, {}) is None
+    assert find_matching_split("IESC", "2026-08-24", 0.5, None) is None
+
+
+def test_none_ratio_is_not_a_match():
+    """比が取れない行を分割にしない。"""
+    assert find_matching_split("IESC", "2026-08-24", None, SPLITS) is None
+
+
+# ---------------------------------------------------------------------------
+# 分割一致が分類の優先順位を上書きする（classify_price_jump）
+# ---------------------------------------------------------------------------
+def test_split_match_overrides_market_wide():
+    """**`IESC` の回帰テスト。** 同日4件でも分割記録があれば要対応にする。
+
+    `MARKET_WIDE_MIN_SYMBOLS = 4` は「同日に4件の分割が重なると全部を
+    市場全体の動きとして消す」。2026-08-24 がまさにそれだった。
+    """
+    r = _jump(ticker="IESC", ratio=0.473140, prev_close=71.5,
+              adv21=1.2e7, same_day_count=4,
+              split_match=find_matching_split("IESC", "2026-08-24",
+                                              0.473140, SPLITS))
+    assert classify_price_jump(r) == "split_suspect"
+
+
+def test_split_match_overrides_real_move():
+    """**`WLFC` の回帰テスト。** 同日1件でも分割記録があれば要対応にする。"""
+    r = _jump(ticker="WLFC", ratio=0.329400, prev_close=180.0,
+              adv21=3.0e7, dv_ratio=3.5, same_day_count=1,
+              split_match=find_matching_split("WLFC", "2026-07-20",
+                                              0.329400, SPLITS))
+    assert classify_price_jump(r) == "split_suspect"
+
+
+def test_split_match_overrides_low_liquidity():
+    """低位株・薄商いでも隠さない（§4-3 の判断）。
+
+    `low_liquidity` は「破損かどうか」ではなく「**対応する価値があるか**」の
+    足切り。未調整分割は Parquet マスタが壊れたまま残り T4 の横断ランクにも
+    乗るので、価格水準を理由に握り潰さない。
+    """
+    r = _jump(ticker="IESC", ratio=0.473140, prev_close=1.0, adv21=100.0,
+              same_day_count=1,
+              split_match=find_matching_split("IESC", "2026-08-24",
+                                              0.473140, SPLITS))
+    assert classify_price_jump(r) == "split_suspect"
+
+
+def test_virtual_still_wins_over_split_match():
+    """仮想テーマ指数は合成値であって、テーマ自体は分割しない。"""
+    r = _jump(ticker="_AI_", ratio=0.5, split_match={"factor": 2.0,
+                                                     "split_date": "2026-08-24",
+                                                     "days_off": 0})
+    assert classify_price_jump(r) == "virtual"
+
+
+def test_without_split_match_behaviour_is_unchanged():
+    """**後方互換。** `split_match` を渡さなければ従来どおり。
+
+    呼び出し側を段階的に移せるようにするための保証。
+    """
+    r = _jump(ticker="IESC", ratio=0.473140, prev_close=71.5,
+              adv21=1.2e7, same_day_count=4)
+    assert classify_price_jump(r) == "market_wide"
+    assert classify_price_jump({**r, "split_match": None}) == "market_wide"
