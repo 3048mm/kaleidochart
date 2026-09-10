@@ -122,3 +122,115 @@ def test_the_theme_is_classified_as_virtual():
 def test_calm_symbol_produces_no_anomaly():
     a = find_anomalies(_prices(), _symbols())
     assert "CALM" not in set(a["ticker"])
+
+
+# ---------------------------------------------------------------------------
+# 分割記録の照合（2026-09-10 追加）
+#
+# 分類器は**分割メタデータを一切見ていなかった**ため、比の大きさと同日件数だけで
+# 判定していた。2026-09-10 に補正した本物の破損2件は、どちらもレポートに
+# 入っていながら捨てられていた（`doc/issue_list.md` P1）:
+#
+#     IESC  2026-08-24  ratio=0.4731  same_day_count=4  → market_wide
+#     WLFC  2026-07-20  ratio=0.3294  same_day_count=1  → real_move
+#
+# ここでは「つなぎ」を固定する。分類そのものは
+# `backend/tests/indicators/test_price_anomaly.py` が受け持つ。
+# ---------------------------------------------------------------------------
+IESC_ROW = pd.DataFrame([
+    {"ticker": "IESC", "date": "2026-08-24", "prev_close": 71.5,
+     "close": 33.83, "ratio": 0.473140, "adv21": 1.2e7,
+     "dv_ratio": 1.0, "dv_vs_adv": 1.0, "same_day_count": 4},
+    {"ticker": "GOOD", "date": "2020-03-09", "prev_close": 100.0,
+     "close": 55.0, "ratio": 0.55, "adv21": 5.0e7,
+     "dv_ratio": 2.5, "dv_vs_adv": 2.5, "same_day_count": 1},
+])
+SPLITS = {"IESC": [("2026-08-24", 2.0)]}
+
+
+def test_split_records_rescue_a_row_from_market_wide():
+    """**本件の回帰テスト。** 同日4件でも分割記録があれば要対応に上がる。"""
+    out = classify(IESC_ROW.copy(), SPLITS)
+    row = out[out["ticker"] == "IESC"].iloc[0]
+    assert row["classification"] == "split_suspect"
+    assert row["split_date"] == "2026-08-24"
+    assert row["split_factor"] == 2.0
+    assert row["split_days_off"] == 0
+
+
+def test_without_split_records_classification_is_unchanged():
+    """後方互換 — 記録を渡さなければ従来どおり `market_wide`。"""
+    out = classify(IESC_ROW.copy())
+    assert out[out["ticker"] == "IESC"].iloc[0]["classification"] == "market_wide"
+    assert out[out["ticker"] == "IESC"].iloc[0]["split_date"] == ""
+
+
+def test_unrelated_row_is_untouched_by_split_records():
+    """記録に無い銘柄は影響を受けない。"""
+    out = classify(IESC_ROW.copy(), SPLITS)
+    good = out[out["ticker"] == "GOOD"].iloc[0]
+    assert good["classification"] == "real_move"
+    assert good["split_date"] == ""
+
+
+def test_liquidity_flag_is_reported_but_does_not_change_class():
+    """低流動でも分割記録と一致すれば要対応（計画書 §4-3）。
+
+    フラグはレポートの**読む順**を決めるためだけに使う。
+    """
+    df = IESC_ROW.copy()
+    df.loc[df["ticker"] == "IESC", ["prev_close", "close", "adv21"]] = [
+        1.0, 0.47, 100.0]
+    out = classify(df, SPLITS)
+    row = out[out["ticker"] == "IESC"].iloc[0]
+    assert row["below_liquidity_floor"]
+    assert row["classification"] == "split_suspect"
+
+
+def test_nearby_but_mismatched_split_is_kept_for_reporting():
+    """`STKH` 型 — 比が合わず要対応にはしないが、**近傍にあることは残す**。"""
+    df = pd.DataFrame([
+        {"ticker": "STKH", "date": "2026-07-28", "prev_close": 3.0,
+         "close": 8.0, "ratio": 2.6667, "adv21": 1.0e7,
+         "dv_ratio": 1.0, "dv_vs_adv": 1.0, "same_day_count": 1},
+    ])
+    out = classify(df, {"STKH": [("2026-07-27", 1 / 3)]})
+    row = out.iloc[0]
+    assert row["classification"] != "split_suspect", "比が合わないのに要対応にしている"
+    assert row["nearby_split"] == "2026-07-27 x0.333333"
+
+
+# ---------------------------------------------------------------------------
+# report_split_coverage — **沈黙しない**ための段
+# ---------------------------------------------------------------------------
+def test_missing_records_are_reported_loudly(capsys):
+    """記録が無いことを黙って通さない。"""
+    from scripts.scan_price_anomalies import report_split_coverage
+
+    report_split_coverage(IESC_ROW, None, "X/split_records.json")
+    out = capsys.readouterr().out
+    assert "無し" in out
+    assert "scan_split_consistency" in out, "生成方法が案内されていない"
+
+
+def test_coverage_gap_is_counted(capsys):
+    """カバー期間より前のアノマリー件数を出す（照合していない範囲）。"""
+    from scripts.scan_price_anomalies import report_split_coverage
+
+    records = {"generated_at": "2026-09-10T20:00:00", "start": "2024-09-11",
+               "years": 2, "tickers_fetched": 2984, "failed": [],
+               "splits": {"IESC": [["2026-08-24", 2.0]]}}
+    report_split_coverage(IESC_ROW, records, "X/split_records.json")
+    # 2020-03-09 の1件がカバー期間外
+    assert "カバー期間外のアノマリー: 1 件" in capsys.readouterr().out
+
+
+def test_failed_tickers_are_reported(capsys):
+    """取得できなかった銘柄も黙って落とさない。"""
+    from scripts.scan_price_anomalies import report_split_coverage
+
+    records = {"generated_at": "2026-09-10T20:00:00", "start": "2024-09-11",
+               "years": 2, "tickers_fetched": 10, "failed": ["AAA", "BBB"],
+               "splits": {}}
+    report_split_coverage(IESC_ROW, records, "X/split_records.json")
+    assert "取得できなかった銘柄: 2 件" in capsys.readouterr().out
