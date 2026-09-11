@@ -37,11 +37,14 @@
     **ワークツリー自身の `data/maintenance_reports/`**（ワークツリーローカル・git管理外）に
     書く（§3で当初「`data/maintenance_reports/`」とだけ書いていたのは、この区別が
     無かったため曖昧だった。本版で訂正）。
-  - **パス解決の依存関係**: 新スクリプトは `data/maintenance_reports/` の読み書きに
-    `backend/paths.py` の**既存（コミット済み）の関数**（`get_prod_data_root()` 等）を使う。
-    並行作業中の P2 で新設されている `require_prod_data_root()` にはまだ依存しない
-    （P2の着地タイミングに本計画を縛られないようにする。P2が先に着地していれば、
-    その時点で `require_prod_data_root()` への切り替えを検討する）
+  - **パス解決の依存関係（2026-09-11 更新）**: 当初は「P2で新設中の
+    `require_prod_data_root()` は未コミットなので依存しない」としていたが、
+    その後 P2 側の変更が `d657365`（本ワークツリーの分岐元 `d83ea67` の親）として
+    **main へ commit 済みになった**ため前提が変わった。`require_prod_data_root()` は
+    「本番を読むこと自体が目的の監査ツール」向けに未設定時 fail-loud するよう
+    設計されており（docstring参照）、本スクリプトの用途に正確に合致するため、
+    **予定を変更してこちらを使う**。読み取り専用参照なので `get_prod_data_root()`
+    と実質的に同じ経路だが、未設定時に `None` を握り潰さず即エラーにできる点が利点。
 - **対象 issue / 関連ドキュメント**: `doc/issue_list.md` P1「分割・統合の検証手段 — 第1段階完了 /
   第3段階（独立ソース）が未着手」、`.claude/skills/moomoo-api/SKILL.md`（新設）、
   `.claude/skills/upstream-data-diagnosis/SKILL.md` §6.2、`doc/completed/split_consistency_scan_plan.md`、
