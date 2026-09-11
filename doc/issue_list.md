@@ -13,16 +13,36 @@
 
 ## P1 — 高（正確性・データ保全。P0 の次）
 
-- [ ] 🟡 **分割・統合の検証手段 — 第1段階完了 / 第3段階（独立ソース）が未着手**（2026-09-04 発見 / 2026-09-10 一部対応）
+- [ ] 🟡 **分割・統合の検証手段 — 第1・2段階完了 / 第3段階（独立ソース）は実装・既知候補の照合まで完了**（2026-09-04 発見 / 2026-09-10 一部対応 / 2026-09-11 第3段階 moomoo 実装）
   - **第1・2段階は完了**: `backend/scripts/scan_split_consistency.py` で
     上流の自己矛盾と手元/上流のスケール乖離を検出できるようになった。
     2,956銘柄で**本物のデータ破損2件（`IESC` / `WLFC`）を検出し補正済み**、誤検出0件。
     詳細: `doc/completed/split_consistency_scan_plan.md` /
     `.claude/skills/upstream-data-diagnosis/SKILL.md` §6.2
-  - **残るのは第3段階**: 上流が分割記録**自体**を持たないケース（`SOXS` / `UAVS` 等299件）は
-    原理的に検出できない。外部の独立ソースが要る。2026-09-07 に GoogleFinance と
-    moomoo を比較し **moomoo 推奨**（復権区分を明示的に選べる点が決定的）。
-    ただし **US 市場の履歴に市場データ契約が要るかが未確認**。
+  - **第3段階（独立ソース照合）を moomoo API で実装した（2026-09-11）**。
+    `backend/data_collection/moomoo_client.py`（本体コードから moomoo API を直接
+    呼ばないための Wrapper）と `backend/scripts/verify_split_with_moomoo.py`
+    （`--tickers` 指定の手動照合スクリプト。自動修正しない）を新設。
+    セットアップ手順・API仕様は `.claude/skills/moomoo-api/SKILL.md` に集約。
+    **口座開設・入金は不要、米国株LV3データは現在プロモーションで無料**と確認済み
+    （「US市場データ契約が要るか未確認」だった論点は解消）。
+    計画書: `doc/in_progress/moomoo_split_verification_plan.md`（Opusアドバイザー
+    レビュー3巡を経て実装。完了後 `doc/completed/` へ移動予定）。
+  - **既知の候補は全件照合済み**: `doc/completed/split_aware_anomaly_classification_plan.md`
+    §7-3「近傍だが比が一致しない」8行（`STKH`/`OIO`/`MLEC`/`NVVE`/`MNTS`/`RGC`/`UAVS`の
+    7銘柄）を moomoo と突き合わせた結果、**全件で分割記録自体は両ソース一致**。
+    元の乖離（11%〜99%超）は分割適用の不備ではなく、分割と同時期の実際の値動きだったと
+    判断できる。`SOXS`（×20併合、2026-03-05）も moomoo で確定値になった
+    （副次的に yfinance 側の `split_records.json` も後日この記録を持つに至っていたことが
+    判明）。**ただし `SOXS` の実データ補正は未実施**（メタデータが一致しても Parquet の
+    価格系列に遡及適用されているかは別問題。後述）。
+  - **なお残る構造的ギャップ**: 本対応が照合したのは既存ヒューリスティックが
+    「怪しい」と挙げていた少数の候補のみで、issue化当初の想定である
+    「上流が分割記録自体を持たない**299件**」全体を照合したわけではない。
+    週次自動化・全銘柄バッチ化は時期尚早（moomoo認証の手動性）と判断し見送っている。
+    **この issue を全件解決としてクローズすることはまだできない。**
+  - **残作業**: (1) `SOXS` の実データ補正を行うかどうかの判断（別issue化するか検討）、
+    (2) 残る299件規模のギャップをどう扱うか（受容するか、より網羅的な再スキャンを行うか）
   - **副次的に判明**: `scan_price_anomalies.py` の分類が分割を隠している（下記の別項）
   - **事象**: 分割・併合の検出と適用は yfinance の `splits` と SEC EDGAR で組んであるが、
     **適用結果が正しいかを独立に検証する手段が無い**。参照先が実質 yfinance 単独なので、
@@ -64,12 +84,9 @@
        0.488 × 0.570 = 0.2782 が実測比 0.278 と厳密に一致して正常と確定できた
 
   - **対応案（要議論）**:
-    - **独立ソースの追加**（本命。以下は候補で未決定）
-      - Google スプレッドシート経由で `GOOGLEFINANCE()` の値を抜く
-      - moomoo 証券 API を組む
-      - いずれも「分割調整のみ / 配当調整あり」のどちらを返すかを最初に確定させること。
-        今回 TradingView は**分割調整のみ**だったため、そのまま比較すると
-        配当銘柄が全部ズレて見える
+    - ~~独立ソースの追加~~ → **2026-09-11 moomoo で実装済み**（上記参照）。
+      「分割調整のみ / 配当調整あり」の懸念は、moomooの `get_rehab()` が分割・配当を
+      別フィールドで返すため生じない（`.claude/skills/moomoo-api/SKILL.md` §5参照）
     - **無配当銘柄の調整幅チェック** — 配当が無いのに調整比が分割比と一致する場合は
       上流の取りこぼしを疑う（MNST はこれで機械的に検出できたはずのケース）
     - **上流の安定性チェック** — 書き込み直前に時間を空けて2回取得し、値が動いていたら
@@ -82,7 +99,9 @@
     特に**無配当銘柄で調整比が 2.0 / 0.5 などの分割比に一致する場合は上流を疑う**。
 
   - 関連: `backend/scripts/resync_price_scale.py`, `backend/scripts/adjust_symbol_split.py`,
-    `backend/scripts/scan_price_anomalies.py`, `.claude/skills/upstream-data-diagnosis/SKILL.md`
+    `backend/scripts/scan_price_anomalies.py`, `backend/scripts/verify_split_with_moomoo.py`,
+    `backend/data_collection/moomoo_client.py`, `.claude/skills/upstream-data-diagnosis/SKILL.md`,
+    `.claude/skills/moomoo-api/SKILL.md`
 
 - [x] 🔴 **`get_latest_master_files()` が読み込み失敗を握り潰し、Parquet の全期間履歴を捨てる経路がある（2026-09-01 発見 / 2026-09-09 解決）**
 
