@@ -688,6 +688,78 @@
     - **表示用の `api/chart_router.py:141` も `min_periods=1`** で、上場直後の銘柄に「200日線」が描かれる。
       自前計算の別系統なので A とは独立に直せる
   - **実測スクリプト**: `tmp/check_minperiods_impact.py` / `tmp/check_minperiods_timeline.py`
+  - **計画化（2026-09-11）**: `doc/in_progress/min_periods_warmup_plan.md`。影響判定の結果
+    （T4 波及ゼロ・シグナル 0.45〜1.76%減・pruning 境界に触れない等）と、**重大度の再評価**
+    （SMA は窓を超えれば正しい値になり誤差が残らないため、課題は「上場直後の銘柄を甘く判定する」ことに限られる。
+    🔴 ほど高くない — 計画書 §1.0）は**計画書を正とする**。
+    方針は一般的なツール（pandas 既定・TA-Lib・Pine）と同じく NaN に揃える。
+  - **昇格の前提**: 下の「T5 のリフレッシュが SQLite 基点のまま」の修正後（計画書 §4-6）
+
+- [ ] 🔴 **T5（`market_signals`）のリフレッシュが SQLite 基点のまま — Parquet 基点化が T5 に及んでおらず、リフレッシュのたびに MTS の先頭が壊れる（2026-09-11 発見）**
+
+  > [!CAUTION]
+  > **この issue を直すまで、本番で `--rebuild-from` 系（`tools/deploy_after_merge.ps1` を含む）を実行しないこと。**
+  > 実行すると T5 がまた壊れる。**もう一度リフレッシュしても直らない**（同じ経路で壊れるため）。
+
+  - **事象**: T5 を全日付で再計算すると、SQLite の `daily_prices` にある SPY だけ（ホット期間 約503本）で計算するため、
+    窓の先頭199本で `sma_200` が遡り不足になり、MTS の SPY 由来列（`market_phase` / `spy_above_sma200` /
+    `spy_sma200_rising`）が誤った値で保存される。**SPY は 2010-04-01 から Parquet にあり正解の値は存在するのに、
+    誤った値が保存され、再計算しない限り残り続ける**（`min_periods=1` の issue とはここが違う）
+
+  - **発生条件**: **T5 の全日付再計算時のみ**
+    - `orchestrator.py:861` が `rebuild_from <= T5` で `market_signals` を全削除 → `t5_signals.py:25` が SQLite の SPY 全行で計算 → 全日付を書き込む
+    - 経路: `--rebuild-from T3/T4/T5`、`tools/deploy_after_merge.ps1`（`deploy_after_merge.py:108-114` が内部で `--rebuild-from T3` を呼ぶ）
+    - **デイリーでは起きない**: T3・T5 とも書き込むのは更新日だけ（`t3_indicators.py:36-39` の `date > t3_max` /
+      `t5_signals.py:17-19,88-89` の `gap_dates`）。最新日は窓の末尾で遡りが十分なので正しい
+
+  - **原因**: 2026-08-29 に730日窓で `--rebuild-from T3` を回して T3 77万行を壊した事故（`update_pipeline.py:32-36`）を受け、
+    **2026-09-04 01:11 の `ae77596` で T3/T4 を Parquet 基点に強制した**。しかし同じ再構築手順の最後の
+    `[4/4] T5`（`update_pipeline.py:71`）は SQLite 基点のまま残った。**ルールの対象が T3/T4 で止まり、T5 が漏れている**
+
+  - **実測（本番の誤り）**: `tmp/spy_mts_window_check.py`
+    本番 `market_signals` を、SPY 全履歴で計算した正しい値（full）と、SQLite ホット期間だけで計算した値（hot）に対して比較
+    （2024-09-09〜2026-09-09・502日）:
+
+    | 列 | 本番≠full | 本番≠hot | 食い違う範囲 |
+    |---|---:|---:|---|
+    | `market_phase` | **34** | 4 | 2024-09-09〜2025-04-21 |
+    | `spy_above_sma200` | 11 | 4 | 同上 |
+    | `spy_sma200_rising` | 54 | — | 2024-09-09〜2025-05-27 |
+
+    **本番値は hot にほぼ一致し、full とは食い違う。** 例: 2024-10-31 は本番 `RALLY_ATTEMPT` / 正しくは `CORRECTION`、
+    2025-03-14 は本番 `BEAR` / 正しくは `RALLY_ATTEMPT`。
+    ※ `spy_sma200_rising` は本番 float64・再計算 object のため、初回比較では502日全不一致と誤って出た。数値化して比較し直した値
+
+  - **いつ壊れたか（世代比較 × ログ）**: `tmp/spy_mts_generation_check.py`
+
+    | Parquet 世代 | `market_phase` の誤り（2024-08〜2025-06） |
+    |---|---:|
+    | `market_signals_20260829_144251` | **0日**（正しい） |
+    | `market_signals_20260910_145529` | 38日（2024-09-03〜2025-04-21） |
+    | `market_signals_20260911_085414` | 38日（デイリー後も変わらず） |
+
+    `logs/pipeline.log` では T5 の全日付再計算（`Saved 501〜503 signal records`）が4回:
+    08-29 16:25（`--rebuild-from T3`・事故）/ **09-04 12:35・09-04 20:44（Parquet 基点化の後の `[4/4] T5`）** /
+    09-06 23:35（`--rebuild-from T5`）。8/29 世代は最初のリフレッシュ（16:25）より前の 14:42 に作られていたため正しい。
+    **Parquet 基点化の後にも3回壊れている**＝もう一度リフレッシュしても直らないことの裏付け
+
+  - **影響**: 誤りの期間は学習期間 `Bull 2024-25`（2024-06〜2025-12）に重なる。
+    **MTS に連動する型3 シナリオの評価に効いている可能性がある**（型1 はレジーム非依存が意図なので直接は効かない）
+
+  - **対応案**: **Parquet 基点のルールを T5 まで広げる**
+    - T3/T4 には全期間を Parquet で再計算するスクリプト（`recompute_parquet_indicators` / `recompute_parquet_ranks`）があるが、
+      **T5 には相当するものが無い**。これを用意するか、T5 に渡す SPY を Parquet から十分遡って読むようにする
+    - あわせて「**SPY の値が変わる変更は T3 以降のリフレッシュ必須**」をルールとして明記する（2026-09-11 ユーザー要望）
+    - `.claude/skills/pipeline-debugging/SKILL.md:30` は「`--rebuild-from T3`（T4/T5 も連鎖再計算される）」とだけあり、
+      Parquet 基点の注意が無い。修正時に書き足す
+    - SPY の自前計算（`market_signals.py:111-112,127`）を `min_periods=window` に揃える場合は、この issue の中で扱う。
+      **揃えるだけだと偽値が別の偽値（BEAR 寄り）に置き換わり、`distribution_days` の `.astype(int)` が NaN で例外になり T5 が落ちる**
+
+  - **修復の手がかり**: 2026-08-29 世代（`market_signals_20260829_144251.parquet`）に 2024-09〜2025-04 の正しい値が残っている。
+    **この旧世代を prune しないこと。** 修正後の検算にも使える
+
+  - **関連**: 上の `min_periods=1` の issue とは発生条件・原因・直し方が異なる別問題。
+    **その昇格はこの issue の修正が前提**（`doc/in_progress/min_periods_warmup_plan.md` §4-6）
 
 - [x] ~~**価格履歴の充足で 2017-01-01 に届かなかった 299銘柄の精査**（2026-09-07 完了）~~
   - **結論: 取得失敗はゼロ。全件が正当な理由で、対応不要。**
