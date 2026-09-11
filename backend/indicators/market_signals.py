@@ -86,6 +86,44 @@ def report_stale_input_gaps(df: pd.DataFrame, col: str, ticker: str,
     return gaps
 
 
+def compute_breadth_momentum(raw_df: pd.DataFrame) -> pd.DataFrame:
+    """個別銘柄の close/sma_50/前日close から、日付別の breadth_sma50/momentum_ratio を作る。
+
+    T5（market_signals）の市場内訳指標。SQLite 経路（`t5_signals.py`）と
+    Parquet 経路（`recompute_parquet_signals.py`）の両方から同じ関数を呼ぶこと
+    （二重実装にしない）。
+
+    元は `t5_signals.py` にインラインで書かれていたロジックをそのまま移したもの
+    （2026-09-11 切り出し）。**NaN の扱いは「改善」していない**——
+    `x.mean(skipna=True) if not x.isna().all() else 0.5` の分岐、
+    最終的な `fillna(0.5)` は、切り出し前と1ビットも変えない。
+
+    Args:
+        raw_df: `symbol_id` / `date` / `close` / `sma_50` 列を持つ DataFrame。
+            銘柄ごとの `shift(1)`（前日比騰落判定）のために内部でソートする
+            （呼び出し側が既にソート済みでも結果は変わらない）。
+
+    Returns:
+        `date` / `breadth_sma50` / `momentum_ratio` 列の DataFrame。
+        入力が空なら同じ列を持つ空の DataFrame を返す。
+    """
+    if raw_df.empty:
+        return pd.DataFrame(columns=['date', 'breadth_sma50', 'momentum_ratio'])
+
+    raw_df = raw_df.sort_values(['symbol_id', 'date']).copy()
+    raw_df['prev_close'] = raw_df.groupby('symbol_id')['close'].shift(1)
+    raw_df['is_up'] = raw_df['close'] > raw_df['prev_close']
+
+    raw_df['is_above_sma50'] = raw_df['close'] > raw_df['sma_50']
+
+    metrics_df = raw_df.groupby('date').agg(
+        breadth_sma50=('is_above_sma50', lambda x: x.mean(skipna=True) if not x.isna().all() else 0.5),
+        momentum_ratio=('is_up', lambda x: x.mean(skipna=True) if not x.isna().all() else 0.5)
+    ).reset_index()
+    metrics_df = metrics_df.fillna(0.5)
+    return metrics_df
+
+
 def calculate_market_signals(
     df_spy: pd.DataFrame,
     df_vix: pd.DataFrame = None,

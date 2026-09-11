@@ -179,10 +179,10 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 影響の小さい順・テスト先行（TDD）。
 
 - [x] **5-1** ワークツリーを作成し `--mode write` でプロビジョニング（`tools/provision_worktree_data.py <worktree> --mode write`）。本計画書をワークツリーへ移してコミット
-- [ ] **5-2** breadth 純関数のテスト（red）— 既存の SQLite 経路と同じ入力で同じ出力になること
-- [ ] **5-3** `t5_signals.py:58-82` を純関数に切り出す（green。SQLite 経路の挙動不変）
-- [ ] **5-4** `recompute_parquet_signals.py` の計算部分のテスト（red）
-- [ ] **5-5** `recompute_parquet_signals.py` を実装（`--dry-run` / `--apply`）
+- [x] **5-2** breadth 純関数のテスト（red）— 既存の SQLite 経路と同じ入力で同じ出力になること
+- [x] **5-3** `t5_signals.py:58-82` を純関数に切り出す（green。SQLite 経路の挙動不変）
+- [x] **5-4** `recompute_parquet_signals.py` の計算部分のテスト（red）
+- [x] **5-5** `recompute_parquet_signals.py` を実装（`--dry-run` / `--apply`）
 - [ ] **5-6** **§6.1 の反証** — ワークツリーから本番 Parquet を読み取り専用で `--dry-run` し、差分が §1.2(a) のベースライン（P3 の SPY 由来列 38/15/58/22日、他期間 0日）と一致するか照合。**一致しなければ実装に進まず原因を調べる**
 - [ ] **5-7** 遡り不足ガード（§3.4）のテスト → 実装（§4-1）
 - [ ] **5-8** `update_pipeline.py` の再構築手順を変更（§3.3）+ テスト
@@ -199,11 +199,17 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 
 ### 作業中メモ
 
-**現在地: 5-1 完了（2026-09-11）。次は 5-2（breadth 純関数のテスト）。**
+**現在地: 5-2〜5-5 完了（2026-09-11、ワーカー実施）。次は 5-6（§6.1 の反証。オーケストレーターが検収で実施）。**
 
 - sandbox の Parquet は最新世代 `20260911_145621` のみ（ハードリンク）。**2026-08-29 世代は sandbox に無い**ので、5-15 の検算は本番 `data/parquet_master/market_signals_20260829_144251.parquet` を読み取り専用で読む
 - **2026-08-29 世代 `market_signals_20260829_144251.parquet` を prune しないこと**（5-15 の検算に使う）
 - ベースライン測定スクリプトは本体の `tmp/` にある（`t5_parquet_baseline.py` / `t5_breadth_population_check.py` / `spy_mts_window_check.py` / `spy_mts_generation_check.py`）。5-6 の照合で使う
+- **breadth 純関数**: `indicators/market_signals.py` に `compute_breadth_momentum(raw_df)` を追加。`t5_signals.py:71-84` のロジック（NaN 分岐・`fillna(0.5)` を含む）をそのまま移した。SQL の `ORDER BY dp.symbol_id, dp.date` に依存していた前日比較 `shift(1)` を、関数内部で `sort_values(['symbol_id','date'])` してから行うよう変更（**ソート済み入力では結果は1ビットも変わらない**ことをテストで担保。未ソート入力でも同じ結果になることも別途テストした——Parquet 経路は SQL の ORDER BY を経由しないため必要）
+- **`recompute_parquet_signals.py`**: `recompute_parquet_ranks.py` と同じ形（`--dry-run`/`--apply` 必須・`pipeline_lock`・他テーブルは `shutil.copy2` で同世代コピー・`data_version_<ts>.json` → `update_pointer_with_retry`）。**path 解決は `recompute_parquet_ranks.py`/`recompute_parquet_indicators.py` と同じく `config.toml` の直読み**（`paths.py` は未使用）。sibling script と揃えたが、`paths.ensure_writable()` によるワークツリーからの本番書き込みガードは掛かっていない点はそれらのスクリプトと同じ制約として残る（`--apply` を本計画では未実行・未検証）
+  - `id`: `range(1, len+1)` で新規採番（`recompute_parquet_ranks.py` の ranks と同じ方針。本番の `market_signals` の `id` は世代を跨いだ再採番の残骸で単調でないため、追随しない）
+  - `created_at`: 呼び出し時点の `datetime.utcnow()` を全行共通の1値で入れる（SQLite 経路が1回の `bulk_save_objects` でほぼ同一タイムスタンプを刻む実挙動と同じ形）
+  - dtype: 本番 Parquet の実測（`spy_above_sma200`/`distribution_days`/`is_distribution_day`/`follow_through_day` は int64、`spy_sma200_rising`/`market_trend_score`/`vxv_vix_ratio`/`breadth_sma50` は float64、`date`/`market_phase`/`created_at` は文字列）に合わせて明示キャスト
+- **動作確認（オーケストレーターの 5-6 の代わりではない）**: ワークツリーから `--dry-run` を実行したところ（`config.toml` 直読みのため実際には本番 Parquet を読み取り専用で参照）、差分が §1.2(a) のベースラインと一致した（`market_phase`/`spy_above_sma200`/`spy_sma200_rising`/`distribution_days` の P3 不一致数が 38/15/58/22 で完全一致、他列も同水準）。5-6 の正式な照合・判断はオーケストレーターに委ねる
 
 ## 6. 検証プラン / 結果
 

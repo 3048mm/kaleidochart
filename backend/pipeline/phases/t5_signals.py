@@ -6,6 +6,7 @@ from sqlalchemy import func
 from db.models import Symbol, DailyPrice, Indicator, MarketSignal
 from pipeline.utils import sanitize_numeric
 from indicators.calculate import calculate_market_signals
+from indicators.market_signals import compute_breadth_momentum
 
 def sync_phase_t5_signals(db, logger: logging.Logger):
     """Phase 5: Market Signals (T5) - Idempotent catch-up."""
@@ -67,19 +68,10 @@ def sync_phase_t5_signals(db, logger: logging.Logger):
         db.commit()
         from db.database import get_read_engine_for
         raw_df = pd.read_sql(query_metrics, get_read_engine_for(db))
-        
+
         if not raw_df.empty:
             raw_df['date'] = pd.to_datetime(raw_df['date'])
-            raw_df['prev_close'] = raw_df.groupby('symbol_id')['close'].shift(1)
-            raw_df['is_up'] = raw_df['close'] > raw_df['prev_close']
-            
-            raw_df['is_above_sma50'] = raw_df['close'] > raw_df['sma_50']
-            
-            metrics_df = raw_df.groupby('date').agg(
-                breadth_sma50=('is_above_sma50', lambda x: x.mean(skipna=True) if not x.isna().all() else 0.5),
-                momentum_ratio=('is_up', lambda x: x.mean(skipna=True) if not x.isna().all() else 0.5)
-            ).reset_index()
-            metrics_df = metrics_df.fillna(0.5)
+            metrics_df = compute_breadth_momentum(raw_df)
         else:
             metrics_df = pd.DataFrame(columns=['date', 'breadth_sma50', 'momentum_ratio'])
 
