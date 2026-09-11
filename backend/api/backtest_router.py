@@ -475,6 +475,10 @@ def get_scenario_summary(name: str):
                     "return_pct": avg_yearly_returns.get(year, 0.0)
                 }
                 
+        # --- CAGR 集計（幾何平均＝代表値、中央値、相加平均） ---
+        factors = [max(1.0 + float(c), 1e-4) for c in cagrs]
+        cagr_geo = float(np.exp(np.mean(np.log(factors)))) - 1.0
+        cagr_med = float(np.median(cagrs))
         cagr_avg = float(np.mean(cagrs))
         cagr_max = float(np.max(cagrs))
         cagr_min = float(np.min(cagrs))
@@ -487,6 +491,10 @@ def get_scenario_summary(name: str):
         total_trades_avg = int(np.mean(total_trades_list))
         profit_factor_avg = float(np.mean(profit_factors))
 
+        # --- Final Capital 集計（幾何平均＝代表値、中央値、相加平均） ---
+        f_caps_pos = [max(float(f), 1.0) for f in final_capitals]
+        final_capital_geo = float(np.exp(np.mean(np.log(f_caps_pos))))
+        final_capital_med = float(np.median(final_capitals))
         final_capital_avg = float(np.mean(final_capitals))
         final_capital_max = float(np.max(final_capitals))
         final_capital_min = float(np.min(final_capitals))
@@ -528,12 +536,12 @@ def get_scenario_summary(name: str):
                 }
         
         summary_obj = BacktestScenarioSummary(
-            cagr=cagr_avg,
+            cagr=cagr_geo,
             profit_factor=profit_factor_avg,
             max_drawdown=max_dd_avg,
             win_rate=win_rate_avg,
             total_trades=total_trades_avg,
-            final_capital=final_capital_avg,
+            final_capital=final_capital_geo,
             yearly_performance=yearly_performance,
             exit_reasons=exit_reasons_merged,
             avg_trade_pnl_pct=avg_trade_pnl_pct_avg,
@@ -545,7 +553,7 @@ def get_scenario_summary(name: str):
         run_initial_capital = first_sum.get("initial_capital")
         run_total_return_pct = None
         if run_initial_capital:
-            run_total_return_pct = (final_capital_avg / run_initial_capital - 1.0) * 100.0
+            run_total_return_pct = (final_capital_geo / run_initial_capital - 1.0) * 100.0
 
         summary_obj.__dict__.update({
             "is_monte_carlo": True,
@@ -556,6 +564,9 @@ def get_scenario_summary(name: str):
             "trading_days": _count_trading_days(run_paths[0]),
             "consider_tax": _resolve_consider_tax(first_sum),
             "total_return_pct": run_total_return_pct,
+            "cagr": cagr_geo,
+            "cagr_geo": cagr_geo,
+            "cagr_med": cagr_med,
             "cagr_avg": cagr_avg,
             "cagr_max": cagr_max,
             "cagr_min": cagr_min,
@@ -565,7 +576,9 @@ def get_scenario_summary(name: str):
             "win_rate_avg": win_rate_avg,
             "total_trades_avg": total_trades_avg,
             "profit_factor_avg": profit_factor_avg,
-            "final_capital": final_capital_avg,
+            "final_capital": final_capital_geo,
+            "final_capital_geo": final_capital_geo,
+            "final_capital_med": final_capital_med,
             "final_capital_avg": final_capital_avg,
             "final_capital_max": final_capital_max,
             "final_capital_min": final_capital_min,

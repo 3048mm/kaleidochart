@@ -1205,24 +1205,19 @@
   - 発見の経緯: `doc/in_progress/ipo_candidates_plan.md` の実装中
 
 
-- [ ] **Monte Carlo の CAGR 集計が相加平均になっている**（2026-08-25 起票）
+- [x] **Monte Carlo の CAGR 集計が相加平均になっている**（2026-08-25 起票、2026-09-12 完了）
   - `backend/api/backtest_router.py` の `cagr_avg = float(np.mean(cagrs))` が
     **10本の MC run の CAGR を相加平均**している。CAGR は複利の成長率なので、
     相加平均は**分散の大きい戦略を有利に見せる**。
   - **2026-08 までに報告された型3 CAGR はすべて相加平均**である点に注意。
     とくに A は run 間の分散が 12.31 と最大で、典型的に得られる値より高く出ている。
     `tmp/` の集計スクリプト群も同じ方法。
-  - **対応案**: 最終資産の幾何平均、または中央値。
-    `scenario_summary.json` は保存済みなので**再計算できる（シナリオテストの再実行は不要）**。
-  - **設計判断が要る**: 「期待値を見るか、典型値を見るか」の選択でもある。
-    相加平均＝期待 CAGR、幾何平均/中央値＝典型的に得られる CAGR。
-    実運用の判断材料としては後者が適切だが、意図的に決めること。
-  - **注意**: 変更する場合は**過去世代（`output/scenario_taxopt_cagrobj/` /
-    `output/scenario_tax_preopt/` / `output/scenario_without_tax/` 等）も同じ方法で
-    再集計**しないと、世代間の比較が成立しなくなる。
-  - 関連: 2026-08-24〜25 の目的関数再設計で、型1 側は同じ理由から
-    相加平均（`avg_gain`）→ 幾何平均（`geo_mean_gain`）へ切り替え済み（§6.5.1）。
-    **型3 側の集計だけが相加平均のまま取り残されている。**
+  - **対応完了（2026-09-12）**:
+    1. 代表値 `summary.cagr` および `summary.final_capital` を **各 run の複利倍率の幾何平均（`cagr_geo` / `final_capital_geo`）** へ切り替え（代表値同士で $(F_{\text{geo}} / I)^{1/Y} - 1 = CAGR_{\text{geo}}$ が成立）。
+    2. 多面的評価・後方互換用として `cagr_geo`, `cagr_med`（中央値）, `cagr_avg`（相加平均）を API / スキーマ / UI で提供。破産ガード（$1 + cagr \le 0$ の下限クリップ $10^{-4}$）を実装。
+    3. フロントエンドのカード表示を `CAGR (10回幾何平均)` に更新し、最良/最悪/中央値を併記。
+    4. バッチ出力（`run_scenario_batch.py`）および世代間比較スクリプト（`tmp/three_gen_comparison.py`, `tmp/final_geo_scenario.py`）の集計も幾何平均基準へ更新。
+    - 詳細: `doc/completed/mc_cagr_geometric_mean_plan.md`
 
 - [ ] **年次 `avg_pnl_pct`（相加平均）をフロントで `geo_pnl_pct` に切り替えるか判断する**（2026-08-25 起票）
   - 2026-08-25 に `scenario_reporter` / `backtest_router` へ `geo_pnl_pct`（年次の幾何平均）を

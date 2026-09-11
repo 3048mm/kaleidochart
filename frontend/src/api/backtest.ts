@@ -19,6 +19,8 @@ export interface BacktestScenarioSummary {
   is_monte_carlo?: boolean;
   runs_count?: number;
   cagr_avg?: number;
+  cagr_geo?: number;
+  cagr_med?: number;
   cagr_max?: number;
   cagr_min?: number;
   max_drawdown_avg?: number;
@@ -28,6 +30,8 @@ export interface BacktestScenarioSummary {
   total_trades_avg?: number;
   profit_factor_avg?: number;
   final_capital_avg?: number;
+  final_capital_geo?: number;
+  final_capital_med?: number;
   final_capital_max?: number;
   final_capital_min?: number;
   avg_trade_pnl_pct?: number;
