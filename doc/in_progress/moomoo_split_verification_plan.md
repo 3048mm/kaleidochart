@@ -21,11 +21,22 @@
     → **本計画のどのステップでも `git add` は必ず「この計画のために自分で変更したファイル」
     に限定した明示パスで行い、実行直前に毎回 `git status --short` で対象を目視確認する。**
     `-A`/`.` は使わない（CLAUDE.mdの規律どおり）。
-  - **残作業（`verify_split_with_moomoo.py`）はワークツリー＋作業ブランチ
-    `feat/moomoo-split-verification` で進める**（CLAUDE.mdの規律により、
-    エージェントは本体チェックアウトでの commit・main への直接 commit を行わない）。
-    ワークツリーは上記3点のコミット後の main から切る（コミット前に切ると
-    レビュー対応前の古いコード・古い計画書で作業が始まってしまう）
+  - **残作業（`verify_split_with_moomoo.py`）はワークツリー＋作業ブランチで進める**
+    （CLAUDE.mdの規律により、エージェントは本体チェックアウトでの commit・main への
+    直接 commit を行わない）。2026-09-11、上記3点のコミット後の main（`d83ea67`、
+    origin/mainとも一致確認済み）から `EnterWorktree` で作成した。
+    **実際のブランチ名は `worktree-feat+moomoo-split-verification`**（ハーネスの
+    `EnterWorktree` が `/` を `+` に置換し `worktree-` を前置する自動命名。当初案の
+    `feat/moomoo-split-verification` という名前そのものでは作られていない）。
+    ワークツリー本体は `.claude/worktrees/feat+moomoo-split-verification/`。
+  - `tools/provision_worktree_data.py . --mode read` を実行し、本番 `data/` を
+    `config.local.toml` の `[data] prod_root` として読み取り専用参照できることを確認済み
+    （`paths.get_prod_data_root()` 経由で本番の `data/maintenance_reports/split_records.json`
+    が読めることを実測確認）。**書き込みは `paths.ensure_writable()` が阻む**ため、
+    `verify_split_with_moomoo.py` のCSV出力は本番 `data/maintenance_reports/` ではなく
+    **ワークツリー自身の `data/maintenance_reports/`**（ワークツリーローカル・git管理外）に
+    書く（§3で当初「`data/maintenance_reports/`」とだけ書いていたのは、この区別が
+    無かったため曖昧だった。本版で訂正）。
   - **パス解決の依存関係**: 新スクリプトは `data/maintenance_reports/` の読み書きに
     `backend/paths.py` の**既存（コミット済み）の関数**（`get_prod_data_root()` 等）を使う。
     並行作業中の P2 で新設されている `require_prod_data_root()` にはまだ依存しない
@@ -177,8 +188,10 @@ moomoo側の記録（3.0）は変換仕様どおり一致するため、「一�
 3. 突き合わせ判定（日付窓で対応づけ、比率のタイトな許容幅で一致/不一致/該当なしを判定する
    ロジック）を実装する（red→green）。**陽性対照・陰性対照・両ソースとも記録なしの3パターンを
    最初からテストに含める**（§6.1参照）
-4. CLI（`--tickers` 必須）・CSV出力（`data/maintenance_reports/moomoo_verification_<timestamp>.csv`）
-   を実装する
+4. CLI（`--tickers` 必須）・CSV出力（**ワークツリーローカル**の
+   `data/maintenance_reports/moomoo_verification_<timestamp>.csv`。本番 `data/` は
+   `--mode read` プロビジョニングで読み取り専用のため、書き込みは常にワークツリー側になる。
+   作業ブランチ節参照）を実装する
 5. 実データで実行し、`SOXS`（moomoo側のみ記録あり、が正しく検出されること）・`STKH`（一致と
    判定されること）・残り候補（§4で範囲確定）を照合する
 
@@ -215,7 +228,8 @@ moomoo側の記録（3.0）は変換仕様どおり一致するため、「一�
       `doc/in_progress/moomoo_split_verification_plan.md`（この計画書自身）。
       **並行作業中の `backend/paths.py` 系・`doc/issue_list.md` 等は含めないこと**
       （作業ブランチ節参照。実行前に `git status --short` で対象を確認する）
-- [ ] 上記コミット後の main からワークツリー・作業ブランチ（`feat/moomoo-split-verification`）を作る
+- [x] 上記コミット後の main からワークツリーを作成（`worktree-feat+moomoo-split-verification`）、
+      `--mode read` でプロビジョニング済み
 - [ ] 比の正規化関数 + ユニットテスト（§3「比の変換仕様」参照。`SOXS`は循環参照のため正解データに使わない）
 - [ ] 突き合わせ判定ロジック + ユニットテスト（陽性対照・陰性対照・moomoo側も記録なしの3パターンを含める。§6.1参照）
 - [ ] `verify_split_with_moomoo.py` CLI・CSV出力
