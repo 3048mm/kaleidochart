@@ -293,11 +293,14 @@ max_hits_per_day = 10
       引き継いで完了）
 - [x] `indicators/calculate.py` に算出ステップを追加（同上コミット。AAPL/SPY/NVDAで
       `calculate_indicators()`経由の値がTradingView突合済みの値と一致することを確認済み）
-- [ ] 仮想カラム2種を3箇所（`screener_registry.VIRTUAL_COLUMNS` / `screener_router._VIRTUAL_COLUMNS`
-      / `backtest_screener.apply_filters_to_df`）に登録
-- [ ] 特殊フィルタ4種（フリップ2種＋継続ブレイク2種、§3.4）を `screener_filters.py` と
-      `screener_registry.EXPLICIT_SPECS` に登録
-- [ ] `backend/tests/api/test_screener_parity.py` の `PARITY_CASES` に境界値ケースを追加
+- [x] 仮想カラム2種を3箇所（`screener_registry.VIRTUAL_COLUMNS` / `screener_router._VIRTUAL_COLUMNS`
+      / `backtest_screener.apply_filters_to_df`）に登録（2026-09-12コミット`9e97db8`）
+- [x] 特殊フィルタ4種（フリップ2種＋継続ブレイク2種、§3.4）を `screener_filters.py` と
+      `screener_registry.EXPLICIT_SPECS` に登録（同上コミット）
+- [x] `backend/tests/api/test_screener_parity.py` の `PARITY_CASES` に境界値ケースを追加
+      （同上コミット。special種は機械導出で自動登録されるため、実際の作業はフィクスチャ
+      データ側にzone_break用のprev/today値を追加することだった。4フィルタとも
+      API経路・バックテスト経路のパリティを確認。`backend/tests/` 全体1699 passed）
 - [ ] Parquet 全期間バックフィルスクリプトを実装、既存カラム不変を検査
 - [ ] サンドボックスでバックフィルを実行し検査
 - [ ] `backtest_config.toml` に候補戦略を2本追加（§3.5: フリップ版 I1 / 継続ブレイク版 I2）
