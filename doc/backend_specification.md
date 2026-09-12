@@ -256,7 +256,7 @@ S&P500（SPY）の動向や市場全体の統計から算出される、市場�
 | `distribution_days` | INTEGER | 過去25日間のディストリビューション・デーの数。 | 下落(-0.2%以下)かつ出来高増の日数 |
 | `follow_through_day` | SMALLINT | フォロースルーデーの発生フラグ（1:発生）。 | 下落局面からの反発（+1.7%以上かつ出来高増） |
 | `market_phase` | STRING | 市場のフェーズ（BULL, CORRECTION, BEAR 等）。 | SPYのトレンドと売りの圧力により判定 |
-| `market_trend_score` | FLOAT | 市場全体の健康度を 0〜100 で数値化したもの。 | 右記5項目の等価20%合計: ①VXV/VIXレシオ, ②市場の幅, ③50EMA/ATR乖離, ④200EMA/ATR乖離, ⑤Distribution Days |
+| `market_trend_score` | FLOAT | 市場全体の健康度を 0〜100 で数値化したもの。 | **4成分の等価25%合計**: ①VXV/VIXレシオ ②市場の幅（breadth_sma50） ③50SMA/ATR乖離 ④200SMA/ATR乖離。**Distribution Days はスコアに含まない**（`market_phase` の判定にのみ使う）。breadth が無い期間（2018-04-01 より前）は ①③④ を等価 1/3 で合計する |
 
 **全期間の再構築は Parquet 基点で行う**（`backend/scripts/recompute_parquet_signals.py`。`update_pipeline.py --rebuild-from T3/T4/T5` はここへ委譲される）。SPY の遡りが `SPY_LOOKBACK_MIN_BARS`（220本。`sma_200` の200本＋`spy_sma200_rising` の20日前比較から導出）に満たない行（2010-04〜2011-02）では、`spy_above_sma200` / `distribution_days` / `market_phase` は**判定不能として NULL** になる。Parquet の `market_signals` では `spy_above_sma200` / `distribution_days` の dtype を NULL 表現のため **float64** で保持する（SQLite 側は `int(...) or None` を維持しており整数のまま）。
 
