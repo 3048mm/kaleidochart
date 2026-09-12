@@ -275,10 +275,14 @@ max_hits_per_day = 10
 - [ ] **TDD**: `backend/tests/indicators/test_zone_break.py` を先に書く（初回 SSL/BSL 確定、
       内部フラクタル追従、終値ブレイクでの反転、FVG 生成/無効化、境界を設けたフォールバック探索の
       正しさ）
-- [ ] `backend/indicators/zone_break.py` を実装（green）
-- [ ] `tmp/` に Pine 直訳に忠実な素朴な参照実装を作り、本実装と出力が一致することを検証
-      （`structure_pivot` の `tmp/sp_core.py` / `verify_structure_pivot_port.py` 方式）
-- [ ] **TradingView の実チャートとの突合**（§6.1 の独立経路確認。数銘柄）
+- [x] `backend/indicators/zone_break.py` を実装（green、2026-09-12コミット `2c1c8d5`）。
+      `detector_bsl/ssl_last_fractal` の無制限バックスキャンは、確定済みフラクタルを
+      前向きに積み末尾参照するO(1)方式に置き換え（`fractal_high(j,0)`との数式的同値性で正当化）
+- [x] `tmp/` に Pine 直訳に忠実な素朴な参照実装を作り、本実装と出力が一致することを検証
+      （`tmp/zone_break_naive_port.py`。オーケストレーターが作成し400本のランダム合成データで
+      一致をテスト化済み。`structure_pivot` の `tmp/sp_core.py` 方式と同じ位置づけ）
+- [ ] **TradingView の実チャートとの突合**（§6.1 の独立経路確認。数銘柄。**ユーザー確認が必要** —
+      TradingViewでの目視操作はエージェントからは行えない）
 - [ ] T3（SQLite直近730日）経路 vs Parquet 全期間バックフィル経路の収束性を検証（§1 のリスク）
 - [ ] sandbox-workflow に従いサンドボックスで一連の検証を行う
 - [ ] `db/models.py` の `Indicator` に4カラム追加
@@ -347,6 +351,10 @@ cd frontend; npm test; npm run build
 
 ## 7. 途中発生した課題
 
+- **2026-09-12 zone_break.py実装の差分規模**: `backend/indicators/zone_break.py`(新規395行) +
+  テスト追記(49行)で計444行、変更種別Aの閾値(200行)を超過。`doc/agent_execution_rules.md` §10.2の
+  運用に従い、**本ブランチをmainへmergeする前に `/code-review` をブランチ単位で1回通す**必要がある
+  （まだ実装途中のため、計画完了に近づいた段階でまとめて実施する想定。個別コミットのたびには行わない）。
 - **2026-09-12 セッション引き継ぎ**: 計画書作成元の `stocktool-fe` セッションが Remote Control
   切断のため、本セッション（オーケストレーター）が引き継いだ。引き継ぎ情報源は本計画書と
   Remote Control 経由でユーザーが把握していた会話内容の要約のみ（`stocktool-fe` の会話ログ本体は
