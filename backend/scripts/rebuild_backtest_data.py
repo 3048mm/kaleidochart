@@ -126,6 +126,7 @@ def rebuild_data():
             logger.info("Successfully archived to Parquet Master!")
         except Exception as pe:
             logger.error(f"Failed Parquet archiving: {pe}")
+            raise RuntimeError(f"Parquet archiving failed. Aborting before purging SQLite cache: {pe}") from pe
 
         # 4. Clean up SQLite Cache to keep database size lightweight (< 2 years)
         logger.info("Purging old records from SQLite DB cache to maintain lightweight size...")
@@ -134,6 +135,7 @@ def rebuild_data():
             logger.info("SQLite DB cache successfully shrunk!")
         except Exception as se:
             logger.error(f"Failed to purge SQLite cache: {se}")
+            raise
 
     logger.info("Rebuild completed successfully!")
 

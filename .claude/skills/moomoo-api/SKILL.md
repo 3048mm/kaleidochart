@@ -178,3 +178,22 @@ moomooも**同じ2026-07-27に `split_ratio=3.0`（1:3のreverse split）を記�
 - moomoo自体も「もう一つの独立ソース」に過ぎない。2026-09-04のMNST事故（上流一致を歯止めにした
   結果、壊れた上流に合わせて正しいデータを壊した）の教訓から、**moomooの値だけで自動修正しない**。
   判断は人間に残す（`scan_split_consistency.py` と同じ方針）
+
+## 9. 存在を確認したが未使用の他のAPI面（参考。今後の調査候補）
+
+`dir(moomoo)` で列挙した際に見つかった、`MoomooClient` がまだラップしていないAPI群。
+使う場合は `MoomooClient` に追加してから使うこと（§1.5の制約）。活用アイデアは
+`doc/issue_list.md` P3「moomoo API 知見の活用アイデア」参照。
+
+| 分類 | API/型 | 用途の見立て |
+| :--- | :--- | :--- |
+| 決算 | `EarningsCalendar*`（`EarningsCalendarEstimateType`/`PubType`等） | 決算日・予想値。stocktoolの決算関連機能との重複可能性は未検証 |
+| 配当ランキング | `DividendRank*` | 高配当銘柄のスクリーニング（stocktool側の用途は未検討） |
+| セクター/テーマ | `get_owner_plate` | 銘柄が属する業種・概念分類。stocktoolの「テーマ」分類との対応は未検証 |
+| 基本情報 | `get_stock_basicinfo` | 銘柄の基本情報一覧（上場市場・種別等） |
+| 為替 | `Market.FX` | 為替レート。`fx_rates`のクロスチェックに使えるか未検証 |
+| リアルタイム | `subscribe`/`get_rt_data`/`get_order_book`/`get_cur_kline` | リアルタイム気配・板情報。現状の日次バッチ設計とは前提が異なる（大掛かりな変更になる） |
+
+いずれも実際に呼び出して仕様（引数・返り値の形・クォータ消費有無）を確認していない。
+使う前に `US.AAPL` 等の既知の値で検算すること（§5の原則と同じ）。
+

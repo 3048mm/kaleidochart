@@ -14,6 +14,24 @@ from indicators.structure_pivot import (DEFAULT_MAX_LEN, DEFAULT_MIN_LEN,
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+
+def _resolve_active_db_path() -> str:
+    """Parquet マスターの場所を解決するための DB パスを返す。"""
+    from db.database import get_active_db_path
+    db_path = get_active_db_path()
+    if db_path:
+        return db_path
+    try:
+        import tomllib
+        config_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            "config.toml")
+        with open(config_path, "rb") as f:
+            return tomllib.load(f).get("system", {}).get("db_path", "data/stocktool.db")
+    except Exception:
+        return "data/stocktool.db"
+
+
 @router.get("/chart/{symbol_id}")
 def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db), full_range: bool = Query(False)):
     """T2+T3: Get combined daily prices and indicators for rendering charts (High speed)"""
@@ -27,19 +45,8 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db), full_range
         
         if full_range is True:
             # Try loading/calculating from Parquet
-            from db.database import get_active_db_path
             from pipeline.parquet_cache_manager import get_parquet_master_dir, get_pointer_file_path, get_latest_master_files
-            db_path = get_active_db_path()
-            if not db_path:
-                try:
-                    import tomllib
-                    config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "config.toml")
-                    with open(config_path, "rb") as f:
-                        config = tomllib.load(f)
-                        db_path = config.get("system", {}).get("db_path", "data/stocktool.db")
-                except Exception:
-                    db_path = "data/stocktool.db"
-            
+            db_path = _resolve_active_db_path()
             parquet_dir = get_parquet_master_dir(db_path)
             pointer_file = get_pointer_file_path(parquet_dir)
             latest_files = get_latest_master_files(pointer_file)
@@ -212,21 +219,10 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db), full_range
         # Load data from Parquet Master cache
         import pandas as pd
         import numpy as np
-        from db.database import get_active_db_path
         from pipeline.parquet_cache_manager import get_parquet_master_dir, get_pointer_file_path, get_latest_master_files
         from fastapi.responses import JSONResponse
 
-        db_path = get_active_db_path()
-        if not db_path:
-            try:
-                import tomllib
-                config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "config.toml")
-                with open(config_path, "rb") as f:
-                    config = tomllib.load(f)
-                    db_path = config.get("system", {}).get("db_path", "data/stocktool.db")
-            except Exception:
-                db_path = "data/stocktool.db"
-        
+        db_path = _resolve_active_db_path()
         parquet_dir = get_parquet_master_dir(db_path)
         pointer_file = get_pointer_file_path(parquet_dir)
         latest_files = get_latest_master_files(pointer_file)
@@ -815,21 +811,7 @@ def get_earnings_data(symbol_id: int, db: Session = Depends(get_api_db)):
 # 構造ピボット (LL-HL) — チャート描画用オーバーレイ
 # ============================================================
 
-def _resolve_active_db_path() -> str:
-    """Parquet マスターの場所を解決するための DB パスを返す。"""
-    from db.database import get_active_db_path
-    db_path = get_active_db_path()
-    if db_path:
-        return db_path
-    try:
-        import tomllib
-        config_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-            "config.toml")
-        with open(config_path, "rb") as f:
-            return tomllib.load(f).get("system", {}).get("db_path", "data/stocktool.db")
-    except Exception:
-        return "data/stocktool.db"
+
 
 
 def _load_ohlc_rows_from_parquet(symbol_id: int, db: Session):
