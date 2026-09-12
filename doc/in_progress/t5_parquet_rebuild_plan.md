@@ -87,8 +87,9 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 2. 本番 `market_signals` の SPY 由来6列が、Parquet 全期間から計算した値と**全期間で完全一致**（P3 の誤り 0日）
 3. 本番 `market_signals` の SPY 由来6列が、**2026-08-29 世代と 2026-08-29 以前の全日付で完全一致**（独立経路の検算）
 4. 残る全削除経路（`--rebuild-from T2` / `--re-calculate`）でも、SPY の遡りが足りない日付を**黙って書き込まない**（§4-1）
-5. 「SPY の値が変わる変更は T3 以降のリフレッシュ必須」「T3 以降の再構築は Parquet 基点」がルールとして明記されている
-6. memory `t5-sqlite-rebuild-freeze` が解除され、① の §4-6 が「前提充足」に更新されている
+5. **ワークツリー・`deploy_after_merge` の作業領域から、T3/T4/T5 の再計算が本番 Parquet に書き込めない**（§3.6。`--apply` を試みると `ProductionWriteError`）
+6. 「SPY の値が変わる変更は T3 以降のリフレッシュ必須」「T3 以降の再構築は Parquet 基点」がルールとして明記されている
+7. memory `t5-sqlite-rebuild-freeze` が解除され、① の §4-6 が「前提充足」に更新されている
 
 ## 2. スコープと設計判断
 
@@ -99,7 +100,8 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 3. **再構築手順を「T3 → T4 → T5 すべて Parquet → SQLite 復元」に変える** — `_rebuild_t3_or_t4_from_parquet` に T5 を加え、SQLite 基点の `[4/4] T5` を撤去。`--rebuild-from T5` 単独も同じ手順に委譲する
 4. **残る全削除経路に遡り不足ガードを入れる**（§4-1）
 5. **本番 MTS を修復する**（§4-2）
-6. **ルールを明記する** — `.claude/skills/pipeline-debugging/SKILL.md:30`（現状「T4/T5 も連鎖再計算される」とだけある）ほか
+6. **再計算スクリプト3本の隔離を直す**（§7-1・§3.6）— `recompute_parquet_signals.py`（新設）/ `recompute_parquet_indicators.py` / `recompute_parquet_ranks.py` のパス解決を `paths.resolve_db_path_for_init()` に揃え、書き込み前に `paths.ensure_writable()` を掛ける
+7. **ルールを明記する** — `.claude/skills/pipeline-debugging/SKILL.md:30`（現状「T4/T5 も連鎖再計算される」とだけある）ほか
 
 ### 2.2 変更しないこと（確定した設計判断）
 
@@ -152,6 +154,17 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 - `.claude/skills/pipeline-debugging/SKILL.md:30` — 「`--rebuild-from T3/T4/T5` は Parquet 基点で全期間を再計算する」「SPY の値が変わる変更は T3 以降のリフレッシュ必須」を書き足す。編集後 `tools/sync_skills.py --apply`
 - `doc/architecture.md` / `doc/backend_specification.md` の T5 の記述（`backend_specification.md:482` 等）
 
+### 3.6 再計算スクリプトの隔離（§7-1・5-6b）
+
+対象3本（`recompute_parquet_signals.py` / `recompute_parquet_indicators.py` / `recompute_parquet_ranks.py`）は、いずれも `config.toml` の `db_path` を直読みして Parquet ディレクトリを決めている。これを**パイプライン本体と同じ解決順**に揃える。
+
+| | 現行 | 変更後 |
+|---|---|---|
+| パス解決 | `config["system"]["db_path"]` をそのまま使う | `paths.resolve_db_path_for_init("stocktool", config["system"]["db_path"])`（`db/database.py:35` の `init_db` と同じ。環境変数 `STOCKTOOL_DB_PATH` → ワークツリーの `config.local.toml` → config.toml の順に解決する） |
+| 書き込み前の防御 | なし（`ensure_writable` は `init_db` でしか呼ばれない） | `--apply` の書き出し前に `paths.ensure_writable(parquet_dir)` |
+
+**これにより `deploy_after_merge` の作業領域（環境変数で指定）と、ワークツリーの sandbox（`config.local.toml`）が、T3/T4/T5 の再計算でも効くようになる。** `--dry-run` は読み取りのみなので、本番を読む用途（5-6 で実施済み）は引き続き可能にする。
+
 ## 4. ユーザー確認事項
 
 **2026-09-11 に全件ユーザー判断済み。** 未解決の確認事項はなし。
@@ -161,6 +174,7 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 | **4-1** | 残る全削除経路（`--rebuild-from T2 --category` / `--re-calculate`）の防御 | 遡り不足の日付があれば例外で止める（§3.4）。足りない分を Parquet から自動で補うと、SQLite 経路に別経路の値を黙って混ぜることになる | **OK** |
 | **4-2** | 本番 MTS の修復方法とタイミング | merge 後、API サーバを止めて `tools/deploy_after_merge.ps1 -RebuildFrom T5`（health check・NG 時ロールバック付き）。**実行前に dry-run の差分を提示して確認を取る**。変わるのは P3 の38日（MTS 最大 15.5pt）と 2018-04〜05 の33日（最大 18.5pt）、他は 0.11pt 以内 | **OK** |
 | **4-3** | 型3 シナリオの再評価 | 修復後に再実行して before/after を記録する（成績は差し戻し基準にしない） | **実行する。**「型3 は Parquet しか見ないので SQL のずれは影響ないと思う」とのユーザー見立て。**コード確認で見立ては支持された**（理由は §4.1）。したがって**期待値は「変化なし」**で、再実行は影響が無いことの答え合わせとして行う |
+| **4-5** | 再計算スクリプトの隔離の穴（§7-1。検収で発見） | 本計画に含める（5-6b） | **本計画で実施する。**「抜け漏れると他のタスクに影響しそう」 |
 | **4-4** | SPY の自前計算（`market_signals.py:111-112,127`）を `min_periods=window` に揃えるか（① から持ち越し） | 揃える。変わるのは 2010-04〜2011-02 の先頭219本だけ。`distribution_days` の `.astype(int)` と `spy_above_sma200` の NaN 潰しも併せて直す | **OK（揃える）** |
 
 ### 4.1 型3 が ② の影響を受けない理由（4-3 のコード確認・2026-09-11）
@@ -184,6 +198,7 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 - [x] **5-4** `recompute_parquet_signals.py` の計算部分のテスト（red）
 - [x] **5-5** `recompute_parquet_signals.py` を実装（`--dry-run` / `--apply`）
 - [x] **5-6** **§6.1 の反証**（2026-09-12 オーケストレーター実施。**§1.2(a) と全セル一致で合格**） — ワークツリーから本番 Parquet を読み取り専用で `--dry-run` し、差分が §1.2(a) のベースライン（P3 の SPY 由来列 38/15/58/22日、他期間 0日）と一致するか照合。**一致しなければ実装に進まず原因を調べる**
+- [ ] **5-6b** **再計算スクリプト3本の隔離を直す**（§3.6・§7-1）— パス解決を `paths.resolve_db_path_for_init()` に揃え、`--apply` の書き込み前に `paths.ensure_writable()`。テストで「ワークツリーから `--apply` すると `ProductionWriteError`」「`--dry-run` は本番を読める」を担保。**5-11・5-14 の前提**
 - [ ] **5-7** 遡り不足ガード（§3.4）のテスト → 実装（§4-1）
 - [ ] **5-8** `update_pipeline.py` の再構築手順を変更（§3.3）+ テスト
 - [ ] **5-9**（§4-4 が「揃える」なら）SPY 自前計算を揃え、`distribution_days` / `spy_above_sma200` の NaN 対策 + テスト
@@ -216,6 +231,7 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 | dry-run 差分 | 本番 Parquet に対して `--dry-run`（5-6） | §1.2(a) と一致（P3 の SPY 由来列のみ不一致） |
 | sandbox 再構築 | `--rebuild-from T3` 後の sandbox `market_signals`（5-11） | SPY 由来6列が Parquet 全期間計算と完全一致 |
 | ガード | SPY の遡りが220本未満の `gap_dates` で T5 を回す | 例外で止まる / デイリー相当では止まらない |
+| 隔離 | ワークツリーから再計算スクリプトを `--apply`（5-6b） | `ProductionWriteError` で拒否。`--dry-run` は従来どおり本番を読める |
 | 本番修復 | 修復後の本番 `market_signals`（5-15） | 成功条件 2・3 |
 | 型3 再評価 | 修復前後で型3 シナリオを同条件で実行（5-16） | **変化なし**（P4 breadth の微差程度）。§4.1 |
 | データ整合 | `db_health_check.py --all --check-nulls` | NG なし |
@@ -254,7 +270,7 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
   3. 本計画の 5-14（`deploy_after_merge -RebuildFrom T5`）と、① の昇格（`-RebuildFrom T3`）も 1 と同じ経路を通る
 - **原因**: 計画書 §3.2 が「`recompute_parquet_ranks.py` と同じ形」を指示し、姉妹スクリプトの隔離の穴を引き継いだ（計画の穴）
 - **直し方の候補**: 再計算スクリプト3本のパス解決を `init_db` と同じ `paths.resolve_db_path_for_init("stocktool", config_db_path)` に揃え、`--apply` の書き込み前に `paths.ensure_writable()` を掛ける
-- **状態**: 本計画に含めるか、ユーザー判断待ち。**判断が出るまで 5-7 以降（特に 5-11・5-14）に進まない**
+- **判断（2026-09-12 ユーザー）**: **本計画に含める。**「抜け漏れると他のタスクに影響しそう」——① の昇格も同じ経路を通るため。対応は **5-6b** として 5-7 の前に置く
 
 ## 8. スコープ外・残作業
 
