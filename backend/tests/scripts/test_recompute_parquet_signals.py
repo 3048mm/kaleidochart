@@ -57,8 +57,12 @@ class TestBuildMarketSignalsFrame:
         assert out["id"].tolist() == list(range(1, len(spy_df) + 1))
         assert out["date"].tolist() == spy_df["date"].dt.strftime("%Y-%m-%d").tolist()
         assert (out["created_at"] == "2026-09-11 12:00:00.123456").all()
-        assert out["spy_above_sma200"].dtype == np.int64
-        assert out["distribution_days"].dtype == np.int64
+        # spy_above_sma200 / distribution_days は SPY の遡りが足りない先頭区間で
+        # None になりうる列（indicators/market_signals.py 参照）。int64 は NaN を
+        # 表現できないため、spy_sma200_rising と同じ float64（NaN 許容）にする
+        # （t5_parquet_rebuild_plan.md §4-4・5-9）。
+        assert out["spy_above_sma200"].dtype == np.float64
+        assert out["distribution_days"].dtype == np.float64
         assert out["is_distribution_day"].dtype == np.int64
         assert out["follow_through_day"].dtype == np.int64
         assert out["market_trend_score"].dtype == np.float64
@@ -91,6 +95,18 @@ class TestBuildMarketSignalsFrame:
         out = build_market_signals_frame(spy_df, None, None, metrics_df, datetime.utcnow())
 
         assert out["breadth_sma50"].isna().all()
+
+    def test_insufficient_lookback_produces_nan_without_raising(self):
+        """SPY の本数が sma_200 の窓（200本）に満たない場合、例外を出さず
+        spy_above_sma200 / distribution_days が NaN になること
+        （t5_parquet_rebuild_plan.md §4-4・5-9）。"""
+        spy_df = _spy_df(n=10)
+        metrics_df = pd.DataFrame(columns=["date", "breadth_sma50", "momentum_ratio"])
+
+        out = build_market_signals_frame(spy_df, None, None, metrics_df, datetime.utcnow())
+
+        assert out["spy_above_sma200"].isna().all()
+        assert out["distribution_days"].isna().all()
 
     def test_empty_spy_df_returns_empty_frame_with_expected_columns(self):
         out = build_market_signals_frame(

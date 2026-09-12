@@ -123,9 +123,12 @@ def build_market_signals_frame(
     out = pd.DataFrame({
         "id": range(1, len(ms) + 1),
         "date": ms["date"].dt.strftime("%Y-%m-%d"),
-        "spy_above_sma200": ms["spy_above_sma200"].astype("int64"),
+        # SPY の遡りが足りない先頭区間は None（判定不能）になりうる列。
+        # 既に None を返しうる spy_sma200_rising と同じ float64（NaN 許容）に揃える
+        # （int64 は NaN を表現できず astype でそのまま落ちるため）。
+        "spy_above_sma200": pd.to_numeric(ms["spy_above_sma200"], errors="coerce").astype("float64"),
         "spy_sma200_rising": pd.to_numeric(ms["spy_sma200_rising"], errors="coerce").astype("float64"),
-        "distribution_days": ms["distribution_days"].astype("int64"),
+        "distribution_days": pd.to_numeric(ms["distribution_days"], errors="coerce").astype("float64"),
         "is_distribution_day": ms["is_distribution_day"].astype("int64"),
         "follow_through_day": ms["follow_through_day"].astype("int64"),
         "market_phase": ms["market_phase"],

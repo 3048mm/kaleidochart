@@ -156,12 +156,23 @@ def calculate_market_signals(
     volume = df['volume'].astype(float)
 
     # 1. SPY Trend Components (required for phase classification)
-    df['sma_50'] = close.rolling(50, min_periods=1).mean()
-    df['sma_200'] = close.rolling(200, min_periods=1).mean()
-    
+    # min_periods を窓幅と一致させる（① 計画 §4-4）。遡りが足りない先頭区間は
+    # 「それらしい値」を返さず NaN にする。SQLite 経路（t5_signals.py）側は
+    # SPY_LOOKBACK_MIN_BARS のガードで、遡り不足の日付そのものを計算対象から
+    # 排除しているため、ここで NaN になるのは Parquet 全期間計算時の先頭のみ
+    # （SPY は 2010-04-01 開始のため、2010-04〜2011-02 の先頭219本が該当）。
+    df['sma_50'] = close.rolling(50, min_periods=50).mean()
+    df['sma_200'] = close.rolling(200, min_periods=200).mean()
+
     sma200_20d_ago = df['sma_200'].shift(20)
 
-    df['spy_above_sma200']  = (close > df['sma_200']).astype(int)
+    # sma_200 の遡りが足りない行は None（判定不能。spy_sma200_rising と同じ慣習）。
+    # NaN を 0（200日線割れ）に潰すと、遡り不足が「200日線割れ」として
+    # 誤って扱われてしまう。
+    df['spy_above_sma200']  = np.where(
+        df['sma_200'].isna(), None,
+        (close > df['sma_200']).astype(int)
+    )
     df['spy_sma200_rising'] = np.where(
         sma200_20d_ago.isna(), None,
         (df['sma_200'] >= sma200_20d_ago).astype(int)
@@ -172,7 +183,14 @@ def calculate_market_signals(
     vol_increase = volume > volume.shift(1)
     is_dist_day  = (daily_ret <= -0.002) & vol_increase
     df['is_distribution_day'] = is_dist_day.astype(int)
-    df['distribution_days'] = is_dist_day.rolling(window=25, min_periods=1).sum().astype(int)
+    dist_days_raw = is_dist_day.rolling(window=25, min_periods=25).sum()
+    # NaN のまま .astype(int) すると IntCastingNaNError になるため、
+    # 先に fillna(0) してから cast し、NaN だった行だけ None に戻す
+    # （spy_above_sma200 と同じ「None = 判定不能」の慣習）。
+    df['distribution_days'] = np.where(
+        dist_days_raw.isna(), None,
+        dist_days_raw.fillna(0).astype(int)
+    )
 
     # 3. Follow Through Day (FTD)
     is_ftd = (daily_ret >= 0.017) & vol_increase
@@ -180,6 +198,12 @@ def calculate_market_signals(
 
     # 4. Market Phase classification
     def phase(row):
+        # 遡り不足で spy_above_sma200 / distribution_days が None（判定不能）の行は
+        # 既存の分岐（1 か 0 かの2値）に押し込めない。None は None==1 でも
+        # None==0 でも False になるため、そのままでは else 節の 'BULL' に落ちて
+        # 誤って強気相場と判定されてしまう。ここで明示的に判定不能を返す。
+        if row['spy_above_sma200'] is None or row['distribution_days'] is None:
+            return None
         if row['spy_above_sma200'] == 1 and row['distribution_days'] <= 3:
             return 'BULL'
         elif row['spy_above_sma200'] == 1 and row['distribution_days'] >= 5:

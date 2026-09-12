@@ -115,9 +115,12 @@ def sync_phase_t5_signals(db, logger: logging.Logger):
         row_date = row['date'].date()
         t5_recs.append(MarketSignal(
             date=row_date,
-            spy_above_sma200=int(row['spy_above_sma200']),
+            # spy_above_sma200 / distribution_days は SPY の遡りが足りない先頭区間で
+            # None（判定不能）になりうる（indicators/market_signals.py 参照）。
+            # spy_sma200_rising と同じ sanitize_numeric によるガードを掛ける。
+            spy_above_sma200=int(row['spy_above_sma200']) if sanitize_numeric(row, 'spy_above_sma200') is not None else None,
             spy_sma200_rising=int(row['spy_sma200_rising']) if sanitize_numeric(row, 'spy_sma200_rising') is not None else None,
-            distribution_days=int(row['distribution_days']),
+            distribution_days=int(row['distribution_days']) if sanitize_numeric(row, 'distribution_days') is not None else None,
             is_distribution_day=int(row['is_distribution_day']),
             follow_through_day=int(row['follow_through_day']),
             market_phase=row['market_phase'],
