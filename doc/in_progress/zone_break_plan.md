@@ -287,8 +287,12 @@ max_hits_per_day = 10
       — 2026-09-12、AAPL/SPY/NVDAの3銘柄で実施、直近60本・最終バーは完全一致（§6.1参照）。
       広い銘柄セットでの確認は後続のサンドボックス検証時に追加で行う
 - [ ] sandbox-workflow に従いサンドボックスで一連の検証を行う
-- [ ] `db/models.py` の `Indicator` に4カラム追加
-- [ ] `indicators/calculate.py` に算出ステップを追加
+- [x] `db/models.py` の `Indicator` に4カラム追加（2026-09-12コミット`8e74e8e`。
+      implementerがレート制限で途中停止したため、models.pyの4カラム定義まではimplementerの
+      成果を採用、`calculate.py`統合とサンドボックスDBへのALTER TABLE反映はオーケストレーターが
+      引き継いで完了）
+- [x] `indicators/calculate.py` に算出ステップを追加（同上コミット。AAPL/SPY/NVDAで
+      `calculate_indicators()`経由の値がTradingView突合済みの値と一致することを確認済み）
 - [ ] 仮想カラム2種を3箇所（`screener_registry.VIRTUAL_COLUMNS` / `screener_router._VIRTUAL_COLUMNS`
       / `backtest_screener.apply_filters_to_df`）に登録
 - [ ] 特殊フィルタ4種（フリップ2種＋継続ブレイク2種、§3.4）を `screener_filters.py` と
