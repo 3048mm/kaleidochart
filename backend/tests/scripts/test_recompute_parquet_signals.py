@@ -1,20 +1,21 @@
 """Parquet の T5（market_signals）全期間再計算（`recompute_parquet_signals.py`）のテスト。
 
-I/O（Parquet 読み書き・pointer 更新）を含まない、計算部分のみを対象にする:
+I/O を含まない計算部分（`build_market_signals_frame` / `compare_by_period`）に加え、
+`run()` のパス解決・書き込みガードのテストを含む（§3.6・5-6b）。
 
-  - `build_market_signals_frame`: SPY/VIX/VXV/breadth の DataFrame から
-    Parquet の `market_signals` スキーマに合わせた出力を組み立てる
-  - `compare_by_period`: 現行世代との期間別・列別の差分集計（dry-run 表示用）
-
-背景: `doc/in_progress/t5_parquet_rebuild_plan.md` §3.2
+背景: `doc/in_progress/t5_parquet_rebuild_plan.md` §3.2・§3.6
 """
+import json
+import os
 from datetime import datetime
 
 import numpy as np
 import pandas as pd
 import pytest
 
+import paths
 from indicators.market_signals import compute_breadth_momentum
+from scripts import recompute_parquet_signals as rps
 from scripts.recompute_parquet_signals import (
     OUTPUT_COLUMNS,
     build_market_signals_frame,
@@ -182,3 +183,139 @@ class TestCompareByPeriod:
         assert diff["P2 2018-04-01〜2024-09-02"]["days"] == 1
         assert diff["P3 2024-09-03〜2025-06-30"]["days"] == 1
         assert diff["P4 2025-07-01〜"]["days"] == 1
+
+
+# --- run() のパス解決・書き込みガード（§3.6・5-6b） --------------------------
+
+_STOCKTOOL_ENV_VARS = (
+    "STOCKTOOL_DATA_ROOT",
+    "STOCKTOOL_PROD_DATA_ROOT",
+    "STOCKTOOL_ENV",
+    "STOCKTOOL_ALLOW_DB_CREATE",
+    "STOCKTOOL_DB_PATH",
+    "STOCKTOOL_USER_DB_PATH",
+    "STOCKTOOL_UNIVERSE_DB_PATH",
+)
+
+
+def _make_worktree_repo(tmp_path, config_local_toml: str | None = None):
+    """ワークツリーを模したディレクトリを作る（`.git` がファイル）。"""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").write_text("gitdir: D:/dummy/.git/worktrees/x\n", encoding="utf-8")
+    if config_local_toml is not None:
+        (repo / "config.local.toml").write_text(config_local_toml, encoding="utf-8")
+    return repo
+
+
+def _make_minimal_parquet_master(parquet_dir):
+    """guard 到達までに読まれる最小限の Parquet 世代を作る。
+
+    書き込みガード（`paths.ensure_writable`）は dry-run 早期リターンの直後・
+    書き出しループの直前に置かれているため、`indicators`/`ranks`/`tc`/`fx` は
+    ガードより後にしか読まれない（コピーのみ）。プレースホルダで足りる。
+    """
+    os.makedirs(parquet_dir, exist_ok=True)
+    sym = pd.DataFrame({"id": [1], "ticker": ["SPY"], "category": ["指数"], "active": [1]})
+    dates = pd.date_range("2020-01-01", periods=5)
+    prices = pd.DataFrame({
+        "symbol_id": [1] * 5,
+        "date": dates.strftime("%Y-%m-%d"),
+        "close": [100.0, 101.0, 102.0, 101.0, 103.0],
+        "high": [101.0] * 5,
+        "low": [99.0] * 5,
+        "volume": [1_000_000] * 5,
+    })
+    signals = pd.DataFrame(columns=OUTPUT_COLUMNS)
+
+    ts = "20200101_000000"
+    files = {}
+    for key, df in (("symbols", sym), ("prices", prices), ("signals", signals)):
+        path = os.path.join(parquet_dir, f"{key}_{ts}.parquet")
+        df.to_parquet(path, index=False)
+        files[key] = path
+    for key, base in (("indicators", "indicators"), ("ranks", "ranks"),
+                       ("tc", "theme_constituents"), ("fx", "fx_rates")):
+        path = os.path.join(parquet_dir, f"{base}_{ts}.parquet")
+        with open(path, "wb") as f:
+            f.write(b"placeholder")
+        files[key] = path
+
+    pointer = os.path.join(parquet_dir, "latest_master.json")
+    with open(pointer, "w", encoding="utf-8") as f:
+        json.dump(files, f)
+    return files
+
+
+class TestRunPathIsolation:
+    """`run()` のパス解決が worktree / 環境変数を尊重すること（§3.6・5-6b）。
+
+    実行環境の実際の worktree/本体判定に依存しないよう、`paths.get_repo_root`
+    を偽の worktree に差し替えて検証する（main へ merge 後の実行でも決定的）。
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clean_stocktool_env(self, monkeypatch):
+        for name in _STOCKTOOL_ENV_VARS:
+            monkeypatch.delenv(name, raising=False)
+
+    def test_apply_from_worktree_pointing_at_prod_raises_production_write_error(
+            self, tmp_path, monkeypatch):
+        """本番データを指すワークツリーから書き込み経路に入ると拒否される。"""
+        prod = tmp_path / "prod"
+        prod.mkdir()
+        repo = _make_worktree_repo(
+            tmp_path,
+            config_local_toml=(
+                f'[data]\nroot = "{prod.as_posix()}"\nprod_root = "{prod.as_posix()}"\n'
+            ),
+        )
+        parquet_dir = prod / "parquet_master"
+        _make_minimal_parquet_master(str(parquet_dir))
+        monkeypatch.setattr(paths, "get_repo_root", lambda: str(repo))
+
+        with pytest.raises(paths.ProductionWriteError):
+            rps.run(dry_run=False)
+
+        # 拒否された時点で新世代は書かれていないこと
+        assert len(list(parquet_dir.glob("market_signals_*.parquet"))) == 0
+
+    def test_apply_with_stocktool_db_path_env_uses_work_dir_not_prod(
+            self, tmp_path, monkeypatch):
+        """`STOCKTOOL_DB_PATH` を設定すると、本番ではなく作業領域が使われる。"""
+        prod = tmp_path / "prod"
+        prod.mkdir()
+        work = tmp_path / "work"
+        work.mkdir()
+        repo = _make_worktree_repo(tmp_path)
+        parquet_dir = work / "parquet_master"
+        _make_minimal_parquet_master(str(parquet_dir))
+        monkeypatch.setattr(paths, "get_repo_root", lambda: str(repo))
+        monkeypatch.setenv("STOCKTOOL_DB_PATH", str(work / "stocktool.db"))
+        monkeypatch.setenv("STOCKTOOL_PROD_DATA_ROOT", str(prod))
+
+        rps.run(dry_run=False)  # 例外を投げずに完走する
+
+        assert len(list(parquet_dir.glob("market_signals_*.parquet"))) == 1
+        assert list(prod.iterdir()) == []
+
+    def test_dry_run_does_not_write_even_when_pointed_at_prod(
+            self, tmp_path, monkeypatch):
+        """`--dry-run` は書き込みガードの有無に関係なく書き込まない。"""
+        prod = tmp_path / "prod"
+        prod.mkdir()
+        repo = _make_worktree_repo(
+            tmp_path,
+            config_local_toml=(
+                f'[data]\nroot = "{prod.as_posix()}"\nprod_root = "{prod.as_posix()}"\n'
+            ),
+        )
+        parquet_dir = prod / "parquet_master"
+        _make_minimal_parquet_master(str(parquet_dir))
+        before = set(os.listdir(parquet_dir))
+        monkeypatch.setattr(paths, "get_repo_root", lambda: str(repo))
+
+        rps.run(dry_run=True)  # 例外にならない（読み取りのみ）
+
+        after = set(os.listdir(parquet_dir))
+        assert after == before

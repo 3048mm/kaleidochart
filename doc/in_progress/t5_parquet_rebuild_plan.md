@@ -198,7 +198,7 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 - [x] **5-4** `recompute_parquet_signals.py` の計算部分のテスト（red）
 - [x] **5-5** `recompute_parquet_signals.py` を実装（`--dry-run` / `--apply`）
 - [x] **5-6** **§6.1 の反証**（2026-09-12 オーケストレーター実施。**§1.2(a) と全セル一致で合格**） — ワークツリーから本番 Parquet を読み取り専用で `--dry-run` し、差分が §1.2(a) のベースライン（P3 の SPY 由来列 38/15/58/22日、他期間 0日）と一致するか照合。**一致しなければ実装に進まず原因を調べる**
-- [ ] **5-6b** **再計算スクリプト3本の隔離を直す**（§3.6・§7-1）— パス解決を `paths.resolve_db_path_for_init()` に揃え、`--apply` の書き込み前に `paths.ensure_writable()`。テストで「ワークツリーから `--apply` すると `ProductionWriteError`」「`--dry-run` は本番を読める」を担保。**5-11・5-14 の前提**
+- [x] **5-6b** **再計算スクリプト3本の隔離を直す**（§3.6・§7-1）— パス解決を `paths.resolve_db_path_for_init()` に揃え、`--apply` の書き込み前に `paths.ensure_writable()`。テストで「ワークツリーから `--apply` すると `ProductionWriteError`」「`--dry-run` は本番を読める」を担保。**5-11・5-14 の前提**
 - [ ] **5-7** 遡り不足ガード（§3.4）のテスト → 実装（§4-1）
 - [ ] **5-8** `update_pipeline.py` の再構築手順を変更（§3.3）+ テスト
 - [ ] **5-9**（§4-4 が「揃える」なら）SPY 自前計算を揃え、`distribution_days` / `spy_above_sma200` の NaN 対策 + テスト
@@ -214,10 +214,13 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 
 ### 作業中メモ
 
-**現在地: 5-2〜5-5 実装済み（`dce43e8`）・5-6 合格。検収中。§7-1 の判断待ちで 5-7 以降は停止。**
+**現在地: 5-2〜5-6b 実装済み。5-7 以降に着手可能。**
 
 - 5-2〜5-5 の実装: `indicators/market_signals.py` に `compute_breadth_momentum(raw_df)` を追加し `t5_signals.py` から呼ぶ形に置換。`scripts/recompute_parquet_signals.py` を新設（`build_market_signals_frame()` / `compare_by_period()` を I/O から分離）。テスト `tests/indicators/test_market_signals_breadth.py` / `tests/scripts/test_recompute_parquet_signals.py`
-- 検収で発見: **§7-1（再計算スクリプトが本番 Parquet に書き込める）**。**判断が出るまでワークツリーで `--rebuild-from` や `--apply` を実行しないこと**（`--dry-run` は読み取りのみで安全）
+- 検収で発見: **§7-1（再計算スクリプトが本番 Parquet に書き込める）** → **5-6b で対応済み**
+- **5-6b の実装**: `recompute_parquet_signals.py` / `recompute_parquet_indicators.py`（`run()`・`verify()` の両方）/ `recompute_parquet_ranks.py` の3本で、`db_path = config["system"]["db_path"]` を `db_path = paths.resolve_db_path_for_init("stocktool", config["system"]["db_path"])` に置換。`--apply` の書き込みガード（`paths.ensure_writable(parquet_dir)`）は**「dry-run 早期リターンの直後・書き出しループの直前」**に置いた（計画の「書き出す直前」を、実データを読み込む前ではなく読み込んだ直後・重い書き込み処理の直前、という位置で満たす形。`recompute_parquet_indicators.py` はこれにより「本番へ書けない状態で全銘柄のチャンク再計算を実行してから拒否される」無駄を避けられる）。`verify()`（`--verify`、読み取り専用）はパス解決のみ直し、`ensure_writable` は呼んでいない
+- テスト: `tests/scripts/test_recompute_parquet_signals.py::TestRunPathIsolation`（3件）/ `tests/scripts/test_recompute_parquet_indicators.py`（新設、4件）/ `tests/scripts/test_recompute_parquet_ranks.py`（新設、3件）。いずれも `paths.get_repo_root` を偽の worktree にモンキーパッチし、実行環境の実際の worktree/本体判定に依存しない決定的なテストにしてある（main へ merge 後に実行しても同じ結果になる）
+- **判明した環境依存の注意点（コードは無関係、テスト実行時のみ）**: `recompute_parquet_ranks.py` の出力に含まれる `≈`（U+2248）が、非対話コンソールへのリダイレクト時に Python が cp932 にフォールバックすると `UnicodeEncodeError` になる（`doc/agent_execution_rules.md` §該当の既知事象）。pytest 実行時は `PYTHONIOENCODING=utf-8`/`PYTHONUTF8=1` を付けること。スクリプト自体は変更していない（対象外）
 - sandbox の Parquet は最新世代 `20260911_145621` のみ（ハードリンク）。**2026-08-29 世代は sandbox に無い**ので、5-15 の検算は本番 `data/parquet_master/market_signals_20260829_144251.parquet` を読み取り専用で読む
 - **2026-08-29 世代 `market_signals_20260829_144251.parquet` を prune しないこと**（5-15 の検算に使う）
 - ベースライン測定スクリプトは本体の `tmp/` にある（`t5_parquet_baseline.py` / `t5_breadth_population_check.py` / `spy_mts_window_check.py` / `spy_mts_generation_check.py`）
@@ -260,7 +263,7 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 
 ## 7. 途中発生した課題
 
-### 7-1. 再計算スクリプトが sandbox 隔離を経由せず、本番 Parquet に書き込める（2026-09-12・5-2〜5-5 の検収で発見）🔴
+### 7-1. 再計算スクリプトが sandbox 隔離を経由せず、本番 Parquet に書き込める（2026-09-12・5-2〜5-5 の検収で発見）✅ 5-6b で対応済み
 
 - **事象**: `recompute_parquet_signals.py`（新設）は、姉妹スクリプト `recompute_parquet_indicators.py`（L125-127, L244-247）・`recompute_parquet_ranks.py`（L65-68）と同じく **`config.toml` の `db_path`（本番の絶対パス）を直接読んで Parquet ディレクトリを決める**。環境変数 `STOCKTOOL_DB_PATH` もワークツリーの `config.local.toml` も見ない。Parquet の書き込みには `paths.ensure_writable()` が掛かっていない（`ensure_writable` は `db/database*.py` の `init_db` でしか呼ばれない）
 - **発見の経緯**: ワーカー（implementer）が完了報告で「計画の『同じ形で作る』に従った結果、ワークツリーから `--apply` すると本番に書ける」と自己申告。オーケストレーターがコードで確認した
