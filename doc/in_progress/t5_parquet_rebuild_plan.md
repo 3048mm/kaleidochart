@@ -163,7 +163,12 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 | パス解決 | `config["system"]["db_path"]` をそのまま使う | `paths.resolve_db_path_for_init("stocktool", config["system"]["db_path"])`（`db/database.py:35` の `init_db` と同じ。環境変数 `STOCKTOOL_DB_PATH` → ワークツリーの `config.local.toml` → config.toml の順に解決する） |
 | 書き込み前の防御 | なし（`ensure_writable` は `init_db` でしか呼ばれない） | `--apply` の書き出し前に `paths.ensure_writable(parquet_dir)` |
 
-**これにより `deploy_after_merge` の作業領域（環境変数で指定）と、ワークツリーの sandbox（`config.local.toml`）が、T3/T4/T5 の再計算でも効くようになる。** `--dry-run` は読み取りのみなので、本番を読む用途（5-6 で実施済み）は引き続き可能にする。
+**これにより `deploy_after_merge` の作業領域（環境変数で指定）と、ワークツリーの sandbox（`config.local.toml`）が、T3/T4/T5 の再計算でも効くようになる。**
+
+> [!IMPORTANT]
+> **副作用: `--dry-run` の参照先も解決結果に従う**（2026-09-12 検収で実測・§7-2）。修正前はワークツリーからでも `config.toml` 経由で**本番**を読んでいたが、修正後は**ワークツリーの sandbox 世代**を読む。
+> - **5-6 の反証は修正前の挙動（本番を直接読む）で実施済み**なので、その結果は有効
+> - **本番を対象にした再計算・差分確認は、本体チェックアウトから実行する**（5-14）。`deploy_after_merge.ps1` はワークツリーからの実行を precheck で弾く作りなので、運用上も本体から実行される
 
 ## 4. ユーザー確認事項
 
@@ -206,7 +211,7 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 - [ ] **5-11** sandbox で `--rebuild-from T3` を実行 → **sandbox の `market_signals` の SPY 由来6列が Parquet 全期間計算と全期間で完全一致**すること、`db_health_check.py --all --check-nulls` が通ること
 - [ ] **5-12** ルールの明記（§3.5）+ `sync_skills.py --apply`
 - [ ] **5-13** 仕様書の T5 記述を更新
-- [ ] **5-14** **先に 5-16 の「修復前」の型3 シナリオを実行して記録しておく** → merge → **dry-run の差分をユーザーに提示して確認** → API サーバ停止 → `tools/deploy_after_merge.ps1 -RebuildFrom T5` → API サーバ再起動（§4-2）
+- [ ] **5-14** **本体チェックアウトから実行する**（ワークツリーからは sandbox を指すため — §7-2）。先に 5-16 の「修復前」の型3 シナリオを実行して記録しておく → merge → **dry-run の差分をユーザーに提示して確認** → API サーバ停止 → `tools/deploy_after_merge.ps1 -RebuildFrom T5` → API サーバ再起動（§4-2）
 - [ ] **5-15** 本番の修復確認 — 成功条件 2・3（Parquet 全期間計算と完全一致 / 8/29 世代と 8/29 以前で完全一致）
 - [ ] **5-16** 型3 シナリオの再評価（§4-3）— 修復前（5-14 の前）と修復後で同じ条件で実行し before/after を記録。**期待値は「変化なし」**（§4.1）。大きく変わったら想定外の読み取り経路を調べる
 - [ ] **5-17** 後片付け — issue ② をクローズ、memory `t5-sqlite-rebuild-freeze` を削除（MEMORY.md の索引も）、① の §4-6 を「前提充足」に更新
@@ -274,6 +279,12 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 - **原因**: 計画書 §3.2 が「`recompute_parquet_ranks.py` と同じ形」を指示し、姉妹スクリプトの隔離の穴を引き継いだ（計画の穴）
 - **直し方の候補**: 再計算スクリプト3本のパス解決を `init_db` と同じ `paths.resolve_db_path_for_init("stocktool", config_db_path)` に揃え、`--apply` の書き込み前に `paths.ensure_writable()` を掛ける
 - **判断（2026-09-12 ユーザー）**: **本計画に含める。**「抜け漏れると他のタスクに影響しそう」——① の昇格も同じ経路を通るため。対応は **5-6b** として 5-7 の前に置く
+
+### 7-2. 隔離修正の副作用: `--dry-run` の参照先が本番から sandbox に変わった（2026-09-12・5-6b の検収で実測）
+
+- **事象**: 5-6b でパス解決を `paths.resolve_db_path_for_init()` に揃えた結果、**ワークツリーから `--dry-run` を実行すると sandbox の世代を読む**ようになった（実測: 現行世代として sandbox の `market_signals_20260911_145621.parquet` を表示。本番の最新は `market_signals_20260912_145123.parquet`）
+- **計画との差**: §3.6 には「`--dry-run` は従来どおり本番を読めるようにする」と書いていたが、パス解決を一本化する以上そうはならない。**隔離としてはこちらが正しい**ため、計画側の記述を実態に合わせて修正した
+- **影響**: (1) **5-6 の反証は修正前に実施済み**で、本番を直接読んだ結果なので有効。(2) **5-14（本番の修復）は本体チェックアウトから実行する**。(3) 5-11（sandbox での確認）はむしろこの修正で安全に実行できるようになった
 
 ## 8. スコープ外・残作業
 
