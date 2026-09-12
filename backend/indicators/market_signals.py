@@ -40,6 +40,16 @@ WEIGHT_BREADTH    = 0.25
 WEIGHT_EMA50_ATR  = 0.25
 WEIGHT_EMA200_ATR = 0.25
 
+# T5（market_signals）を SQLite 基点で計算する際に、SPY の遡り本数が
+# 最低限これだけ必要（不足なら黙って書き込まず例外で止める。t5_signals.py 参照）。
+#
+# 根拠: 下の `calculate_market_signals()` で `sma_200` は `close.rolling(200, ...)`、
+# `spy_sma200_rising` はその `sma_200` を `shift(20)` して比較するため、
+# 対象日までに 200 + 20 = 220 本の SPY が必要。**決め打ちの数値ではなく、
+# MTS の SMA200 窓（200）や rising 判定の比較幅（20）を変えたら、この定数も
+# 追随して直す必要がある。**
+SPY_LOOKBACK_MIN_BARS = 220
+
 
 
 def find_stale_input_gaps(df: pd.DataFrame, col: str) -> list[tuple]:

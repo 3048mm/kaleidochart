@@ -204,7 +204,7 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 - [x] **5-5** `recompute_parquet_signals.py` を実装（`--dry-run` / `--apply`）
 - [x] **5-6** **§6.1 の反証**（2026-09-12 オーケストレーター実施。**§1.2(a) と全セル一致で合格**） — ワークツリーから本番 Parquet を読み取り専用で `--dry-run` し、差分が §1.2(a) のベースライン（P3 の SPY 由来列 38/15/58/22日、他期間 0日）と一致するか照合。**一致しなければ実装に進まず原因を調べる**
 - [x] **5-6b** **再計算スクリプト3本の隔離を直す**（§3.6・§7-1）— パス解決を `paths.resolve_db_path_for_init()` に揃え、`--apply` の書き込み前に `paths.ensure_writable()`。テストで「ワークツリーから `--apply` すると `ProductionWriteError`」「`--dry-run` は本番を読める」を担保。**5-11・5-14 の前提**
-- [ ] **5-7** 遡り不足ガード（§3.4）のテスト → 実装（§4-1）
+- [x] **5-7** 遡り不足ガード（§3.4）のテスト → 実装（§4-1）
 - [ ] **5-8** `update_pipeline.py` の再構築手順を変更（§3.3）+ テスト
 - [ ] **5-9**（§4-4 が「揃える」なら）SPY 自前計算を揃え、`distribution_days` / `spy_above_sma200` の NaN 対策 + テスト
 - [ ] **5-10** pytest 全件パス
@@ -219,7 +219,11 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 
 ### 作業中メモ
 
-**現在地: 5-2〜5-6b 実装済み。5-7 以降に着手可能。**
+**現在地: 5-2〜5-7 実装済み。5-8 以降に着手可能。**
+
+- **5-7 の実装**: `indicators/market_signals.py` に定数 `SPY_LOOKBACK_MIN_BARS = 220` を追加（`sma_200` の `rolling(200)` ＋ `spy_sma200_rising` の `shift(20)` で 200+20=220 本必要という根拠をコメントに明記。MTS の窓を変えたら追随が要る旨も明記）。`t5_signals.py` の `sync_phase_t5_signals()` で `spy_df['date'] = pd.to_datetime(...)` の直後・`calculate_market_signals()` を呼ぶ前に、`gap_dates` の**最古日付**について「その日までの SQLite の SPY 本数」を数え、220本未満なら `RuntimeError` で止める（既存の `t2_prices.py:65` / `orchestrator.py:794` と同じ型・同じ「日本語の理由＋対処法を1つのメッセージに入れる」スタイル）。メッセージには不足日付・実本数・必要本数・原因（SQLite はホット期間のみ）・対処（`--rebuild-from T5` など Parquet 基点の手順）を含める
+- **「最古の gap 日付だけ見れば十分」の根拠**: SPY の日付は連続して増える一方なので、ある日付までの SQLite 行数はその日付が新しいほど多い（単調非減少）。したがって `gap_dates` の中で最も遡りが浅い＝最も条件が厳しいのは必ず最古の日付であり、そこが220本以上ならそれより新しい gap 日付は全て220本以上を満たす
+- テスト: `backend/tests/pipeline/test_t5_lookback_guard.py`（新設・4件）— 遡り不足で例外・境界（220本ちょうどで通過／219本で例外）・日次相当（最新日のみ gap・503本）で通過、を担保。既存の `test_pipeline_idempotency.py::test_sync_phase_t5_backfills_null_score` は、過去250日ぶんを「未計算」のまま（`MarketSignal` レコードなし）にしていたため gap_dates が250日全部に広がり、最古日付では SPY の遡りが1本しかなく新ガードに引っかかっていた。テストの主眼（既存レコードの NULL スコアを埋める）とは無関係な副作用なので、過去250日ぶんに完了済みダミー `MarketSignal`（`market_trend_score=50.0`）を追加し、gap_dates が対象日1件だけになるよう修正した（フィクスチャの是正であり、ガードの仕様やテスト対象ロジックは変えていない）
 
 - 5-2〜5-5 の実装: `indicators/market_signals.py` に `compute_breadth_momentum(raw_df)` を追加し `t5_signals.py` から呼ぶ形に置換。`scripts/recompute_parquet_signals.py` を新設（`build_market_signals_frame()` / `compare_by_period()` を I/O から分離）。テスト `tests/indicators/test_market_signals_breadth.py` / `tests/scripts/test_recompute_parquet_signals.py`
 - 検収で発見: **§7-1（再計算スクリプトが本番 Parquet に書き込める）** → **5-6b で対応済み**

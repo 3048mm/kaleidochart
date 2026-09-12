@@ -6,7 +6,7 @@ from sqlalchemy import func
 from db.models import Symbol, DailyPrice, Indicator, MarketSignal
 from pipeline.utils import sanitize_numeric
 from indicators.calculate import calculate_market_signals
-from indicators.market_signals import compute_breadth_momentum
+from indicators.market_signals import compute_breadth_momentum, SPY_LOOKBACK_MIN_BARS
 
 def sync_phase_t5_signals(db, logger: logging.Logger):
     """Phase 5: Market Signals (T5) - Idempotent catch-up."""
@@ -28,6 +28,24 @@ def sync_phase_t5_signals(db, logger: logging.Logger):
         logger.error("SPY price data missing.")
         return
     spy_df['date'] = pd.to_datetime(spy_df['date'])
+
+    # 遡り不足ガード（§4-1）: gap_dates のうち最古の日付は、SPY の遡りが
+    # 最も浅い（＝最も条件が厳しい）ため、そこだけ確認すれば足りる。
+    # SQLite はホット期間（直近730日程度）しか保持しないため、
+    # `--rebuild-from T2 --category` / `--re-calculate` など T5 を全削除する経路で
+    # 遡りが足りない日付を黙って書き込まないようにする（デイリーは最新日のみが
+    # gap になり遡りは十分あるため、ここには掛からない）。
+    earliest_gap_date = min(gap_dates)
+    spy_bars_before_gap = int((spy_df['date'] <= pd.Timestamp(earliest_gap_date)).sum())
+    if spy_bars_before_gap < SPY_LOOKBACK_MIN_BARS:
+        raise RuntimeError(
+            f"T5 の遡りが不足しています: {earliest_gap_date} 時点で SQLite の SPY は "
+            f"{spy_bars_before_gap} 本しかありません（sma_200 の遡りに必要な "
+            f"{SPY_LOOKBACK_MIN_BARS} 本に未達）。SQLite はホット期間（直近730日程度）"
+            "しか保持していないため、この状態で全日付を再計算すると sma_200 の窓の"
+            "先頭が壊れ、MTS の SPY 由来列（market_phase 等）に誤った値が保存されます。"
+            " `--rebuild-from T5` など Parquet 基点の再構築手順を使ってください。"
+        )
 
     vix_df = pd.DataFrame()
     if vix_sym_id:
