@@ -1,6 +1,7 @@
 # Direction via Zone Break 指標移植 計画書
 
-- **ステータス**: 🚧 実装中（§4 ユーザー承認済み・2026-09-12、ワークツリー作成着手）
+- **ステータス**: 🚧 型1一次判定まで完了（2026-09-12）。単体では明確なエッジ無し（§6参照）。
+  残作業は本番昇格・フロントエンド表示（成功条件4）。Optuna投入の可否はユーザー判断待ち
 - **実施者**: AI エージェント (Claude Sonnet 5) — オーケストレーター（2026-09-12、Remote Control切断した
   stocktool-fe セッションから本セッションが引き継ぎ。会話ログ・本計画書のみを引き継ぎ情報源とする）
 - **開始日**: 2026-09-11 / **完了日**: —
@@ -272,9 +273,10 @@ max_hits_per_day = 10
 
 - [x] §4 のユーザー確認事項に回答をもらう（2026-09-12、全項目 OK。§3.4/3.5 に継続ブレイク特殊
       フィルタ2種・`min_market_cap` 追加のレビュー指摘あり、反映済み）
-- [ ] **TDD**: `backend/tests/indicators/test_zone_break.py` を先に書く（初回 SSL/BSL 確定、
+- [x] **TDD**: `backend/tests/indicators/test_zone_break.py` を先に書く（初回 SSL/BSL 確定、
       内部フラクタル追従、終値ブレイクでの反転、FVG 生成/無効化、境界を設けたフォールバック探索の
-      正しさ）
+      正しさ）— 2026-09-12コミット`4061575`、4テストケース。ImportErrorでの赤を確認後、
+      実装完了後に境界探索の一致テストを1件追加（計5件、全pass）
 - [x] `backend/indicators/zone_break.py` を実装（green、2026-09-12コミット `2c1c8d5`）。
       `detector_bsl/ssl_last_fractal` の無制限バックスキャンは、確定済みフラクタルを
       前向きに積み末尾参照するO(1)方式に置き換え（`fractal_high(j,0)`との数式的同値性で正当化）
@@ -306,9 +308,11 @@ max_hits_per_day = 10
       `backfill_structure_pivot.py`と同じ設計）
 - [x] サンドボックスでバックフィルを実行し検査（同上コミット。6,764,686行/3,279銘柄、
       SSL/BSL確定済み99.7%、既存66列不変を確認。`backend/tests/`全体1699 passed維持）
-- [ ] `backtest_config.toml` に候補戦略を2本追加（§3.5: フリップ版 I1 / 継続ブレイク版 I2）
-- [ ] 型1バックテストを非最適化で単発実行し、Alpha 等の一次指標を確認（§6 検証プラン）
-- [ ] バックエンド全体 `pytest backend/tests/` 全件パス
+- [x] `backtest_config.toml` に候補戦略を2本追加（§3.5: フリップ版 I1 / 継続ブレイク版 I2、
+      2026-09-12コミット`2777df0`）
+- [x] 型1バックテストを非最適化で単発実行し、Alpha 等の一次指標を確認（§6 検証プラン。
+      結果は§6参照 — 単体では明確なエッジ無し、採否は現時点で否定的）
+- [x] バックエンド全体 `pytest backend/tests/` 全件パス（1700 passed、この時点まで都度確認済み）
 - [ ] 本番昇格（増分方式。`promote_structure_pivot.py` を参考に専用スクリプト or 手順を用意）
 - [ ] `GET /api/chart/{symbol_id}/zone_break` を実装、テスト追加
 - [ ] `frontend/src/types.ts` / `frontend/src/api/zoneBreak.ts` とテスト
@@ -333,6 +337,21 @@ $env:PYTHONPATH="backend"; .\venv\Scripts\python.exe -m pytest backend/tests/ -v
 # 型1（非最適化・単発、フリップ版・継続ブレイク版の両方）
 .\venv\Scripts\python.exe backend\backtest\backtest_runner.py --strategy I1_zone_break_flip
 .\venv\Scripts\python.exe backend\backtest\backtest_runner.py --strategy I2_zone_break_breakout
+```
+
+### 2026-09-12 実施結果（サンドボックス、2021-03-26〜2026-03-26、5年）
+
+| 戦略 | Trades | WinRate | PF | Expectancy | AvgGain | SPY | Alpha |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| I1_zone_break_flip（フリップ=初動） | 10,808 | 34.4% | 1.08 | +0.30% | +0.30% | +0.52% | **-0.22%** |
+| I2_zone_break_breakout（継続ブレイク） | 9,818 | 37.6% | 1.14 | +0.55% | +0.55% | +0.56% | **-0.01%** |
+
+**単体では明確なエッジが見えない**（I1はSPY平均保有比で負け、I2はほぼSPY並み）。
+`min_market_cap` 以外の絞り込みを一切かけていない素朴な状態でこの結果であり、
+本計画の背景（§1「前回の会話で...RS/Trend Templateで絞った後の確認フィルタとして
+型1バックテストで有意性を検証してから採否判断すべき、という方針で合意した」）どおり、
+**単体シグナルとしての採否は現時点で否定的**。RS/Trend Templateとの組み合わせでの
+再検証、またはOptuna投入するかはユーザー判断（§2.2でスコープ外と確定済み）。
 
 # フロントエンド
 cd frontend; npm test; npm run build
