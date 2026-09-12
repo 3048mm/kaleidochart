@@ -234,73 +234,20 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 
 ### 作業中メモ
 
-**現在地: 5-2〜5-9b 実装済み。5-11 以降に着手可能（2026-09-12 pytest 1741 passed / 0 failed）。**
+**現在地: 5-1〜5-10 すべて検収合格（2026-09-12）。次は 5-11（sandbox での実走確認）。**
 
-- **5-8b の実装**（`update_pipeline.py::_rebuild_from_parquet()`）: 関数のシグネチャに `config: dict` を追加し、
-  ステップ4の `run_production_restore()` 呼び出し直前に
-  `db_path = paths.resolve_db_path_for_init("stocktool", config["system"]["db_path"])` を計算して
-  `run_production_restore(db_path=db_path)` と明示的に渡す形に変更した。**5-6b の再計算スクリプト3本と全く同じ関数・同じ引数**
-  （`config["system"]["db_path"]` は `load_config()` が読む `config.toml` そのもの）で解決するため、
-  「Parquet は A・書き込み先は B」の食い違いは構造的に発生しない（同じ入力→同じ関数→同じ出力）。
-  呼び出し元 `_run_rebuild_or_pipeline()` は既に `config` を持っていたため、`_rebuild_from_parquet(rebuild_from.upper(), logger, config)`
-  に1行差し替えるだけで済んだ。`run_production_restore.py` 側の「環境変数 `STOCKTOOL_DB_PATH` を解除する」防御（L127）・
-  `db_path=None` 時に本番を決め打ちする既定値は**無変更**（`deploy_after_merge.py` は既に `--db-path` を渡しており挙動不変）。
-  - テスト: `backend/tests/scripts/test_update_pipeline_restore_path.py`（新設・4件）— 5-6b の `TestRunPathIsolation` と
-    同じ手法（`paths.get_repo_root` を偽のワークツリーに差し替え）で、(1) sandbox（`config.local.toml`）を指すワークツリーでは
-    sandbox の db_path（本番の `_DUMMY_PROD_DB_PATH` ではない）で呼ばれること、(2) `STOCKTOOL_DB_PATH` 環境変数がある場合は
-    その解決結果で呼ばれること、(3) 復元先 db_path から導く Parquet ディレクトリ（`get_parquet_master_dir(db_path)`）と、
-    再計算スクリプトの解決順を直接再現した Parquet ディレクトリが一致すること（食い違い防止の回帰テスト）、
-    (4) `run_production_restore()` の `db_path` 既定値が `None` のままであること（後方互換の確認）、を検証。
-    実際の再計算・復元は一切実行しない（`recompute_parquet_*.run` と `run_production_restore` をモック）。
-  - 既存の `test_update_pipeline_rebuild.py`（5-8）は `_call()` の `config={"system": {}}` に `db_path` キーが無く
-    `KeyError` になるため、`config={"system": {"db_path": "dummy_config_db.db"}}` に修正した
-    （呼び出し順序の検証という主眼は変えていない）。
-
-- **5-9b の実装**（`dashboard_router.py:78`）: `market_phase=signal.market_phase,` を
-  `market_phase=signal.market_phase.upper() if signal.market_phase else "UNKNOWN",` に変更
-  （`portfolio_logic.calculate_recommended_cash()` L179 と同じ書き方）。`schemas.py`（`DashboardResponse.market_phase: str`）・
-  フロントエンドは無変更。
-  - **同じ穴の有無を確認**: `grep -rn "\.market_phase\b" backend` で `MarketSignal.market_phase` の全消費箇所を洗い出した。
-    `portfolio_service.py:626` は `calculate_recommended_cash()` に渡すだけで、その関数自身が None ガードを持つため対象外。
-    `schemas.py` の他の `MarketSignal` 由来フィールド（`distribution_days: int` は `or 0`、`market_trend_score: float` は
-    `or 0.0`、`vxv_vix_ratio` は元から `Optional[float]`）は既に安全。**`market_phase: str` が唯一の未ガード箇所だった。**
-  - テスト: `backend/tests/api/test_dashboard_router.py` に `market_phase: str | None = "BULL"` パラメータを
-    `_seed()`/`_make_client()` へ追加（既定値は既存テストと同じ `"BULL"` なので既存アサーションは無変更）、
-    `test_dashboard_market_phase_none_does_not_500`（新設）で `market_phase=None` の `MarketSignal` でも
-    `GET /api/dashboard` が 200 を返し `market_phase == "UNKNOWN"` になることを検証。
-
-
-- **5-9 の実装**（`indicators/market_signals.py`）: `sma_50`/`sma_200` の `min_periods` を窓幅（50/200）に揃えた。
-  - `spy_above_sma200` は `np.where(df['sma_200'].isna(), None, (close > df['sma_200']).astype(int))` に変更（既存の `spy_sma200_rising` と同じ「None = 判定不能」の慣習）。NaN を 0（200日線割れ）に潰さない
-  - `distribution_days` は `is_dist_day.rolling(window=25, min_periods=25).sum()` に変更後、`.astype(int)` を NaN 込みで直接呼ぶと `IntCastingNaNError` になるため、`np.where(dist_days_raw.isna(), None, dist_days_raw.fillna(0).astype(int))` の形に変更（先に `fillna(0)` してから cast し、NaN だった行だけ `None` に戻す）
-  - `market_phase` の `phase()` 関数の先頭に `if row['spy_above_sma200'] is None or row['distribution_days'] is None: return None` を追加。追加前は None が既存の `==1`/`==0` 分岐どちらにも一致せず、else 節の `'BULL'` に誤って落ちていた（205日線割れでも上げ相場でもない「判定不能」を、強気相場と取り違える形）
-  - `atr_14`（L250 付近）は**指示どおり変更していない**（§8 に残作業として追記）
-- **dtype の整合**: `recompute_parquet_signals.py::build_market_signals_frame()` で `spy_above_sma200`/`distribution_days` の cast を `int64` → `pd.to_numeric(..., errors="coerce").astype("float64")` に変更（既存の `spy_sma200_rising` と同じ float64・NaN 許容のパターンに揃えた。nullable `Int64` は使っていない — 既存列にちょうど同じ形の先例があったため、そちらに合わせた）。`t5_signals.py` の書き込み部は `spy_above_sma200`/`distribution_days` の代入を `int(row[...]) if sanitize_numeric(row, ...) is not None else None` に変更（`spy_sma200_rising` と同じパターン）
-- **2010年先頭の実差分**（sandbox Parquet を読み取り専用で確認。`tmp/check_2010_head_diff.py`）: 新旧の計算結果を比較し、**差分は 2010-04-01〜2011-02-10 の219日だけ**（`spy_above_sma200`/`market_phase` が199日、`spy_sma200_rising` が199日、`distribution_days` が24日、和集合で219日）。計画の見立てどおり
-- **既存テストの修正が必要だった箇所**:
-  - `test_calculate.py::test_market_trend_score_neutral` — SPY 履歴がわずか2本だったため、`min_periods` を窓幅に揃えると `sma_50`/`sma_200` が両方 NaN になり `market_trend_score` も NaN になって assert が失敗する。219日ヨコバイ(125)＋最終日だけ150に上昇、という220本の履歴に置き換え、元のシナリオ（終値が両SMAの上に出る）を遡り十分な形で再現した
-  - `test_recompute_parquet_signals.py` の `test_output_has_expected_columns_and_dtypes` — `spy_above_sma200`/`distribution_days` の期待 dtype を `np.int64` → `np.float64` に修正（上記 dtype 変更に追随）
-- **追加したテスト**:
-  - `backend/tests/indicators/test_market_signals_lookback_nan.py`（新設・9件）— 例外が出ないこと（境界含む）、遡り不足で None になり 0/'BULL' に潰れないこと、遡りが十分な区間では従来の `min_periods=1` 版と同じ値になること（回帰防止）
-  - `backend/tests/scripts/test_recompute_parquet_signals.py::TestBuildMarketSignalsFrame::test_insufficient_lookback_produces_nan_without_raising`（新設）— `build_market_signals_frame()` が遡り不足データでも例外なく NaN を返すこと
-  - `backend/tests/pipeline/test_t5_signals_nan_write.py`（新設）— `sync_phase_t5_signals()` の書き込み経路が None 行で `TypeError` にならないこと。**本番の `SPY_LOOKBACK_MIN_BARS`（220）ガードが有効な限り、この経路で実際に None が書き込まれることは無い**（ガードの閾値がちょうど `sma_200`+`shift(20)` の遡り要件と一致するよう設計されているため）。このテストは `SPY_LOOKBACK_MIN_BARS` を意図的に下げて None が書き込み経路に到達する状況を人工的に作り、書き込み側の耐性そのものを検証している
-
-- **5-8 の実装**: `update_pipeline.py` の `_rebuild_t3_or_t4_from_parquet()` を `_rebuild_from_parquet()` に改名し、手順を「Parquet で T3（T3 指定時のみ）→ Parquet で T4（T3/T4 指定時のみ）→ Parquet で T5（`recompute_parquet_signals.run(dry_run=False)`。常に実行）→ SQLite 復元」の4段に変更（`market_signals` も Parquet から復元されるので追加の rotate は不要）。旧来の「`[4/4] T5 を再計算して rotate`」というログだけで実処理の無かった箇所と、`rebuild_from = "T5"` に差し替えて `run_pipeline()` を続行していた撤去対象の処理を、新設の `_run_rebuild_or_pipeline()` に置き換えた。`_run_rebuild_or_pipeline()` は `rebuild_from` が T3/T4/T5 のいずれかなら `_rebuild_from_parquet()` に委譲して**そのまま return**し（`run_pipeline()` を一切呼ばない）、それ以外（`T2` や指定なしの通常実行）は従来どおり `run_pipeline()` を呼ぶ。`--rebuild-from T5` 単独も同じ分岐（`("T3", "T4", "T5")` の条件）に入り、`_rebuild_from_parquet("T5", logger)` 内で T3/T4 の再計算だけがスキップされる（`level in ("T3","T4")` の判定で T4 も回さない）
-- **これにより §7-3 で確認された「5-8 が入るまで `--rebuild-from T3/T4/T5` は最後の `[4/4] T5` で意図的に `RuntimeError` になる」状態は解消された。** T5 は SQLite ではなく Parquet 全期間から計算されるため、5-7 の遡り不足ガード（`sync_phase_t5_signals()` 側）を通らない
-- テスト: `backend/tests/scripts/test_update_pipeline_rebuild.py`（新設・7件）。`recompute_parquet_indicators.run` / `recompute_parquet_ranks.run` / `recompute_parquet_signals.run` / `run_production_restore.run_production_restore` / `pipeline.orchestrator.run_pipeline` をそれぞれモックし、`_run_rebuild_or_pipeline()` を直接呼んで呼び出し順序・`run_pipeline` が呼ばれないことを検証（実パイプライン・実再計算は一切実行しない）
-
-- **5-7 の実装**: `indicators/market_signals.py` に定数 `SPY_LOOKBACK_MIN_BARS = 220` を追加（`sma_200` の `rolling(200)` ＋ `spy_sma200_rising` の `shift(20)` で 200+20=220 本必要という根拠をコメントに明記。MTS の窓を変えたら追随が要る旨も明記）。`t5_signals.py` の `sync_phase_t5_signals()` で `spy_df['date'] = pd.to_datetime(...)` の直後・`calculate_market_signals()` を呼ぶ前に、`gap_dates` の**最古日付**について「その日までの SQLite の SPY 本数」を数え、220本未満なら `RuntimeError` で止める（既存の `t2_prices.py:65` / `orchestrator.py:794` と同じ型・同じ「日本語の理由＋対処法を1つのメッセージに入れる」スタイル）。メッセージには不足日付・実本数・必要本数・原因（SQLite はホット期間のみ）・対処（`--rebuild-from T5` など Parquet 基点の手順）を含める
-- **「最古の gap 日付だけ見れば十分」の根拠**: SPY の日付は連続して増える一方なので、ある日付までの SQLite 行数はその日付が新しいほど多い（単調非減少）。したがって `gap_dates` の中で最も遡りが浅い＝最も条件が厳しいのは必ず最古の日付であり、そこが220本以上ならそれより新しい gap 日付は全て220本以上を満たす
-- テスト: `backend/tests/pipeline/test_t5_lookback_guard.py`（新設・4件）— 遡り不足で例外・境界（220本ちょうどで通過／219本で例外）・日次相当（最新日のみ gap・503本）で通過、を担保。既存の `test_pipeline_idempotency.py::test_sync_phase_t5_backfills_null_score` は、過去250日ぶんを「未計算」のまま（`MarketSignal` レコードなし）にしていたため gap_dates が250日全部に広がり、最古日付では SPY の遡りが1本しかなく新ガードに引っかかっていた。テストの主眼（既存レコードの NULL スコアを埋める）とは無関係な副作用なので、過去250日ぶんに完了済みダミー `MarketSignal`（`market_trend_score=50.0`）を追加し、gap_dates が対象日1件だけになるよう修正した（フィクスチャの是正であり、ガードの仕様やテスト対象ロジックは変えていない）
-
-- 5-2〜5-5 の実装: `indicators/market_signals.py` に `compute_breadth_momentum(raw_df)` を追加し `t5_signals.py` から呼ぶ形に置換。`scripts/recompute_parquet_signals.py` を新設（`build_market_signals_frame()` / `compare_by_period()` を I/O から分離）。テスト `tests/indicators/test_market_signals_breadth.py` / `tests/scripts/test_recompute_parquet_signals.py`
-- 検収で発見: **§7-1（再計算スクリプトが本番 Parquet に書き込める）** → **5-6b で対応済み**
-- **5-6b の実装**: `recompute_parquet_signals.py` / `recompute_parquet_indicators.py`（`run()`・`verify()` の両方）/ `recompute_parquet_ranks.py` の3本で、`db_path = config["system"]["db_path"]` を `db_path = paths.resolve_db_path_for_init("stocktool", config["system"]["db_path"])` に置換。`--apply` の書き込みガード（`paths.ensure_writable(parquet_dir)`）は**「dry-run 早期リターンの直後・書き出しループの直前」**に置いた（計画の「書き出す直前」を、実データを読み込む前ではなく読み込んだ直後・重い書き込み処理の直前、という位置で満たす形。`recompute_parquet_indicators.py` はこれにより「本番へ書けない状態で全銘柄のチャンク再計算を実行してから拒否される」無駄を避けられる）。`verify()`（`--verify`、読み取り専用）はパス解決のみ直し、`ensure_writable` は呼んでいない
-- テスト: `tests/scripts/test_recompute_parquet_signals.py::TestRunPathIsolation`（3件）/ `tests/scripts/test_recompute_parquet_indicators.py`（新設、4件）/ `tests/scripts/test_recompute_parquet_ranks.py`（新設、3件）。いずれも `paths.get_repo_root` を偽の worktree にモンキーパッチし、実行環境の実際の worktree/本体判定に依存しない決定的なテストにしてある（main へ merge 後に実行しても同じ結果になる）
-- **判明した環境依存の注意点（コードは無関係、テスト実行時のみ）**: `recompute_parquet_ranks.py` の出力に含まれる `≈`（U+2248）が、非対話コンソールへのリダイレクト時に Python が cp932 にフォールバックすると `UnicodeEncodeError` になる（`doc/agent_execution_rules.md` §該当の既知事象）。pytest 実行時は `PYTHONIOENCODING=utf-8`/`PYTHONUTF8=1` を付けること。スクリプト自体は変更していない（対象外）
-- sandbox の Parquet は最新世代 `20260911_145621` のみ（ハードリンク）。**2026-08-29 世代は sandbox に無い**ので、5-15 の検算は本番 `data/parquet_master/market_signals_20260829_144251.parquet` を読み取り専用で読む
-- **2026-08-29 世代 `market_signals_20260829_144251.parquet` を prune しないこと**（5-15 の検算に使う）
-- ベースライン測定スクリプトは本体の `tmp/` にある（`t5_parquet_baseline.py` / `t5_breadth_population_check.py` / `spy_mts_window_check.py` / `spy_mts_generation_check.py`）
+- 検収済み: 5-1 / 5-2〜5-5（`dce43e8`）/ 5-6 反証・全セル一致 / 5-6b（`fc0303d`）/ 5-7（`9591796`）/
+  5-8（`acb3842`）/ 5-9（`8b54a34`）/ 5-10 テスト全件 / 5-8b（`e4fca95`）/ 5-9b（`dd8bafa`）。
+  **テスト全体の最新実測: 1741 passed / 0 failed**
+- 5-11 は**オーケストレーター自身の検証作業**（委譲しない）。ワークツリーで `--rebuild-from T3` を実走させ、
+  sandbox の `market_signals` の SPY 由来6列が Parquet 全期間計算と一致することを確認する。
+  **実走前に「解決先が本番ではなく sandbox であること」を必ず確認する**（5-6b/5-8b で塞いだが、
+  本番を壊す操作なので二重に確認する）
+- sandbox の Parquet は世代 `20260911_145621` のハードリンク。本番は既に `20260912_145123` へ進んでいる
+  （デイリー実行のため）。**5-11 は sandbox 世代に対する確認**で、本番の修復は 5-14 で別途行う
+- **検算用**: 本番 `market_signals_20260829_144251.parquet`（prune 禁止）と、そのコピーを
+  ワークツリーの `tmp/verify/` に退避済み（gitignore 対象）
+- ベースライン測定スクリプトは本体の `tmp/`（`t5_parquet_baseline.py` ほか）
 
 ## 6. 検証プラン / 結果
 
@@ -407,7 +354,14 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
   — §7-1（再計算スクリプト3本）・§7-4（`run_production_restore`）はどちらも**呼び出し側が個別にパスを解決している**
   ことが原因で、同じ穴が別の場所に再発しうる。`paths.py` / `db/database.py` のラッパーを必ず通す形にし、
   sandbox・作業領域・本番の切り替えをラッパー内で完結させるのが本質的な対策。
-  **本タスクで扱うか課題リストへ起票するかは別途議論**（ユーザーの明示。5-8b・5-6b はそれまでの暫定対応）
+  **本タスクで扱うか課題リストへ起票するかは別途議論**（ユーザーの明示。5-8b・5-6b はそれまでの暫定対応）。
+  **規模感の調査（2026-09-12 実測）**: `config["system"]["db_path"]` を自前で読むファイルは **31本**。
+  うち Parquet マスタ・ポインタ・復元に触るものが **10本**で、`paths.py` を経由しているのは **3本のみ**
+  （いずれも 5-6b で直した再計算スクリプト）。**つまりマスタに書き込む経路のうち6本が自前解決のまま**:
+  `pipeline/parquet_maintenance.py` / `scripts/backfill_price_history.py` / `scripts/purge_orphan_symbol.py` /
+  `scripts/restore_fx_from_generation.py` / `scripts/restore_truncated_symbol_history.py` /
+  `scripts/truncate_symbol_history.py`。**オーケストレーターの見解**: 本計画には含めず課題リストへ起票するのが妥当
+  （目的が別・6本それぞれに呼び出し経路の確認と検証が必要・T5 修復に必要な経路は 5-6b/5-8b で塞げている）
 - **`DashboardResponse.market_phase` が `Optional` でない** — `schemas.py:274` は `str` 宣言で、`dashboard_router.py:78` は値をそのまま渡す（隣の `distribution_days` は `or 0` で守られている）。5-9 以降 `market_phase` は 2010-04〜2011-02 の行で `None` になりうるため、**ホットキャッシュに 2010年の行が入る復元をした場合だけ**その日付で 500 になる。`portfolio_logic.py:179` と同じ `if market_phase else "UNKNOWN"` の1行で塞げる（**2026-09-12 ユーザー判断で実施 → 5-9b**）
 - **`--rebuild-from T2 --category` の T3 が SQLite 基点のまま** — T2 のカテゴリ再取得後の T3 も、2026-08-29 の事故と同じ構図の可能性がある。T5 は §3.4 のガードで止まるが、T3 は未確認。別 issue 候補
 - **`has_breadth = date >= '2018-04-01'` のハードコード** — 旧起点に由来。① §8 の「既存ガードの撤去」で扱う
