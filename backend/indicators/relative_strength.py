@@ -6,6 +6,59 @@ from numba import njit
 from .moving_averages import calculate_ema_tv
 
 # ============================================================
+# 数値的に頑健な rolling std（rs_ratio_eN / rs_momentum_eN 用）
+# ============================================================
+# 仕様: doc/completed/rs_rolling_std_precision_plan.md
+#
+# なぜ pandas 標準の .rolling().std() を使わないのか:
+#   pandas の rolling std は全履歴に対して1回のパスで逐次更新（online algorithm）
+#   するため、極端に桁の異なる値（累積分割・併合で価格が数十億倍になった過去の
+#   区間など）を通過した際の浮動小数点誤差が、何年も後の全く異なる桁の区間の
+#   計算まで汚染することがある（rs_std が厳密に 0.0 になる、または大きく
+#   ずれた値になる）。棚卸し（2026-09-12）で全3,279銘柄中6銘柄がこの影響を
+#   受けていることを確認済み（価格レンジが極端な銘柄に強く相関するが、完全な
+#   決定的しきい値ではない）。
+#
+#   本実装は各ウィンドウを毎回ゼロから独立に計算する（2パス法: 平均→偏差二乗和）
+#   ため、過去の履歴の桁からの汚染を受けない。ddof=1 で pandas/numpy の
+#   デフォルトと定義を揃える。
+@njit(cache=True)
+def _rolling_std_independent_kernel(values, window, min_periods):
+    n = values.shape[0]
+    out = np.full(n, np.nan)
+    for i in range(n):
+        start = i - window + 1
+        if start < 0:
+            start = 0
+        cnt = 0
+        s = 0.0
+        for j in range(start, i + 1):
+            v = values[j]
+            if not np.isnan(v):
+                cnt += 1
+                s += v
+        if cnt < min_periods or cnt < 2:
+            continue
+        mean = s / cnt
+        ssd = 0.0
+        for j in range(start, i + 1):
+            v = values[j]
+            if not np.isnan(v):
+                d = v - mean
+                ssd += d * d
+        out[i] = np.sqrt(ssd / (cnt - 1))
+    return out
+
+
+def rolling_std_independent(series: pd.Series, window: int, min_periods: int) -> pd.Series:
+    """各ウィンドウを独立に計算する rolling std（ddof=1）。
+    pandas の `.rolling(window).std()` の代替。上の解説コメント参照。
+    """
+    values = np.ascontiguousarray(series.to_numpy(dtype=np.float64))
+    out = _rolling_std_independent_kernel(values, int(window), int(min_periods))
+    return pd.Series(out, index=series.index)
+
+# ============================================================
 # RS ドットの経過日数カウンタ（rs_blue_dot_age / rs_red_dot_age）
 # ============================================================
 # 仕様: doc/completed/rs_dot_age_plan.md §3.1
@@ -135,7 +188,7 @@ def calc_relative_strength(df: pd.DataFrame, df_spy: pd.DataFrame = None) -> pd.
         
         # 2. rs_ratio_eN (Z-score of rs_value_eN over n days)
         rs_mean = rs_ema.rolling(window=n, min_periods=max(1, n//2)).mean()
-        rs_std  = rs_ema.rolling(window=n, min_periods=max(1, n//2)).std()
+        rs_std  = rolling_std_independent(rs_ema, n, max(1, n//2))
         df[f'rs_ratio_e{n}'] = np.where(
             rs_std.isna() | (rs_std == 0), np.nan, (rs_ema - rs_mean) / rs_std
         )
@@ -152,7 +205,7 @@ def calc_relative_strength(df: pd.DataFrame, df_spy: pd.DataFrame = None) -> pd.
         
         # Standardize the smoothed ROC
         roc_mean = roc_ema.rolling(window=n, min_periods=max(1, n//2)).mean()
-        roc_std  = roc_ema.rolling(window=n, min_periods=max(1, n//2)).std()
+        roc_std  = rolling_std_independent(roc_ema, n, max(1, n//2))
         df[f'rs_momentum_e{n}'] = np.where(
             roc_std.isna() | (roc_std == 0), np.nan, (roc_ema - roc_mean) / roc_std
         )

@@ -1,6 +1,6 @@
 # `rs_ratio_eN`/`rs_momentum_eN` の rolling std 数値精度問題 計画書
 
-- **ステータス**: 🚧 実装中
+- **ステータス**: ⏸️ 実装・検証完了、本番昇格待ち（T5 SQLite基点問題のfreeze解除待ち。§5参照）
 - **実施者**: Claude（オーケストレーター実行、2026-09-12セッション継続）
 - **開始日**: 2026-09-12 / **完了日**: —
 - **作業ブランチ**: `worktree-rs-std-precision`（`.claude/worktrees/rs-std-precision`、
@@ -125,14 +125,26 @@ NULL以外の扱い（警告付きスキップ等）にする。
       価格レンジ（`close`の最大値/最小値の比）を調べ、`rs_ratio_eN`がNULLになっている
       銘柄と価格レンジの関係を定量化した（`SOXS`/`SQQQ`/`BOIL`以外にも該当銘柄がないか）
 - [x] §4の合意に基づき対応案を確定する（案2・全銘柄適用、2026-09-12）
-- [ ] 対応案の実装前にテストを書く（TDD）: 極端な価格レンジを持つ合成データで
-      現状のNULL発生を再現するテスト → 修正後にNULLが解消することを確認するテスト
-- [ ] 通常銘柄（価格レンジが普通）で修正前後の計算結果が完全一致することを保証する回帰テスト
-- [ ] sandboxで全銘柄・全期間のT3再計算を実行し、処理時間と結果を検証する
-- [ ] pytest全件パスを確認する
-- [ ] 本番へ昇格する（`sandbox-workflow`のStep4-5）
+- [x] 対応案の実装前にテストを書く（TDD）: `backend/tests/indicators/test_relative_strength_precision.py`
+      （極端な価格レンジ合成データでの再現・独立numpy計算との一致・通常データでの参照実装との一致の3本）
+- [x] 通常銘柄（価格レンジが普通）で修正前後の計算結果が完全一致することを保証する回帰テスト
+      （既存の`test_calculate.py`スナップショットテストを更新。`rs_ratio_e21`等の他カラムは
+      無変更、`rs_momentum_e21`のみ旧バグ値`None`→正しい値に変化したことを確認済み）
+- [x] **sandboxでの検証**（下記「作業中メモ」参照）: 本番相当データ(hardlink)でSOXS/SQQQ/BOIL/
+      NVVE/FAZ/MNTSの異常NULLが解消し、AAPL(対照)と同じ「warmupのみ」のNULLパターンに
+      揃ったことを確認。**ただし `update_pipeline.py --rebuild-from T3` によるsandbox全銘柄
+      公式パイプライン実行は未実施**（理由: 下記の本番昇格ブロッカー参照。cascade先のT5が
+      既知の問題を抱えており、今回の検証目的には`calc_relative_strength`の直接サンプル検証
+      （300銘柄+既知6銘柄+対照1銘柄）で十分と判断）
+- [x] pytest全件パスを確認する（1693 passed、既存スイートに回帰なし）
+- [ ] **本番へ昇格する（ブロック中）**: `t5-sqlite-rebuild-freeze`（2026-09-11〜）により
+      `--rebuild-from`系・`deploy_after_merge`を**本番実行しない**運用ルールが敷かれている
+      （T5のmarket_signals全日付再計算がSQLite基点のままでMTSが壊れる問題が未クローズ）。
+      本変更はT3のみの修正だが、通常の昇格経路（`--rebuild-from T3`）がT4/T5までcascadeする
+      ため、そのままでは使えない。**ユーザーに昇格方法を確認する**（T5問題のクローズを待つか、
+      T5をcascadeさせない昇格手段があるか等）
 - [ ] `doc/issue_list.md` P2該当項目を更新（解決を反映）
-- [ ] 計画書を`doc/completed/`へ移動する
+- [ ] 計画書を`doc/completed/`へ移動する（本番昇格完了後）
 
 ### 作業中メモ
 
@@ -198,6 +210,52 @@ min_periods=n//2)` の後段でさらに `rs_ema`（EMA平滑化後の系列）�
 - 通常銘柄（例: `AAPL`）で修正前後の`rs_ratio_e21`等の値が完全一致することを確認する
   （既存の計算方法を壊していないことの保証）
 
+### 6.0 実装・検証結果（2026-09-12、ワークツリー`rs-std-precision`）
+
+**実装**: `backend/indicators/relative_strength.py` に `rolling_std_independent()` を追加
+（numba `@njit` カーネル、2パス法: 平均→偏差二乗和でddof=1のstdを毎ウィンドウ独立に計算）。
+`rs_std`/`roc_std`（計2箇所×n=5/14/21/63/200）を `.rolling().std()` からこれに置き換え。
+`rs_mean`/`roc_mean`は変更していない（pandasの`.rolling().mean()`のまま。§3の対応案2の
+記述どおりstdのみが対象）。
+
+**合成データでの再現・修正確認**: 前半1200日を1e10スケール、後半1200日を100前後スケール
+にした合成系列で、修正前は成熟区間（後半に入って100営業日以降）で`rs_ratio_e14`が
+1081/1100件（98%）NULL、`rs_ratio_e63`が645/1100件（59%）NULLになることを確認
+（`rs_ratio_e21`はNULLにはならなかったが、値が独立numpy計算比で**650倍**ずれていた:
+0.47 vs 0.0007 — NULLだけでなく**値そのものが壊れるケース**も存在することが判明）。
+修正後は全n・全区間で異常NULL 0件、`rs_ratio_e21`の値も独立numpy計算と小数点5桁まで一致。
+
+**本番相当データでの検証**（sandbox、hardlinkされた本番Parquet世代`20260912_145123`）:
+棚卸しで判明した既知6銘柄（`SOXS`/`SQQQ`/`BOIL`/`NVVE`/`FAZ`/`MNTS`）と対照銘柄`AAPL`に
+ついて`calc_relative_strength`を直接実行。**修正後は7銘柄すべてが同一の
+「warmupのみに由来するNULLパターン」**（各n値のNULL件数が銘柄間で完全一致: e5=5, e14=19,
+e21=29, e63=92, e200=298）に揃った。これは、価格レンジに関わらずEMA+rolling.std()の
+構造上必要なウォームアップ日数だけがNULLの原因として残り、価格レンジ由来の異常NULLが
+完全に解消したことを意味する。
+
+**性能measurement**:
+- `calc_relative_strength`全体（サンプル300銘柄、active）: 平均約30ms/銘柄
+  （初回のnumba JITコンパイル約1.1秒を除く）。全3,279銘柄換算で**約106秒**。
+- std計算部分のみのマイクロベンチマーク（1銘柄相当=n×2箇所×5系統=10回呼び出し）:
+  旧実装(pandas) 8.02ms/銘柄 → 新実装(numba独立計算) 29.24ms/銘柄。
+  **全銘柄換算の増分は約+70秒**（26.3秒→95.9秒）。
+- 参考: 全期間再構築（yfinance再取得込み）は約4時間20分（`parquet-data-quality`スキル
+  §9）。T3のみの再計算でも通常は分〜十数分オーダーと想定され、+70〜96秒は無視できる増分
+  と判断する。**§4-3の性能懸念は解消**（ユーザーへの再エスカレーションは不要と判断）。
+
+**既存テストへの影響**: `backend/tests/indicators/test_calculate.py`の
+`test_calculate_indicators_protection`（現状出力を固定するスナップショットテスト）で
+`rs_momentum_e21`の期待値が`None`→`-1.5909704215098808`に変化。この既存テストは完全に
+決定論的な直線データ（ノイズなし）を使っており、旧実装はこの「ごく小さいが本来非ゼロの
+分散」を誤って0.0/NULLにしていた（＝価格レンジが極端でない通常データでも同種の精度問題が
+発生し得ることの追加証拠）。期待値を修正後の正しい値に更新し、コメントで理由を明記した。
+他の全カラム（`rs_ratio_e21`含む）は無変更。pytest全体（1693件）はこの1件の更新以外
+無修正でパス。
+
+**未実施（本番昇格ブロッカーのため）**: `update_pipeline.py --rebuild-from T3`による
+sandbox全銘柄の公式パイプライン実行。理由は§5チェックリスト参照（T5 SQLite基点問題の
+freeze中で、cascade経路の検証を今回は見送った）。
+
 ### 6.1 反証 — この結論が誤りだとしたら、何が観測されるはずか
 
 - **この結論（pandasの`.rolling().std()`の逐次計算精度が原因）が誤りだとしたら**:
@@ -220,7 +278,20 @@ min_periods=n//2)` の後段でさらに `rs_ema`（EMA平滑化後の系列）�
 
 ## 7. 途中発生した課題
 
-（着手後に記入）
+- **本番昇格が `t5-sqlite-rebuild-freeze` にブロックされていることが判明**（2026-09-12）。
+  本変更は種別B（T3のみ）だが、標準の昇格経路（`update_pipeline.py --rebuild-from T3`）は
+  T4/T5までcascadeする設計になっており、T5（market_signals）が2026-09-11〜SQLite基点の
+  ままで壊れている既知issueが未クローズのため、このまま本番実行すると別issueを踏む。
+  §5チェックリストに反映済み。次セッション（またはユーザーとの合意後）で昇格方法を
+  再検討する必要がある。
+- **テストスクリプトのインデックス整合性バグ（本番コードのバグではない）**: 性能検証用の
+  検証スクリプト（`tmp/perf_and_correctness_check.py`）で、複数銘柄を1つの
+  `pd.read_parquet()`結果から`symbol_id`でスライスして`reset_index()`せずに
+  `calc_relative_strength`へ渡すと、関数内の`close = df['close']`（merge前に取得した
+  Series）とmerge後の`df`のインデックスが一致せず、pandasの索引アラインメントにより
+  行数が想定外に増える（`ValueError: operands could not be broadcast`）。本番の
+  `calculate_indicators()`は呼び出し前に必ず`df.sort_values('date').reset_index(drop=True)`
+  するため実害はないが、他の検証スクリプトを書く際は同様に注意すること。
 
 ## 8. スコープ外・残作業
 
