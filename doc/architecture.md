@@ -298,6 +298,9 @@ graph TD
 > [!NOTE]
 > スキーマ（列定義）は Parquet と SQLite で完全に同一です。Parquet は Snappy 圧縮による省スペースバイナリ、SQLite は高速ランダム検索用のインデックスインジケータ付きキャッシュテーブルとして機能します。
 
+> [!NOTE]
+> **T3/T4/T5 の全期間再構築（`--rebuild-from T3/T4/T5`、`deploy_after_merge.ps1`）は Parquet 基点で計算する。** SQLite はホット期間（730日）しか持たないため、SQLite 基点で全日付を再計算すると窓の先頭が壊れる（実例: `pipeline-debugging` スキル参照）。
+
 ### 11.1.1 銘柄マスタ `universe.db` の位置づけ
 
 `data/universe.db` は **銘柄定義の編集マスター**です。上表のホット/コールドとは別系統で、

@@ -224,8 +224,8 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 - [x] **5-8b** **`run_production_restore()` の復元先を明示する**（§3.7・§7-4・§4-6）— `_rebuild_from_parquet()` から解決済みの db_path を渡す。関数側の「環境変数を解除する」防御は残す。テストで「ワークツリーからは sandbox を対象にする」「引数なしの従来挙動を変えていない」を担保。**5-11・5-14 の前提**
 - [x] **5-9b** **`dashboard_router.py:78` に `market_phase` の None ガードを足す**（§4-7）— `portfolio_logic.py:179` と同じ `if market_phase else "UNKNOWN"` の書き方に揃える
 - [ ] **5-11** sandbox で `--rebuild-from T3` を実行 → **sandbox の `market_signals` の SPY 由来6列が Parquet 全期間計算と全期間で完全一致**すること、`db_health_check.py --all --check-nulls` が通ること
-- [ ] **5-12** ルールの明記（§3.5）+ `sync_skills.py --apply`
-- [ ] **5-13** 仕様書の T5 記述を更新
+- [x] **5-12** ルールの明記（§3.5）+ `sync_skills.py --apply`
+- [x] **5-13** 仕様書の T5 記述を更新
 - [ ] **5-14** **本体チェックアウトから実行する**（ワークツリーからは sandbox を指すため — §7-2）。先に 5-16 の「修復前」の型3 シナリオを実行して記録しておく → merge → **dry-run の差分をユーザーに提示して確認** → API サーバ停止 → `tools/deploy_after_merge.ps1 -RebuildFrom T5` → API サーバ再起動（§4-2）
 - [ ] **5-15** 本番の修復確認 — 成功条件 2・3（Parquet 全期間計算と完全一致 / 8/29 世代と 8/29 以前で完全一致）
 - [ ] **5-16** 型3 シナリオの再評価（§4-3）— 修復前（5-14 の前）と修復後で同じ条件で実行し before/after を記録。**期待値は「変化なし」**（§4.1）。大きく変わったら想定外の読み取り経路を調べる
@@ -234,8 +234,14 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 
 ### 作業中メモ
 
-**現在地: 5-1〜5-10 すべて検収合格（2026-09-12）。次は 5-11（sandbox での実走確認）。**
+**現在地: 5-1〜5-10・5-8b・5-9b・5-12・5-13 検収合格（2026-09-12）。次は 5-11（sandbox での実走確認）。**
 
+- 5-12・5-13（ドキュメント更新のみ・コード変更なし）: `.claude/skills/pipeline-debugging/SKILL.md`（Parquet 基点の明記・
+  SPY 変更時のリフレッシュ・T5 遡り不足時の復旧手順）→ `sync_skills.py --apply` で `.agents/skills/` に同期、
+  `doc/agent_execution_rules.md` §10.5（`deploy_after_merge` の T3/T4/T5 が Parquet 基点である旨）、
+  `doc/backend_specification.md`（Phase 5 表・§3.6 に NULL 方針と Parquet dtype float64 を明記）、
+  `doc/architecture.md`（§11.2 に T3/T4/T5 再構築の Parquet 基点 NOTE を追加）。pytest 1741 passed / 0 failed、
+  `sync_skills.py --check` 差分ゼロを確認済み
 - 検収済み: 5-1 / 5-2〜5-5（`dce43e8`）/ 5-6 反証・全セル一致 / 5-6b（`fc0303d`）/ 5-7（`9591796`）/
   5-8（`acb3842`）/ 5-9（`8b54a34`）/ 5-10 テスト全件 / 5-8b（`e4fca95`）/ 5-9b（`dd8bafa`）。
   **テスト全体の最新実測: 1741 passed / 0 failed**

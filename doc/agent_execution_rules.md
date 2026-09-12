@@ -565,6 +565,8 @@ SEC を参照するスクリプトがワークツリーで動くようになる�
 
 merge 直後に本体で `tools/deploy_after_merge.ps1` を実行する（1コマンド化。計画書: `doc/in_progress/deploy_after_merge_plan.md`）。処理内容: 前提チェック → 本番 Parquet のコピーに新コードでマイグレーション/再計算 → swap → `restore_sqlite_cache_from_parquet` → `db_health_check` → NG なら旧世代へロールバック。
 
+`-RebuildFrom T3/T4/T5` を指定した場合、T3/T4/T5 は Parquet 基点で全期間再生成される（SQLite 基点では計算しない）。SQLite の復元先は解決済みのパスが明示的に渡される（`run_production_restore(db_path=...)`）ため、作業領域からの実行が本番を書き換えることはない。
+
 - マイグレーションは**冪等（再実行可能）**に書く（昇格時に最新の本番データへ再適用されるため）。
 - 昇格中は daily update と API サーバを停止する。
 - **APIサーバーの再起動**: backendコードを変更した場合は、適用後に本番の API サーバープロセス（`run_server.bat`等）を再起動して反映すること。
