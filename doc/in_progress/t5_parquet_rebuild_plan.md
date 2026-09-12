@@ -207,7 +207,7 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 - [x] **5-7** 遡り不足ガード（§3.4）のテスト → 実装（§4-1）
 - [x] **5-8** `update_pipeline.py` の再構築手順を変更（§3.3）+ テスト
 - [x] **5-9**（§4-4 が「揃える」なら）SPY 自前計算を揃え、`distribution_days` / `spy_above_sma200` の NaN 対策 + テスト
-- [ ] **5-10** pytest 全件パス
+- [x] **5-10** pytest 全件パス（2026-09-12 オーケストレーター実測: **1736 passed / 0 failed**）
 - [ ] **5-11** sandbox で `--rebuild-from T3` を実行 → **sandbox の `market_signals` の SPY 由来6列が Parquet 全期間計算と全期間で完全一致**すること、`db_health_check.py --all --check-nulls` が通ること
 - [ ] **5-12** ルールの明記（§3.5）+ `sync_skills.py --apply`
 - [ ] **5-13** 仕様書の T5 記述を更新
@@ -337,8 +337,22 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 - **状態**: 本計画に含めるか（**5-8b** とする）、別 issue にするか、**ユーザー判断待ち**。
   **5-11・5-14 の前提**なので、判断が出るまでそこには進まない
 
+### 7-5. 5-9 で Parquet の dtype を2列変更した（§3.2 の制約からの逸脱・2026-09-12 検収で確認）
+
+- **事象**: §3.2 では「出力スキーマは現行 Parquet の `market_signals` に合わせる（dtype も現行世代に揃える）」としていたが、
+  5-9 で `spy_above_sma200` / `distribution_days` を **int64 → float64** に変えた
+- **理由**: 両列が `None`（判定不能）を取りうるようになったため。**int64 は NaN を表現できず `astype` で落ちる**。
+  既に `None` を取りうる `spy_sma200_rising` が float64 だったので、その慣習に揃えた（pandas の nullable `Int64` は導入していない）
+- **消費側への影響は無し（検収で実測確認）**:
+  - Parquet の `signals` を直接読むのは `backtest/etf_single_runner.py:164` の1箇所のみで、使うのは `date` と
+    `market_trend_score` だけ（`pd.isna` ガード付き・失敗時は動的計算にフォールバック）。変更した2列は読んでいない
+  - API・フロントは SQLite から読む。SQLite 書き込み側（`t5_signals.py`）は `int(...) or None` を維持しているため、
+    SQLite の列は従来どおり整数のまま
+  - rotate のマージ（`merge_timeseries_table`）は旧世代 int64 と新世代 float64 の concat になるが、float64 に統一されるだけ
+
 ## 8. スコープ外・残作業
 
+- **`DashboardResponse.market_phase` が `Optional` でない** — `schemas.py:274` は `str` 宣言で、`dashboard_router.py:78` は値をそのまま渡す（隣の `distribution_days` は `or 0` で守られている）。5-9 以降 `market_phase` は 2010-04〜2011-02 の行で `None` になりうるため、**ホットキャッシュに 2010年の行が入る復元をした場合だけ**その日付で 500 になる。`portfolio_logic.py:179` と同じ `if market_phase else "UNKNOWN"` の1行で塞げる（今回はスコープ外・ユーザー判断待ち）
 - **`--rebuild-from T2 --category` の T3 が SQLite 基点のまま** — T2 のカテゴリ再取得後の T3 も、2026-08-29 の事故と同じ構図の可能性がある。T5 は §3.4 のガードで止まるが、T3 は未確認。別 issue 候補
 - **`has_breadth = date >= '2018-04-01'` のハードコード** — 旧起点に由来。① §8 の「既存ガードの撤去」で扱う
 - **日次の T5 でも `market_trend_score` が NULL の過去日付は `gap_dates` に入る**（`pipeline-debugging/SKILL.md:32`「NULL 欠損は過去に遡ってバックフィル」）。SQLite 窓の先頭付近の日付が NULL だと遡りが足りない。§3.4 のガードで止まるので黙って壊れはしないが、止まったときの復旧手順（`--rebuild-from T5`）を SKILL.md に書く
