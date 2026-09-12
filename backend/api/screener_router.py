@@ -128,6 +128,9 @@ _VIRTUAL_COLUMNS = {
     "sp_dist_pivot_pct": lambda: (Indicator.sp_pivot - DailyPrice.close) / DailyPrice.close * 100,
     "sp_range_pct":      lambda: (Indicator.sp_pivot - Indicator.sp_hl) / DailyPrice.close * 100,
     "sp_risk_pct":       lambda: (DailyPrice.close - Indicator.sp_hl) / DailyPrice.close * 100,
+    # Direction via Zone Break。zb_ssl（損切り候補）/ zb_bsl（ブレイク水準、済みなら負値）までの距離
+    "zb_dist_ssl_pct": lambda: (DailyPrice.close - Indicator.zb_ssl) / DailyPrice.close * 100,
+    "zb_dist_bsl_pct": lambda: (Indicator.zb_bsl - DailyPrice.close) / DailyPrice.close * 100,
 }
 
 # --- レジストリ fail-loud 判定用: 既知カラム集合 / ランクカラム集合 ---

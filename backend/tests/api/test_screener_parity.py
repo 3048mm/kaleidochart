@@ -130,6 +130,13 @@ def _stock_today_overrides(t: int) -> dict:
         #   hi : 98  -> 上抜け成立（95.24 <= 98 < 100）
         #   lo : 90  -> 不成立（前日終値 101.01 が既に上）
         "sp_counter": 98.0 if hi else 90.0,
+        # Direction via Zone Break。t=1: Bear→Bull flip 成立。t=2: Bull→Bear flip 成立。
+        # t=3: Bear継続、zb_sslが前日(90)から下落(85)→bear_breakout 成立。
+        # t=4: Bull継続、zb_bslが前日(105)から上昇(112)→bull_breakout 成立。
+        # t=5: Bull継続だがzb_bsl不変(110)→bull_breakout 不成立。t=6: Bear継続だがzb_ssl不変(92)→不成立。
+        "is_zone_break_bull": {1: True, 2: False, 3: False, 4: True, 5: True, 6: False}[t],
+        "zb_ssl": {3: 85.0, 6: 92.0}.get(t, 1.0),
+        "zb_bsl": {4: 112.0, 5: 110.0}.get(t, 1.0),
     }
 
 
@@ -145,6 +152,10 @@ def _stock_prev_overrides(t: int) -> dict:
         "dist_63d_high_pct": -5.0,   # fail-loud のカラム充足確認用（pivot_tol 未指定時は未使用）
         "vol_surge_21": 1.0,          # 同上
         "avg_dollar_volume_21": 5e6,
+        # Direction via Zone Break の前日状態（today側コメント参照）
+        "is_zone_break_bull": {1: False, 2: True, 3: False, 4: True, 5: True, 6: False}[t],
+        "zb_ssl": {3: 90.0, 6: 92.0}.get(t, 1.0),
+        "zb_bsl": {4: 105.0, 5: 110.0}.get(t, 1.0),
     }
 
 

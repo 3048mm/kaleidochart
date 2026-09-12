@@ -543,6 +543,61 @@ def filter_structure_trend_line_break(merged: pd.DataFrame) -> pd.Series:
     mask = (prev_close <= merged['sp_counter']) & (merged['close'] > merged['sp_counter'])
     return mask.fillna(False)
 
+def filter_is_zone_break_bull_flip(merged: pd.DataFrame) -> pd.Series:
+    """Direction via Zone Break: 前日Bear→当日Bullに転換した銘柄を通過させる。
+
+    Pine原文の `isBreak_bl` 由来の反転イベント（計画書 doc/in_progress/zone_break_plan.md
+    §3.1.1 参照）。イベント型フィルタのため、必要カラムが無い場合は全False
+    （`filter_structure_1st_break` 等と同じ deny-by-default 方針）。
+    """
+    required = ('is_zone_break_bull', 'prev_is_zone_break_bull')
+    if any(c not in merged.columns for c in required):
+        return pd.Series(False, index=merged.index)
+    mask = (merged['prev_is_zone_break_bull'] == False) & (merged['is_zone_break_bull'] == True)
+    return mask.fillna(False)
+
+
+def filter_is_zone_break_bear_flip(merged: pd.DataFrame) -> pd.Series:
+    """Direction via Zone Break: 前日Bull→当日Bearに転換した銘柄を通過させる（対称）。"""
+    required = ('is_zone_break_bull', 'prev_is_zone_break_bull')
+    if any(c not in merged.columns for c in required):
+        return pd.Series(False, index=merged.index)
+    mask = (merged['prev_is_zone_break_bull'] == True) & (merged['is_zone_break_bull'] == False)
+    return mask.fillna(False)
+
+
+def filter_is_zone_break_bull_breakout(merged: pd.DataFrame) -> pd.Series:
+    """Direction via Zone Break: Bull継続中に新しいゾーンをブレイクした銘柄を通過させる。
+
+    Pine原文の `isConf_bl` 由来の継続イベント（フリップとは異なる意味を持つ。
+    計画書 §3.1.1 参照）。前日・当日ともBullが継続していること（フリップ当日は
+    prev_is_zone_break_bull==False になるため自然に除外される）に加え、`zb_bsl` が
+    前日から更新（上昇）されていることを条件とする。
+    """
+    required = ('is_zone_break_bull', 'prev_is_zone_break_bull', 'zb_bsl', 'prev_zb_bsl')
+    if any(c not in merged.columns for c in required):
+        return pd.Series(False, index=merged.index)
+    mask = (
+        (merged['prev_is_zone_break_bull'] == True)
+        & (merged['is_zone_break_bull'] == True)
+        & (merged['zb_bsl'] > merged['prev_zb_bsl'])
+    )
+    return mask.fillna(False)
+
+
+def filter_is_zone_break_bear_breakout(merged: pd.DataFrame) -> pd.Series:
+    """Direction via Zone Break: Bear継続中に新しいゾーンをブレイクした銘柄を通過させる（対称）。"""
+    required = ('is_zone_break_bull', 'prev_is_zone_break_bull', 'zb_ssl', 'prev_zb_ssl')
+    if any(c not in merged.columns for c in required):
+        return pd.Series(False, index=merged.index)
+    mask = (
+        (merged['prev_is_zone_break_bull'] == False)
+        & (merged['is_zone_break_bull'] == False)
+        & (merged['zb_ssl'] < merged['prev_zb_ssl'])
+    )
+    return mask.fillna(False)
+
+
 # ============================================================
 # 特殊ブールフィルタキーのレジストリ
 # ============================================================
