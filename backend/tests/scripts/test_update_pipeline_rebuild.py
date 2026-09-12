@@ -47,7 +47,7 @@ def _call(rebuild_from, categories=None, caplog_level=logging.INFO):
     update_pipeline._run_rebuild_or_pipeline(
         rebuild_from=rebuild_from,
         selected_categories=categories,
-        config={"system": {}},
+        config={"system": {"db_path": "dummy_config_db.db"}},
         db_path="dummy.db",
         logger=logger,
         skip_fetch=False,

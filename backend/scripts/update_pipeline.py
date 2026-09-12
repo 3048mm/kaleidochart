@@ -21,7 +21,7 @@ from logging.handlers import RotatingFileHandler
 
 import multiprocessing
 
-def _rebuild_from_parquet(level: str, logger) -> None:
+def _rebuild_from_parquet(level: str, logger, config: dict) -> None:
     """T3 / T4 / T5 の作り直しを **Parquet 基点**で行う。
 
     ## なぜ SQLite 基点ではいけないか
@@ -60,12 +60,25 @@ def _rebuild_from_parquet(level: str, logger) -> None:
     `--category` は無視する（全銘柄を作り直す方が安全で、Parquet 基点なら
     銘柄を絞る利点も無いため）。
 
+    ## 復元先の解決（§3.7・5-8b）
+
+    ステップ4で呼ぶ `run_production_restore()` は引数なしだと
+    `<チェックアウトのルート>/data/stocktool.db` を決め打ちする。再計算スクリプト3本
+    （5-6b）と食い違うと「Parquet は A・書き込み先は B」の破壊的な不整合になるため、
+    ここで**同じ解決結果**（`paths.resolve_db_path_for_init()`）を明示的に渡す。
+
     Args:
         level: "T3" / "T4" / "T5"。T4 指定時は T3 を、T5 指定時は T3・T4 を
                それぞれスキップする（依存元は既に作り直し済みという前提）。
+        config: `load_config()` で読んだ `config.toml`。db_path 解決に使う。
     """
+    import paths
     from scripts import recompute_parquet_indicators, recompute_parquet_ranks, recompute_parquet_signals
     from scripts.run_production_restore import run_production_restore
+
+    # 再計算スクリプト3本（5-6b）と同じ解決順に揃える。ここが食い違うと
+    # 「Parquet は A・書き込み先は B」の破壊的な不整合になる。
+    db_path = paths.resolve_db_path_for_init("stocktool", config["system"]["db_path"])
 
     if level == "T3":
         logger.info("=== [1/4] Parquet の T3 を全期間再計算 ===")
@@ -83,8 +96,8 @@ def _rebuild_from_parquet(level: str, logger) -> None:
     logger.info("=== [3/4] Parquet の T5 を全期間再計算 ===")
     recompute_parquet_signals.run(dry_run=False)
 
-    logger.info("=== [4/4] SQLite をホット期間ぶん復元 ===")
-    if not run_production_restore():
+    logger.info("=== [4/4] SQLite をホット期間ぶん復元 (%s) ===", db_path)
+    if not run_production_restore(db_path=db_path):
         raise RuntimeError("SQLite の復元に失敗しました。Parquet は更新済みなので、"
                            " 復元だけやり直してください。")
 
@@ -104,7 +117,7 @@ def _run_rebuild_or_pipeline(rebuild_from, selected_categories, config, db_path,
         if selected_categories:
             logger.warning("--rebuild-from %s では --category を無視し、全銘柄を作り直します"
                            "（Parquet 基点のため銘柄を絞る利点がありません）", rebuild_from)
-        _rebuild_from_parquet(rebuild_from.upper(), logger)
+        _rebuild_from_parquet(rebuild_from.upper(), logger, config)
         return
 
     from pipeline.orchestrator import run_pipeline
