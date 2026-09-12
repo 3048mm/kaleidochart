@@ -75,7 +75,12 @@ def get_dashboard(
 
     resp = schemas.DashboardResponse(
         date=target_date,
-        market_phase=signal.market_phase,
+        # market_phase は SPY の遡りが足りない先頭区間（2010-04〜2011-02）で
+        # None になりうる（indicators/market_signals.py の SPY_LOOKBACK_MIN_BARS 未満）。
+        # DashboardResponse.market_phase は Optional でない str 宣言のため、
+        # None をそのまま渡すとレスポンス構築時に 500 になる。
+        # portfolio_logic.calculate_recommended_cash() と同じ "UNKNOWN" の慣習に揃える。
+        market_phase=signal.market_phase.upper() if signal.market_phase else "UNKNOWN",
         distribution_days=signal.distribution_days or 0,
         market_trend_score=signal.market_trend_score or 0.0,
         vxv_vix_ratio=signal.vxv_vix_ratio,

@@ -221,8 +221,8 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 - [x] **5-8** `update_pipeline.py` の再構築手順を変更（§3.3）+ テスト
 - [x] **5-9**（§4-4 が「揃える」なら）SPY 自前計算を揃え、`distribution_days` / `spy_above_sma200` の NaN 対策 + テスト
 - [x] **5-10** pytest 全件パス（2026-09-12 オーケストレーター実測: **1736 passed / 0 failed**）
-- [ ] **5-8b** **`run_production_restore()` の復元先を明示する**（§3.7・§7-4・§4-6）— `_rebuild_from_parquet()` から解決済みの db_path を渡す。関数側の「環境変数を解除する」防御は残す。テストで「ワークツリーからは sandbox を対象にする」「引数なしの従来挙動を変えていない」を担保。**5-11・5-14 の前提**
-- [ ] **5-9b** **`dashboard_router.py:78` に `market_phase` の None ガードを足す**（§4-7）— `portfolio_logic.py:179` と同じ `if market_phase else "UNKNOWN"` の書き方に揃える
+- [x] **5-8b** **`run_production_restore()` の復元先を明示する**（§3.7・§7-4・§4-6）— `_rebuild_from_parquet()` から解決済みの db_path を渡す。関数側の「環境変数を解除する」防御は残す。テストで「ワークツリーからは sandbox を対象にする」「引数なしの従来挙動を変えていない」を担保。**5-11・5-14 の前提**
+- [x] **5-9b** **`dashboard_router.py:78` に `market_phase` の None ガードを足す**（§4-7）— `portfolio_logic.py:179` と同じ `if market_phase else "UNKNOWN"` の書き方に揃える
 - [ ] **5-11** sandbox で `--rebuild-from T3` を実行 → **sandbox の `market_signals` の SPY 由来6列が Parquet 全期間計算と全期間で完全一致**すること、`db_health_check.py --all --check-nulls` が通ること
 - [ ] **5-12** ルールの明記（§3.5）+ `sync_skills.py --apply`
 - [ ] **5-13** 仕様書の T5 記述を更新
@@ -234,7 +234,41 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 
 ### 作業中メモ
 
-**現在地: 5-2〜5-9 実装済み。5-10 以降に着手可能。**
+**現在地: 5-2〜5-9b 実装済み。5-11 以降に着手可能（2026-09-12 pytest 1741 passed / 0 failed）。**
+
+- **5-8b の実装**（`update_pipeline.py::_rebuild_from_parquet()`）: 関数のシグネチャに `config: dict` を追加し、
+  ステップ4の `run_production_restore()` 呼び出し直前に
+  `db_path = paths.resolve_db_path_for_init("stocktool", config["system"]["db_path"])` を計算して
+  `run_production_restore(db_path=db_path)` と明示的に渡す形に変更した。**5-6b の再計算スクリプト3本と全く同じ関数・同じ引数**
+  （`config["system"]["db_path"]` は `load_config()` が読む `config.toml` そのもの）で解決するため、
+  「Parquet は A・書き込み先は B」の食い違いは構造的に発生しない（同じ入力→同じ関数→同じ出力）。
+  呼び出し元 `_run_rebuild_or_pipeline()` は既に `config` を持っていたため、`_rebuild_from_parquet(rebuild_from.upper(), logger, config)`
+  に1行差し替えるだけで済んだ。`run_production_restore.py` 側の「環境変数 `STOCKTOOL_DB_PATH` を解除する」防御（L127）・
+  `db_path=None` 時に本番を決め打ちする既定値は**無変更**（`deploy_after_merge.py` は既に `--db-path` を渡しており挙動不変）。
+  - テスト: `backend/tests/scripts/test_update_pipeline_restore_path.py`（新設・4件）— 5-6b の `TestRunPathIsolation` と
+    同じ手法（`paths.get_repo_root` を偽のワークツリーに差し替え）で、(1) sandbox（`config.local.toml`）を指すワークツリーでは
+    sandbox の db_path（本番の `_DUMMY_PROD_DB_PATH` ではない）で呼ばれること、(2) `STOCKTOOL_DB_PATH` 環境変数がある場合は
+    その解決結果で呼ばれること、(3) 復元先 db_path から導く Parquet ディレクトリ（`get_parquet_master_dir(db_path)`）と、
+    再計算スクリプトの解決順を直接再現した Parquet ディレクトリが一致すること（食い違い防止の回帰テスト）、
+    (4) `run_production_restore()` の `db_path` 既定値が `None` のままであること（後方互換の確認）、を検証。
+    実際の再計算・復元は一切実行しない（`recompute_parquet_*.run` と `run_production_restore` をモック）。
+  - 既存の `test_update_pipeline_rebuild.py`（5-8）は `_call()` の `config={"system": {}}` に `db_path` キーが無く
+    `KeyError` になるため、`config={"system": {"db_path": "dummy_config_db.db"}}` に修正した
+    （呼び出し順序の検証という主眼は変えていない）。
+
+- **5-9b の実装**（`dashboard_router.py:78`）: `market_phase=signal.market_phase,` を
+  `market_phase=signal.market_phase.upper() if signal.market_phase else "UNKNOWN",` に変更
+  （`portfolio_logic.calculate_recommended_cash()` L179 と同じ書き方）。`schemas.py`（`DashboardResponse.market_phase: str`）・
+  フロントエンドは無変更。
+  - **同じ穴の有無を確認**: `grep -rn "\.market_phase\b" backend` で `MarketSignal.market_phase` の全消費箇所を洗い出した。
+    `portfolio_service.py:626` は `calculate_recommended_cash()` に渡すだけで、その関数自身が None ガードを持つため対象外。
+    `schemas.py` の他の `MarketSignal` 由来フィールド（`distribution_days: int` は `or 0`、`market_trend_score: float` は
+    `or 0.0`、`vxv_vix_ratio` は元から `Optional[float]`）は既に安全。**`market_phase: str` が唯一の未ガード箇所だった。**
+  - テスト: `backend/tests/api/test_dashboard_router.py` に `market_phase: str | None = "BULL"` パラメータを
+    `_seed()`/`_make_client()` へ追加（既定値は既存テストと同じ `"BULL"` なので既存アサーションは無変更）、
+    `test_dashboard_market_phase_none_does_not_500`（新設）で `market_phase=None` の `MarketSignal` でも
+    `GET /api/dashboard` が 200 を返し `market_phase == "UNKNOWN"` になることを検証。
+
 
 - **5-9 の実装**（`indicators/market_signals.py`）: `sma_50`/`sma_200` の `min_periods` を窓幅（50/200）に揃えた。
   - `spy_above_sma200` は `np.where(df['sma_200'].isna(), None, (close > df['sma_200']).astype(int))` に変更（既存の `spy_sma200_rising` と同じ「None = 判定不能」の慣習）。NaN を 0（200日線割れ）に潰さない
