@@ -205,7 +205,7 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 - [x] **5-6** **§6.1 の反証**（2026-09-12 オーケストレーター実施。**§1.2(a) と全セル一致で合格**） — ワークツリーから本番 Parquet を読み取り専用で `--dry-run` し、差分が §1.2(a) のベースライン（P3 の SPY 由来列 38/15/58/22日、他期間 0日）と一致するか照合。**一致しなければ実装に進まず原因を調べる**
 - [x] **5-6b** **再計算スクリプト3本の隔離を直す**（§3.6・§7-1）— パス解決を `paths.resolve_db_path_for_init()` に揃え、`--apply` の書き込み前に `paths.ensure_writable()`。テストで「ワークツリーから `--apply` すると `ProductionWriteError`」「`--dry-run` は本番を読める」を担保。**5-11・5-14 の前提**
 - [x] **5-7** 遡り不足ガード（§3.4）のテスト → 実装（§4-1）
-- [ ] **5-8** `update_pipeline.py` の再構築手順を変更（§3.3）+ テスト
+- [x] **5-8** `update_pipeline.py` の再構築手順を変更（§3.3）+ テスト
 - [ ] **5-9**（§4-4 が「揃える」なら）SPY 自前計算を揃え、`distribution_days` / `spy_above_sma200` の NaN 対策 + テスト
 - [ ] **5-10** pytest 全件パス
 - [ ] **5-11** sandbox で `--rebuild-from T3` を実行 → **sandbox の `market_signals` の SPY 由来6列が Parquet 全期間計算と全期間で完全一致**すること、`db_health_check.py --all --check-nulls` が通ること
@@ -219,7 +219,11 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 
 ### 作業中メモ
 
-**現在地: 5-2〜5-7 実装済み。5-8 以降に着手可能。**
+**現在地: 5-2〜5-8 実装済み。5-9 以降に着手可能。**
+
+- **5-8 の実装**: `update_pipeline.py` の `_rebuild_t3_or_t4_from_parquet()` を `_rebuild_from_parquet()` に改名し、手順を「Parquet で T3（T3 指定時のみ）→ Parquet で T4（T3/T4 指定時のみ）→ Parquet で T5（`recompute_parquet_signals.run(dry_run=False)`。常に実行）→ SQLite 復元」の4段に変更（`market_signals` も Parquet から復元されるので追加の rotate は不要）。旧来の「`[4/4] T5 を再計算して rotate`」というログだけで実処理の無かった箇所と、`rebuild_from = "T5"` に差し替えて `run_pipeline()` を続行していた撤去対象の処理を、新設の `_run_rebuild_or_pipeline()` に置き換えた。`_run_rebuild_or_pipeline()` は `rebuild_from` が T3/T4/T5 のいずれかなら `_rebuild_from_parquet()` に委譲して**そのまま return**し（`run_pipeline()` を一切呼ばない）、それ以外（`T2` や指定なしの通常実行）は従来どおり `run_pipeline()` を呼ぶ。`--rebuild-from T5` 単独も同じ分岐（`("T3", "T4", "T5")` の条件）に入り、`_rebuild_from_parquet("T5", logger)` 内で T3/T4 の再計算だけがスキップされる（`level in ("T3","T4")` の判定で T4 も回さない）
+- **これにより §7-3 で確認された「5-8 が入るまで `--rebuild-from T3/T4/T5` は最後の `[4/4] T5` で意図的に `RuntimeError` になる」状態は解消された。** T5 は SQLite ではなく Parquet 全期間から計算されるため、5-7 の遡り不足ガード（`sync_phase_t5_signals()` 側）を通らない
+- テスト: `backend/tests/scripts/test_update_pipeline_rebuild.py`（新設・7件）。`recompute_parquet_indicators.run` / `recompute_parquet_ranks.run` / `recompute_parquet_signals.run` / `run_production_restore.run_production_restore` / `pipeline.orchestrator.run_pipeline` をそれぞれモックし、`_run_rebuild_or_pipeline()` を直接呼んで呼び出し順序・`run_pipeline` が呼ばれないことを検証（実パイプライン・実再計算は一切実行しない）
 
 - **5-7 の実装**: `indicators/market_signals.py` に定数 `SPY_LOOKBACK_MIN_BARS = 220` を追加（`sma_200` の `rolling(200)` ＋ `spy_sma200_rising` の `shift(20)` で 200+20=220 本必要という根拠をコメントに明記。MTS の窓を変えたら追随が要る旨も明記）。`t5_signals.py` の `sync_phase_t5_signals()` で `spy_df['date'] = pd.to_datetime(...)` の直後・`calculate_market_signals()` を呼ぶ前に、`gap_dates` の**最古日付**について「その日までの SQLite の SPY 本数」を数え、220本未満なら `RuntimeError` で止める（既存の `t2_prices.py:65` / `orchestrator.py:794` と同じ型・同じ「日本語の理由＋対処法を1つのメッセージに入れる」スタイル）。メッセージには不足日付・実本数・必要本数・原因（SQLite はホット期間のみ）・対処（`--rebuild-from T5` など Parquet 基点の手順）を含める
 - **「最古の gap 日付だけ見れば十分」の根拠**: SPY の日付は連続して増える一方なので、ある日付までの SQLite 行数はその日付が新しいほど多い（単調非減少）。したがって `gap_dates` の中で最も遡りが浅い＝最も条件が厳しいのは必ず最古の日付であり、そこが220本以上ならそれより新しい gap 日付は全て220本以上を満たす
