@@ -7,10 +7,24 @@ TradingView 公開スクリプト `Direction via Zone Break [by rukich]`（Pine 
 入力・期待値は doc/in_progress/zone_break_plan.md §3.1.1 で確定済みのものを
 そのまま使用する（本ファイルでの再計算・再解釈は行わない）。
 """
+import importlib.util
+from pathlib import Path
+
 import numpy as np
 import pytest
 
 from indicators.zone_break import zone_break_series
+
+# Pine原文の detector_bsl_last_fractal / detector_ssl_last_fractal を無制限バックスキャンの
+# まま逐語移植したオラクル（gitignore対象・ワークツリーに実在。無ければ下のテストはスキップ）。
+_NAIVE_PORT_PATH = Path(__file__).resolve().parents[3] / 'tmp' / 'zone_break_naive_port.py'
+
+
+def _load_naive_port():
+    spec = importlib.util.spec_from_file_location('zone_break_naive_port', _NAIVE_PORT_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 # ============================================================
@@ -102,6 +116,41 @@ def test_フリップ反転():
     np.testing.assert_array_equal(zb_ssl, expected_ssl)
     np.testing.assert_array_equal(zb_bsl, expected_bsl)
     assert list(is_weak) == expected_is_weak
+
+
+# ============================================================
+# 補足: 境界を設けたフォールバック探索の妥当性検証
+# ============================================================
+
+def test_境界を設けた探索が無制限版と一致する():
+    """反転時のフォールバック探索（detector_bsl/ssl_last_fractal 相当）を
+    境界を設けた効率化版（確定済みフラクタルのリストの末尾を見るだけ）で実装しているが、
+    Pine原文どおりの無制限バックスキャン（オラクル）と完全一致することを検証する。
+
+    doc/in_progress/zone_break_plan.md §2.2 の設計判断（O(n^2)を避けるための効率化）が
+    正しいことの担保。十分な長さの合成データ（乱数シード固定）で比較する。
+    """
+    if not _NAIVE_PORT_PATH.exists():
+        pytest.skip('tmp/zone_break_naive_port.py が無い環境ではスキップ（オラクル検証専用のtmpファイル）')
+
+    naive = _load_naive_port()
+
+    rng = np.random.default_rng(20260912)
+    n = 400
+    close = 100 + np.cumsum(rng.normal(0, 1.0, n))
+    high = close + rng.uniform(0.1, 2.0, n)
+    low = close - rng.uniform(0.1, 2.0, n)
+    # high>=max(open,close), low<=min(open,close) 程度の妥当性を保つ
+    high = np.maximum(high, close)
+    low = np.minimum(low, close)
+
+    is_bull_naive, ssl_naive, bsl_naive, is_weak_naive, _events = naive.zone_break_naive(high, low, close)
+    is_bull, zb_ssl, zb_bsl, is_weak = zone_break_series(high, low, close)
+
+    np.testing.assert_array_equal(is_bull, is_bull_naive)
+    np.testing.assert_array_equal(zb_ssl, ssl_naive)
+    np.testing.assert_array_equal(zb_bsl, bsl_naive)
+    np.testing.assert_array_equal(is_weak, is_weak_naive)
 
 
 # ============================================================
