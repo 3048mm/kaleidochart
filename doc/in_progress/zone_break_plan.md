@@ -301,8 +301,11 @@ max_hits_per_day = 10
       （同上コミット。special種は機械導出で自動登録されるため、実際の作業はフィクスチャ
       データ側にzone_break用のprev/today値を追加することだった。4フィルタとも
       API経路・バックテスト経路のパリティを確認。`backend/tests/` 全体1699 passed）
-- [ ] Parquet 全期間バックフィルスクリプトを実装、既存カラム不変を検査
-- [ ] サンドボックスでバックフィルを実行し検査
+- [x] Parquet 全期間バックフィルスクリプトを実装、既存カラム不変を検査
+      （`backend/scripts/backfill_zone_break.py`、2026-09-12コミット`43a375a`。
+      `backfill_structure_pivot.py`と同じ設計）
+- [x] サンドボックスでバックフィルを実行し検査（同上コミット。6,764,686行/3,279銘柄、
+      SSL/BSL確定済み99.7%、既存66列不変を確認。`backend/tests/`全体1699 passed維持）
 - [ ] `backtest_config.toml` に候補戦略を2本追加（§3.5: フリップ版 I1 / 継続ブレイク版 I2）
 - [ ] 型1バックテストを非最適化で単発実行し、Alpha 等の一次指標を確認（§6 検証プラン）
 - [ ] バックエンド全体 `pytest backend/tests/` 全件パス
