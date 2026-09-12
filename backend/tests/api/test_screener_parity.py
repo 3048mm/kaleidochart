@@ -137,6 +137,7 @@ def _stock_today_overrides(t: int) -> dict:
         "is_zone_break_bull": {1: True, 2: False, 3: False, 4: True, 5: True, 6: False}[t],
         "zb_ssl": {3: 85.0, 6: 92.0}.get(t, 1.0),
         "zb_bsl": {4: 112.0, 5: 110.0}.get(t, 1.0),
+        "is_zone_break_weak": 1 if hi else 0,
     }
 
 
@@ -411,6 +412,7 @@ PARITY_CASES: dict = {
     "max_rs_blue_dot_age": 0,
     # --- bool_column ---
     "is_trend_template": True,
+    "is_zone_break_weak": True,
 }
 # EXPLICIT_SPECS 由来のキー（special・close_gt）は機械的に True を割り当てる。
 # どちらも「フィルタが有効かどうか」を示す boolean フラグとしてのみ使われ、個別の閾値を
