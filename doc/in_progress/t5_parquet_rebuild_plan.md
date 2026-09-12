@@ -301,6 +301,27 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 - **引き継ぎ上の注意**: このブランチの途中状態で `--rebuild-from` を試すと落ちるが、不具合ではない。そもそも本計画では ② が直るまで本番で `--rebuild-from` を実行しない方針（冒頭の CAUTION）
 - **副作用として既存テストを1件修正した**: `test_pipeline_idempotency.py::test_sync_phase_t5_backfills_null_score` は過去250日を未計算のまま投入しており、ガードに掛かるようになった。過去分を「計算済み」として投入する形に直した。**テストの主眼（NULL スコアが埋まること）の assert は変えていない**ことを検収で確認済み
 
+### 7-4. `run_production_restore()` も本番を決め打ちする（2026-09-12・5-8 の検収で発見）🔴
+
+- **事象**: 再構築手順のステップ4で呼ぶ `run_production_restore()` は**引数なし**で、その場合の復元先は
+  `<チェックアウトのルート>/data/stocktool.db` の**決め打ち**（`run_production_restore.py:14,123`）。
+  さらに環境変数 `STOCKTOOL_DB_PATH` を**意図的に解除する**（同 L127。「parquet は A・書き込み先は B」の
+  不整合を防ぐための既存の措置）。`paths.py` は使っていない。復元先 DB の隣の `parquet_master/` を読む
+  （`parquet_cache_manager.py:626` の `get_parquet_master_dir(db_path)`）ため、**復元先の決め方がそのまま
+  参照する Parquet を決める**
+- **5-8 が入れたものではない**。旧コードもステップ3で同じ呼び方をしていた。§7-1 と同じ家系の穴で、
+  5-6b では再計算スクリプト3本しか塞いでいなかった
+- **影響**:
+  1. **本体チェックアウトから実行すると、`deploy_after_merge` が作業領域を環境変数で指定していても
+     本番 SQLite を削除して復元する**（health check 前に本番が書き換わる）
+  2. **ワークツリーから実行すると、プロビジョニング済みの sandbox（`data/sandbox/stocktool.db`）ではなく
+     `<worktree>/data/stocktool.db` を対象にする** → **5-11 の sandbox 確認が意図した場所に効かない**
+- **直し方の案**: 5-6b と同じ方針。`_rebuild_from_parquet()` から**解決済みの db_path を明示的に渡す**
+  （`run_production_restore(db_path=paths.resolve_db_path_for_init("stocktool", ...))`）。関数側の
+  「環境変数を解除する」防御は**そのまま残す**（引数で明示されたパスを正とする設計と整合する）
+- **状態**: 本計画に含めるか（**5-8b** とする）、別 issue にするか、**ユーザー判断待ち**。
+  **5-11・5-14 の前提**なので、判断が出るまでそこには進まない
+
 ## 8. スコープ外・残作業
 
 - **`--rebuild-from T2 --category` の T3 が SQLite 基点のまま** — T2 のカテゴリ再取得後の T3 も、2026-08-29 の事故と同じ構図の可能性がある。T5 は §3.4 のガードで止まるが、T3 は未確認。別 issue 候補
