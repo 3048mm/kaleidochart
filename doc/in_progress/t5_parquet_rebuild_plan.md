@@ -226,6 +226,9 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 - [x] **5-11** sandbox で `--rebuild-from T3` を実走 → **合格**（2026-09-12。①sandbox Parquet vs 独立計算が SPY 由来6列・全期間4,136日で一致 ②sandbox SQLite vs Parquet が 502日で全列一致（復元の確認）③ログで新手順を確認（T3 22:45→T4 22:51→T5 22:53→復元先が **sandbox のパス**）④**本番は無傷**（世代・ポインタとも変化なし、新世代は sandbox 側）⑤`db_health_check --all --check-nulls` は本番ベースラインと**同種のみ**で回帰なし）
 - [x] **5-12** ルールの明記（§3.5）+ `sync_skills.py --apply`
 - [x] **5-13** 仕様書の T5 記述を更新
+- [ ] **5-6c** dry-run の差分に**日付集合の対称差**を表示する（§7-6(3)）— `compare_by_period()` の inner merge を直す。**5-14 のゲートそのもの**
+- [ ] **5-7b** 遡り不足ガードの判定を「**SQLite の SPY 起点が Parquet の起点より後ろか**」に変える（§7-6(1)）— 全期間再構築と日次の正常な NULL バックフィルで止まらないこと、切り詰めた窓では止まることをテストで担保
+- [ ] **5-8c** 復元の後に `run_pipeline(rebuild_from=None, skip_fetch=True)` を呼び、T1/FX/仮想指数/rotate/purge/整合監査を通す（§7-6(2)）— `refresh_T3Table.bat` のコメントと SKILL.md の記述も実態へ
 - [ ] **5-14** **本体チェックアウトから実行する**（ワークツリーからは sandbox を指すため — §7-2）。先に 5-16 の「修復前」の型3 シナリオを実行して記録しておく → merge → **dry-run の差分をユーザーに提示して確認** → API サーバ停止 → `tools/deploy_after_merge.ps1 -RebuildFrom T5` → API サーバ再起動（§4-2）
 - [ ] **5-15** 本番の修復確認 — 成功条件 2・3（Parquet 全期間計算と完全一致 / 8/29 世代と 8/29 以前で完全一致）
 - [ ] **5-16** 型3 シナリオの再評価（§4-3）— 修復前（5-14 の前）と修復後で同じ条件で実行し before/after を記録。**期待値は「変化なし」**（§4.1）。大きく変わったら想定外の読み取り経路を調べる
@@ -243,9 +246,8 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
   「5項目の等価20%合計（⑤Distribution Days を含む）」だったが、実装は **4成分×25%**で
   **Distribution Days はスコアに含まない**（`indicators/market_signals.py` L149,304-317。
   breadth が無い期間は3成分×1/3）
-- **⚠ 未実施: merge 前のコードレビュー**（種別 B なので必須・ブランチ単位で1回）。
-  2026-09-13 に `/code-review high main...HEAD` を試みたが **API のセッション上限（2時リセット）で実行できず**。
-  **5-14（本番修復）に進む前に必ず実施すること**
+- **コードレビュー実施済み（2026-09-13）→ 指摘3件、対応中**（§7-6）。うち2件は検収済み項目の欠陥
+  （5-7 のガード判定・5-8 の後処理落ち）。**3件を直すまで 5-14 に進まない**
 - 5-14 の注意: **本体チェックアウトから実行**（ワークツリーからは sandbox を指す — §7-2）。
   実行前に dry-run の差分をユーザーへ提示して確認を取る。先に 5-16 の「修復前」型3 シナリオを記録しておく
 - sandbox の Parquet は `--rebuild-from T3` 実走後の世代 `20260912_225403`。本番は `20260912_145123`
@@ -350,6 +352,43 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
   - API・フロントは SQLite から読む。SQLite 書き込み側（`t5_signals.py`）は `int(...) or None` を維持しているため、
     SQLite の列は従来どおり整数のまま
   - rotate のマージ（`merge_timeseries_table`）は旧世代 int64 と新世代 float64 の concat になるが、float64 に統一されるだけ
+
+### 7-6. コードレビューで3件（2026-09-13・`/code-review high main...HEAD`）🔴
+
+**オーケストレーターが `.bat` を読んで前提を確認済み。3件とも妥当と判断した。うち2件は既に検収した項目の欠陥。**
+
+**(1) [高] 遡り不足ガードの判定基準が違い、正当な全期間再構築を必ず止める**（`t5_signals.py:40` / 5-7）
+- ガードは「最古 gap 日付より前に SPY が220本あるか」を見る。**全期間再構築では最古日付の遡りは必ず1本**なので、
+  SQLite にフル履歴があっても例外になる。`run/tool/refresh_All.bat`（`--re-calculate`。8.8年分を再取得）が該当
+- **止まる位置が悪い**: `orchestrator.py:861` の `MarketSignal` 全削除の**後**、`rotate`（同 :936）の**前**。
+  例外で `market_signals` が空のまま rotate に到達せず、**再取得した数時間分が Parquet に保存されない**。
+  `refresh_All.bat` は L36 で errorlevel を見ていないため、そのまま `COMPLETED` と表示する（実測確認済み）
+- **同じ機構で日次更新が死ぬ**: ホット期間の古い日付に `market_trend_score` NULL が1件あるだけで
+  gap に入り、遡り220本未満なら毎晩 T5 で落ちて rotate に到達しない（SKILL.md が「再実行でバックフィルされる」と
+  案内している正常な修復ケース）。**オーケストレーターは 5-7 の検収で「止まるだけなので安全」と評価したが誤り**
+- **対応方針（決定）**: 判定を「**SQLite の SPY 系列の起点が Parquet の起点より後ろか（＝窓が切り詰められているか）**」に変える。
+  切り詰められていれば従来どおり `RuntimeError` で Parquet 基点へ誘導し、一致していれば通す（先頭の遡り不足日は
+  5-9 により既に NULL になるため、偽の値は書かれない）。**5-9 が入った今、ガードの役割は「偽値の防止」ではなく
+  「切り詰めた窓で再構築しようとしていることの通知」**であり、この判定の方が意図に合う → **5-7b**
+
+**(2) [中] Parquet 委譲で T1 同期・FX・仮想指数・rotate・purge・整合監査が落ちた**（`update_pipeline.py:116` / 5-8）
+- `run_pipeline()` を呼ばなくしたため、旧経路が実行していた T1（universe.db → symbols）・FX 同期・仮想テーマ指数の
+  再合成・rotate・purge・`verify_pipeline_integrity` が全て実行されなくなった
+- `run/tool/refresh_T3Table.bat` は `--rebuild-from T3 --skip-fetch` のみで **`--skip-sync` を渡していない**（実測確認済み）。
+  従来は銘柄編集が反映・永続化されていたが、現在は反映されず、さらに `restore_sqlite_cache_from_parquet()` が
+  `symbols`/`theme_constituents` を旧世代 Parquet のスナップショットへ巻き戻す
+- **オーケストレーターの指示（§3.3）が rotate のことしか考えておらず、他の後処理を見落としていた**
+- **対応方針（決定）**: ステップ4（復元）の**後に** `run_pipeline(rebuild_from=None, skip_fetch=True)` を呼んで
+  後処理を通す。復元済みなので **T5 の `gap_dates` は空**になり SQLite 基点の T5 は走らない。
+  `skip_fetch=True` 固定で yfinance の自動モード（`orchestrator.py:777-808`）にも入らない。
+  `refresh_T3Table.bat` のコメントと SKILL.md の該当記述も実態に合わせる → **5-8c**
+
+**(3) [中〜低] dry-run の差分が inner merge で、日付の消失・追加を検出できない**（`recompute_parquet_signals.py:159`）
+- `compare_by_period()` が `how="inner"` のため、片側にしかない日付は「不一致 0 日」に見える。
+  **この表は本番上書き（5-14）の唯一のゲート**なので、日付集合の対称差の件数を必ず表示する → **5-6c**
+
+**→ 3件すべてを直してから 5-14 に進む。** 特に (3) は 5-14 の判断材料そのものなので、
+現時点で取得した本番 dry-run の差分は**暫定値として扱う**。
 
 ## 8. スコープ外・残作業
 
