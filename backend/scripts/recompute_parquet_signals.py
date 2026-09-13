@@ -149,8 +149,20 @@ def compare_by_period(old_df: pd.DataFrame, new_df: pd.DataFrame,
     （型差だけで全不一致に見える罠を避ける。計画書 §1.2 の注記）。
     `market_phase` は文字列比較。
 
+    **列の比較は `how="inner"` の結合なので、片側にしか無い日付（現行世代にしか
+    無い/再計算にしか無い）は列の不一致には現れない。** これは本番上書き（5-14）の
+    唯一のゲートなので見落とせない。そのため期間ごとに「日付集合の対称差」を
+    別途数え、`date_diff` として返す（§7-6(3)）。
+
     Returns:
-        期間ラベル -> {"days": int, "columns": {列名 -> {"mismatch_days", "max_abs_diff"}}}
+        期間ラベル -> {
+            "days": int,
+            "columns": {列名 -> {"mismatch_days", "max_abs_diff"}},
+            "date_diff": {
+                "only_in_old": int, "only_in_new": int,
+                "only_in_old_examples": [str, ...], "only_in_new_examples": [str, ...],
+            },
+        }
     """
     old = old_df.copy()
     new = new_df.copy()
@@ -176,7 +188,21 @@ def compare_by_period(old_df: pd.DataFrame, new_df: pd.DataFrame,
             bad = ~both_na & ((diff > tolerance) | (a.isna() != b.isna()))
             mx = float(diff[bad].max()) if bad.any() else 0.0
             columns[col] = {"mismatch_days": int(bad.sum()), "max_abs_diff": mx}
-        result[label] = {"days": int(mask.sum()), "columns": columns}
+
+        # 日付集合の対称差（inner merge では検出できない片側だけの日付）。
+        # 0件でも「見ていない」と区別できるよう、必ず算出して返す。
+        old_mask = (old["date"] >= start) & (old["date"] <= end)
+        new_mask = (new["date"] >= start) & (new["date"] <= end)
+        only_old = sorted(set(old.loc[old_mask, "date"]) - set(new.loc[new_mask, "date"]))
+        only_new = sorted(set(new.loc[new_mask, "date"]) - set(old.loc[old_mask, "date"]))
+        date_diff = {
+            "only_in_old": len(only_old),
+            "only_in_new": len(only_new),
+            "only_in_old_examples": [d.strftime("%Y-%m-%d") for d in only_old[:5]],
+            "only_in_new_examples": [d.strftime("%Y-%m-%d") for d in only_new[:5]],
+        }
+
+        result[label] = {"days": int(mask.sum()), "columns": columns, "date_diff": date_diff}
     return result
 
 
@@ -195,6 +221,18 @@ def _print_diff(diff: dict) -> None:
                 cells.append(f"{c['mismatch_days']:>6} ({c['max_abs_diff']:>7.3g})")
         print(f"{col:<22}" + "".join(cells))
     print("期間の日数:", {label[:2]: diff[label]["days"] for label, *_ in PERIODS})
+
+    # 日付集合の対称差（§7-6(3)）。列の不一致（inner merge）には現れない
+    # 「片側にしか無い日付」を必ず表示する（0件でも明示。5-14 の判断材料）。
+    print("\n[3b] 日付集合の対称差（列の不一致には出ない、片側にしか無い日付。0件でも表示）")
+    print(f"{'期間':<28}{'現行世代のみ':>12}{'再計算のみ':>12}")
+    for label, *_ in PERIODS:
+        dd = diff[label]["date_diff"]
+        print(f"{label:<28}{dd['only_in_old']:>12}{dd['only_in_new']:>12}")
+        if dd["only_in_old"]:
+            print(f"    現行世代のみ 例: {dd['only_in_old_examples']}")
+        if dd["only_in_new"]:
+            print(f"    再計算のみ   例: {dd['only_in_new_examples']}")
 
 
 def _load_prices(prices_path: str, symbol_id: int | None, cols: list[str]) -> pd.DataFrame:

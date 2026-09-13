@@ -200,6 +200,51 @@ class TestCompareByPeriod:
         assert diff["P3 2024-09-03〜2025-06-30"]["days"] == 1
         assert diff["P4 2025-07-01〜"]["days"] == 1
 
+    def test_date_diff_is_zero_and_explicit_when_date_sets_match(self):
+        """§7-6(3): 日付集合が完全一致する場合でも、0件であることを明示的に返す。"""
+        dates = pd.date_range("2019-01-01", periods=3).strftime("%Y-%m-%d").tolist()
+        old = self._frame(dates)
+        new = self._frame(dates)
+
+        diff = compare_by_period(old, new)
+
+        dd = diff["P2 2018-04-01〜2024-09-02"]["date_diff"]
+        assert dd["only_in_old"] == 0
+        assert dd["only_in_new"] == 0
+        assert dd["only_in_old_examples"] == []
+        assert dd["only_in_new_examples"] == []
+
+    def test_date_diff_detects_dates_missing_from_new(self):
+        """§7-6(3): inner merge の列比較では現れない「現行世代にしか無い日付」を検出する。"""
+        old_dates = pd.date_range("2019-01-01", periods=3).strftime("%Y-%m-%d").tolist()
+        new_dates = old_dates[:2]  # 3日目が再計算結果から消えている
+        old = self._frame(old_dates)
+        new = self._frame(new_dates)
+
+        diff = compare_by_period(old, new)
+
+        p2 = diff["P2 2018-04-01〜2024-09-02"]
+        # 列の不一致（inner merge）には出ない —— これが 5-6c の問題そのもの
+        for stats in p2["columns"].values():
+            assert stats["mismatch_days"] == 0
+        assert p2["date_diff"]["only_in_old"] == 1
+        assert p2["date_diff"]["only_in_new"] == 0
+        assert p2["date_diff"]["only_in_old_examples"] == ["2019-01-03"]
+
+    def test_date_diff_detects_dates_missing_from_old(self):
+        """§7-6(3): 「再計算にしか無い日付（新しく増えた日付）」を検出する。"""
+        old_dates = pd.date_range("2019-01-01", periods=2).strftime("%Y-%m-%d").tolist()
+        new_dates = pd.date_range("2019-01-01", periods=3).strftime("%Y-%m-%d").tolist()
+        old = self._frame(old_dates)
+        new = self._frame(new_dates)
+
+        diff = compare_by_period(old, new)
+
+        p2 = diff["P2 2018-04-01〜2024-09-02"]
+        assert p2["date_diff"]["only_in_old"] == 0
+        assert p2["date_diff"]["only_in_new"] == 1
+        assert p2["date_diff"]["only_in_new_examples"] == ["2019-01-03"]
+
 
 # --- run() のパス解決・書き込みガード（§3.6・5-6b） --------------------------
 
