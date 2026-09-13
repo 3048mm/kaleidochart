@@ -223,7 +223,7 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 - [x] **5-10** pytest 全件パス（2026-09-12 オーケストレーター実測: **1736 passed / 0 failed**）
 - [x] **5-8b** **`run_production_restore()` の復元先を明示する**（§3.7・§7-4・§4-6）— `_rebuild_from_parquet()` から解決済みの db_path を渡す。関数側の「環境変数を解除する」防御は残す。テストで「ワークツリーからは sandbox を対象にする」「引数なしの従来挙動を変えていない」を担保。**5-11・5-14 の前提**
 - [x] **5-9b** **`dashboard_router.py:78` に `market_phase` の None ガードを足す**（§4-7）— `portfolio_logic.py:179` と同じ `if market_phase else "UNKNOWN"` の書き方に揃える
-- [ ] **5-11** sandbox で `--rebuild-from T3` を実行 → **sandbox の `market_signals` の SPY 由来6列が Parquet 全期間計算と全期間で完全一致**すること、`db_health_check.py --all --check-nulls` が通ること
+- [x] **5-11** sandbox で `--rebuild-from T3` を実走 → **合格**（2026-09-12。①sandbox Parquet vs 独立計算が SPY 由来6列・全期間4,136日で一致 ②sandbox SQLite vs Parquet が 502日で全列一致（復元の確認）③ログで新手順を確認（T3 22:45→T4 22:51→T5 22:53→復元先が **sandbox のパス**）④**本番は無傷**（世代・ポインタとも変化なし、新世代は sandbox 側）⑤`db_health_check --all --check-nulls` は本番ベースラインと**同種のみ**で回帰なし）
 - [x] **5-12** ルールの明記（§3.5）+ `sync_skills.py --apply`
 - [x] **5-13** 仕様書の T5 記述を更新
 - [ ] **5-14** **本体チェックアウトから実行する**（ワークツリーからは sandbox を指すため — §7-2）。先に 5-16 の「修復前」の型3 シナリオを実行して記録しておく → merge → **dry-run の差分をユーザーに提示して確認** → API サーバ停止 → `tools/deploy_after_merge.ps1 -RebuildFrom T5` → API サーバ再起動（§4-2）
@@ -234,26 +234,23 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 
 ### 作業中メモ
 
-**現在地: 5-1〜5-10・5-8b・5-9b・5-12・5-13 検収合格（2026-09-12）。次は 5-11（sandbox での実走確認）。**
+**現在地: 5-1〜5-13 すべて検収合格（2026-09-13）。残るは「merge 前のコードレビュー」→ 5-14 以降（本番修復）。**
 
-- 5-12・5-13（ドキュメント更新のみ・コード変更なし）: `.claude/skills/pipeline-debugging/SKILL.md`（Parquet 基点の明記・
-  SPY 変更時のリフレッシュ・T5 遡り不足時の復旧手順）→ `sync_skills.py --apply` で `.agents/skills/` に同期、
-  `doc/agent_execution_rules.md` §10.5（`deploy_after_merge` の T3/T4/T5 が Parquet 基点である旨）、
-  `doc/backend_specification.md`（Phase 5 表・§3.6 に NULL 方針と Parquet dtype float64 を明記）、
-  `doc/architecture.md`（§11.2 に T3/T4/T5 再構築の Parquet 基点 NOTE を追加）。pytest 1741 passed / 0 failed、
-  `sync_skills.py --check` 差分ゼロを確認済み
 - 検収済み: 5-1 / 5-2〜5-5（`dce43e8`）/ 5-6 反証・全セル一致 / 5-6b（`fc0303d`）/ 5-7（`9591796`）/
-  5-8（`acb3842`）/ 5-9（`8b54a34`）/ 5-10 テスト全件 / 5-8b（`e4fca95`）/ 5-9b（`dd8bafa`）。
-  **テスト全体の最新実測: 1741 passed / 0 failed**
-- 5-11 は**オーケストレーター自身の検証作業**（委譲しない）。ワークツリーで `--rebuild-from T3` を実走させ、
-  sandbox の `market_signals` の SPY 由来6列が Parquet 全期間計算と一致することを確認する。
-  **実走前に「解決先が本番ではなく sandbox であること」を必ず確認する**（5-6b/5-8b で塞いだが、
-  本番を壊す操作なので二重に確認する）
-- sandbox の Parquet は世代 `20260911_145621` のハードリンク。本番は既に `20260912_145123` へ進んでいる
-  （デイリー実行のため）。**5-11 は sandbox 世代に対する確認**で、本番の修復は 5-14 で別途行う
+  5-8（`acb3842`）/ 5-9（`8b54a34`）/ 5-10 / 5-8b（`e4fca95`）/ 5-9b（`dd8bafa`）/ 5-11 実走・合格 /
+  5-12・5-13（`0eb163b`）。**テスト全体: 1741 passed / 0 failed**、`sync_skills.py --check` 差分ゼロ
+- 5-13 の検収で**仕様書の既存の誤りを1件修正**（`588b3d7`）: `market_trend_score` の説明が
+  「5項目の等価20%合計（⑤Distribution Days を含む）」だったが、実装は **4成分×25%**で
+  **Distribution Days はスコアに含まない**（`indicators/market_signals.py` L149,304-317。
+  breadth が無い期間は3成分×1/3）
+- **⚠ 未実施: merge 前のコードレビュー**（種別 B なので必須・ブランチ単位で1回）。
+  2026-09-13 に `/code-review high main...HEAD` を試みたが **API のセッション上限（2時リセット）で実行できず**。
+  **5-14（本番修復）に進む前に必ず実施すること**
+- 5-14 の注意: **本体チェックアウトから実行**（ワークツリーからは sandbox を指す — §7-2）。
+  実行前に dry-run の差分をユーザーへ提示して確認を取る。先に 5-16 の「修復前」型3 シナリオを記録しておく
+- sandbox の Parquet は `--rebuild-from T3` 実走後の世代 `20260912_225403`。本番は `20260912_145123`
 - **検算用**: 本番 `market_signals_20260829_144251.parquet`（prune 禁止）と、そのコピーを
-  ワークツリーの `tmp/verify/` に退避済み（gitignore 対象）
-- ベースライン測定スクリプトは本体の `tmp/`（`t5_parquet_baseline.py` ほか）
+  ワークツリーの `tmp/verify/` に退避済み（gitignore 対象）。判定スクリプトは `tmp/verify_sandbox_t5.py`
 
 ## 6. 検証プラン / 結果
 
@@ -262,9 +259,9 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 | 単体 | pytest（5-2〜5-9 で追加したもの含む全件） | 全件パス |
 | breadth 純関数 | 切り出し前後で SQLite 経路の出力を比較 | 完全一致 |
 | dry-run 差分 | 本番 Parquet に対して `--dry-run`（5-6） | §1.2(a) と一致（P3 の SPY 由来列のみ不一致） |
-| sandbox 再構築 | `--rebuild-from T3` 後の sandbox `market_signals`（5-11） | SPY 由来6列が Parquet 全期間計算と完全一致 |
+| sandbox 再構築 | `--rebuild-from T3` 後の sandbox `market_signals`（5-11） | SPY 由来6列が Parquet 全期間計算と完全一致 → **達成（4,136日で一致）** |
 | ガード | SPY の遡りが220本未満の `gap_dates` で T5 を回す | 例外で止まる / デイリー相当では止まらない |
-| 隔離 | ワークツリーから再計算スクリプトを `--apply`（5-6b） | `ProductionWriteError` で拒否。`--dry-run` は従来どおり本番を読める |
+| 隔離 | ワークツリーから再計算スクリプトを `--apply`（5-6b） | `ProductionWriteError` で拒否 → **達成**。`--dry-run` の参照先は sandbox になる（§7-2） |
 | 本番修復 | 修復後の本番 `market_signals`（5-15） | 成功条件 2・3 |
 | 型3 再評価 | 修復前後で型3 シナリオを同条件で実行（5-16） | **変化なし**（P4 breadth の微差程度）。§4.1 |
 | データ整合 | `db_health_check.py --all --check-nulls` | NG なし |
@@ -356,6 +353,9 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 
 ## 8. スコープ外・残作業
 
+- **`doc/backend_specification.md` の見出し番号が重複している** — `#### 3.6.1 為替レート`（263行）と
+  `#### 3.6.1 各定性的シグナルの定義`（333行）が同じ番号。**本計画の変更前から存在する不整合**で、
+  番号を振り直すと他ドキュメントからの参照を壊す恐れがあるため今回は直さない（5-13 の検収で確認）
 - **方針: DB 系の呼び出しは基本ラッパー経由にし、切り替えをラッパー内で完結させる**（2026-09-12 ユーザー提示）
   — §7-1（再計算スクリプト3本）・§7-4（`run_production_restore`）はどちらも**呼び出し側が個別にパスを解決している**
   ことが原因で、同じ穴が別の場所に再発しうる。`paths.py` / `db/database.py` のラッパーを必ず通す形にし、
