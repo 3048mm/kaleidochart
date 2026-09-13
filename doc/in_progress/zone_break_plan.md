@@ -314,7 +314,8 @@ max_hits_per_day = 10
       結果は§6参照 — 単体では明確なエッジ無し、採否は現時点で否定的）
 - [x] バックエンド全体 `pytest backend/tests/` 全件パス（1700 passed、この時点まで都度確認済み）
 - [ ] 本番昇格（増分方式。`promote_structure_pivot.py` を参考に専用スクリプト or 手順を用意）
-- [ ] `GET /api/chart/{symbol_id}/zone_break` を実装、テスト追加
+- [x] `GET /api/chart/{symbol_id}/zone_break` を実装、テスト追加（2026-09-13コミット`4eb1a69`。
+      `build_zone_break_response`、テスト4件、`backend/tests/`全体1704 passed）
 - [ ] `frontend/src/types.ts` / `frontend/src/api/zoneBreak.ts` とテスト
 - [ ] `ChartPage` に描画とトグルを追加（FVG ボックスの描画方式を技術検証）
 - [ ] `frontend/src/api/__tests__` を含むフロントエンド全体 `npm test` / `npm run build`
