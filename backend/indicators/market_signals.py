@@ -41,13 +41,19 @@ WEIGHT_EMA50_ATR  = 0.25
 WEIGHT_EMA200_ATR = 0.25
 
 # T5（market_signals）を SQLite 基点で計算する際に、SPY の遡り本数が
-# 最低限これだけ必要（不足なら黙って書き込まず例外で止める。t5_signals.py 参照）。
+# 最低限これだけ必要な基準（t5_signals.py の遡り不足ガード参照）。
 #
 # 根拠: 下の `calculate_market_signals()` で `sma_200` は `close.rolling(200, ...)`、
 # `spy_sma200_rising` はその `sma_200` を `shift(20)` して比較するため、
 # 対象日までに 200 + 20 = 220 本の SPY が必要。**決め打ちの数値ではなく、
 # MTS の SMA200 窓（200）や rising 判定の比較幅（20）を変えたら、この定数も
 # 追随して直す必要がある。**
+#
+# 用途（§7-6(1)・5-7b で変更）: 本数不足は「即・例外」の合図ではなくなった。
+# 本数が足りない場合にのみ、SQLite の SPY 起点と Parquet マスタの SPY 起点を
+# 比較し、Parquet にも同等以上の履歴が無ければ（切り詰めではなく単なる履歴
+# 不足）通す。Parquet が読めない場合のフォールバック判定として、この定数は
+# 引き続き使われる。
 SPY_LOOKBACK_MIN_BARS = 220
 
 
@@ -157,10 +163,11 @@ def calculate_market_signals(
 
     # 1. SPY Trend Components (required for phase classification)
     # min_periods を窓幅と一致させる（① 計画 §4-4）。遡りが足りない先頭区間は
-    # 「それらしい値」を返さず NaN にする。SQLite 経路（t5_signals.py）側は
-    # SPY_LOOKBACK_MIN_BARS のガードで、遡り不足の日付そのものを計算対象から
-    # 排除しているため、ここで NaN になるのは Parquet 全期間計算時の先頭のみ
-    # （SPY は 2010-04-01 開始のため、2010-04〜2011-02 の先頭219本が該当）。
+    # 「それらしい値」を返さず NaN にする。Parquet 全期間計算時の先頭
+    # （SPY は 2010-04-01 開始のため、2010-04〜2011-02 の先頭219本が該当）で
+    # NaN になるのはもちろん、SQLite 経路（t5_signals.py）でも、遡り不足ガード
+    # （§7-6(1)・5-7b）が「Parquet にも同等以上の履歴が無い（切り詰めではない）」
+    # と判断して通した場合は、ここで同じように NaN になる。
     df['sma_50'] = close.rolling(50, min_periods=50).mean()
     df['sma_200'] = close.rolling(200, min_periods=200).mean()
 

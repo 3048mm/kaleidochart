@@ -29,8 +29,8 @@ python tools/db_health_check.py --ticker NVDA --check-nulls
 | T2 最新日が SPY より古い（Synced: No） | T2: yfinance 取得漏れ | `python backend/scripts/update_pipeline.py`（SPY 主導の差分キャッチアップが自動で走る） |
 | T2 行数 ≠ T3 行数（Consistent: No） | T3: 指標計算漏れ | `update_pipeline.py --rebuild-from T3`（T4/T5 も連鎖再計算される。**Parquet 基点で全期間を再計算**） |
 | 特定日の relative_ranks が欠損 | T4 | `update_pipeline.py` 再実行（T3.MAX > T4.MAX の不足日を Delete-Insert で補完）。ピンポイント修復の過去例: `backend/scripts/fix_missing_ranks.py` |
-| market_signals の NULL・欠損 | T5 | `update_pipeline.py` 再実行（NULL 欠損は過去に遡ってバックフィルされる） |
-| T5 の全日付再計算が `RuntimeError`（遡り不足）で止まる | T5: SPY の遡りガード | `sync_phase_t5_signals()` は `gap_dates` の最古日付で SPY の遡りが `SPY_LOOKBACK_MIN_BARS`（220本）未満だと止まる（壊れた値を黙って書かないための防御）。`--rebuild-from T5`（Parquet 基点）で再計算する |
+| market_signals の NULL・欠損 | T5 | `update_pipeline.py` 再実行（NULL 欠損は過去に遡ってバックフィルされる）。**遡りガード（次項）は SQLite の SPY 起点が Parquet と一致していれば通すため、ホット期間内の NULL 埋めはこれだけで止まらない** |
+| T5 の全日付再計算が `RuntimeError`（遡り不足）で止まる | T5: SPY の遡りガード | `sync_phase_t5_signals()` は `gap_dates` の最古日付で SPY の遡りが `SPY_LOOKBACK_MIN_BARS`（220本）未満のとき、SQLite の SPY 起点が Parquet マスタの SPY 起点より後ろ（＝窓が切り詰められている）なら止める。一致していれば通す（Parquet 未読時は安全側で従来の本数判定にフォールバック。§7-6(1)・5-7b）。止まった場合は `--rebuild-from T5`（Parquet 基点）で再計算する |
 | 指標カラム追加後に過去分が NULL | T3 | パイプラインが NULL レコードを自動検知して補完する。効かない場合は `--rebuild-from T3` |
 | 仮想テーマ (`_XXX_`) の T2 が 0 件 | T1/T2+: 構成銘柄ゼロ | スプレッドシートの `tags` 紐付けを確認 → T1 同期 → `refresh_constituents.py` |
 | 株価自体が誤っている（分割未反映等） | T2 | `update_pipeline.py --rebuild-from T2`（以降の全テーブルを刷新、時間がかかる） |

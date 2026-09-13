@@ -8,6 +8,42 @@ from pipeline.utils import sanitize_numeric
 from indicators.calculate import calculate_market_signals
 from indicators.market_signals import compute_breadth_momentum, SPY_LOOKBACK_MIN_BARS
 
+
+def _get_parquet_spy_min_date() -> Optional["pd.Timestamp"]:
+    """Parquet マスタの SPY 起点（最古日付）を取得する（§7-6(1)・5-7b）。
+
+    遡り不足ガードが「SQLite の窓が Parquet に対して切り詰められているか」を
+    判定するために使う。**読めない場合は None を返す**——黙って通さず、
+    呼び出し側で従来の本数判定（`SPY_LOOKBACK_MIN_BARS`）にフォールバックさせる
+    （安全側に倒す）。
+    """
+    try:
+        import paths
+        from pipeline.parquet_cache_manager import (
+            get_latest_master_files, get_parquet_master_dir, get_pointer_file_path,
+        )
+        db_path = paths.resolve_db_path_for_init("stocktool", None)
+        parquet_dir = get_parquet_master_dir(db_path)
+        pointer_file = get_pointer_file_path(parquet_dir)
+        cur = get_latest_master_files(pointer_file)
+        if not cur:
+            return None
+        sym = pd.read_parquet(cur["symbols"], columns=["id", "ticker"])
+        spy_rows = sym.loc[sym["ticker"] == "SPY", "id"]
+        if spy_rows.empty:
+            return None
+        spy_id = int(spy_rows.iloc[0])
+        prices = pd.read_parquet(
+            cur["prices"], columns=["symbol_id", "date"],
+            filters=[("symbol_id", "==", spy_id)],
+        )
+        if prices.empty:
+            return None
+        return pd.to_datetime(prices["date"]).min().date()
+    except Exception:  # noqa: BLE001 — 読めない場合は None（フォールバックの合図）
+        return None
+
+
 def sync_phase_t5_signals(db, logger: logging.Logger):
     """Phase 5: Market Signals (T5) - Idempotent catch-up."""
     logger.info("--- Phase 5: Market Signal calculation START ---")
@@ -29,23 +65,63 @@ def sync_phase_t5_signals(db, logger: logging.Logger):
         return
     spy_df['date'] = pd.to_datetime(spy_df['date'])
 
-    # 遡り不足ガード（§4-1）: gap_dates のうち最古の日付は、SPY の遡りが
-    # 最も浅い（＝最も条件が厳しい）ため、そこだけ確認すれば足りる。
-    # SQLite はホット期間（直近730日程度）しか保持しないため、
-    # `--rebuild-from T2 --category` / `--re-calculate` など T5 を全削除する経路で
-    # 遡りが足りない日付を黙って書き込まないようにする（デイリーは最新日のみが
-    # gap になり遡りは十分あるため、ここには掛からない）。
+    # 遡り不足ガード（§4-1・§7-6(1)・5-7b）: gap_dates のうち最古の日付は、SPY の
+    # 遡りが最も浅い（＝最も条件が厳しい）ため、そこだけ確認すれば足りる。
+    #
+    # 本数（220本未満）だけを見て即座に止めると、正当な全期間再構築（SQLite の
+    # SPY が Parquet と同じ起点から入っている）まで必ず止まってしまう
+    # （最古日付の遡りは定義上1本しかない）。また、ホット期間の古い日付に
+    # NULL スコアが1件あるだけの正常な修復ケースも、その日付の遡りが220本に
+    # 満たないだけで毎晩落ちる。5-9 で「遡り不足の日付は None（NaN）になる」
+    # ようにした今、このガードの役割は「偽値の防止」ではなく「SQLite の窓が
+    # Parquet に対して切り詰められている（＝取れるはずの履歴を使っていない）
+    # ことの通知」である。そこで本数不足を検知した場合に限り、Parquet マスタの
+    # SPY 起点と比較し、**Parquet にも同等以上の遡りが無い（=切り詰めではなく
+    # 単なる履歴不足）なら通す**。デイリー（本数十分）はこの比較に到達しない。
     earliest_gap_date = min(gap_dates)
     spy_bars_before_gap = int((spy_df['date'] <= pd.Timestamp(earliest_gap_date)).sum())
     if spy_bars_before_gap < SPY_LOOKBACK_MIN_BARS:
-        raise RuntimeError(
-            f"T5 の遡りが不足しています: {earliest_gap_date} 時点で SQLite の SPY は "
-            f"{spy_bars_before_gap} 本しかありません（sma_200 の遡りに必要な "
-            f"{SPY_LOOKBACK_MIN_BARS} 本に未達）。SQLite はホット期間（直近730日程度）"
-            "しか保持していないため、この状態で全日付を再計算すると sma_200 の窓の"
-            "先頭が壊れ、MTS の SPY 由来列（market_phase 等）に誤った値が保存されます。"
-            " `--rebuild-from T5` など Parquet 基点の再構築手順を使ってください。"
-        )
+        sqlite_spy_min_date = spy_df['date'].min().date()
+        parquet_spy_min_date = _get_parquet_spy_min_date()
+
+        if parquet_spy_min_date is None:
+            # Parquet を読めない場合は黙って通さず、従来の本数判定に
+            # フォールバックする（安全側に倒す）。
+            logger.warning(
+                "Parquet マスタの SPY 起点を取得できなかったため、遡り不足ガードは"
+                " 従来の本数判定（SPY_LOOKBACK_MIN_BARS）にフォールバックします。"
+            )
+            raise RuntimeError(
+                f"T5 の遡りが不足しています: {earliest_gap_date} 時点で SQLite の SPY は "
+                f"{spy_bars_before_gap} 本しかありません（sma_200 の遡りに必要な "
+                f"{SPY_LOOKBACK_MIN_BARS} 本に未達）。SQLite はホット期間（直近730日程度）"
+                "しか保持していないため、この状態で全日付を再計算すると sma_200 の窓の"
+                "先頭が壊れ、MTS の SPY 由来列（market_phase 等）に誤った値が保存されます。"
+                " `--rebuild-from T5` など Parquet 基点の再構築手順を使ってください。"
+            )
+        elif sqlite_spy_min_date > parquet_spy_min_date:
+            # SQLite の窓が Parquet に対して切り詰められている
+            # （Parquet には使えるはずの履歴があるのに SQLite に無い）。
+            raise RuntimeError(
+                f"T5 の SQLite 窓が Parquet マスタに対して切り詰められています: "
+                f"SQLite 起点={sqlite_spy_min_date}, Parquet 起点={parquet_spy_min_date}"
+                f"（{earliest_gap_date} 時点で SQLite の SPY は {spy_bars_before_gap} 本、"
+                f"sma_200 の遡りに必要な {SPY_LOOKBACK_MIN_BARS} 本に未達）。この状態で"
+                "全日付を再計算すると sma_200 の窓の先頭が壊れ、MTS の SPY 由来列"
+                "（market_phase 等）に誤った値が保存されます。"
+                " `--rebuild-from T5` など Parquet 基点の再構築手順を使ってください。"
+            )
+        else:
+            # SQLite 起点と Parquet 起点が一致（=切り詰めではなく、そもそも
+            # Parquet にもこれ以上の履歴が無い）。遡り不足の先頭日は
+            # calculate_market_signals() 側で None になる（5-9）ため、
+            # 偽の値が書かれることは無い。通す。
+            logger.info(
+                f"T5: {earliest_gap_date} 時点の SPY 遡りは {spy_bars_before_gap} 本"
+                f"（{SPY_LOOKBACK_MIN_BARS} 本未満）ですが、Parquet マスタの SPY 起点"
+                f"（{parquet_spy_min_date}）も SQLite と同じため切り詰めではないと判断し、"
+                "計算を続行します（遡り不足の先頭日は NaN として書き込まれます）。"
+            )
 
     vix_df = pd.DataFrame()
     if vix_sym_id:
