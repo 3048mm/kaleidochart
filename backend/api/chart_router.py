@@ -10,6 +10,7 @@ from api import schemas
 from api.deps import get_api_db, get_api_user_db
 from indicators.structure_pivot import (DEFAULT_MAX_LEN, DEFAULT_MIN_LEN,
                                         find_counter_trends, find_structures)
+from indicators.zone_break import find_zone_break_zones, zone_break_series
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -1023,3 +1024,80 @@ def get_structure_pivot_data(
     """
     return build_structure_pivot_response(symbol_id, db, full_range, min_len, max_len,
                                          fib_1st, fib_tp1, fib_tp2)
+
+
+# ============================================================
+# Direction via Zone Break — チャート描画用オーバーレイ
+# ============================================================
+
+def _level_to_dict(level, dates: List[str]) -> Dict[str, Any]:
+    """`ZoneBreakLevel`（インデックス基準）を日付基準の dict に変換する。"""
+    return {
+        "kind": level.kind,
+        "price": level.price,
+        "start_date": dates[level.start_index],
+        "end_date": dates[level.end_index],
+        "is_current": level.is_current,
+    }
+
+
+def _fvg_to_dict(box, dates: List[str]) -> Dict[str, Any]:
+    """`ZoneBreakFvg`（インデックス基準）を日付基準の dict に変換する。"""
+    return {
+        "kind": box.kind,
+        "left_date": dates[box.left_index],
+        "right_date": dates[box.right_index],
+        "top": box.top,
+        "bottom": box.bottom,
+        "invalidated": box.invalidated,
+        "is_current": box.is_current,
+    }
+
+
+def build_zone_break_response(
+    symbol_id: int,
+    db: Session,
+    full_range: bool = False,
+) -> Dict[str, Any]:
+    """Direction via Zone Break をオンザフライで計算して返す（チャート描画用）。
+
+    T3 インジケータには SSL/BSL/is_weak の4カラムのみ持つ（`is_zone_break_bull` /
+    `zb_ssl` / `zb_bsl` / `is_zone_break_weak`）。SSL/BSL ラインの区間・FVG ボックスは
+    チャート描画専用でありオンザフライ計算とする（`build_structure_pivot_response` と
+    同じ設計判断。doc/in_progress/zone_break_plan.md §2.2 参照）。
+
+    データ不足のときはエラーにせず空で返す — チャートの一部なので、
+    区間が出ないことで画面全体を落とさない。
+    """
+    symbol = db.query(Symbol).filter(Symbol.id == symbol_id, Symbol.active == 1).first()
+    if not symbol:
+        raise HTTPException(status_code=404, detail="Symbol not found")
+
+    dates, high, low, close = _load_ohlc_for_structure(symbol_id, db, full_range)
+    if len(dates) == 0:
+        return {
+            "metadata": {"ticker": symbol.ticker, "bars": 0},
+            "ssl_levels": [], "bsl_levels": [], "fvg_boxes": [],
+            "current_direction": None,
+        }
+
+    state = find_zone_break_zones(high, low, close)
+    is_bull, _ssl, _bsl, _is_weak = zone_break_series(high, low, close)
+
+    return {
+        "metadata": {"ticker": symbol.ticker, "bars": len(dates)},
+        "ssl_levels": [_level_to_dict(lv, dates) for lv in state.ssl_levels],
+        "bsl_levels": [_level_to_dict(lv, dates) for lv in state.bsl_levels],
+        "fvg_boxes": [_fvg_to_dict(b, dates) for b in state.fvg_boxes],
+        "current_direction": "bull" if bool(is_bull[-1]) else "bear",
+    }
+
+
+@router.get("/chart/{symbol_id}/zone_break")
+def get_zone_break_data(
+    symbol_id: int,
+    db: Session = Depends(get_api_db),
+    full_range: bool = Query(False),
+):
+    """`build_zone_break_response` の薄いラッパ（`get_structure_pivot_data` と同じ構成）。"""
+    return build_zone_break_response(symbol_id, db, full_range)
