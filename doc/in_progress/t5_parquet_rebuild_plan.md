@@ -226,9 +226,9 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 - [x] **5-11** sandbox で `--rebuild-from T3` を実走 → **合格**（2026-09-12。①sandbox Parquet vs 独立計算が SPY 由来6列・全期間4,136日で一致 ②sandbox SQLite vs Parquet が 502日で全列一致（復元の確認）③ログで新手順を確認（T3 22:45→T4 22:51→T5 22:53→復元先が **sandbox のパス**）④**本番は無傷**（世代・ポインタとも変化なし、新世代は sandbox 側）⑤`db_health_check --all --check-nulls` は本番ベースラインと**同種のみ**で回帰なし）
 - [x] **5-12** ルールの明記（§3.5）+ `sync_skills.py --apply`
 - [x] **5-13** 仕様書の T5 記述を更新
-- [ ] **5-6c** dry-run の差分に**日付集合の対称差**を表示する（§7-6(3)）— `compare_by_period()` の inner merge を直す。**5-14 のゲートそのもの**
-- [ ] **5-7b** 遡り不足ガードの判定を「**SQLite の SPY 起点が Parquet の起点より後ろか**」に変える（§7-6(1)）— 全期間再構築と日次の正常な NULL バックフィルで止まらないこと、切り詰めた窓では止まることをテストで担保
-- [ ] **5-8c** 復元の後に `run_pipeline(rebuild_from=None, skip_fetch=True)` を呼び、T1/FX/仮想指数/rotate/purge/整合監査を通す（§7-6(2)）— `refresh_T3Table.bat` のコメントと SKILL.md の記述も実態へ
+- [x] **5-6c** dry-run の差分に**日付集合の対称差**を表示する（§7-6(3)）— `compare_by_period()` の inner merge を直す。**5-14 のゲートそのもの**
+- [x] **5-7b** 遡り不足ガードの判定を「**SQLite の SPY 起点が Parquet の起点より後ろか**」に変える（§7-6(1)）— 全期間再構築と日次の正常な NULL バックフィルで止まらないこと、切り詰めた窓では止まることをテストで担保
+- [x] **5-8c** 復元の後に `run_pipeline(rebuild_from=None, skip_fetch=True)` を呼び、T1/FX/仮想指数/rotate/purge/整合監査を通す（§7-6(2)）— `refresh_T3Table.bat` のコメントと SKILL.md の記述も実態へ
 - [ ] **5-14** **本体チェックアウトから実行する**（ワークツリーからは sandbox を指すため — §7-2）。先に 5-16 の「修復前」の型3 シナリオを実行して記録しておく → merge → **dry-run の差分をユーザーに提示して確認** → API サーバ停止 → `tools/deploy_after_merge.ps1 -RebuildFrom T5` → API サーバ再起動（§4-2）
 - [ ] **5-15** 本番の修復確認 — 成功条件 2・3（Parquet 全期間計算と完全一致 / 8/29 世代と 8/29 以前で完全一致）
 - [ ] **5-16** 型3 シナリオの再評価（§4-3）— 修復前（5-14 の前）と修復後で同じ条件で実行し before/after を記録。**期待値は「変化なし」**（§4.1）。大きく変わったら想定外の読み取り経路を調べる
@@ -237,17 +237,39 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 
 ### 作業中メモ
 
-**現在地: 5-1〜5-13 すべて検収合格（2026-09-13）。残るは「merge 前のコードレビュー」→ 5-14 以降（本番修復）。**
+**現在地: 5-1〜5-13・5-6c・5-7b・5-8c すべて実装済み（2026-09-13、実装ワーカー）。オーケストレーターの検収待ち → 5-14 以降（本番修復）。**
 
 - 検収済み: 5-1 / 5-2〜5-5（`dce43e8`）/ 5-6 反証・全セル一致 / 5-6b（`fc0303d`）/ 5-7（`9591796`）/
   5-8（`acb3842`）/ 5-9（`8b54a34`）/ 5-10 / 5-8b（`e4fca95`）/ 5-9b（`dd8bafa`）/ 5-11 実走・合格 /
-  5-12・5-13（`0eb163b`）。**テスト全体: 1741 passed / 0 failed**、`sync_skills.py --check` 差分ゼロ
+  5-12・5-13（`0eb163b`）
 - 5-13 の検収で**仕様書の既存の誤りを1件修正**（`588b3d7`）: `market_trend_score` の説明が
   「5項目の等価20%合計（⑤Distribution Days を含む）」だったが、実装は **4成分×25%**で
   **Distribution Days はスコアに含まない**（`indicators/market_signals.py` L149,304-317。
   breadth が無い期間は3成分×1/3）
-- **コードレビュー実施済み（2026-09-13）→ 指摘3件、対応中**（§7-6）。うち2件は検収済み項目の欠陥
-  （5-7 のガード判定・5-8 の後処理落ち）。**3件を直すまで 5-14 に進まない**
+- **コードレビューの指摘3件（§7-6）を実装ワーカーが対応（未検収）**:
+  - **5-6c**: `compare_by_period()` に `date_diff`（`only_in_old` / `only_in_new` の件数＋先頭5件の日付例）を
+    期間ごとに追加。0件でも必ず表示する。`_print_diff()` に `[3b]` の表を追加。既存キー（`days`/`columns`）は
+    変えていないため既存アサーションは無傷
+  - **5-7b**: 判定を「本数不足（220本未満）を検知した場合に限り、Parquet マスタの SPY 起点と比較する」
+    2段構成にした（`t5_signals.py` の `_get_parquet_spy_min_date()` + ガード本体）。
+    **本数が十分な場合（デイリー相当）は Parquet 比較に到達しない**——これが実装上の要点。
+    もし常に「SQLite 全体の起点 vs Parquet 起点」を無条件比較する素朴な実装にすると、SQLite は
+    ホット期間（約730日）しか保持しないため**日次更新が毎晩 RuntimeError になる**（起点は常に
+    Parquet より後ろなため）。本数不足を外側のゲートにすることで、日次は「十分な本数があるので
+    比較に進まない」→ 通る。切り詰められた窓は「本数不足 かつ Parquet に追加の履歴がある」→ 止まる。
+    ホット期間の古い日付の単発 NULL 修復も「本数不足だが Parquet も同じ起点」→ 通る。
+    Parquet 読めない場合は本数判定にフォールバック（従来どおり raise）。
+    テスト4本 + フォールバック1本を `test_t5_lookback_guard.py` に実装（旧4テストは置き換え）
+  - **5-8c**: `_rebuild_from_parquet()` の SQLite 復元（ステップ4）の後に `run_pipeline(rebuild_from=None,
+    skip_fetch=True, skip_sync=<呼び出し元の値>, categories=None, skip_t3=False,
+    recalculate_all=False)` を追加（ステップ5）。復元済みのため T5 の `gap_dates` は空になり
+    SQLite 基点の T5 は走らない——`test_update_pipeline_rebuild.py` で `run_pipeline` をモックし
+    kwargs を検証（`rebuild_from is None` / `skip_fetch is True`）。**T5 が実際に二重計算されない
+    ことの直接証拠は 5-11 相当の実走（Parquet に real データを使う統合テスト）でしか取れない**ため、
+    5-14 前の実走確認で再確認するのが望ましい。`refresh_T3Table.bat` のコメントと
+    `pipeline-debugging/SKILL.md` の該当行も実態に合わせて更新、`sync_skills.py --apply` 済み
+- テスト全体: **1747 passed / 0 failed**（1741 + 5-6c 3件 + 5-7b 差分2件 + 5-8c 差分2件）、
+  `sync_skills.py --check` 差分ゼロ
 - 5-14 の注意: **本体チェックアウトから実行**（ワークツリーからは sandbox を指す — §7-2）。
   実行前に dry-run の差分をユーザーへ提示して確認を取る。先に 5-16 の「修復前」型3 シナリオを記録しておく
 - sandbox の Parquet は `--rebuild-from T3` 実走後の世代 `20260912_225403`。本番は `20260912_145123`

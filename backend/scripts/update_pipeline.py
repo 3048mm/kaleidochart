@@ -21,7 +21,7 @@ from logging.handlers import RotatingFileHandler
 
 import multiprocessing
 
-def _rebuild_from_parquet(level: str, logger, config: dict) -> None:
+def _rebuild_from_parquet(level: str, logger, config: dict, skip_sync: bool = False) -> None:
     """T3 / T4 / T5 の作り直しを **Parquet 基点**で行う。
 
     ## なぜ SQLite 基点ではいけないか
@@ -52,10 +52,26 @@ def _rebuild_from_parquet(level: str, logger, config: dict) -> None:
         2. Parquet で T4 を全期間再計算し、新世代を publish（T3/T4 指定時のみ）
         3. Parquet で T5（market_signals）を全期間再計算し、新世代を publish
         4. SQLite をホット期間ぶん復元（market_signals も Parquet から入る）
+        5. `run_pipeline(rebuild_from=None, skip_fetch=True)` を呼び、
+           T1（universe.db → symbols 同期）・FX 同期・仮想テーマ指数の再合成・
+           rotate・purge・`verify_pipeline_integrity` を通す（§7-6(2)・5-8c）
 
-    T3〜T5 すべて Parquet で完結し SQLite も復元済みになるため、この関数の
-    呼び出し元は `run_pipeline()` を呼ばない（rotate＝SQLite→Parquet の
-    マージが不要なため）。
+    ステップ5を追加した理由: ステップ4までで終えていた旧実装は、旧経路
+    （`run_pipeline()` 一括呼び出し）が実行していた上記の後処理を全て落として
+    いた（コードレビューで発見。`run/tool/refresh_T3Table.bat` は
+    `--rebuild-from T3 --skip-fetch` のみで `--skip-sync` を渡さないため、
+    従来は銘柄編集が反映・永続化されていたが、後処理が落ちたことで反映されず、
+    さらに `restore_sqlite_cache_from_parquet()` が `symbols`/`theme_constituents`
+    を旧世代 Parquet のスナップショットへ巻き戻していた）。
+
+    ステップ5は**ステップ4の復元の後**に呼ぶため、`run_pipeline()` 内部の
+    T5（`sync_phase_t5_signals`）の gap_dates は空になり、SQLite 基点の T5 は
+    走らない（＝ T5 の二重計算にはならない。この関数の目的である
+    「T5 を Parquet 基点にする」と両立する）。`skip_fetch=True` を固定するため、
+    yfinance の自動モード（`orchestrator.py:777-808`）にも入らない。
+    `categories` は渡さない（`--rebuild-from` では無視する既存方針）。
+    `skip_sync` は呼び出し元（`_run_rebuild_or_pipeline`）から渡ってきた値を
+    そのまま尊重する。
 
     `--category` は無視する（全銘柄を作り直す方が安全で、Parquet 基点なら
     銘柄を絞る利点も無いため）。
@@ -71,6 +87,8 @@ def _rebuild_from_parquet(level: str, logger, config: dict) -> None:
         level: "T3" / "T4" / "T5"。T4 指定時は T3 を、T5 指定時は T3・T4 を
                それぞれスキップする（依存元は既に作り直し済みという前提）。
         config: `load_config()` で読んだ `config.toml`。db_path 解決に使う。
+        skip_sync: True なら T1（universe.db → symbols 同期）をスキップする。
+               呼び出し元の `--skip-sync` をそのまま渡す（§7-6(2)）。
     """
     import paths
     from scripts import recompute_parquet_indicators, recompute_parquet_ranks, recompute_parquet_signals
@@ -81,43 +99,59 @@ def _rebuild_from_parquet(level: str, logger, config: dict) -> None:
     db_path = paths.resolve_db_path_for_init("stocktool", config["system"]["db_path"])
 
     if level == "T3":
-        logger.info("=== [1/4] Parquet の T3 を全期間再計算 ===")
+        logger.info("=== [1/5] Parquet の T3 を全期間再計算 ===")
         recompute_parquet_indicators.run(dry_run=False,
                                          chunk_size=recompute_parquet_indicators.DEFAULT_CHUNK_SIZE)
     else:
-        logger.info("=== [1/4] T3 は指定されていないためスキップ ===")
+        logger.info("=== [1/5] T3 は指定されていないためスキップ ===")
 
     if level in ("T3", "T4"):
-        logger.info("=== [2/4] Parquet の T4 を全期間再計算 ===")
+        logger.info("=== [2/5] Parquet の T4 を全期間再計算 ===")
         recompute_parquet_ranks.run(dry_run=False)
     else:
-        logger.info("=== [2/4] T4 は指定されていないためスキップ（T5 単独） ===")
+        logger.info("=== [2/5] T4 は指定されていないためスキップ（T5 単独） ===")
 
-    logger.info("=== [3/4] Parquet の T5 を全期間再計算 ===")
+    logger.info("=== [3/5] Parquet の T5 を全期間再計算 ===")
     recompute_parquet_signals.run(dry_run=False)
 
-    logger.info("=== [4/4] SQLite をホット期間ぶん復元 (%s) ===", db_path)
+    logger.info("=== [4/5] SQLite をホット期間ぶん復元 (%s) ===", db_path)
     if not run_production_restore(db_path=db_path):
         raise RuntimeError("SQLite の復元に失敗しました。Parquet は更新済みなので、"
                            " 復元だけやり直してください。")
+
+    logger.info("=== [5/5] 後処理（T1/FX/仮想指数/rotate/purge/整合監査）を実行 ===")
+    from pipeline.orchestrator import run_pipeline
+    run_pipeline(
+        config=config,
+        db_path=db_path,
+        logger=logger,
+        rebuild_from=None,
+        categories=None,
+        skip_fetch=True,
+        skip_sync=skip_sync,
+        skip_t3=False,
+        recalculate_all=False,
+    )
 
 
 def _run_rebuild_or_pipeline(rebuild_from, selected_categories, config, db_path, logger,
                               skip_fetch, skip_sync, skip_t3, recalculate_all) -> None:
     """`--rebuild-from` の指定に応じて、Parquet 基点の再構築 or 通常のパイプラインを実行する。
 
-    T3/T4/T5 は `_rebuild_from_parquet()` に委譲する。Parquet で全期間の
-    再計算 → SQLite 復元まで完結するため、**`run_pipeline()` は呼ばない**
-    （以前は `rebuild_from="T5"` に差し替えて `run_pipeline()` を続行し、
-    SQLite 基点で T5 を再計算していたが、これが MTS 破損の原因だった）。
+    T3/T4/T5 は `_rebuild_from_parquet()` に委譲する。**この関数自身は
+    `run_pipeline()` を呼ばない**（以前は `rebuild_from="T5"` に差し替えて
+    `run_pipeline()` を続行し、SQLite 基点で T5 を再計算していたが、これが
+    MTS 破損の原因だった）。`_rebuild_from_parquet()` は、Parquet での全期間
+    再計算・SQLite 復元の**後に**、後処理（T1/FX/仮想指数/rotate/purge/整合監査）
+    のために `run_pipeline()` を1回呼ぶ（§7-6(2)・5-8c）。
     それ以外（`T2` や `rebuild_from` 無しの通常実行）は従来どおり
-    `run_pipeline()` を呼ぶ。
+    この関数から `run_pipeline()` を呼ぶ。
     """
     if rebuild_from and rebuild_from.upper() in ("T3", "T4", "T5"):
         if selected_categories:
             logger.warning("--rebuild-from %s では --category を無視し、全銘柄を作り直します"
                            "（Parquet 基点のため銘柄を絞る利点がありません）", rebuild_from)
-        _rebuild_from_parquet(rebuild_from.upper(), logger, config)
+        _rebuild_from_parquet(rebuild_from.upper(), logger, config, skip_sync=skip_sync)
         return
 
     from pipeline.orchestrator import run_pipeline

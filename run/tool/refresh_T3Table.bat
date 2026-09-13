@@ -7,7 +7,8 @@ call venv\Scripts\activate.bat
 
 echo =========================================================
 echo   StockTool - Rebuild T3 (Indicators) Table
-echo   Recomputes T3/T4 on the Parquet master, then T5
+echo   Recomputes T3/T4/T5 on the Parquet master, restores SQLite,
+echo   then runs post-processing (T1 sync/FX/virtual themes/rotate/purge)
 echo =========================================================
 echo.
 echo   NOTE: Stop the API server and the daily task first.
@@ -17,8 +18,13 @@ echo.
 :: update_pipeline.py --rebuild-from T3 that does everything:
 ::   1. recompute T3 on Parquet (full history per symbol)
 ::   2. recompute T4 on Parquet
-::   3. restore the SQLite hot cache from Parquet
-::   4. recompute T5 and rotate
+::   3. recompute T5 (market_signals) on Parquet
+::   4. restore the SQLite hot cache from Parquet (market_signals included)
+::   5. post-processing: run_pipeline(rebuild_from=None, skip_fetch=True)
+::      to run T1 symbol sync (universe.db), FX sync, virtual theme index
+::      rebuild, rotate, purge, and the integrity audit. --skip-sync is NOT
+::      passed here, so T1 symbol sync runs and any edits made in universe.db
+::      get synced and persisted.
 ::
 :: The previous version of this file ran run_production_restore.py first and
 :: then --rebuild-from T3. That is no longer needed: T3 now reads the Parquet

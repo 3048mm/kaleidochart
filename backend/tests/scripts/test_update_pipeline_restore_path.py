@@ -22,6 +22,7 @@ from scripts import recompute_parquet_ranks
 from scripts import recompute_parquet_signals
 from scripts import run_production_restore as rpr_module
 from pipeline.parquet_cache_manager import get_parquet_master_dir
+import pipeline.orchestrator as orchestrator_module
 
 
 _STOCKTOOL_ENV_VARS = (
@@ -57,7 +58,11 @@ def _clean_stocktool_env(monkeypatch):
 
 @pytest.fixture()
 def _mock_recompute_scripts(monkeypatch):
-    """T3/T4/T5 の再計算は呼ばれたことだけ記録し、実処理はしない。"""
+    """T3/T4/T5 の再計算は呼ばれたことだけ記録し、実処理はしない。
+
+    復元の後に呼ばれる後処理の `run_pipeline()`（§7-6(2)・5-8c）もここでモックする
+    （本テストの関心は db_path 解決であり、後処理の実処理は対象外）。
+    """
     calls = []
     monkeypatch.setattr(recompute_parquet_indicators, "run",
                          lambda dry_run, chunk_size: calls.append("T3"))
@@ -65,6 +70,8 @@ def _mock_recompute_scripts(monkeypatch):
                          lambda dry_run: calls.append("T4"))
     monkeypatch.setattr(recompute_parquet_signals, "run",
                          lambda dry_run: calls.append("T5"))
+    monkeypatch.setattr(orchestrator_module, "run_pipeline",
+                         lambda **kwargs: calls.append("run_pipeline"))
     return calls
 
 
