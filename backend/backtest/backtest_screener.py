@@ -33,6 +33,10 @@ try:
         filter_structure_2nd_break,
         filter_structure_trend_line_break,
         filter_vcp_breakout,
+        filter_is_zone_break_bull_flip,
+        filter_is_zone_break_bear_flip,
+        filter_is_zone_break_bull_breakout,
+        filter_is_zone_break_bear_breakout,
     )
     from indicators import screener_registry
 except ModuleNotFoundError:
@@ -55,6 +59,10 @@ except ModuleNotFoundError:
         filter_structure_2nd_break,
         filter_structure_trend_line_break,
         filter_vcp_breakout,
+        filter_is_zone_break_bull_flip,
+        filter_is_zone_break_bear_flip,
+        filter_is_zone_break_bull_breakout,
+        filter_is_zone_break_bear_breakout,
     )
     from backend.indicators import screener_registry
 
@@ -192,6 +200,10 @@ def apply_filters_to_df(
         merged['sp_range_pct'] = (merged['sp_pivot'] - merged['sp_hl']) / merged['close'] * 100
     if 'sp_hl' in merged.columns and 'close' in merged.columns:
         merged['sp_risk_pct'] = (merged['close'] - merged['sp_hl']) / merged['close'] * 100
+    if 'zb_ssl' in merged.columns and 'close' in merged.columns:
+        merged['zb_dist_ssl_pct'] = (merged['close'] - merged['zb_ssl']) / merged['close'] * 100
+    if 'zb_bsl' in merged.columns and 'close' in merged.columns:
+        merged['zb_dist_bsl_pct'] = (merged['zb_bsl'] - merged['close']) / merged['close'] * 100
 
     # --- レジストリで必要カラムを解決する（doc/completed/screener_filter_unification_plan.md §3.1.4） ---
     from backend.db.models import RelativeRank
@@ -516,6 +528,18 @@ def apply_filters_to_df(
             base_vol_dry_max=(float(strategy['base_vol_dry_max'])
                               if strategy.get('base_vol_dry_max') is not None else None),
         )
+
+    # Direction via Zone Break（フリップ = isBreak_bl 由来の反転）
+    if strategy.get('is_zone_break_bull_flip'):
+        mask &= filter_is_zone_break_bull_flip(merged)
+    if strategy.get('is_zone_break_bear_flip'):
+        mask &= filter_is_zone_break_bear_flip(merged)
+
+    # Direction via Zone Break（継続ブレイク = isConf_bl 由来の継続）
+    if strategy.get('is_zone_break_bull_breakout'):
+        mask &= filter_is_zone_break_bull_breakout(merged)
+    if strategy.get('is_zone_break_bear_breakout'):
+        mask &= filter_is_zone_break_bear_breakout(merged)
 
     # 3. Expression Filter
     expression = strategy.get('expression')

@@ -2,8 +2,9 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { createChart, IChartApi, ISeriesApi, CrosshairMode, SeriesMarker } from 'lightweight-charts';
-import { Symbol, ChartDataPoint, EarningData, ChartResponse, ChartSymbolMeta, StructurePivot, CounterTrend } from '../types';
+import { Symbol, ChartDataPoint, EarningData, ChartResponse, ChartSymbolMeta, StructurePivot, CounterTrend, ZoneBreakLevel, ZoneBreakFvg } from '../types';
 import { STRUCTURE_HISTORY_LIMIT, buildStructureMarkers, buildStructureSegments, fetchStructurePivot } from '../api/structurePivot';
+import { buildZoneBreakFvgSegments, buildZoneBreakLevelSegments, fetchZoneBreak } from '../api/zoneBreak';
 import { appConfig } from '../config';
 import { RrgChart } from '../components/RrgChart';
 import { SymbolDataTable } from '../components/SymbolDataTable';
@@ -167,6 +168,12 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
     // 表示トグルは構造ピボットと共通（2026-09-03 ユーザー判断。排他なので分けても
     // 片方が常に無反応に見えるだけ）
     const [currentCounter, setCurrentCounter] = useState<CounterTrend | null>(null);
+    // Direction via Zone Break。バックテストで単体のエッジは確認できなかった指標
+    // （doc/in_progress/zone_break_plan.md §6、2026-09-13）のため、既定は非表示にする
+    const [showZoneBreak, setShowZoneBreak] = useState(false);
+    const [zbSslLevels, setZbSslLevels] = useState<ZoneBreakLevel[]>([]);
+    const [zbBslLevels, setZbBslLevels] = useState<ZoneBreakLevel[]>([]);
+    const [zbFvgBoxes, setZbFvgBoxes] = useState<ZoneBreakFvg[]>([]);
 
     const chartRef = useRef<IChartApi | null>(null);
     const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -179,6 +186,7 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
     const compSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const sma50AtrSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const structureSeriesRef = useRef<ISeriesApi<"Line">[]>([]);
+    const zoneBreakSeriesRef = useRef<ISeriesApi<"Line">[]>([]);
 
     const selected = useMemo(() => {
         const parsedTicker = ticker?.includes(':') ? ticker.split(':')[1] : ticker;
@@ -241,6 +249,32 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
             });
         return () => { cancelled = true; };
     }, [selected, fullRange, showStructurePivot]);
+
+    // 1c. Direction via Zone Break。トグル ON のときだけ取得する
+    useEffect(() => {
+        if (!selected || !showZoneBreak) {
+            setZbSslLevels([]);
+            setZbBslLevels([]);
+            setZbFvgBoxes([]);
+            return;
+        }
+        let cancelled = false;
+        fetchZoneBreak(selected.id, fullRange)
+            .then(resp => {
+                if (cancelled) return;
+                setZbSslLevels(resp.ssl_levels);
+                setZbBslLevels(resp.bsl_levels);
+                setZbFvgBoxes(resp.fvg_boxes);
+            })
+            // zone_break が出ないだけでチャート全体を落とさない
+            .catch(() => {
+                if (cancelled) return;
+                setZbSslLevels([]);
+                setZbBslLevels([]);
+                setZbFvgBoxes([]);
+            });
+        return () => { cancelled = true; };
+    }, [selected, fullRange, showZoneBreak]);
 
 
 
@@ -508,6 +542,29 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
             });
         }
 
+        // --- Direction via Zone Break (SSL/BSL 水準 + FVG ボックス) ---
+        zoneBreakSeriesRef.current.forEach(series => {
+            try { chart.removeSeries(series); } catch { /* チャート破棄済み */ }
+        });
+        zoneBreakSeriesRef.current = [];
+
+        if (showZoneBreak && (zbSslLevels.length > 0 || zbBslLevels.length > 0 || zbFvgBoxes.length > 0)) {
+            const dates = data.map(d => d.time);
+            const levelSegments = buildZoneBreakLevelSegments(zbSslLevels, zbBslLevels, dates, false);
+            const fvgSegments = buildZoneBreakFvgSegments(zbFvgBoxes, dates);
+            [...levelSegments, ...fvgSegments].forEach(seg => {
+                const series = chart.addLineSeries({
+                    color: seg.color, lineWidth: seg.width, lineStyle: seg.style,
+                    lastValueVisible: false, priceLineVisible: false, crosshairMarkerVisible: false,
+                });
+                series.setData([
+                    { time: seg.from as any, value: seg.fromValue },
+                    { time: seg.to as any, value: seg.toValue },
+                ]);
+                zoneBreakSeriesRef.current.push(series);
+            });
+        }
+
         // --- Volume Histogram ---
         let volSeries = volSeriesRef.current;
         if (!volSeries) {
@@ -665,7 +722,8 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
         data, compareData, showVolume, showTd9, showBB, showRsDots, showSma50Atr,
         showSma21, showSma50, showSma63, showSma150, showSma200,
         showEma5, showEma21, showEma50, showEma63, showEma200,
-        showStructurePivot, structures, currentCounter
+        showStructurePivot, structures, currentCounter,
+        showZoneBreak, zbSslLevels, zbBslLevels, zbFvgBoxes
     ]);
 
     const latest = data.length > 0 ? data[data.length - 1] : null;
@@ -1053,6 +1111,7 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
                                     <button className={`toggle-btn ${showRsDots ? 'active' : ''}`} onClick={() => setShowRsDots(!showRsDots)}>RS.</button>
                                     <button className={`toggle-btn ${showSma50Atr ? 'active' : ''}`} onClick={() => setShowSma50Atr(!showSma50Atr)}>50/ATR</button>
                                     <button className={`toggle-btn ${showStructurePivot ? 'active' : ''}`} onClick={() => setShowStructurePivot(!showStructurePivot)} title="LL-HL 構造ピボット">Pivot</button>
+                                    <button className={`toggle-btn ${showZoneBreak ? 'active' : ''}`} onClick={() => setShowZoneBreak(!showZoneBreak)} title="Direction via Zone Break（SSL/BSL/FVG）">ZoneBreak</button>
 
                                     <div style={{ borderLeft: '1px solid #333', margin: '0 10px', height: '24px', alignSelf: 'center' }}></div>
 
@@ -1226,6 +1285,7 @@ export const ChartPage: React.FC<ChartPageProps> = ({ symbols }) => {
                             <span style={{ fontSize: '10px', color: '#687fa1', textTransform: 'uppercase', display: 'block', marginBottom: '6px', fontWeight: '600', letterSpacing: '0.05em' }}>その他表示</span>
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
                                 <button className={`toggle-btn ${showStructurePivot ? 'active' : ''}`} style={{ padding: '8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer', gridColumn: 'span 2' }} onClick={() => setShowStructurePivot(!showStructurePivot)}>Pivot (LL-HL 構造ピボット)</button>
+                                <button className={`toggle-btn ${showZoneBreak ? 'active' : ''}`} style={{ padding: '8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer', gridColumn: 'span 2' }} onClick={() => setShowZoneBreak(!showZoneBreak)}>ZoneBreak (SSL/BSL/FVG)</button>
                                 <button className={`toggle-btn ${showVolume ? 'active' : ''}`} style={{ padding: '8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }} onClick={() => setShowVolume(!showVolume)}>出来高 (Volume)</button>
                                 <button className={`toggle-btn ${showTd9 ? 'active' : ''}`} style={{ padding: '8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }} onClick={() => setShowTd9(!showTd9)}>TD9 シーケンシャル</button>
                                 <button className={`toggle-btn ${showBB ? 'active' : ''}`} style={{ padding: '8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer' }} onClick={() => setShowBB(!showBB)}>ボリンジャーバンド</button>

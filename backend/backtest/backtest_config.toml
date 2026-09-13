@@ -806,6 +806,51 @@ min_market_cap     = { type = "categorical", choices = [1e8, 3e8, 1e9, 3e9] }
 
 
 # =============================================================
+# Direction via Zone Break（候補戦略、doc/in_progress/zone_break_plan.md §3.5）
+# 初期値は最適化前の素朴な組み合わせ。型1の単発実行でベースラインを取るための2本。
+# フリップ（初動）と継続ブレイクは意味が異なるシグナルのため独立の戦略として分離。
+# Optuna投入は本計画のスコープ外（§2.2）。
+# =============================================================
+[[strategy]]
+name = "I1_zone_break_flip"
+description = "Direction via Zone Break: 強気転換初日、直近ゾーンがまだ無効化されていない"
+is_zone_break_bull_flip = true
+is_zone_break_weak = false
+min_market_cap = 1e8
+max_hits_per_day = 10
+
+[[strategy]]
+name = "I2_zone_break_breakout"
+description = "Direction via Zone Break: 強気トレンド継続中に新しいゾーンをブレイク（無効化されていない）"
+is_zone_break_bull_breakout = true
+is_zone_break_weak = false
+min_market_cap = 1e8
+max_hits_per_day = 10
+
+# I1/I2単体ではAlphaが出なかった（2026-09-12実施、計画書§6）ため、当初の仮説どおり
+# RS/Trend Templateで絞った確認フィルタとして再検証する（ユーザー判断、非最適化の単発実行）
+[[strategy]]
+name = "J1_zone_break_flip_confirmed"
+description = "Direction via Zone Break フリップ + RS上位30%・Trend Template適合の確認フィルタ"
+is_trend_template = true
+min_rs_ratio_rank_e21 = 0.7
+is_zone_break_bull_flip = true
+is_zone_break_weak = false
+min_market_cap = 1e8
+max_hits_per_day = 10
+
+[[strategy]]
+name = "J2_zone_break_breakout_confirmed"
+description = "Direction via Zone Break 継続ブレイク + RS上位30%・Trend Template適合の確認フィルタ"
+is_trend_template = true
+min_rs_ratio_rank_e21 = 0.7
+is_zone_break_bull_breakout = true
+is_zone_break_weak = false
+min_market_cap = 1e8
+max_hits_per_day = 10
+
+
+# =============================================================
 # Optimization Evaluation Periods (Multi-period cross-validation)
 # =============================================================
 

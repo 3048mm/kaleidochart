@@ -206,6 +206,10 @@ T2の価格データを元に算出される各種テクニカル・モメンタ
 | `sp_pivot` | FLOAT | **構造ピボット (LL-HL) のブレイクアウト水準。** 押し目構造が生きているバーのみ値を持ち、それ以外は NULL。 | LL と HL の**間**の最高値（両端の足は含まない）。`indicators/structure_pivot.py::structure_pivot_series()` |
 | `sp_hl` | FLOAT | **構造ピボットの HL（切り上げた安値）価格。そのまま損切り候補になる。** 同上、構造が無いバーは NULL。 | 直前のピボット安値より高いピボット安値。当日安値が割った時点で構造は消える |
 | `sp_counter` | FLOAT | **カウンタートレンド線の当日値。** LL-HL 構造が**成立していない**期間にだけ引かれる下向きの抵抗線で、`sp_pivot` とは排他（どちらか一方が NULL）。上抜けが Trend Line Break シグナル。 | ショート側のピボット高値2点を結ぶ。候補は**長さごとの状態機械が持つ prev / curr の2点だけ**（帯 2-5 なので最大8点）。アンカー1＝`idx <= limit_idx` で価格が最大のもの、アンカー2＝`anchor1 < idx < limit_idx` の curr のうち**傾きが最大**のもの（最小ではない）。`limit_idx` はロング側の現在のピボット安値。`indicators/structure_pivot.py::counter_trend_series()` |
+| `is_zone_break_bull` | BOOLEAN | **Direction via Zone Break（TradingView `[by rukich]`移植）の現在のトレンド方向。** True=Bull, False=Bear。初期値 True。 | 3本足フラクタルでSSL/BSLを検出し、確定closeがSSL/BSLを超えた次のフラクタル確定で反転（フリップ）または継続（ゾーン更新のみ）を判定する状態機械。`indicators/zone_break.py::zone_break_series()` |
+| `zb_ssl` | FLOAT | 現在のSSL（直近安値、損切り候補）価格。未確定の間は0.0。 | 同上 |
+| `zb_bsl` | FLOAT | 現在のBSL（直近高値、ブレイク水準）価格。未確定の間は0.0。 | 同上 |
+| `is_zone_break_weak` | BOOLEAN | 直近トレンド内で最も近いFVG（Fair Value Gap）ゾーンが無効化済みか。 | FVGボックス（3本足ギャップ）を`close`と比較し、無効化が1件でも起きたらTrue。継続ブレイクの確定close瞬間にリセット |
 
 > [!IMPORTANT]
 > **`sp_pivot` / `sp_hl` / `sp_counter` には確定遅延がある。** ピボットは `ta.pivotlow(low, L, L)` 相当の
@@ -225,6 +229,19 @@ T2の価格データを元に算出される各種テクニカル・モメンタ
 >
 > **スクリーン条件としては不採用**（実測で Alpha ≒ 0）。DATA VIEW 表示とチャート描画、
 > および手動でのエントリー/損切り判断に使う。経緯: `doc/completed/structure_pivot_screener_plan.md`
+
+> [!IMPORTANT]
+> **`is_zone_break_bull` / `zb_ssl` / `zb_bsl` / `is_zone_break_weak` には確定遅延は無い。**
+> ブレイク判定自体は当日の確定closeだけで決まる（3本足フラクタルの確定は1本遅れるが先読みではない）。
+> 全履歴を遡る `detector_bsl/ssl_last_fractal`（Pine原文）は、確定済みフラクタルを前向きに
+> 積んでおき末尾を参照するO(1)方式に置き換えている（無制限版オラクルとの出力一致をテストで担保）。
+>
+> T3（SQLite直近730日）とParquet全期間バックフィルの収束性はAAPL/SPY/NVDAの3銘柄で確認済み
+> （直近60本・最終バーは完全一致）。TradingView実チャートとの突合も同3銘柄で一致を確認済み。
+>
+> **スクリーン条件としては非最適化の単発実行でAlphaが確認できていない**（I1: -0.22%,
+> I2: -0.01%。RS/Trend Templateとの組み合わせでも改善せず、J1: +0.03%, J2: -0.01%）。
+> Optuna最適化は未実施。チャート表示（§5.1.3）用途が主。経緯: `doc/completed/zone_break_plan.md`
 
 ### 3.5 T4: 相対評価データ (`relative_ranks`)
 
@@ -611,6 +628,27 @@ D-2（2026-07-04）で特殊ブールフィルタの実体は `indicators/screen
 随伴パラメータ `structure_fib_1st` は `FilterSpec.params` に宣言すること
 （宣言しないと `is_non_filter_key()` が除外できず、実行時に未知キーで停止する）。
 
+#### Zone Break 由来の仮想カラム・特殊フィルタ
+
+実カラムは `zb_ssl` / `zb_bsl` の2つで、距離は `close` で正規化して導く（構造ピボットと同じ構成）。
+
+| 名前 | 式 | 用途 |
+| :--- | :--- | :--- |
+| `zb_dist_ssl_pct` | `(close - zb_ssl) / close * 100` | SSL（損切り候補）までの距離 |
+| `zb_dist_bsl_pct` | `(zb_bsl - close) / close * 100` | BSL（ブレイク水準）までの距離。ブレイク済みなら負値 |
+
+特殊フィルタ4種（Pine原文の `isBreak_bl`/`isConf_bl` にそれぞれ対応。§3.4 T3節参照）:
+
+| キー | 意味 | 必要カラム（当日/前日） |
+| :--- | :--- | :--- |
+| `is_zone_break_bull_flip` | 前日Bear→当日Bullに転換（反転） | `is_zone_break_bull` |
+| `is_zone_break_bear_flip` | 前日Bull→当日Bearに転換（反転） | `is_zone_break_bull` |
+| `is_zone_break_bull_breakout` | Bull継続中に新しいゾーンをブレイク（継続） | `is_zone_break_bull`, `zb_bsl` |
+| `is_zone_break_bear_breakout` | Bear継続中に新しいゾーンをブレイク（継続） | `is_zone_break_bull`, `zb_ssl` |
+
+いずれもイベント型フィルタのため、必要カラムが無い場合は全False（deny-by-default、
+`is_structure_1st_break` 等と同じ方針）。
+
 #### 全経路共通のルール
 
 | ルール | 実装 | 適用先 |
@@ -721,6 +759,28 @@ ticker を永続キーにする設計は「DB を作り直しても追随でき�
 > `broken_at_confirmation` は「構造が確定した時点で既に終値がピボットを超えていた」ケース。
 > 本番 Parquet 5年の実測で **27〜28%**（長さ帯によらずほぼ一定）が該当する。
 > 確定遅延の実害を示す指標として残している。
+
+### 5.1.3 Direction via Zone Break API (`GET /chart/{symbol_id}/zone_break`)
+
+チャート描画用に SSL/BSL ラインの区間列・FVG ボックスをリクエスト時に計算して返す
+（`structure_pivot` と同じ設計。T3 の4カラムからは導けない区間情報のみオンザフライ計算）。
+
+| 項目 | 内容 |
+| :--- | :--- |
+| **実体** | `indicators/zone_break.py::find_zone_break_zones()` |
+| **ルータ** | `api/chart_router.py::build_zone_break_response()` ＋ 同名の薄いルータ |
+| **クエリ** | `full_range`（既定 false。true で Parquet マスターの全期間） |
+| **レスポンス** | `metadata` ＋ `ssl_levels` / `bsl_levels`（区間列）＋ `fvg_boxes`（ボックス列）＋ `current_direction`（`'bull'`\|`'bear'`\|`null`） |
+
+`ssl_levels`/`bsl_levels` の各要素は `kind` / `price` / `start_date` / `end_date` / `is_current`。
+`fvg_boxes` の各要素は `kind`（`'bull'`\|`'bear'`）/ `left_date` / `right_date` / `top` / `bottom`
+（生成時に固定された無効化判定用の水準）/ `invalidated` / `is_current`。
+
+> [!NOTE]
+> フロントエンド（`frontend/src/api/zoneBreak.ts`）は lightweight-charts v4 に矩形描画の
+> 標準APIが無いため、FVG ボックスを**上端・下端の2本の線分（輪郭のみ、塗りつぶし無し）**
+> として描画する。`ChartPage` の表示は既定で OFF（バックテストで単体のエッジが
+> 確認できなかったため。経緯: `doc/completed/zone_break_plan.md` §6）。
 
 ### 5.2 ウォッチリスト API
 

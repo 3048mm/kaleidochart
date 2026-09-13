@@ -462,3 +462,35 @@ export interface StructurePivotResponse {
     counters?: CounterTrend[]
     current_counter?: CounterTrend | null
 }
+
+/** Direction via Zone Break — GET /api/chart/{symbol_id}/zone_break
+ *  SSL（直近安値）/ BSL（直近高値）の水平線区間。値が一定に保たれる連続区間として
+ *  切り出したもの（`is_current` が最終バー時点で生きている区間）。 */
+export interface ZoneBreakLevel {
+    kind: 'ssl' | 'bsl'
+    price: number
+    start_date: string
+    end_date: string
+    is_current: boolean
+}
+
+/** FVG（Fair Value Gap）ボックス。`bottom`/`top` は生成時に固定された値
+ *  （終値との比較で無効化判定に使う水準そのもの）。 */
+export interface ZoneBreakFvg {
+    kind: 'bull' | 'bear'
+    left_date: string
+    right_date: string
+    top: number
+    bottom: number
+    invalidated: boolean
+    is_current: boolean
+}
+
+export interface ZoneBreakResponse {
+    metadata: { ticker: string; bars: number }
+    ssl_levels: ZoneBreakLevel[]
+    bsl_levels: ZoneBreakLevel[]
+    fvg_boxes: ZoneBreakFvg[]
+    /** 最終バー時点のトレンド方向。データ不足時は null にはならず 'bull'（初期値）になる */
+    current_direction: 'bull' | 'bear' | null
+}

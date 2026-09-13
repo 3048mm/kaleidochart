@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Float, Date, DateTime, BigInteger, ForeignKey, UniqueConstraint, SmallInteger, Index
+from sqlalchemy import Column, Integer, String, Float, Date, DateTime, BigInteger, ForeignKey, UniqueConstraint, SmallInteger, Index, Boolean
 from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
@@ -181,7 +181,13 @@ class Indicator(Base):
     # カウンタートレンド線。**構造が生きていない期間にだけ**引かれるので、
     # sp_pivot とは排他（どちらか一方が NULL になる）
     sp_counter         = Column(Float)        # 下向きの抵抗線。上抜けが Trend Line Break
-    
+
+    # --- Direction via Zone Break ---
+    is_zone_break_bull   = Column(Boolean)    # 現在のトレンド方向（True=Bull, False=Bear）
+    zb_ssl               = Column(Float)      # 現在の SSL 価格（直近安値、損切り候補）
+    zb_bsl               = Column(Float)      # 現在の BSL 価格（直近高値、ブレイク水準）
+    is_zone_break_weak   = Column(Boolean)    # 直近トレンド内の最も近い FVG ゾーンが無効化済みか
+
     __table_args__ = (
         UniqueConstraint('symbol_id', 'date', name='uq_indicators_symbol_date'),
     )
