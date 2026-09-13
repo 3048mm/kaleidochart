@@ -316,10 +316,19 @@ max_hits_per_day = 10
 - [ ] 本番昇格（増分方式。`promote_structure_pivot.py` を参考に専用スクリプト or 手順を用意）
 - [x] `GET /api/chart/{symbol_id}/zone_break` を実装、テスト追加（2026-09-13コミット`4eb1a69`。
       `build_zone_break_response`、テスト4件、`backend/tests/`全体1704 passed）
-- [ ] `frontend/src/types.ts` / `frontend/src/api/zoneBreak.ts` とテスト
-- [ ] `ChartPage` に描画とトグルを追加（FVG ボックスの描画方式を技術検証）
-- [ ] `frontend/src/api/__tests__` を含むフロントエンド全体 `npm test` / `npm run build`
-- [ ] `tools/db_health_check.py --all --check-nulls`
+- [x] `frontend/src/types.ts` / `frontend/src/api/zoneBreak.ts` とテスト（2026-09-13コミット`9775074`。
+      FVGボックスの描画方式は「lightweight-charts v4に矩形描画APIが無いため上端/下端の
+      2本の線分（輪郭のみ）で表現」に決定。§4-Q4への回答）
+- [x] `ChartPage` に描画とトグルを追加（コミット`614d907`。既定は非表示 — バックテストで
+      単体のエッジが確認できなかったため。Playwrightで実ブラウザ動作確認済み、
+      BSLライン描画・コンソールエラー無しを確認）
+- [x] `frontend/src/api/__tests__` を含むフロントエンド全体 `npm test` / `npm run build`
+      （62 passed、tsc型チェック・buildとも成功）
+- [x] `tools/db_health_check.py --all --check-nulls`（サンドボックスで実施。全3264銘柄中
+      要対応5銘柄・上流待ち20銘柄は全て既存の無関係な問題（`rs_ratio_e21`等のNULL・
+      上流データの遅延）。`CRITICAL_COLUMNS`（sma_200/ema_21/rs_value/rs_ratio_e21/
+      rs_momentum_e21）に zone_break 列は含まれない — `sp_pivot`/`sp_hl` と同じく
+      未確定時は正当にNULL/0になる状態カラムのため、意図的に対象外）
 - [ ] `doc/backend_specification.md` / `doc/frontend_specification.md` に追記
 - [ ] 本計画書を `doc/completed/` へ移動（型1の一次判定が出た時点。Optuna 投入自体は別計画でよい）
 
