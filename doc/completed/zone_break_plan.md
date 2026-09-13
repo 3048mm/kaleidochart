@@ -1,10 +1,13 @@
 # Direction via Zone Break 指標移植 計画書
 
-- **ステータス**: 🚧 型1一次判定まで完了（2026-09-12）。単体では明確なエッジ無し（§6参照）。
-  残作業は本番昇格・フロントエンド表示（成功条件4）。Optuna投入の可否はユーザー判断待ち
+- **ステータス**: ✅ コード側は完了（2026-09-13）。フロントエンド表示（成功条件4）まで完了。
+  単体では明確なエッジ無し（§6参照。Optuna投入の可否はユーザー判断待ち、この計画のスコープ外）。
+  **残るのはユーザー実施の2ステップのみ**: ①本番データ昇格（DBスキーマ追加＋Parquetバックフィル、
+  APIサーバー・日次更新を止めてから）②本ブランチのmainへのマージ（いずれもエージェントからは
+  実行不可の運用ルール。§8参照）
 - **実施者**: AI エージェント (Claude Sonnet 5) — オーケストレーター（2026-09-12、Remote Control切断した
   stocktool-fe セッションから本セッションが引き継ぎ。会話ログ・本計画書のみを引き継ぎ情報源とする）
-- **開始日**: 2026-09-11 / **完了日**: —
+- **開始日**: 2026-09-11 / **完了日**: 2026-09-13（コード側。本番昇格・マージはユーザー実施待ち）
 - **作業ブランチ**: `worktree-zone-break`（`.claude/worktrees/zone-break` / main 基点。提案、§4 で確認）
 - **対象 issue / 関連ドキュメント**:
   TradingView 公開スクリプト `Direction via Zone Break [by rukich]`
@@ -313,7 +316,10 @@ max_hits_per_day = 10
 - [x] 型1バックテストを非最適化で単発実行し、Alpha 等の一次指標を確認（§6 検証プラン。
       結果は§6参照 — 単体では明確なエッジ無し、採否は現時点で否定的）
 - [x] バックエンド全体 `pytest backend/tests/` 全件パス（1700 passed、この時点まで都度確認済み）
-- [ ] 本番昇格（増分方式。`promote_structure_pivot.py` を参考に専用スクリプト or 手順を用意）
+- [ ] **本番昇格**（ユーザー実施。エージェントは実行しない — API サーバー・日次更新の停止が
+      必要で、実行対象が本番 `data/stocktool.db` / `data/parquet_master/` になるため）。
+      手順は §8「本番昇格・マージの手順（ユーザー実施）」参照。スクリプト・ALTER TABLE文は
+      準備済み・サンドボックスで検証済み
 - [x] `GET /api/chart/{symbol_id}/zone_break` を実装、テスト追加（2026-09-13コミット`4eb1a69`。
       `build_zone_break_response`、テスト4件、`backend/tests/`全体1704 passed）
 - [x] `frontend/src/types.ts` / `frontend/src/api/zoneBreak.ts` とテスト（2026-09-13コミット`9775074`。
@@ -330,7 +336,8 @@ max_hits_per_day = 10
       rs_momentum_e21）に zone_break 列は含まれない — `sp_pivot`/`sp_hl` と同じく
       未確定時は正当にNULL/0になる状態カラムのため、意図的に対象外）
 - [ ] `doc/backend_specification.md` / `doc/frontend_specification.md` に追記
-- [ ] 本計画書を `doc/completed/` へ移動（型1の一次判定が出た時点。Optuna 投入自体は別計画でよい）
+- [x] 本計画書を `doc/completed/` へ移動（型1の一次判定・フロントエンド表示まで完了したため。
+      本番昇格・マージはユーザー実施、手順は§8.1に記載。Optuna 投入自体は別計画でよい）
 
 ### 作業中メモ
 
@@ -451,6 +458,44 @@ cd frontend; npm test; npm run build
 ## 8. スコープ外・残作業
 
 - Optuna 全体最適化（約12時間）の実行 — 単発バックテストの結果を見てユーザーが判断
-- FVG ボックスのチャート描画方式の具体的な技術検証（§4 #4）— 実装時に確定
+  （§6の結果はI1/I2/J1/J2いずれもAlphaがほぼ横ばいで、投資対効果は疑わしいという判断材料あり）
 - ショート側の概念は無いため対象外（§2.2）
 - `exit_type` の差し替え — 対象外（§2.2、`structure_pivot` の前例で中止済み）
+
+### 8.1 本番昇格・マージの手順（ユーザー実施）
+
+コード側の実装・テスト・サンドボックス検証はすべて完了している。以下2ステップは
+運用ルール上エージェントが単独実行できないため、ユーザー自身が実施すること。
+
+**① 本番データ昇格**（APIサーバー・日次更新パイプラインを止めてから）:
+```powershell
+# 1. 本番 stocktool.db に4カラムを追加（インデックスは不要、既存の promote_structure_pivot.py も同様）
+python -c "
+import sqlite3
+conn = sqlite3.connect('data/stocktool.db')
+conn.execute('PRAGMA journal_mode=WAL'); conn.execute('PRAGMA busy_timeout=5000')
+conn.execute('ALTER TABLE indicators ADD COLUMN is_zone_break_bull BOOLEAN')
+conn.execute('ALTER TABLE indicators ADD COLUMN zb_ssl FLOAT')
+conn.execute('ALTER TABLE indicators ADD COLUMN zb_bsl FLOAT')
+conn.execute('ALTER TABLE indicators ADD COLUMN is_zone_break_weak BOOLEAN')
+conn.commit(); conn.close()
+"
+
+# 2. Parquet全期間バックフィル（--apply で本番の latest_master.json を差し替え。旧世代は削除されない）
+python backend/scripts/backfill_zone_break.py --source-dir "data/parquet_master" --out-dir "data/parquet_master" --apply
+
+# 3. SQLiteホットキャッシュ（直近730日）を新しいParquetから復元
+#    restore_sqlite_cache_from_parquet（parquet_cache_manager.py）または既存の復元手順に従う
+```
+サンドボックスでの実施結果（2026-09-12）: 6,764,686行 / 3,279銘柄、SSL/BSL確定済み99.7%、
+既存66列は不変を検査済み（`backfill_zone_break.py` の `verify()`）。AAPL/SPY/NVDAでTradingView
+実チャートとの一致・T3/Parquet収束性も確認済み（§6.1）。
+
+**② mainへのマージ**:
+```powershell
+git checkout main
+git merge worktree-zone-break
+```
+本ブランチは444行超の新規モジュール（`zone_break.py`）を含む変更種別Bのため、
+merge前に `/code-review` をブランチ単位で1回通すことを推奨する
+（`doc/agent_execution_rules.md` §10.2、本計画書§7で記録済みの要件）。
