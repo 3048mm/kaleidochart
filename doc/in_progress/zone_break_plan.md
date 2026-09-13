@@ -353,6 +353,27 @@ $env:PYTHONPATH="backend"; .\venv\Scripts\python.exe -m pytest backend/tests/ -v
 **単体シグナルとしての採否は現時点で否定的**。RS/Trend Templateとの組み合わせでの
 再検証、またはOptuna投入するかはユーザー判断（§2.2でスコープ外と確定済み）。
 
+### 2026-09-13 追検証（RS/Trend Template確認フィルタとの組み合わせ、ユーザー指示）
+
+単体でAlphaが出なかった結果を受け、当初の仮説（本計画書の背景欄「RS/Trend Templateで絞った後の
+確認フィルタとして...検証してから採否判断すべき」）どおり、`is_trend_template = true` +
+`min_rs_ratio_rank_e21 = 0.7`（RS上位30%）を追加した確認フィルタ版を
+`backtest_config.toml` に追加（J1/J2、非最適化の単発実行、こちらもコミット済み）。
+
+| 戦略 | Trades | WinRate | PF | Expectancy | AvgGain | SPY | Alpha |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| I1_zone_break_flip（単体） | 10,808 | 34.4% | 1.08 | +0.30% | +0.30% | +0.52% | -0.22% |
+| J1_zone_break_flip_confirmed（RS/TT確認） | 4,252 | 36.3% | 1.16 | +0.56% | +0.56% | +0.52% | **+0.03%** |
+| I2_zone_break_breakout（単体） | 9,818 | 37.6% | 1.14 | +0.55% | +0.55% | +0.56% | -0.01% |
+| J2_zone_break_breakout_confirmed（RS/TT確認） | 7,648 | 38.2% | 1.12 | +0.42% | +0.42% | +0.43% | -0.01% |
+
+**RS/Trend Templateで絞ってもAlphaはほぼ横ばい（誤差レベル）**。J1はI1よりわずかに改善
+（-0.22%→+0.03%）したが、なお有意とは言えない水準。J2はI2から変化なし。
+**「RS/Trend Templateの確認フィルタとして使う」という当初の仮説も、この非最適化の
+単発実行では支持されなかった**。Optunaで最適化すれば改善する可能性はあるが、
+ベースラインでここまでフラットだと最適化コスト（約12時間）に見合うかは疑わしい
+——という判断材料として記録し、投資判断（Optuna投入・採否）はユーザーに委ねる。
+
 # フロントエンド
 cd frontend; npm test; npm run build
 ```

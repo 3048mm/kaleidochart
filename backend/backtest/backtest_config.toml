@@ -827,6 +827,28 @@ is_zone_break_weak = false
 min_market_cap = 1e8
 max_hits_per_day = 10
 
+# I1/I2単体ではAlphaが出なかった（2026-09-12実施、計画書§6）ため、当初の仮説どおり
+# RS/Trend Templateで絞った確認フィルタとして再検証する（ユーザー判断、非最適化の単発実行）
+[[strategy]]
+name = "J1_zone_break_flip_confirmed"
+description = "Direction via Zone Break フリップ + RS上位30%・Trend Template適合の確認フィルタ"
+is_trend_template = true
+min_rs_ratio_rank_e21 = 0.7
+is_zone_break_bull_flip = true
+is_zone_break_weak = false
+min_market_cap = 1e8
+max_hits_per_day = 10
+
+[[strategy]]
+name = "J2_zone_break_breakout_confirmed"
+description = "Direction via Zone Break 継続ブレイク + RS上位30%・Trend Template適合の確認フィルタ"
+is_trend_template = true
+min_rs_ratio_rank_e21 = 0.7
+is_zone_break_bull_breakout = true
+is_zone_break_weak = false
+min_market_cap = 1e8
+max_hits_per_day = 10
+
 
 # =============================================================
 # Optimization Evaluation Periods (Multi-period cross-validation)
