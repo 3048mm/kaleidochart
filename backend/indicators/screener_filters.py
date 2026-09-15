@@ -546,7 +546,7 @@ def filter_structure_trend_line_break(merged: pd.DataFrame) -> pd.Series:
 def filter_is_zone_break_bull_flip(merged: pd.DataFrame) -> pd.Series:
     """Direction via Zone Break: 前日Bear→当日Bullに転換した銘柄を通過させる。
 
-    Pine原文の `isBreak_bl` 由来の反転イベント（計画書 doc/in_progress/zone_break_plan.md
+    Pine原文の `isBreak_bl` 由来の反転イベント（計画書 doc/completed/zone_break_plan.md
     §3.1.1 参照）。イベント型フィルタのため、必要カラムが無い場合は全False
     （`filter_structure_1st_break` 等と同じ deny-by-default 方針）。
     """
@@ -567,12 +567,18 @@ def filter_is_zone_break_bear_flip(merged: pd.DataFrame) -> pd.Series:
 
 
 def filter_is_zone_break_bull_breakout(merged: pd.DataFrame) -> pd.Series:
-    """Direction via Zone Break: Bull継続中に新しいゾーンをブレイクした銘柄を通過させる。
+    """Direction via Zone Break: Bull継続中にzb_bslが前日から上昇した銘柄を通過させる。
 
-    Pine原文の `isConf_bl` 由来の継続イベント（フリップとは異なる意味を持つ。
-    計画書 §3.1.1 参照）。前日・当日ともBullが継続していること（フリップ当日は
-    prev_is_zone_break_bull==False になるため自然に除外される）に加え、`zb_bsl` が
-    前日から更新（上昇）されていることを条件とする。
+    前日・当日ともBullが継続していること（フリップ当日は prev_is_zone_break_bull==False
+    になるため自然に除外される）に加え、`zb_bsl` が前日から更新（上昇）されていることを条件とする。
+
+    **注意（2026-09-16 code-review Angle Aで検出）**: 名前は「継続ブレイク」だが、
+    Pine原文の `isConf_bl`（確定closeがBSLを上抜けた後の高値フラクタル確定）に厳密には
+    一致しない。`zone_break.py` の内部実装では、`isConf_bl` を経ない素朴なBSL追従更新
+    （新しいトレンドの立ち上がり時、内部候補int_ssl_blが確立する前の高値フラクタル追従。
+    `zone_break.py::_zone_break_scan` L113 相当）でも `zb_bsl` は上昇しうるため、本フィルタは
+    それも含む広い「Bull継続中のBSL上昇」を検出する。`isConf_bl`確定イベントだけに絞るには
+    `zone_break_series` 側でその遷移を別途公開する実装変更が要る（計画書 §8.1 参照）。
     """
     required = ('is_zone_break_bull', 'prev_is_zone_break_bull', 'zb_bsl', 'prev_zb_bsl')
     if any(c not in merged.columns for c in required):
@@ -586,7 +592,11 @@ def filter_is_zone_break_bull_breakout(merged: pd.DataFrame) -> pd.Series:
 
 
 def filter_is_zone_break_bear_breakout(merged: pd.DataFrame) -> pd.Series:
-    """Direction via Zone Break: Bear継続中に新しいゾーンをブレイクした銘柄を通過させる（対称）。"""
+    """Direction via Zone Break: Bear継続中にzb_sslが前日から下落した銘柄を通過させる（対称）。
+
+    `filter_is_zone_break_bull_breakout` と同じ注意点（isConf_bl確定イベントだけに
+    絞られておらず、より広い「Bear継続中のSSL下落」を検出する）が当てはまる。
+    """
     required = ('is_zone_break_bull', 'prev_is_zone_break_bull', 'zb_ssl', 'prev_zb_ssl')
     if any(c not in merged.columns for c in required):
         return pd.Series(False, index=merged.index)
