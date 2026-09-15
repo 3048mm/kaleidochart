@@ -200,10 +200,15 @@ def apply_filters_to_df(
         merged['sp_range_pct'] = (merged['sp_pivot'] - merged['sp_hl']) / merged['close'] * 100
     if 'sp_hl' in merged.columns and 'close' in merged.columns:
         merged['sp_risk_pct'] = (merged['close'] - merged['sp_hl']) / merged['close'] * 100
+    # zb_ssl / zb_bsl は未確定のとき NaN ではなく 0.0（zone_break_series の仕様）なので、
+    # sp_pivot/sp_hl の NaN 伝播と違って何もしないと「未確定銘柄が close比±100%」という
+    # もっともらしい値になり紛れ込む（2026-09-16 code-review Angle C で検出）。NaN にして揃える
     if 'zb_ssl' in merged.columns and 'close' in merged.columns:
-        merged['zb_dist_ssl_pct'] = (merged['close'] - merged['zb_ssl']) / merged['close'] * 100
+        merged['zb_dist_ssl_pct'] = np.where(
+            merged['zb_ssl'] > 0, (merged['close'] - merged['zb_ssl']) / merged['close'] * 100, np.nan)
     if 'zb_bsl' in merged.columns and 'close' in merged.columns:
-        merged['zb_dist_bsl_pct'] = (merged['zb_bsl'] - merged['close']) / merged['close'] * 100
+        merged['zb_dist_bsl_pct'] = np.where(
+            merged['zb_bsl'] > 0, (merged['zb_bsl'] - merged['close']) / merged['close'] * 100, np.nan)
 
     # --- レジストリで必要カラムを解決する（doc/completed/screener_filter_unification_plan.md §3.1.4） ---
     from backend.db.models import RelativeRank

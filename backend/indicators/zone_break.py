@@ -3,7 +3,7 @@
 TradingView 公開スクリプト `Direction via Zone Break [by rukich]`（Pine v6、MPL 2.0、
 scriptAccess: open_no_auth）を移植したもの。Pine 原文全文は `tmp/direction_via_zone_break.txt`
 （gitignore 対象・ワークツリーに実在）。状態遷移の解析結果は
-`doc/in_progress/zone_break_plan.md` §3.1.1 を参照。
+`doc/completed/zone_break_plan.md` §3.1.1 を参照。
 
 ## 検出するもの
 
@@ -19,7 +19,7 @@ scriptAccess: open_no_auth）を移植したもの。Pine 原文全文は `tmp/d
 - **境界を設けたフォールバック探索（`detector_bsl_last_fractal` / `detector_ssl_last_fractal`
   の効率化）**: Pine 原文は反転イベントの瞬間に「全履歴を遡って最初に見つかる逆側の
   3本足フラクタル」を探す（原文 L31-50）。素直に移植すると最悪 O(n²) になる
-  （`doc/in_progress/zone_break_plan.md` §2.2 で非採用と確定済み）。
+  （`doc/completed/zone_break_plan.md` §2.2 で非採用と確定済み）。
   数学的には `detector_bsl_last_fractal(i)` の `k` 番目の探索対象は
   `fractal_high(j, 0)`（`j = i - k`）と厳密に等価（中心バーの左右1本ずつだけで
   判定する条件のため、`i` 自体には依存しない）。したがって「確定済みの3本足
@@ -115,6 +115,11 @@ def _zone_break_scan(
 
         # ---- 同上（Bear側、対称） ----
         if is_bear:
+            # 次行の `bsl_bl = 0.0` はBull側の `ssl_bl = low[i-1]`（L108）と非対称に見えるが、
+            # Pine原文L92-93がそのまま `bsl_bl := 0.0`（実質no-op）であり翻訳ミスではない。
+            # 原文に忠実に、あえて未修正のまま残す（2026-09-16 code-review Angle Aで確認済み。
+            # 影響は high_fractals が空の状態でBearへフリップする極端なケースのみで、
+            # 数年分の実データでは事実上発生しない。計画書 §8.1 参照）。
             if bsl_bl <= 0.0 and fh0:
                 bsl_bl = 0.0
             if bsl_bl > 0.0 and ssl_bl <= 0.0 and fh0 and high[i - 1] > bsl_bl:

@@ -1064,7 +1064,7 @@ def build_zone_break_response(
     T3 インジケータには SSL/BSL/is_weak の4カラムのみ持つ（`is_zone_break_bull` /
     `zb_ssl` / `zb_bsl` / `is_zone_break_weak`）。SSL/BSL ラインの区間・FVG ボックスは
     チャート描画専用でありオンザフライ計算とする（`build_structure_pivot_response` と
-    同じ設計判断。doc/in_progress/zone_break_plan.md §2.2 参照）。
+    同じ設計判断。doc/completed/zone_break_plan.md §2.2 参照）。
 
     データ不足のときはエラーにせず空で返す — チャートの一部なので、
     区間が出ないことで画面全体を落とさない。

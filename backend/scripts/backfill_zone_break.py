@@ -32,7 +32,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from indicators.zone_break import zone_break_series  # noqa: E402
 
-#: バックフィルする列の全体（doc/in_progress/zone_break_plan.md §3.2）
+#: バックフィルする列の全体（doc/completed/zone_break_plan.md §3.2）
 ALL_COLUMNS = ('is_zone_break_bull', 'zb_ssl', 'zb_bsl', 'is_zone_break_weak')
 _BOOL_COLUMNS = {'is_zone_break_bull', 'is_zone_break_weak'}
 
@@ -45,7 +45,7 @@ def compute_zone_break_columns(prices_path: str, columns: tuple) -> pd.DataFrame
     """価格マスターから全銘柄の (symbol_id, date, <columns>) を作る。
 
     銘柄ごとに日付昇順で計算する。確定遅延は無い（zone_break_series 側の仕様、
-    doc/in_progress/zone_break_plan.md §3.1 参照）。
+    doc/completed/zone_break_plan.md §3.1 参照）。
     """
     px = pd.read_parquet(prices_path, columns=['symbol_id', 'date', 'high', 'low', 'close'])
     px['date'] = px['date'].astype(str)
@@ -119,7 +119,9 @@ def backfill_indicators(indicators_path: str, zb_df: pd.DataFrame, out_path: str
             writer.write_table(table)
 
             total += table.num_rows
-            matched += int(joined['zb_ssl'].notna().sum())
+            # columns[0] は --columns で選ばれた列のいずれか。zb_ssl 固定だと --columns で
+            # zb_ssl/zb_bsl を除外したときに KeyError になる（2026-09-16 code-review Angle A で検出）
+            matched += int(joined[columns[0]].notna().sum())
             _log(f'  row group {i + 1}/{pf.metadata.num_row_groups}: {table.num_rows:,} 行')
     finally:
         if writer is not None:

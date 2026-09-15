@@ -291,7 +291,11 @@ max_hits_per_day = 10
 - [x] T3（SQLite直近730日）経路 vs Parquet 全期間バックフィル経路の収束性を検証（§1 のリスク）
       — 2026-09-12、AAPL/SPY/NVDAの3銘柄で実施、直近60本・最終バーは完全一致（§6.1参照）。
       広い銘柄セットでの確認は後続のサンドボックス検証時に追加で行う
-- [ ] sandbox-workflow に従いサンドボックスで一連の検証を行う
+- [x] sandbox-workflow に従いサンドボックスで一連の検証を行う（`--mode write`でプロビジョニング、
+      実装・バックフィル・スクリーナー登録すべてサンドボックスで実施し本番は無変更のまま。
+      **ただし収束性検証はAAPL/SPY/NVDAの3銘柄のみ**（§1のリスクに対して薄商い銘柄を含む
+      広い銘柄セットでの検証は未実施。2026-09-16 code-review Angle B/C/altitudeで指摘。
+      §9「既知の制限」参照）
 - [x] `db/models.py` の `Indicator` に4カラム追加（2026-09-12コミット`8e74e8e`。
       implementerがレート制限で途中停止したため、models.pyの4カラム定義まではimplementerの
       成果を採用、`calculate.py`統合とサンドボックスDBへのALTER TABLE反映はオーケストレーターが
@@ -462,18 +466,77 @@ cd frontend; npm test; npm run build
 - ショート側の概念は無いため対象外（§2.2）
 - `exit_type` の差し替え — 対象外（§2.2、`structure_pivot` の前例で中止済み）
 
-### 8.1 本番昇格・マージの手順（ユーザー実施）
+### 8.1 既知の制限（2026-09-16、`/code-review` ultra相当の8観点並列レビューで検出）
 
-コード側の実装・テスト・サンドボックス検証はすべて完了している。以下2ステップは
-運用ルール上エージェントが単独実行できないため、ユーザー自身が実施すること。
+**本番昇格前に必ず読むこと。** 8つの独立したレビュー観点（altitude/Angle A/Angle B/Angle C/
+efficiency/simplification/reuse/CLAUDE.md規約）のうち3つ（altitude、Angle C、Angle A）が
+**収束して同一の構造的リスク**を指摘した:
+
+> **`zone_break` の状態（`is_bull`/`ssl_bl`/`bsl_bl`）は `structure_pivot` と異なり構造的に
+> 無制限（トレンドレッグが何年も続きうる）。したがって「T3日次計算がSQLite直近730日
+> ウィンドウの先頭から状態機械を再起動する」ことは、`structure_pivot`（`max_len`で構造の
+> 寿命が数本〜十数本に収まる）とは違って一般には正当化されない。**
+>
+> §6.1 の収束性検証は **AAPL/SPY/NVDAの3流動性大型銘柄のみ**で行っており、直近60本・
+> 最終バーの完全一致を確認したが、これは経験的な観測であって `structure_pivot` のときの
+> ような構造的な保証ではない。**薄商い銘柄・長期トレンド銘柄（730日を超えて反転していない
+> 銘柄）では、日次のT3再計算がParquetバックフィルで確定した正しい状態と乖離したまま
+> 収束しない可能性がある**（`counter_trend`の前例と同じ失敗類型。詳細:
+> `doc/completed/structure_pivot_screener_plan.md` §5.6）。
+>
+> 加えて、この乖離は**一度きりのバックフィル時点の問題ではなく毎日発生しうる**
+> （`backend/pipeline/phases/t3_indicators.py` の日次差分計算も
+> `backend/scripts/weekly_maintenance.py` のT2/T3不整合修復パスも、同じ730日ウィンドウで
+> `zone_break_series` を再実行するため）。
+>
+> **対応方針はユーザー判断**。選択肢: (a) 全銘柄でのSQLite/Parquet収束性を追加検証してから
+> 昇格する、(b) `current_direction`・T3のzone_break列を常にParquet全期間から計算する方式に
+> 設計変更する（`structure_pivot`の`full_range`引数と同様の「ホットキャッシュは信頼できない」
+> 前提への転換、追加実装が必要）、(c) リスクを許容した上でまず昇格し、Alphaが出た場合に
+> Optuna投入する前段でこの検証を行う。**本計画はこの判断をせずに完了とする**（成功条件は
+> 「型1で判定できる状態にする」ところまでであり、この制限があっても型1の一次判定
+　（§6、いずれもAlphaがほぼ横ばい）自体は揺らがない）。
+
+その他、レビューで検出し**修正済み**の項目:
+- `zb_dist_ssl_pct`/`zb_dist_bsl_pct` が未確定（`zb_ssl`/`zb_bsl`=0.0）を除外するガードを
+  持たず、`sp_dist_pivot_pct`のNaN伝播と違って未確定銘柄が close比±100%という尤もらしい値で
+  紛れ込むバグ（Angle C）。`screener_router.py`/`backtest_screener.py`で0以下をNULL/NaNに
+  修正済み
+- `backfill_zone_break.py`が`--columns`でzb_ssl/zb_bslを除外した場合に`KeyError`になるバグ
+  （Angle A）。`columns[0]`を参照するよう修正済み
+- 本ドキュメントの`doc/in_progress/zone_break_plan.md`パス参照6箇所が、計画書移動後に
+  リンク切れになっていた（Angle B）。`doc/completed/zone_break_plan.md`に修正済み
+
+**修正しなかった項目**（意図的な判断、理由付き）:
+- `zone_break.py:118`（Bear側BSL初期化で`bsl_bl = 0.0`）はPine原文L92-93の逐語訳であり
+  翻訳ミスではない（Angle Aは「Bull側との非対称」を指摘したが、Pine原文自体が非対称。
+  `high_fractals`が空の状態でBearへフリップする極端なケースでのみ影響し、数年分の実データでは
+  事実上発生しない）。原文に忠実に、あえて未修正のまま残す
+- `is_zone_break_bull_breakout`/`bear_breakout`は、docstringが述べる「isConf_bl由来の継続
+  ブレイク」より実際には広い条件（`int_ssl_bl<=0`の間の素朴なBSL追従更新でも発火しうる、
+  `zone_break.py:113`）で発火する（Angle A）。§6のI2/J2の結果はこの実装どおりの挙動を
+  測定したものであり無効ではないが、フィルタの意味は「確定した継続ブレイク」ではなく
+  より広い「トレンド継続中のBSL上昇」である。今回は docstring 側の記述を実態に合わせて
+  修正するに留め、フィルタ自体の意味を狭める実装変更（要: 内部の`is_conf_bl`遷移を
+  外部公開する）は将来の改善候補として残す
+
+### 8.2 本番昇格・マージの手順（ユーザー実施）
+
+コード側の実装・テストは完了しているが、**§8.1の既知の制限（特にSQLite/Parquet収束性の
+検証範囲）を踏まえたうえで昇格するかどうかを判断すること**。以下2ステップは運用ルール上
+エージェントが単独実行できないため、ユーザー自身が実施すること。
 
 **① 本番データ昇格**（APIサーバー・日次更新パイプラインを止めてから）:
 ```powershell
-# 1. 本番 stocktool.db に4カラムを追加（インデックスは不要、既存の promote_structure_pivot.py も同様）
+# 1. 本番 stocktool.db に4カラムを追加（sqlite-wal-handling規約: WAL/busy_timeout/synchronous の
+#    3プラグマ必須 + 書き込みは BEGIN IMMEDIATE。promote_structure_pivot.py と同じ手順）
 python -c "
 import sqlite3
 conn = sqlite3.connect('data/stocktool.db')
-conn.execute('PRAGMA journal_mode=WAL'); conn.execute('PRAGMA busy_timeout=5000')
+conn.execute('PRAGMA journal_mode=WAL')
+conn.execute('PRAGMA busy_timeout=5000')
+conn.execute('PRAGMA synchronous=NORMAL')
+conn.execute('BEGIN IMMEDIATE')
 conn.execute('ALTER TABLE indicators ADD COLUMN is_zone_break_bull BOOLEAN')
 conn.execute('ALTER TABLE indicators ADD COLUMN zb_ssl FLOAT')
 conn.execute('ALTER TABLE indicators ADD COLUMN zb_bsl FLOAT')
@@ -489,7 +552,8 @@ python backend/scripts/backfill_zone_break.py --source-dir "data/parquet_master"
 ```
 サンドボックスでの実施結果（2026-09-12）: 6,764,686行 / 3,279銘柄、SSL/BSL確定済み99.7%、
 既存66列は不変を検査済み（`backfill_zone_break.py` の `verify()`）。AAPL/SPY/NVDAでTradingView
-実チャートとの一致・T3/Parquet収束性も確認済み（§6.1）。
+実チャートとの一致・SQLite/Parquet収束性（直近60本・最終バー）も確認済み（§6.1）——
+**ただしこの3銘柄に限る（§8.1参照）**。
 
 **② mainへのマージ**:
 ```powershell
@@ -499,3 +563,4 @@ git merge worktree-zone-break
 本ブランチは444行超の新規モジュール（`zone_break.py`）を含む変更種別Bのため、
 merge前に `/code-review` をブランチ単位で1回通すことを推奨する
 （`doc/agent_execution_rules.md` §10.2、本計画書§7で記録済みの要件）。
+**2026-09-16 に実施済み**（8観点並列レビュー、結果は§8.1に反映済み）。

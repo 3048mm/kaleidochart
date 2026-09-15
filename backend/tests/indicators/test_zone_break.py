@@ -4,7 +4,7 @@ TradingView 公開スクリプト `Direction via Zone Break [by rukich]`（Pine 
 移植したもの。3本足フラクタルで SSL(安値側)/BSL(高値側) を確定・追従更新し、
 終値のブレイクでトレンド継続/反転(フリップ)を判定する状態機械の挙動を検証する。
 
-入力・期待値は doc/in_progress/zone_break_plan.md §3.1.1 で確定済みのものを
+入力・期待値は doc/completed/zone_break_plan.md §3.1.1 で確定済みのものを
 そのまま使用する（本ファイルでの再計算・再解釈は行わない）。
 """
 import importlib.util
@@ -127,7 +127,7 @@ def test_境界を設けた探索が無制限版と一致する():
     境界を設けた効率化版（確定済みフラクタルのリストの末尾を見るだけ）で実装しているが、
     Pine原文どおりの無制限バックスキャン（オラクル）と完全一致することを検証する。
 
-    doc/in_progress/zone_break_plan.md §2.2 の設計判断（O(n^2)を避けるための効率化）が
+    doc/completed/zone_break_plan.md §2.2 の設計判断（O(n^2)を避けるための効率化）が
     正しいことの担保。十分な長さの合成データ（乱数シード固定）で比較する。
     """
     if not _NAIVE_PORT_PATH.exists():

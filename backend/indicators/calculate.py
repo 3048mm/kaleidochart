@@ -63,7 +63,7 @@ def calculate_indicators(df_daily: pd.DataFrame, df_spy: pd.DataFrame = None) ->
 
     # 6. Direction via Zone Break。価格のみから決まるので SPY 非依存。
     #    確定遅延は無い（当日の確定closeだけでブレイク判定が決まる。フラクタル自体の
-    #    確定は1本遅れるが先読みではない。doc/in_progress/zone_break_plan.md §3.1 参照）
+    #    確定は1本遅れるが先読みではない。doc/completed/zone_break_plan.md §3.1 参照）
     is_bull, zb_ssl, zb_bsl, is_weak = zone_break_series(
         df['high'].to_numpy(dtype=float),
         df['low'].to_numpy(dtype=float),

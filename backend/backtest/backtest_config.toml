@@ -806,7 +806,7 @@ min_market_cap     = { type = "categorical", choices = [1e8, 3e8, 1e9, 3e9] }
 
 
 # =============================================================
-# Direction via Zone Break（候補戦略、doc/in_progress/zone_break_plan.md §3.5）
+# Direction via Zone Break（候補戦略、doc/completed/zone_break_plan.md §3.5）
 # 初期値は最適化前の素朴な組み合わせ。型1の単発実行でベースラインを取るための2本。
 # フリップ（初動）と継続ブレイクは意味が異なるシグナルのため独立の戦略として分離。
 # Optuna投入は本計画のスコープ外（§2.2）。

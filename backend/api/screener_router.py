@@ -7,7 +7,7 @@ indicators/screener_filters.py (audit D-2).
 """
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session, aliased
-from sqlalchemy import desc, func, Column as SAColumn
+from sqlalchemy import desc, func, case, Column as SAColumn
 from typing import List, Optional, Dict, Any
 from datetime import date as dt_date, timedelta
 import os, logging, tomli
@@ -128,9 +128,19 @@ _VIRTUAL_COLUMNS = {
     "sp_dist_pivot_pct": lambda: (Indicator.sp_pivot - DailyPrice.close) / DailyPrice.close * 100,
     "sp_range_pct":      lambda: (Indicator.sp_pivot - Indicator.sp_hl) / DailyPrice.close * 100,
     "sp_risk_pct":       lambda: (DailyPrice.close - Indicator.sp_hl) / DailyPrice.close * 100,
-    # Direction via Zone Break。zb_ssl（損切り候補）/ zb_bsl（ブレイク水準、済みなら負値）までの距離
-    "zb_dist_ssl_pct": lambda: (DailyPrice.close - Indicator.zb_ssl) / DailyPrice.close * 100,
-    "zb_dist_bsl_pct": lambda: (Indicator.zb_bsl - DailyPrice.close) / DailyPrice.close * 100,
+    # Direction via Zone Break。zb_ssl（損切り候補）/ zb_bsl（ブレイク水準、済みなら負値）までの距離。
+    # 未確定は NULL/NaN ではなく 0.0（zone_break_series の仕様）なので、そのまま計算すると
+    # 「SSL/BSLが一度も確定していない銘柄」が close比±100%というもっともらしい値になり、
+    # sp_dist_pivot_pct の NULL 伝播による自然な除外（sp_pivot が NULL）と違って
+    # フィルタに紛れ込む（2026-09-16 code-review Angle C で検出）。0以下は NULL にして揃える。
+    "zb_dist_ssl_pct": lambda: case(
+        (Indicator.zb_ssl > 0, (DailyPrice.close - Indicator.zb_ssl) / DailyPrice.close * 100),
+        else_=None,
+    ),
+    "zb_dist_bsl_pct": lambda: case(
+        (Indicator.zb_bsl > 0, (Indicator.zb_bsl - DailyPrice.close) / DailyPrice.close * 100),
+        else_=None,
+    ),
 }
 
 # --- レジストリ fail-loud 判定用: 既知カラム集合 / ランクカラム集合 ---
