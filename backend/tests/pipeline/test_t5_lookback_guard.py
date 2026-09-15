@@ -1,22 +1,23 @@
-"""T5（market_signals）の遡り不足ガードのテスト（計画書 §3.4・§4-1・§7-6(1)・5-7b）。
+"""T5（market_signals）の遡り不足ガードのテスト（計画書 §3.4・§4-1・§7-7・§4-8・5-7c）。
 
 SQLite はホット期間（直近730日程度）しか SPY の価格を保持しないため、
 `--rebuild-from T2 --category` / `--re-calculate` のように `market_signals` を
 全削除する経路で全日付を再計算すると、窓の先頭（sma_200 の遡り）が足りず
 MTS の SPY 由来列が誤った値になる（詳細は計画書 §1.1・§1.2）。
 
-**判定基準（§7-6(1) で変更）**: gap_dates の最古日付で SPY の遡りが
-`SPY_LOOKBACK_MIN_BARS`（220本）に満たない場合、即座に例外にはしない。
-SQLite の SPY 起点と Parquet マスタの SPY 起点を比較し、
+**方針（§7-7・§4-8・5-7c で確定。例外で止める旧方式から変更）**:
+gap_dates のうち、その日までの SPY 遡りが `SPY_LOOKBACK_MIN_BARS`（220本）に
+満たない日付は**例外にせず、書き込み対象から外す**。除外が発生したら
+`logger.error` で「除外した日付数・範囲・対処方法」を警告する。除外後に
+残った日付は通常どおり書き込まれる。全て除外された場合は書き込まずに
+`logger.error` を出して早期 return する。
 
-- **切り詰められている**（SQLite 起点 > Parquet 起点。Parquet には使えるはずの
-  履歴があるのに SQLite に無い）→ 例外で止める
-- **一致している**（切り詰めではなく、そもそも Parquet にもこれ以上の履歴が無い）
-  → 通す（先頭の遡り不足日は 5-9 により NaN になるため、偽の値は書かれない）
-- **Parquet が読めない** → 黙って通さず、従来の本数判定にフォールバックする
-
-このため、`pipeline.phases.t5_signals._get_parquet_spy_min_date` を
-monkeypatch して、各シナリオの Parquet 起点を明示的に固定する。
+旧方式（本数不足を検知したときだけ Parquet マスタの SPY 起点と比較し、
+切り詰めなら例外にする）は、**ホット期間の古い日付に `market_trend_score`
+NULL が1件あるだけの正常な修復ケース**（SKILL.md が「再実行でバックフィルされる」
+と案内している挙動）でも必ず発火し、日次更新が毎晩落ちて rotate に到達せず
+Parquet の更新が止まる欠陥があった（§7-7）。新方式は Parquet を一切参照しない
+ため、テストで Parquet 関連の monkeypatch は不要になった。
 """
 
 import logging
@@ -28,7 +29,6 @@ from sqlalchemy.orm import sessionmaker
 
 from db.models import Base, Symbol, DailyPrice, Indicator, MarketSignal
 from indicators.market_signals import SPY_LOOKBACK_MIN_BARS
-from pipeline.phases import t5_signals
 from pipeline.phases.t5_signals import sync_phase_t5_signals
 
 
@@ -76,112 +76,113 @@ def _mark_completed(db_session, dates: list[date]) -> None:
     db_session.commit()
 
 
-class TestFullRebuildLikeGap:
-    """全期間再構築相当: SQLite の SPY が Parquet と同じ起点から入っている
-    （`--re-calculate` が空の作業用DBへ全履歴を再取得した直後の状態に相当）。
-    gap_dates は全日付。止まらず、先頭行は NaN で書かれる。
-    """
-
-    def test_does_not_raise_and_head_row_is_nan(self, db_session, monkeypatch):
-        n_bars = SPY_LOOKBACK_MIN_BARS + 30
-        start_date = date(2024, 1, 1)
-        dates = _seed_spy_history(db_session, n_bars=n_bars, start_date=start_date)
-        # MarketSignal を1件も作らないので全日付が gap_dates になる。
-        # SQLite 起点 = Parquet 起点（同じ start_date）に固定する。
-        monkeypatch.setattr(t5_signals, "_get_parquet_spy_min_date", lambda: start_date)
-
-        sync_phase_t5_signals(db_session, logging.getLogger("test"))
-
-        head_signal = db_session.query(MarketSignal).filter(MarketSignal.date == dates[0]).first()
-        assert head_signal is not None
-        assert head_signal.spy_above_sma200 is None
-        assert head_signal.market_phase is None
-
-        tail_signal = db_session.query(MarketSignal).filter(MarketSignal.date == dates[-1]).first()
-        assert tail_signal is not None
-        assert tail_signal.market_trend_score is not None
-
-
-class TestTruncatedWindow:
-    """切り詰めた窓: SQLite の SPY 起点が Parquet マスタの SPY 起点より後ろ
-    （Parquet には使えるはずの履歴があるのに SQLite に無い）。例外で止まる。
-    """
-
-    def test_raises_with_both_origins_and_remediation_in_message(self, db_session, monkeypatch):
-        start_date = date(2026, 1, 1)
-        dates = _seed_spy_history(db_session, n_bars=100, start_date=start_date)
-        parquet_origin = date(2010, 4, 1)
-        monkeypatch.setattr(t5_signals, "_get_parquet_spy_min_date", lambda: parquet_origin)
-
-        with pytest.raises(RuntimeError) as exc_info:
-            sync_phase_t5_signals(db_session, logging.getLogger("test"))
-
-        msg = str(exc_info.value)
-        assert str(start_date) in msg  # SQLite 起点
-        assert str(parquet_origin) in msg  # Parquet 起点
-        assert "--rebuild-from T5" in msg  # 対処方法
-
-        # 止まった以上、先頭日の MarketSignal は書き込まれていない
-        assert db_session.query(MarketSignal).filter(MarketSignal.date == dates[0]).first() is None
-
-
 class TestDailyUpdateLikeGap:
-    """日次相当: gap は最新日のみで、SPY の遡りは十分ある。
-    （SQLite 起点が Parquet 起点より後ろでも、本数が足りているためガードに
-    到達しない。）
-    """
+    """日次相当: gap は最新日のみで、SPY の遡りは十分ある。警告なしで従来どおり書き込まれる。"""
 
-    def test_does_not_raise(self, db_session, monkeypatch):
+    def test_does_not_raise_and_writes_without_warning(self, db_session, caplog):
         start_date = date(2024, 1, 1)
         dates = _seed_spy_history(db_session, n_bars=503, start_date=start_date)
         target_date = dates[-1]
         _mark_completed(db_session, dates[:-1])
-        # Parquet 起点が大きく異なっていても、本数が十分なため比較に到達しない
-        # ことを確認する意図で、あえて古い日付を設定する。
-        monkeypatch.setattr(t5_signals, "_get_parquet_spy_min_date", lambda: date(2010, 4, 1))
 
-        sync_phase_t5_signals(db_session, logging.getLogger("test"))
+        with caplog.at_level(logging.ERROR):
+            sync_phase_t5_signals(db_session, logging.getLogger("test"))
 
         signal = db_session.query(MarketSignal).filter(MarketSignal.date == target_date).first()
         assert signal is not None
         assert signal.market_trend_score is not None
+        assert not any(r.levelno >= logging.ERROR for r in caplog.records)
 
 
 class TestHotWindowNullScoreRepair:
     """ホット期間の古い日付に market_trend_score が NULL の行が1件だけある、
-    正常な修復ケース（SQLite 起点 = Parquet 起点）。**これが指摘の核心**:
-    旧判定（本数のみ）ではここで例外になり、rotate に到達できなかった。
+    正常な修復ケース（SQLite 起点は Parquet 起点より後ろ＝実運用と同じ状況）。
+    **これが指摘の核心**（§7-7）: 旧方式ではここで例外になり rotate に到達
+    できなかった。新方式は例外を投げず、その日付だけ書き込み対象から外す。
     """
 
-    def test_does_not_raise_when_origin_matches_parquet(self, db_session, monkeypatch):
-        start_date = date(2026, 1, 1)
-        n_bars = SPY_LOOKBACK_MIN_BARS - 1  # 遡り本数はガードの閾値未満
-        dates = _seed_spy_history(db_session, n_bars=n_bars, start_date=start_date)
-        target_date = dates[-1]
-        _mark_completed(db_session, dates[:-1])
-        # SQLite の SPY 起点と Parquet の SPY 起点が一致 → 切り詰めではない
-        monkeypatch.setattr(t5_signals, "_get_parquet_spy_min_date", lambda: start_date)
+    def test_excludes_only_the_unrepairable_date(self, db_session, caplog):
+        start_date = date(2024, 1, 1)
+        # ホット期間相当（約730日）。先頭日だけ NULL スコアの修復対象にする。
+        dates = _seed_spy_history(db_session, n_bars=SPY_LOOKBACK_MIN_BARS + 50, start_date=start_date)
+        repair_date = dates[0]
+        # repair_date 以外はすべて完了済みにする（NULL 修復ケースを再現）。
+        _mark_completed(db_session, dates[1:])
 
-        sync_phase_t5_signals(db_session, logging.getLogger("test"))
-
-        signal = db_session.query(MarketSignal).filter(MarketSignal.date == target_date).first()
-        assert signal is not None
-        assert signal.market_trend_score is not None
-
-
-class TestParquetUnreadableFallback:
-    """Parquet が読めない場合は黙って通さず、従来の本数判定にフォールバックする。"""
-
-    def test_falls_back_to_bar_count_check_and_raises(self, db_session, monkeypatch):
-        start_date = date(2026, 1, 1)
-        dates = _seed_spy_history(db_session, n_bars=100, start_date=start_date)
-        monkeypatch.setattr(t5_signals, "_get_parquet_spy_min_date", lambda: None)
-
-        with pytest.raises(RuntimeError) as exc_info:
+        with caplog.at_level(logging.ERROR):
             sync_phase_t5_signals(db_session, logging.getLogger("test"))
 
-        msg = str(exc_info.value)
-        assert str(dates[0]) in msg
-        assert str(SPY_LOOKBACK_MIN_BARS) in msg
-        assert "--rebuild-from T5" in msg
-        assert db_session.query(MarketSignal).filter(MarketSignal.date == dates[0]).first() is None
+        # 例外を投げない
+        # 遡り不足の repair_date は書き込まれない
+        assert db_session.query(MarketSignal).filter(MarketSignal.date == repair_date).first() is None
+
+        error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert error_records, "遡り不足の除外は logger.error で警告されるはず"
+        combined = " ".join(r.getMessage() for r in error_records)
+        assert "1 件" in combined  # 除外した日付数
+        assert str(repair_date) in combined  # 除外した日付範囲（最古〜最新）
+        assert "--rebuild-from T5" in combined  # 対処方法
+
+
+class TestFullRebuildLikeGap:
+    """全期間再構築相当: gap が系列の起点から全日付。例外なし。
+    先頭の遡り不足日は書き込まれず、220本目以降の日付は書き込まれる。
+    """
+
+    def test_excludes_head_and_writes_tail(self, db_session, caplog):
+        n_bars = SPY_LOOKBACK_MIN_BARS + 30
+        start_date = date(2024, 1, 1)
+        dates = _seed_spy_history(db_session, n_bars=n_bars, start_date=start_date)
+        # MarketSignal を1件も作らないので全日付が gap_dates になる。
+
+        with caplog.at_level(logging.ERROR):
+            sync_phase_t5_signals(db_session, logging.getLogger("test"))
+
+        # 先頭219本（遡り不足）は書き込まれない
+        for d in dates[:SPY_LOOKBACK_MIN_BARS - 1]:
+            assert db_session.query(MarketSignal).filter(MarketSignal.date == d).first() is None
+
+        # 220本目以降は書き込まれる
+        tail_signal = db_session.query(MarketSignal).filter(MarketSignal.date == dates[-1]).first()
+        assert tail_signal is not None
+        assert tail_signal.market_trend_score is not None
+
+        error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert error_records
+        combined = " ".join(r.getMessage() for r in error_records)
+        assert str(SPY_LOOKBACK_MIN_BARS - 1) in combined  # 除外した日付数
+
+
+class TestAllGapDatesInsufficientLookback:
+    """すべての gap 日付が遡り不足（例: SPY が10本しかない）。
+    例外なし・1行も書き込まれない・警告が出る。
+    """
+
+    def test_writes_nothing_and_warns(self, db_session, caplog):
+        start_date = date(2026, 1, 1)
+        dates = _seed_spy_history(db_session, n_bars=10, start_date=start_date)
+
+        with caplog.at_level(logging.ERROR):
+            sync_phase_t5_signals(db_session, logging.getLogger("test"))
+
+        assert db_session.query(MarketSignal).count() == 0
+
+        error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert error_records
+
+
+class TestLookbackBoundary:
+    """境界値: 遡りちょうど220本の日付は書き込まれる、219本の日付は除外される。"""
+
+    def test_boundary_220_written_219_excluded(self, db_session, caplog):
+        start_date = date(2024, 1, 1)
+        dates = _seed_spy_history(db_session, n_bars=SPY_LOOKBACK_MIN_BARS, start_date=start_date)
+        boundary_219 = dates[SPY_LOOKBACK_MIN_BARS - 2]  # 遡り219本
+        boundary_220 = dates[SPY_LOOKBACK_MIN_BARS - 1]  # 遡り220本
+
+        with caplog.at_level(logging.ERROR):
+            sync_phase_t5_signals(db_session, logging.getLogger("test"))
+
+        assert db_session.query(MarketSignal).filter(MarketSignal.date == boundary_219).first() is None
+        signal_220 = db_session.query(MarketSignal).filter(MarketSignal.date == boundary_220).first()
+        assert signal_220 is not None

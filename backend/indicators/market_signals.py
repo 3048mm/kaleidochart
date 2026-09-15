@@ -40,8 +40,9 @@ WEIGHT_BREADTH    = 0.25
 WEIGHT_EMA50_ATR  = 0.25
 WEIGHT_EMA200_ATR = 0.25
 
-# T5（market_signals）を SQLite 基点で計算する際に、SPY の遡り本数が
-# 最低限これだけ必要な基準（t5_signals.py の遡り不足ガード参照）。
+# T5（market_signals）を SQLite 基点で計算する際に、gap 日付を書き込み対象に
+# 含めるために SPY の遡り本数が最低限これだけ必要な基準
+# （t5_signals.py の遡り不足ガード参照）。
 #
 # 根拠: 下の `calculate_market_signals()` で `sma_200` は `close.rolling(200, ...)`、
 # `spy_sma200_rising` はその `sma_200` を `shift(20)` して比較するため、
@@ -49,11 +50,9 @@ WEIGHT_EMA200_ATR = 0.25
 # MTS の SMA200 窓（200）や rising 判定の比較幅（20）を変えたら、この定数も
 # 追随して直す必要がある。**
 #
-# 用途（§7-6(1)・5-7b で変更）: 本数不足は「即・例外」の合図ではなくなった。
-# 本数が足りない場合にのみ、SQLite の SPY 起点と Parquet マスタの SPY 起点を
-# 比較し、Parquet にも同等以上の履歴が無ければ（切り詰めではなく単なる履歴
-# 不足）通す。Parquet が読めない場合のフォールバック判定として、この定数は
-# 引き続き使われる。
+# 用途（§7-7・§4-8・5-7c で変更）: 本数不足は「例外で止める合図」ではない。
+# 本数が足りない gap 日付は**書き込み対象から外し**、`logger.error` で
+# 警告するだけにする（詳細は t5_signals.py の `_filter_insufficient_lookback_dates`）。
 SPY_LOOKBACK_MIN_BARS = 220
 
 
