@@ -726,7 +726,20 @@
     方針は一般的なツール（pandas 既定・TA-Lib・Pine）と同じく NaN に揃える。
   - **昇格の前提**: 下の「T5 のリフレッシュが SQLite 基点のまま」の修正後（計画書 §4-6）
 
-- [ ] 🔴 **T5（`market_signals`）のリフレッシュが SQLite 基点のまま — Parquet 基点化が T5 に及んでおらず、リフレッシュのたびに MTS の先頭が壊れる（2026-09-11 発見）**
+- [x] ~~🔴 **T5（`market_signals`）のリフレッシュが SQLite 基点のまま — Parquet 基点化が T5 に及んでおらず、リフレッシュのたびに MTS の先頭が壊れる（2026-09-11 発見 / 2026-09-17 解決）**~~
+
+  > [!NOTE]
+  > **2026-09-17 解決・本番昇格済み。** 計画書: `doc/completed/t5_parquet_rebuild_plan.md`
+  >
+  > T3/T4 と同じく **T5 も Parquet 基点で全期間再計算**する形に統一した（`backend/scripts/recompute_parquet_signals.py` を新設し、`--rebuild-from T3/T4/T5` はT3→T4→T5→SQLite 復元→後処理 の手順に委譲）。SQLite 基点で T5 を再計算する経路は撤去した。
+  >
+  > **修復結果**: 新世代 `20260917_022002`。P3（2024-09-03〜2025-06-30）で誤っていた `market_phase` 38日・`spy_above_sma200` 15日・`spy_sma200_rising` 58日・`distribution_days` 22日が**すべて解消**。欠落していた `2026-09-14` の行も追加された。
+  >
+  > **検算（2つの独立経路で合格）**: ①本番 vs 独立計算（`calculate_market_signals()` を直接呼ぶ）が全期間・SPY 由来6列で一致、日付集合の対称差 0 ②本番 vs 2026-08-29 世代（壊れる前の値）が3,909日・全6列で完全一致（5-9 で意図的に NULL 化した先頭区間 2010-04-01〜2011-02-10 を除く）。
+  >
+  > **副産物**: 再計算スクリプト3本と復元の隔離漏れも塞いだ（`paths.resolve_db_path_for_init()` 経由に統一し、書き込み前に `ensure_writable()`）。これにより `deploy_after_merge` の作業領域指定が実際に効くようになった。
+  >
+  > **残課題**: 「判定不能（NULL）」をレイヤ横断でどう表現するかは設計論点として未決（`doc/completed/t5_parquet_rebuild_plan.md` §8）。ダッシュボードの `market_trend_score or 0.0` / `distribution_days or 0` は未修正のまま。
 
   > [!CAUTION]
   > **この issue を直すまで、本番で `--rebuild-from` 系（`tools/deploy_after_merge.ps1` を含む）を実行しないこと。**
