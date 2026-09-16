@@ -249,7 +249,7 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 
 ### 作業中メモ
 
-**現在地: 実装・検収は完了（5-9e を除く）。次は 5-14（本番修復）だが、①5-9e の判断 ②日次更新の中断（§7-10(2)）への対処 ③ユーザー承認 が前提。**
+**現在地: main へマージ済み。昇格（`deploy_after_merge.ps1 -RebuildFrom T3`）をユーザーが実行するのを待っている状態。その後 5-15 検算 → 5-16 型3（after のみ）→ 5-17 issue クローズと freeze 解除 → 5-19 completed へ。**
 
 - **テスト実測: backend 1753 passed / 0 failed、frontend 10ファイル54テスト passed**、`sync_skills.py --check` 差分ゼロ
 - **ワークツリー撤収時の注意**: `frontend/node_modules` が本体へのジャンクションになっている。`tools/remove_worktree.ps1` はこのケースを想定してリパースポイントをリンクだけ切り離す作りなので、**必ずこのスクリプトを通すこと**（素の削除・`git worktree remove` は本体の node_modules を巻き込む）
@@ -728,6 +728,26 @@ P1 の199日は 5-9 による先頭の NULL 化（設計どおり）、P3 が修
   SPY の価格は 4,138行あるのに現行世代の `market_signals` にこの日付が無い＝**修復で1行増える**
 - P3/P4 の `breadth_sma50` の小さな差（最大 0.005）は、breadth 母集団が 2,924→2,956銘柄に増えたため（`active` の現況で再計算する仕様どおり）
 - P1 の199日は 5-9 による先頭の NULL 化（設計どおり）、**P3 が修復対象の壊れ**
+
+### 7-11. マージ完了と昇格の実行待ち（2026-09-17）
+
+- **型3 の「修復前」ベースラインは取らない**（ユーザー判断: 「MTS だけなら特に問題ない」）。
+  §4-3 の型3 再評価は**修復後のみ記録**する
+- **main へマージ済み**（`9fda405 Merge branch 'worktree-feat+t5-parquet-rebuild'`）。
+  同時に別セッションの `bd39fe5 Merge branch 'worktree-rs-std-precision'` も入った。衝突なし
+- **`--rebuild-from T3` 1回で3つのプランが同時に片付く構成になった**:
+  ① rs-std-precision（T3 の RS 精度修正。`doc/in_progress/rs_rolling_std_precision_plan.md` は
+  **本 T5 問題の freeze 解除待ちでブロックされていた**）② 本計画の T5 修復 ③ zone_break の指標追加分
+- **昇格（5-14）はユーザー承認済みだが、`tools/deploy_after_merge.ps1` の実行が
+  自動モードの権限チェックでブロックされた**（環境側の制限）。**ユーザーが本体チェックアウトで実行する**:
+
+  ```powershell
+  cd "D:\My Documents\Programing\stocktool"
+  .	ools\deploy_after_merge.ps1 -RebuildFrom T3
+  ```
+
+  - 前提条件は確認済み（API サーバー停止・パイプライン実行中プロセスなし・次の日次は 09-17 07:00）
+  - 検算用の 2026-08-29 世代のコピーはワークツリーの `tmp/verify/` に退避済み（本番側が prune されても検算可能）
 
 ## 8. スコープ外・残作業
 
