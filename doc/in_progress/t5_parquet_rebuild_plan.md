@@ -743,7 +743,7 @@ P1 の199日は 5-9 による先頭の NULL 化（設計どおり）、P3 が修
 
   ```powershell
   cd "D:\My Documents\Programing\stocktool"
-  .	ools\deploy_after_merge.ps1 -RebuildFrom T3
+  .\tools\deploy_after_merge.ps1 -RebuildFrom T3
   ```
 
   - 前提条件は確認済み（API サーバー停止・パイプライン実行中プロセスなし・次の日次は 09-17 07:00）
