@@ -1,8 +1,8 @@
 # T5（market_signals）のリフレッシュを Parquet 基点にする 計画書
 
-- **ステータス**: 🚧 進行中（§4 は 2026-09-11 にユーザー判断済み）
+- **ステータス**: ✅ 完了 — T5 を Parquet 基点に統一し、本番 MTS の38日の誤りを修復（検算合格）
 - **実施者**: AI エージェント（Claude Opus 5）
-- **開始日**: 2026-09-11 / **完了日**: —
+- **開始日**: 2026-09-11 / **完了日**: 2026-09-17
 - **作業ブランチ**: `worktree-feat+t5-parquet-rebuild`（ワークツリー `.claude/worktrees/feat+t5-parquet-rebuild`、`--mode write` でプロビジョニング済み。分岐元 main `5c7cbe7`）
 - **対象 issue**: `doc/issue_list.md`「T5（`market_signals`）のリフレッシュが SQLite 基点のまま — Parquet 基点化が T5 に及んでおらず、リフレッシュのたびに MTS の先頭が壊れる」（以下 **②**）
 - **後続**: `doc/in_progress/min_periods_warmup_plan.md`（以下 **①**）の昇格は本計画の完了が前提（① §4-6）
@@ -243,13 +243,13 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 - [x] **5-8c** 復元の後に `run_pipeline(rebuild_from=None, skip_fetch=True)` を呼び、T1/FX/仮想指数/rotate/purge/整合監査を通す（§7-6(2)）— `refresh_T3Table.bat` のコメントと SKILL.md の記述も実態へ
 - [x] **5-14** 本番修復 — **完了（2026-09-17 02:26）**。ユーザーが `deploy_after_merge.ps1 -RebuildFrom T3` を実行（私の実行は権限制限でブロックされたため）。**新世代 `20260917_022002` / 所要 1431秒 / 昇格成功**
 - [x] **5-15** 本番の修復確認 — **合格（2026-09-17）**。§7-12 参照
-- [ ] **5-16** 型3 シナリオの再評価（§4-3）— 修復前（5-14 の前）と修復後で同じ条件で実行し before/after を記録。**期待値は「変化なし」**（§4.1）。大きく変わったら想定外の読み取り経路を調べる
-- [ ] **5-17** 後片付け — issue ② をクローズ、memory `t5-sqlite-rebuild-freeze` を削除（MEMORY.md の索引も）、① の §4-6 を「前提充足」に更新
-- [ ] **5-18** 計画書を `doc/completed/` へ移動
+- [x] **5-16** 型3 シナリオ — **修復後のみ実行（2026-09-17）**。§7-13 参照（「修復前」はユーザー判断でスキップ: 「MTS だけなら特に問題ない」）
+- [x] **5-17** 後片付け — issue ② をクローズ（`doc/issue_list.md`）、memory `t5-sqlite-rebuild-freeze` を削除（索引も更新）、① の計画書 §4-6 を「前提充足」に更新（あわせて**本体で未追跡だった ① の計画書を git 管理下に取り込んだ**）
+- [x] **5-18** 計画書を `doc/completed/` へ移動
 
 ### 作業中メモ
 
-**現在地: 昇格・検算まで完了（§7-12）。残りは 5-16 型3（after のみ）→ 5-17 issue クローズと freeze 解除 → 5-19 completed へ移動とワークツリー撤収。5-9e は未回答のまま。**
+**完了（2026-09-17）。** 残るのはユーザー作業のみ: ①このブランチを main へマージ ②`tools/remove_worktree.ps1` でワークツリーを撤収（`frontend/node_modules` のジャンクションがあるため必ずこのスクリプトを通す）。**未決の設計論点は §8 を参照。**
 
 - **テスト実測: backend 1753 passed / 0 failed、frontend 10ファイル54テスト passed**、`sync_skills.py --check` 差分ゼロ
 - **ワークツリー撤収時の注意**: `frontend/node_modules` が本体へのジャンクションになっている。`tools/remove_worktree.ps1` はこのケースを想定してリパースポイントをリンクだけ切り離す作りなので、**必ずこのスクリプトを通すこと**（素の削除・`git worktree remove` は本体の node_modules を巻き込む）
@@ -771,6 +771,21 @@ P1 の199日は 5-9 による先頭の NULL 化（設計どおり）、P3 が修
 - **新規: `PWRL` / `FDXF` / `AZUL`（`rs_momentum_e21` の NULL。履歴75〜76本）**
   → **本計画の変更（T5）とは無関係**。同時に昇格した **rs-std-precision（T3 の RS 精度修正）の影響と見られる**。
   T2/T3 の行数不一致は 0 件で、`market_signals` 由来の NG も 0 件。**そのプランの担当側で妥当性を確認すること**
+
+### 7-13. 5-16 型3 シナリオの結果（2026-09-17・修復後のみ）
+
+- **「修復前」はユーザー判断でスキップ**（「MTS だけなら特に問題ない」）。したがって before/after の比較はできず、
+  **修復後の記録**として残す
+- 実行: `python backend/backtest/run_scenario_batch.py`（本体チェックアウト・本番データ）。
+  **850 run = 17戦略 × 5レジームモデル × 10回**、全 run 成功。出力は `output/scenario/{strategy}/{model}/run_*/`
+- **そもそも型3 は修復した列を読まない**（§4.1 で確認済み）: SPY 由来の MTS は `MarketTrendScorer` が
+  T3 の `sma_50`/`sma_200`/`atr_14` から自前で計算し、`breadth_sma50` / `vxv_vix_ratio` は SQLite の
+  `market_signals` から読むが、この2列はホット期間で壊れていなかった。**したがって型3 への影響は想定どおり無い**
+- ただし**同時に昇格した rs-std-precision（T3 の RS 精度修正）は型3 の入力に効く**ため、
+  今回の数値を過去の run と直接比べることはできない（どちらの影響かを分離できない）
+- CAGR 中央値の分布（参考）: 好調な戦略は `B256_union` 25〜37% / `B6` 21〜30% / `B3` 12〜23%、
+  低調な戦略は `H3_tlb` −15〜−6% / `H3_tlb_narrow` −8〜+2% / `G1` −2〜+4%。
+  **この値の評価は本計画の範囲外**（戦略の採否は型1/型3 の役割分担に従って別途判断する）
 
 ## 8. スコープ外・残作業
 
