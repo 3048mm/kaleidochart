@@ -240,6 +240,42 @@ Parquet マスターは MVCC で**新しいタイムスタンプ名のファイ�
 
 ---
 
+### B-6. yfinance/curl_cffi が `SSL certificate problem: unable to get local issuer certificate` で全滅する（Norton等のTLS検査ソフト環境）
+
+#### 症状
+venv 内の Python から yfinance を叩くと、AAPL のような普通の銘柄ですら以下のエラーで
+全件失敗する。素の `curl`（Git Bash）や PowerShell の `Invoke-WebRequest` は同じホストに
+問題なく到達できるため、「ネットワーク不通」と誤診しやすい。
+
+```
+Failed to get ticker 'AAPL' reason: Failed to perform, curl: (60) SSL certificate problem: unable to get local issuer certificate.
+```
+
+#### 原因
+Norton 等のアンチウイルスが HTTPS 通信を TLS 中間者検査しており、Windows証明書ストアには
+検査用ルート証明書が入っている（`curl`/`Invoke-WebRequest` はこれを信頼するので通る）。
+一方 `yfinance` が内部で使う `curl_cffi` は **独自の CA バンドルしか見ない**ため、
+Windows ストアに証明書があっても信頼せず検証に失敗する。
+環境変数 `NODE_EXTRA_CA_CERTS` が Norton の証明書ファイルを指しているのが判別の手がかり
+（Node.js 向けに設定されているだけで Python 側には効かない）。
+
+#### 対策ルール
+その証明書ファイルを `CURL_CA_BUNDLE` として明示的に渡すと解決する:
+
+```powershell
+$env:CURL_CA_BUNDLE = "C:\ProgramData\Norton\Antivirus\wscert.pem"
+```
+```bash
+export CURL_CA_BUNDLE="C:\\ProgramData\\Norton\\Antivirus\\wscert.pem"
+```
+
+パスはマシン依存（アンチウイルス製品・バージョンにより異なる）。まず
+`$env:NODE_EXTRA_CA_CERTS`（PowerShell）または `env | grep -i cert`（bash）で
+検査用証明書のパスを確認してから設定すること。この変数は yfinance だけでなく
+`curl_cffi` を使う他のライブラリにも効く。
+
+---
+
 ## C. フロントエンド関連 (Frontend)
 
 ### C-1. フロントエンドにおける数値フィールドの Null-safety
@@ -322,4 +358,5 @@ Parquet マスターは MVCC で**新しいタイムスタンプ名のファイ�
 - 2026-05-31: ハイブリッドデータ移行に伴う Parquet フィルター高速化 (B-4) および sqlite3.executemany による SQLite ネイティブバルクインサート高速化 (A-6) を追記
 - 2026-09-01: A-7（スキーマだけの空DBを掴む罠 — pytest が残す 139,264 バイトの残骸）と B-5（`latest_master.json` の絶対パス / `get_latest_master_files()` が失敗を `None` に化けさせる）を追記。OS・Git 起因のリンク事情は `agent_execution_rules.md` §11 へ
 - 2026-08-20: D-3 自己更新ルールを改訂 — 3回打ち切り時を追記トリガーに追加、エラー原文（検索キー）の必須化、agent_execution_rules.md との振り分けを明記
+- 2026-09-16: B-6（Norton等のTLS検査ソフト環境でyfinance/curl_cffiがSSL証明書エラーで全滅する問題と`CURL_CA_BUNDLE`による回避）を追記
 
