@@ -28,6 +28,13 @@ SQLite の `relative_ranks` と突合して検証済み（2026-08-05）:
   - **他銘柄のパーセンタイル値はわずかに変わる**（母集団が変動するため）
   - したがって**過去の最適化結果は厳密には再現しなくなる**
 
+## パス解決
+
+Parquet ディレクトリの解決は `paths.resolve_db_path_for_init()` を経由する
+（環境変数 `STOCKTOOL_DB_PATH` やワークツリーの `config.local.toml` を尊重する）。
+`--apply` の書き込み前には `paths.ensure_writable()` を掛け、ワークツリーから
+本番 Parquet へ書き込もうとした場合は `ProductionWriteError` で拒否する。
+
 Usage:
     $env:PYTHONPATH="backend"
     .\\venv\\Scripts\\python.exe backend\\scripts\\recompute_parquet_ranks.py --dry-run
@@ -51,6 +58,7 @@ if _backend_dir not in sys.path:
     sys.path.insert(0, _backend_dir)
 
 import tomli  # noqa: E402
+import paths  # noqa: E402
 from pipeline.pipeline_lock import pipeline_lock  # noqa: E402
 from pipeline.parquet_cache_manager import (  # noqa: E402
     get_latest_master_files,
@@ -64,7 +72,7 @@ from pipeline.parquet_recompute import INDICATORS_TO_RANK, recompute_ranks  # no
 def run(dry_run: bool):
     with open(os.path.join(_project_root, "config.toml"), "rb") as f:
         config = tomli.load(f)
-    db_path = config["system"]["db_path"]
+    db_path = paths.resolve_db_path_for_init("stocktool", config["system"]["db_path"])
     parquet_dir = get_parquet_master_dir(db_path)
     pointer_file = get_pointer_file_path(parquet_dir)
     cur = get_latest_master_files(pointer_file)
@@ -117,6 +125,9 @@ def run(dry_run: bool):
     if dry_run:
         print("\n[DRY-RUN] 書き込んでいません。")
         return
+
+    # ワークツリーから本番 Parquet へ書こうとしていないか（FS では防げないのでここで検査）
+    paths.ensure_writable(parquet_dir)
 
     # --- 新世代の書き出し ---
     print("\n[5] 新世代の書き出し...")

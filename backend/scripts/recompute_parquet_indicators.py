@@ -19,6 +19,13 @@ T3 は **SQLite の `daily_prices` にある全行**を入力にする（`t3_ind
 各銘柄の全履歴がそのまま入力になる。T4 について同じ理由で作られた
 `recompute_parquet_ranks.py` と同じ考え方・同じ手順に揃えてある。
 
+## パス解決
+
+Parquet ディレクトリの解決は `paths.resolve_db_path_for_init()` を経由する
+（環境変数 `STOCKTOOL_DB_PATH` やワークツリーの `config.local.toml` を尊重する）。
+`--apply` の書き込み前には `paths.ensure_writable()` を掛け、ワークツリーから
+本番 Parquet へ書き込もうとした場合は `ProductionWriteError` で拒否する。
+
 ## メモリ
 
 `recompute_indicators()` を全銘柄で直接呼ぶと `pd.concat` が落ちる
@@ -60,6 +67,7 @@ if _backend_dir not in sys.path:
     sys.path.insert(0, _backend_dir)
 
 import tomli  # noqa: E402
+import paths  # noqa: E402
 from pipeline.parquet_cache_manager import (  # noqa: E402
     get_latest_master_files,
     get_parquet_master_dir,
@@ -124,7 +132,8 @@ def verify(sample: int, chunk_size: int) -> int:
     """
     with open(os.path.join(_project_root, "config.toml"), "rb") as f:
         config = tomli.load(f)
-    parquet_dir = get_parquet_master_dir(config["system"]["db_path"])
+    db_path = paths.resolve_db_path_for_init("stocktool", config["system"]["db_path"])
+    parquet_dir = get_parquet_master_dir(db_path)
     cur = get_latest_master_files(get_pointer_file_path(parquet_dir))
     if not cur:
         print("[ERROR] latest_master.json を解決できません。")
@@ -243,7 +252,7 @@ def verify(sample: int, chunk_size: int) -> int:
 def run(dry_run: bool, chunk_size: int) -> None:
     with open(os.path.join(_project_root, "config.toml"), "rb") as f:
         config = tomli.load(f)
-    db_path = config["system"]["db_path"]
+    db_path = paths.resolve_db_path_for_init("stocktool", config["system"]["db_path"])
     parquet_dir = get_parquet_master_dir(db_path)
     pointer_file = get_pointer_file_path(parquet_dir)
     cur = get_latest_master_files(pointer_file)
@@ -285,6 +294,9 @@ def run(dry_run: bool, chunk_size: int) -> None:
              f"（うち ETF 系 {len(set(pre2018.index) & etf_ids):,}）")
         _log("[dry-run] 書き込んでいません。")
         return
+
+    # ワークツリーから本番 Parquet へ書こうとしていないか（FS では防げないのでここで検査）
+    paths.ensure_writable(parquet_dir)
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_path = os.path.join(parquet_dir, f"indicators_{ts}.parquet")

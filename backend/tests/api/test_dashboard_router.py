@@ -28,7 +28,8 @@ TARGET_DATE = date(2026, 7, 1)
 DATES = [TARGET_DATE - timedelta(days=i) for i in range(34, -1, -1)]
 
 
-def _seed(session, n_individual: int, n_sectors: int = 2, n_themes: int = 3):
+def _seed(session, n_individual: int, n_sectors: int = 2, n_themes: int = 3,
+          market_phase: str | None = "BULL"):
     """ダッシュボードが参照する全テーブルへ最小限のデータを投入する。"""
     symbols = [
         Symbol(id=1, ticker="SPY", exchange="NYSEARCA", name="SPDR S&P500", category="指標", active=1),
@@ -85,13 +86,14 @@ def _seed(session, n_individual: int, n_sectors: int = 2, n_themes: int = 3):
                               rs_trend_s5=1.0, rs_trend_s14=1.0, rs_trend_s21=1.0, rs_trend_s63=1.0, rs_trend_s200=1.0,
                               vol_surge_rel_spy_21=1.0))
 
-    session.add(MarketSignal(date=TARGET_DATE, market_phase="BULL",
+    session.add(MarketSignal(date=TARGET_DATE, market_phase=market_phase,
                              distribution_days=1, market_trend_score=75.0,
                              vxv_vix_ratio=1.2, is_distribution_day=0, follow_through_day=0))
     session.commit()
 
 
-def _make_client(tmp_path, name: str, n_individual: int, n_sectors: int = 2, n_themes: int = 3):
+def _make_client(tmp_path, name: str, n_individual: int, n_sectors: int = 2, n_themes: int = 3,
+                 market_phase: str | None = "BULL"):
     """使い捨てファイル DB でシード済みの TestClient とクエリカウンタを返す。"""
     db_file = tmp_path / f"dash_{name}.db"
     engine = create_engine(f"sqlite:///{db_file}", connect_args={"check_same_thread": False})
@@ -99,7 +101,7 @@ def _make_client(tmp_path, name: str, n_individual: int, n_sectors: int = 2, n_t
     TestSession = sessionmaker(bind=engine, autocommit=False, autoflush=False)
     session = TestSession()
     try:
-        _seed(session, n_individual, n_sectors=n_sectors, n_themes=n_themes)
+        _seed(session, n_individual, n_sectors=n_sectors, n_themes=n_themes, market_phase=market_phase)
     finally:
         session.close()
 
@@ -171,6 +173,18 @@ def test_dashboard_returns_expected_categories(tmp_path):
     assert data["spy_feature"]["ticker"] == "SPY"
     assert {it["ticker"] for it in data["sectors"]} == {"SEC0", "SEC1"}
     assert {it["ticker"] for it in data["themes_top"]} == {"THM0", "THM1", "THM2"}
+
+
+def test_dashboard_market_phase_none_does_not_500(tmp_path):
+    """`market_phase` が None の `MarketSignal`（SPY の遡りが220本未満の日付。
+    indicators/market_signals.py の SPY_LOOKBACK_MIN_BARS 参照）でも 500 にならず
+    "UNKNOWN" を返すこと（doc/in_progress/t5_parquet_rebuild_plan.md §4-7・5-9b）。
+    """
+    client, _ = _make_client(tmp_path, "phase_none", n_individual=3, market_phase=None)
+    r = client.get("/api/dashboard")
+
+    assert r.status_code == 200
+    assert r.json()["market_phase"] == "UNKNOWN"
 
 
 def test_theme_detail_query_count_does_not_scale_with_constituents(tmp_path):

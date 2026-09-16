@@ -81,36 +81,43 @@ def test_market_trend_score_bear():
     assert score <= 1.0
 
 def test_market_trend_score_neutral():
-    """中立相場での50点前後を検証"""
+    """中立相場での50点前後を検証
+
+    sma_50/sma_200 は min_periods を窓幅（50/200）に揃えているため
+    （t5_parquet_rebuild_plan.md §4-4）、2本だけの履歴では両方 NaN になり
+    market_trend_score も NaN になってしまう。220本のヨコバイ履歴 + 最終日だけ
+    上昇させる形に置き換え、sma_50/sma_200 の遡りを満たしたまま
+    「終値が両方の上に出る」という元のシナリオを再現する。
+    """
     # VIX: 23.5 (12.5 pts) -> (35-23.5)/(35-12) = 11.5/23 = 0.5 -> 12.5 pts
+    dates = pd.date_range(start='2025-01-01', periods=220)
     df_vix = pd.DataFrame({
-        'date': pd.to_datetime(['2026-01-01']),
+        'date': [dates[-1]],
         'close': [23.5]
     })
-    
+
     # Metrics: Breadth 0.5, Momentum 0.5 (12.5 + 12.5 = 25 pts)
     df_metrics = pd.DataFrame({
-        'date': pd.to_datetime(['2026-01-01']),
+        'date': [dates[-1]],
         'breadth_sma50': [0.5],
         'momentum_ratio': [0.5]
     })
-    
-    # SPY: SMA200 のみ上回る想定 (約8.3 pts) -> 12.5(VIX) + 25(Metrics) + 8.3 = 45.8
-    # 1件だと全部 True になるので、ダミー履歴を入れる
+
+    # SPY: 219日ヨコバイ(125) -> 最終日だけ150に上昇
+    # (sma_50/sma_200 とも約125のまま、close だけ両方の上に出る)
+    prices = [125.0] * 219 + [150.0]
     df_spy = pd.DataFrame({
-        'date': pd.to_datetime(['2025-12-01', '2026-01-01']),
-        'close': [100.0, 150.0], # 200MA=125, 50MA=125, 21EMA=125 ... 全部越えるな
-        'open': [100.0, 150.0],
-        'high': [100.0, 150.0],
-        'low': [100.0, 150.0],
-        'volume': [1000, 1000]
+        'date': dates,
+        'close': prices,
+        'open': prices,
+        'high': prices,
+        'low': prices,
+        'volume': [1000] * 220
     })
-    
-    # 計算ロジック上、EMA/SMAの期間が必要なので、
-    # 実際はもっと長いデータが必要だが、まずは構造のテスト
+
     res = calculate_market_signals(df_spy, df_vix=df_vix, df_metrics=df_metrics)
     score = res.iloc[-1]['market_trend_score']
-    
+
     assert 10.0 <= score <= 90.0
 
 def test_calculate_indicators_protection():

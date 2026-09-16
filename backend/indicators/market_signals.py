@@ -40,6 +40,23 @@ WEIGHT_BREADTH    = 0.25
 WEIGHT_EMA50_ATR  = 0.25
 WEIGHT_EMA200_ATR = 0.25
 
+# T5（market_signals）を SQLite 基点で計算する際に、gap 日付の SPY 遡りが
+# 十分か判定する基準（t5_signals.py の遡り不足ガード参照）。
+#
+# 根拠: 下の `calculate_market_signals()` で `sma_200` は `close.rolling(200, ...)`、
+# `spy_sma200_rising` はその `sma_200` を `shift(20)` して比較するため、
+# 対象日までに 200 + 20 = 220 本の SPY が必要。**決め打ちの数値ではなく、
+# MTS の SMA200 窓（200）や rising 判定の比較幅（20）を変えたら、この定数も
+# 追随して直す必要がある。**
+#
+# 用途（§7-8(1)・5-7d で変更）: 本数不足は「書き込み対象から外す合図」でも
+# 「例外で止める合図」でもない。遡り不足の gap 日付も**行として書き込む**
+# （5-9 により spy_above_sma200 / distribution_days / market_phase は None、
+# market_trend_score は NaN になるため、偽の値は入らない）。この定数は
+# `logger.error` で警告を出すかどうかの閾値としてのみ使う
+# （詳細は t5_signals.py の `_find_insufficient_lookback_dates`）。
+SPY_LOOKBACK_MIN_BARS = 220
+
 
 
 def find_stale_input_gaps(df: pd.DataFrame, col: str) -> list[tuple]:
@@ -86,6 +103,44 @@ def report_stale_input_gaps(df: pd.DataFrame, col: str, ticker: str,
     return gaps
 
 
+def compute_breadth_momentum(raw_df: pd.DataFrame) -> pd.DataFrame:
+    """個別銘柄の close/sma_50/前日close から、日付別の breadth_sma50/momentum_ratio を作る。
+
+    T5（market_signals）の市場内訳指標。SQLite 経路（`t5_signals.py`）と
+    Parquet 経路（`recompute_parquet_signals.py`）の両方から同じ関数を呼ぶこと
+    （二重実装にしない）。
+
+    元は `t5_signals.py` にインラインで書かれていたロジックをそのまま移したもの
+    （2026-09-11 切り出し）。**NaN の扱いは「改善」していない**——
+    `x.mean(skipna=True) if not x.isna().all() else 0.5` の分岐、
+    最終的な `fillna(0.5)` は、切り出し前と1ビットも変えない。
+
+    Args:
+        raw_df: `symbol_id` / `date` / `close` / `sma_50` 列を持つ DataFrame。
+            銘柄ごとの `shift(1)`（前日比騰落判定）のために内部でソートする
+            （呼び出し側が既にソート済みでも結果は変わらない）。
+
+    Returns:
+        `date` / `breadth_sma50` / `momentum_ratio` 列の DataFrame。
+        入力が空なら同じ列を持つ空の DataFrame を返す。
+    """
+    if raw_df.empty:
+        return pd.DataFrame(columns=['date', 'breadth_sma50', 'momentum_ratio'])
+
+    raw_df = raw_df.sort_values(['symbol_id', 'date']).copy()
+    raw_df['prev_close'] = raw_df.groupby('symbol_id')['close'].shift(1)
+    raw_df['is_up'] = raw_df['close'] > raw_df['prev_close']
+
+    raw_df['is_above_sma50'] = raw_df['close'] > raw_df['sma_50']
+
+    metrics_df = raw_df.groupby('date').agg(
+        breadth_sma50=('is_above_sma50', lambda x: x.mean(skipna=True) if not x.isna().all() else 0.5),
+        momentum_ratio=('is_up', lambda x: x.mean(skipna=True) if not x.isna().all() else 0.5)
+    ).reset_index()
+    metrics_df = metrics_df.fillna(0.5)
+    return metrics_df
+
+
 def calculate_market_signals(
     df_spy: pd.DataFrame,
     df_vix: pd.DataFrame = None,
@@ -108,12 +163,24 @@ def calculate_market_signals(
     volume = df['volume'].astype(float)
 
     # 1. SPY Trend Components (required for phase classification)
-    df['sma_50'] = close.rolling(50, min_periods=1).mean()
-    df['sma_200'] = close.rolling(200, min_periods=1).mean()
-    
+    # min_periods を窓幅と一致させる（① 計画 §4-4）。遡りが足りない先頭区間は
+    # 「それらしい値」を返さず NaN にする。Parquet 全期間計算時の先頭
+    # （SPY は 2010-04-01 開始のため、2010-04〜2011-02 の先頭219本が該当）で
+    # NaN になるのはもちろん、SQLite 経路（t5_signals.py）でも同じ窓を使うため、
+    # 遡りが足りない gap 日付（§7-8(1)・5-7d で除外をやめ、行として書き込む
+    # 方針に変更済み）はここで同じように NaN になる。
+    df['sma_50'] = close.rolling(50, min_periods=50).mean()
+    df['sma_200'] = close.rolling(200, min_periods=200).mean()
+
     sma200_20d_ago = df['sma_200'].shift(20)
 
-    df['spy_above_sma200']  = (close > df['sma_200']).astype(int)
+    # sma_200 の遡りが足りない行は None（判定不能。spy_sma200_rising と同じ慣習）。
+    # NaN を 0（200日線割れ）に潰すと、遡り不足が「200日線割れ」として
+    # 誤って扱われてしまう。
+    df['spy_above_sma200']  = np.where(
+        df['sma_200'].isna(), None,
+        (close > df['sma_200']).astype(int)
+    )
     df['spy_sma200_rising'] = np.where(
         sma200_20d_ago.isna(), None,
         (df['sma_200'] >= sma200_20d_ago).astype(int)
@@ -124,7 +191,14 @@ def calculate_market_signals(
     vol_increase = volume > volume.shift(1)
     is_dist_day  = (daily_ret <= -0.002) & vol_increase
     df['is_distribution_day'] = is_dist_day.astype(int)
-    df['distribution_days'] = is_dist_day.rolling(window=25, min_periods=1).sum().astype(int)
+    dist_days_raw = is_dist_day.rolling(window=25, min_periods=25).sum()
+    # NaN のまま .astype(int) すると IntCastingNaNError になるため、
+    # 先に fillna(0) してから cast し、NaN だった行だけ None に戻す
+    # （spy_above_sma200 と同じ「None = 判定不能」の慣習）。
+    df['distribution_days'] = np.where(
+        dist_days_raw.isna(), None,
+        dist_days_raw.fillna(0).astype(int)
+    )
 
     # 3. Follow Through Day (FTD)
     is_ftd = (daily_ret >= 0.017) & vol_increase
@@ -132,14 +206,28 @@ def calculate_market_signals(
 
     # 4. Market Phase classification
     def phase(row):
+        # 遡り不足で spy_above_sma200 / distribution_days が None（判定不能）の行は
+        # 既存の分岐（1 か 0 かの2値）に押し込めない。None は None==1 でも
+        # None==0 でも False になるため、そのままでは else 節の 'BULL' に落ちて
+        # 誤って強気相場と判定されてしまう。ここで明示的に判定不能を返す。
+        if row['spy_above_sma200'] is None or row['distribution_days'] is None:
+            return None
         if row['spy_above_sma200'] == 1 and row['distribution_days'] <= 3:
             return 'BULL'
         elif row['spy_above_sma200'] == 1 and row['distribution_days'] >= 5:
             return 'CORRECTION'
         elif row['spy_above_sma200'] == 0 and row['follow_through_day'] == 1:
+            # FTD で確定するので spy_sma200_rising の値は見ない（None でも判定不能にしない）。
             return 'RALLY_ATTEMPT'
         elif row['spy_above_sma200'] == 0:
-            if row.get('spy_sma200_rising') == 0:
+            spy_sma200_rising = row.get('spy_sma200_rising')
+            # spy_sma200_rising は sma_200.shift(20) 由来のため、sma_200 が算出され
+            # 始めた直後の20本（200〜219本目）で None になる（5-9d）。この分岐でしか
+            # spy_sma200_rising を使わないため、None のときは判定不能を返す
+            # （BEAR / RALLY_ATTEMPT のどちらかを None==0 の偽判定で捏造しない）。
+            if spy_sma200_rising is None:
+                return None
+            if spy_sma200_rising == 0:
                 return 'BEAR'
             return 'RALLY_ATTEMPT'
         else:
