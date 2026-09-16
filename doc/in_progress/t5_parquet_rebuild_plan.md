@@ -235,8 +235,8 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 - [x] **5-6c** dry-run の差分に**日付集合の対称差**を表示する（§7-6(3)）— `compare_by_period()` の inner merge を直す。**5-14 のゲートそのもの**
 - [x] ~~**5-7b** 遡り不足ガードの判定を Parquet 起点比較に変える~~ → **検収不合格**（`729bf19`。核心のケースが直っていない。§7-7）
 - [x] **5-7c** 遡り不足ガードを「除外＋警告」に変える（§7-7）→ **検収合格**（`e2f883b`。例外は完全に排除。テスト 1747 passed）。**ただし表現を 5-7d で修正**
-- [ ] **5-7d** 遡り不足の日付も**行として書く**（除外をやめる）＋警告は維持（§7-8(1)）— 仕様書・Parquet 経路・`/available_dates` の連続性を揃える。**5-14 の前提**
-- [ ] **5-9c** フロントで**判定不能を明示**する（§7-8(2)）— `MarketPhaseMeter.tsx` が `"UNKNOWN"` を BEAR に倒さないようにする
+- [x] **5-7d** 遡り不足の日付も**行として書く**（除外をやめる）＋警告は維持（§7-8(1)）— 仕様書・Parquet 経路・`/available_dates` の連続性を揃える。**5-14 の前提** → **実装完了（`6c95dfe`）**
+- [x] **5-9c** フロントで**判定不能を明示**する（§7-8(2)）— `MarketPhaseMeter.tsx` が `"UNKNOWN"` を BEAR に倒さないようにする → **実装完了（`98afefd`）**
 - [x] **5-8c** 復元の後に `run_pipeline(rebuild_from=None, skip_fetch=True)` を呼び、T1/FX/仮想指数/rotate/purge/整合監査を通す（§7-6(2)）— `refresh_T3Table.bat` のコメントと SKILL.md の記述も実態へ
 - [ ] **5-14** **本体チェックアウトから実行する**（ワークツリーからは sandbox を指すため — §7-2）。先に 5-16 の「修復前」の型3 シナリオを実行して記録しておく → merge → **dry-run の差分をユーザーに提示して確認** → API サーバ停止 → `tools/deploy_after_merge.ps1 -RebuildFrom T5` → API サーバ再起動（§4-2）
 - [ ] **5-15** 本番の修復確認 — 成功条件 2・3（Parquet 全期間計算と完全一致 / 8/29 世代と 8/29 以前で完全一致）
@@ -246,7 +246,63 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 
 ### 作業中メモ
 
-**現在地: 5-6c / 5-8c / 5-7c は検収合格（5-7c は実装ワーカーが実装完了・未検収）。5-14 に進む前に、修正後の 5-11 相当の実走再確認が必要。**
+**現在地: 5-7d・5-9c は実装ワーカーが実装完了（未検収）。5-14 に進む前に、修正後の 5-11 相当の実走再確認が必要。**
+
+**5-7d の実装（2026-09-16・実装ワーカー）**: `_filter_insufficient_lookback_dates`（除外＋警告）を
+`_find_insufficient_lookback_dates`（検出のみ・警告用）に置き換えた。
+- `gap_dates` は一切フィルタしない。遡り不足の日付も他の gap 日付と同様に
+  `calculate_market_signals()` に渡り、`ms_df` に行として現れ、そのまま `t5_recs` に入って書き込まれる
+- 5-9 の `sanitize_numeric` ガード（既存）が `spy_above_sma200`/`distribution_days`/`market_trend_score` を
+  None として保存する。`market_phase` は `calculate_market_signals()` 側で既に Python `None` を返すため
+  そのまま代入で NULL になる
+- 警告文言を「除外します」→「NULL（判定不能）として書き込みます」に変更。件数・範囲・対処
+  （`--rebuild-from T5`）は維持。「全て除外された場合の早期 return」ブロックは削除（除外という概念が
+  無くなったため）
+- `SPY_LOOKBACK_MIN_BARS`（`indicators/market_signals.py`）のコメントを「書き込み対象に含める最小本数」から
+  「`logger.error` で警告するかどうかの閾値」に修正
+- `test_t5_lookback_guard.py` を新方針に合わせて書き直した。実装の実際の挙動を確認しながら修正:
+  - **核心のケース**（ホット期間先頭1件の NULL 修復・`TestHotWindowNullScoreRepair`）: 例外なし・行が書かれる・
+    `spy_above_sma200`/`distribution_days`/`market_phase`/`market_trend_score` が全て NULL・警告に
+    「1 件」「日付」「`--rebuild-from T5`」「除外 という語は含まれない」ことを確認
+  - **全期間再構築相当**（`TestFullRebuildLikeGap`）: 実装を実行して確認した結果、`market_trend_score` が
+    実際に NULL になるのは先頭 **199 本**（`sma_200` の `min_periods=200`）で、`SPY_LOOKBACK_MIN_BARS`（220）は
+    警告の閾値であって NULL 判定の閾値ではない（200〜219本目は `sma_200` は算出できるため
+    `market_trend_score` に値が入るが、`spy_sma200_rising` の遡り20日分の安全マージンとして警告対象になる）。
+    テストはこの実挙動に合わせて「先頭199本は NULL・200本目以降は値が入る・全 gap_dates が行として
+    書かれる（消失なし）・警告件数は219件」を検証する形にした
+  - **全 gap 日付が遡り不足**（`TestAllGapDatesInsufficientLookback`）: 10本しかない場合は全て200本未満なので
+    全日付が NULL 行として書かれる（0行書き込みではない）ことを確認
+  - **境界**（`TestLookbackBoundary`）: 220本ちょうど・219本ともに `sma_200` 算出は成立する範囲
+    （200本以上）のため、市場スコアの null/not-null では区別できない。gap_dates をこの2日だけに絞り、
+    「219本は警告対象（1件・日付が本文に出る）・220本は警告対象外（日付が本文に出ない）・どちらも
+    行として書き込まれる」ことを検証する形に設計した
+  - 日次相当（`TestDailyUpdateLikeGap`）は変更なし
+- pytest 全体: **1747 passed / 0 failed**（PYTHONPATH=backend PYTHONIOENCODING=utf-8 PYTHONUTF8=1、
+  206秒）。5-7c までと総数は変わらず（既存5テストを新5テストに置き換え）
+- `tools/sync_skills.py --check` 差分ゼロを確認（`pipeline-debugging/SKILL.md` の対応行を新挙動に更新済み、
+  `.agents/skills/` へも同期済み）
+- コミット `6c95dfe`
+
+**5-9c の実装（2026-09-16・実装ワーカー）**: `MarketPhaseMeter.tsx` の
+`const activeIndex = currentIndex === -1 ? 0 : currentIndex;`（BEAR フォールバック）を撤去。
+- `isUnknown = currentIndex === -1` を導入し、`activeIndex` はフォールバックせずそのまま
+  `currentIndex`（`-1`）を保持する
+- セグメント（バー）・ラベルの `isActive`/`isPast` 判定に `!isUnknown &&` を追加。`isUnknown` のときは
+  どのセグメントもハイライト・着色されず、全ラベルが非強調（グレー・非ボールド）のまま —
+  既存の「非アクティブ」表現をそのまま流用した中立表示
+- ヘッダー行（`Market Trend Phase`）の右側に、`isUnknown` のときだけ `appConfig.colors.neutral`
+  （既存の中立グレー `#aaaaaa`）で「判定不能」という文言を追加表示する。新しい色は導入していない
+- 既知4フェーズ（BULL/CORRECTION/RALLY_ATTEMPT/BEAR）の分岐・配色・レイアウトは変更していない
+  （`isUnknown` が false のときは従来と同じ式になる）
+- テスト新設 `MarketPhaseMeter.test.tsx`: `"UNKNOWN"` で「判定不能」表示・Bear Market 非ハイライト・
+  全ラベル非ハイライトを確認。BEAR/BULL/CORRECTION の既存表示（ハイライト・色）が回帰していないことも確認
+- frontend node_modules がこのワークツリーに存在しなかったため、本体チェックアウトの
+  `frontend/node_modules`（`package-lock.json` は本体と完全一致を確認済み）へのジャンクションを作成して
+  `npm test` を実行した。**このワークツリーを `tools/remove_worktree.ps1` で撤収する前に、この
+  ジャンクション（`frontend/node_modules`）を先に削除しておくこと**（ジャンクション越しに本体の
+  `node_modules` を辿って削除してしまうリスクがあるため）
+- `npm test -- --run`: **10 test files / 54 tests passed**（新設1ファイル4テスト含む）
+- コミット `98afefd`
 
 **5-7c の実装（2026-09-16・実装ワーカー）**: `t5_signals.py` の遡り不足ガードを
 「例外で止める」から「**除外＋警告**」に変更した。
