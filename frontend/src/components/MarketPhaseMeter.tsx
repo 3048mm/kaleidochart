@@ -15,7 +15,10 @@ export const MarketPhaseMeter: React.FC<MarketPhaseMeterProps> = ({ phase }) => 
     ];
 
     const currentIndex = phases.findIndex(p => p.id === phase);
-    const activeIndex = currentIndex === -1 ? 0 : currentIndex; // Default BEAR if unknown
+    // 既知の4フェーズ以外（API の "UNKNOWN" 等）は判定不能。BEAR に倒さず、
+    // どのセグメントもハイライトしない中立表示にする（§7-8(2)・5-9c）。
+    const isUnknown = currentIndex === -1;
+    const activeIndex = currentIndex;
 
     // Color gradient representing safety: Red -> Orange -> Yellow -> Green
     const colors = [
@@ -35,18 +38,25 @@ export const MarketPhaseMeter: React.FC<MarketPhaseMeterProps> = ({ phase }) => 
             borderRadius: '8px',
             border: `1px solid ${appConfig.colors.glassBorder}`
         }}>
-            <div style={{ fontSize: '11px', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                Market Trend Phase
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                <div style={{ fontSize: '11px', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    Market Trend Phase
+                </div>
+                {isUnknown && (
+                    <div style={{ fontSize: '10px', color: appConfig.colors.neutral }}>
+                        判定不能
+                    </div>
+                )}
             </div>
-            
+
             <div style={{ display: 'flex', gap: '4px', height: '12px' }}>
                 {phases.map((p, index) => {
-                    const isActive = index === activeIndex;
-                    const isPast = index <= activeIndex;
+                    const isActive = !isUnknown && index === activeIndex;
+                    const isPast = !isUnknown && index <= activeIndex;
                     // If past or active, use the color of the *current active phase*, else dim.
                     // Or we could have each segment colored uniquely when reached. Let's color by the active index.
                     const bgColor = isPast ? colors[activeIndex] : 'rgba(255, 255, 255, 0.1)';
-                    
+
                     return (
                         <div
                             key={p.id}
@@ -62,10 +72,10 @@ export const MarketPhaseMeter: React.FC<MarketPhaseMeterProps> = ({ phase }) => 
                     );
                 })}
             </div>
-            
+
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 {phases.map((p, index) => {
-                    const isActive = index === activeIndex;
+                    const isActive = !isUnknown && index === activeIndex;
                     return (
                         <div
                             key={`lbl-${p.id}`}
