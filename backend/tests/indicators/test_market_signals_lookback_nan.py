@@ -87,6 +87,90 @@ class TestInsufficientLookbackYieldsNoneNotFakeValues:
         assert res["market_phase"].apply(lambda v: v is None).all()
 
 
+class TestPhaseUndeterminedWhenSpySma200RisingIsNone:
+    """`spy_sma200_rising` は `sma_200.shift(20)` 由来のため、`sma_200` が算出され
+    始めた直後の20本（200〜219本目、0-indexed 199〜218）で None になる。この帯で
+    `spy_above_sma200 == 0` かつ `follow_through_day != 1` のとき、`phase()` が
+    `spy_sma200_rising` の None を見ずに `RALLY_ATTEMPT` を捏造しないこと（5-9d）。
+    """
+
+    @staticmethod
+    def _declining_spy_df(n: int, ftd_index: int | None = None) -> pd.DataFrame:
+        """単調減少（下降トレンド）の SPY 日足。`ftd_index` を指定すると、その日だけ
+        +2% の急騰＋出来高増（FTD の条件を満たす）を差し込む。
+        """
+        start = date(2010, 4, 1)
+        dates = [start + timedelta(days=i) for i in range(n)]
+        closes = [200.0 - i * 0.3 for i in range(n)]
+        volumes = [1_000_000] * n
+        if ftd_index is not None:
+            closes[ftd_index] = closes[ftd_index - 1] * 1.02
+            volumes[ftd_index] = 2_000_000
+        return pd.DataFrame({
+            "date": pd.to_datetime(dates),
+            "close": closes,
+            "high": [c + 0.5 for c in closes],
+            "low": [c - 0.5 for c in closes],
+            "volume": volumes,
+        })
+
+    def test_market_phase_is_none_in_the_20_bar_gap_without_ftd(self):
+        """200〜219本目（0-indexed 199〜218）: spy_above_sma200==0・FTD無し・
+        spy_sma200_rising が NaN → market_phase は None（BEAR/RALLY_ATTEMPT を
+        捏造しない）。"""
+        spy_df = self._declining_spy_df(n=250)
+        res = calculate_market_signals(spy_df)
+        window = res.iloc[199:219]
+
+        assert (window["spy_above_sma200"] == 0).all()
+        assert (window["follow_through_day"] == 0).all()
+        assert window["spy_sma200_rising"].isna().all()
+        assert window["market_phase"].apply(lambda v: v is None).all()
+
+    def test_ftd_confirms_rally_attempt_even_when_spy_sma200_rising_is_nan(self):
+        """同じ帯でも FTD が立っていれば確定できるので判定不能にしない。"""
+        ftd_index = 210
+        spy_df = self._declining_spy_df(n=250, ftd_index=ftd_index)
+        res = calculate_market_signals(spy_df)
+        row = res.iloc[ftd_index]
+
+        assert row["spy_above_sma200"] == 0
+        assert row["follow_through_day"] == 1
+        assert pd.isna(row["spy_sma200_rising"])
+        assert row["market_phase"] == "RALLY_ATTEMPT"
+
+    def test_bull_side_unaffected_by_nan_spy_sma200_rising(self):
+        """spy_above_sma200==1（BULL/CORRECTION）側は spy_sma200_rising を使わない
+        ので、NaN でも従来どおり判定される（巻き込んでいないことの確認）。"""
+        n = 250
+        start = date(2010, 4, 1)
+        dates = [start + timedelta(days=i) for i in range(n)]
+        closes = [100.0 + i * 0.1 for i in range(n)]
+        spy_df = pd.DataFrame({
+            "date": pd.to_datetime(dates),
+            "close": closes,
+            "high": [c + 0.5 for c in closes],
+            "low": [c - 0.5 for c in closes],
+            "volume": [1_000_000] * n,
+        })
+        res = calculate_market_signals(spy_df)
+        window = res.iloc[199:219]
+
+        assert (window["spy_above_sma200"] == 1).all()
+        assert window["spy_sma200_rising"].isna().all()
+        assert (window["market_phase"] == "BULL").all()
+
+    def test_known_behaviour_beyond_220_bars_is_not_regressed(self):
+        """220本目以降（spy_sma200_rising が算出される）は既存の分類ロジックのまま
+        （下降トレンドで sma_200 も下降 → BEAR）。"""
+        spy_df = self._declining_spy_df(n=250)
+        res = calculate_market_signals(spy_df)
+        tail = res.iloc[219:]
+
+        assert tail["spy_sma200_rising"].apply(lambda v: v is not None and not pd.isna(v)).all()
+        assert (tail["market_phase"] == "BEAR").all()
+
+
 class TestSufficientLookbackMatchesPreviousBehaviour:
     """遡りが十分な区間では、min_periods を変える前と同じ値になること（回帰防止）。"""
 

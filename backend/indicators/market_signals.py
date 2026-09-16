@@ -166,9 +166,9 @@ def calculate_market_signals(
     # min_periods を窓幅と一致させる（① 計画 §4-4）。遡りが足りない先頭区間は
     # 「それらしい値」を返さず NaN にする。Parquet 全期間計算時の先頭
     # （SPY は 2010-04-01 開始のため、2010-04〜2011-02 の先頭219本が該当）で
-    # NaN になるのはもちろん、SQLite 経路（t5_signals.py）でも、遡り不足ガード
-    # （§7-6(1)・5-7b）が「Parquet にも同等以上の履歴が無い（切り詰めではない）」
-    # と判断して通した場合は、ここで同じように NaN になる。
+    # NaN になるのはもちろん、SQLite 経路（t5_signals.py）でも同じ窓を使うため、
+    # 遡りが足りない gap 日付（§7-8(1)・5-7d で除外をやめ、行として書き込む
+    # 方針に変更済み）はここで同じように NaN になる。
     df['sma_50'] = close.rolling(50, min_periods=50).mean()
     df['sma_200'] = close.rolling(200, min_periods=200).mean()
 
@@ -217,9 +217,17 @@ def calculate_market_signals(
         elif row['spy_above_sma200'] == 1 and row['distribution_days'] >= 5:
             return 'CORRECTION'
         elif row['spy_above_sma200'] == 0 and row['follow_through_day'] == 1:
+            # FTD で確定するので spy_sma200_rising の値は見ない（None でも判定不能にしない）。
             return 'RALLY_ATTEMPT'
         elif row['spy_above_sma200'] == 0:
-            if row.get('spy_sma200_rising') == 0:
+            spy_sma200_rising = row.get('spy_sma200_rising')
+            # spy_sma200_rising は sma_200.shift(20) 由来のため、sma_200 が算出され
+            # 始めた直後の20本（200〜219本目）で None になる（5-9d）。この分岐でしか
+            # spy_sma200_rising を使わないため、None のときは判定不能を返す
+            # （BEAR / RALLY_ATTEMPT のどちらかを None==0 の偽判定で捏造しない）。
+            if spy_sma200_rising is None:
+                return None
+            if spy_sma200_rising == 0:
                 return 'BEAR'
             return 'RALLY_ATTEMPT'
         else:
