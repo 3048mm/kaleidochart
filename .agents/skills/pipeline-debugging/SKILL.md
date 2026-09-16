@@ -30,7 +30,7 @@ python tools/db_health_check.py --ticker NVDA --check-nulls
 | T2 行数 ≠ T3 行数（Consistent: No） | T3: 指標計算漏れ | `update_pipeline.py --rebuild-from T3`（T4/T5 も連鎖再計算される。**Parquet 基点で全期間を再計算**） |
 | 特定日の relative_ranks が欠損 | T4 | `update_pipeline.py` 再実行（T3.MAX > T4.MAX の不足日を Delete-Insert で補完）。ピンポイント修復の過去例: `backend/scripts/fix_missing_ranks.py` |
 | market_signals の NULL・欠損 | T5 | `update_pipeline.py` 再実行（NULL 欠損は過去に遡ってバックフィルされる）。**この修復は落ちない**（遡りガードは例外にしない。次項） |
-| T5 の遡りガードが `logger.error` で日付を除外した | T5: SPY の遡りガード | `sync_phase_t5_signals()` は `gap_dates` のうち SPY の遡りが `SPY_LOOKBACK_MIN_BARS`（220本）未満の日付を**例外にせず書き込み対象から除外し、`logger.error` で除外日付数・範囲・対処を警告する**（日次更新やホット期間内の NULL 埋めが毎晩落ちて rotate に到達できなくなる不具合があったため §7-7・5-7c で変更）。除外された日付に正しい値を入れるには `--rebuild-from T5`（Parquet 基点）で再計算する |
+| T5 の遡りガードが `logger.error` で警告した | T5: SPY の遡りガード | `sync_phase_t5_signals()` は `gap_dates` のうち SPY の遡りが `SPY_LOOKBACK_MIN_BARS`（220本）未満の日付も**書き込み対象から外さず、行として書き込む**（`spy_above_sma200`/`distribution_days`/`market_phase`/`market_trend_score` は NULL＝判定不能になる）。`logger.error` は件数・範囲・対処を警告するだけで、書き込みは止めない（日次更新やホット期間内の NULL 埋めが毎晩落ちて rotate に到達できなくなる不具合があったため §7-7・5-7c で例外をやめ、§7-8(1)・5-7d で「除外」もやめた）。NULL のままの日付に正しい値を入れるには `--rebuild-from T5`（Parquet 基点）で再計算する |
 | 指標カラム追加後に過去分が NULL | T3 | パイプラインが NULL レコードを自動検知して補完する。効かない場合は `--rebuild-from T3` |
 | 仮想テーマ (`_XXX_`) の T2 が 0 件 | T1/T2+: 構成銘柄ゼロ | スプレッドシートの `tags` 紐付けを確認 → T1 同期 → `refresh_constituents.py` |
 | 株価自体が誤っている（分割未反映等） | T2 | `update_pipeline.py --rebuild-from T2`（以降の全テーブルを刷新、時間がかかる） |

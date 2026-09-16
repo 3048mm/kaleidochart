@@ -40,9 +40,8 @@ WEIGHT_BREADTH    = 0.25
 WEIGHT_EMA50_ATR  = 0.25
 WEIGHT_EMA200_ATR = 0.25
 
-# T5（market_signals）を SQLite 基点で計算する際に、gap 日付を書き込み対象に
-# 含めるために SPY の遡り本数が最低限これだけ必要な基準
-# （t5_signals.py の遡り不足ガード参照）。
+# T5（market_signals）を SQLite 基点で計算する際に、gap 日付の SPY 遡りが
+# 十分か判定する基準（t5_signals.py の遡り不足ガード参照）。
 #
 # 根拠: 下の `calculate_market_signals()` で `sma_200` は `close.rolling(200, ...)`、
 # `spy_sma200_rising` はその `sma_200` を `shift(20)` して比較するため、
@@ -50,9 +49,12 @@ WEIGHT_EMA200_ATR = 0.25
 # MTS の SMA200 窓（200）や rising 判定の比較幅（20）を変えたら、この定数も
 # 追随して直す必要がある。**
 #
-# 用途（§7-7・§4-8・5-7c で変更）: 本数不足は「例外で止める合図」ではない。
-# 本数が足りない gap 日付は**書き込み対象から外し**、`logger.error` で
-# 警告するだけにする（詳細は t5_signals.py の `_filter_insufficient_lookback_dates`）。
+# 用途（§7-8(1)・5-7d で変更）: 本数不足は「書き込み対象から外す合図」でも
+# 「例外で止める合図」でもない。遡り不足の gap 日付も**行として書き込む**
+# （5-9 により spy_above_sma200 / distribution_days / market_phase は None、
+# market_trend_score は NaN になるため、偽の値は入らない）。この定数は
+# `logger.error` で警告を出すかどうかの閾値としてのみ使う
+# （詳細は t5_signals.py の `_find_insufficient_lookback_dates`）。
 SPY_LOOKBACK_MIN_BARS = 220
 
 

@@ -8,27 +8,26 @@ from indicators.calculate import calculate_market_signals
 from indicators.market_signals import compute_breadth_momentum, SPY_LOOKBACK_MIN_BARS
 
 
-def _filter_insufficient_lookback_dates(gap_dates: list, spy_df: pd.DataFrame) -> tuple[list, list]:
+def _find_insufficient_lookback_dates(gap_dates: list, spy_df: pd.DataFrame) -> list:
     """`gap_dates` のうち、その日までの SPY 遡りが `SPY_LOOKBACK_MIN_BARS` に
-    満たないものを外す（§7-7・§4-8・5-7c）。
+    満たないものを検出する（§7-8(1)・5-7d）。
 
-    例外で止めるのはやめ、遡り不足の日付を「書き込み対象から外す」形にした。
+    書き込み対象からは**外さない**——遡り不足の日付も他の gap 日付と同様に
+    行として書き込む（5-9 により該当列は None/NaN になるので偽の値は入らない）。
+    ここで検出した日付は `logger.error` の警告にのみ使う。
     `spy_df` は日付昇順（呼び出し側で `order_by(DailyPrice.date)` 済み）なので、
     日付ごとにフルスキャンせず `np.searchsorted` で本数を数える。
 
     Returns:
-        (kept, excluded) — いずれも `gap_dates` と同じ型（`date`）のリスト。
-        昇順を維持する。
+        `gap_dates` のうち遡り不足のものだけを昇順で並べたリスト。
     """
     if not gap_dates:
-        return [], []
+        return []
     spy_dates_arr = spy_df['date'].to_numpy(dtype='datetime64[ns]')
     gap_dt_arr = np.array([pd.Timestamp(d) for d in gap_dates], dtype='datetime64[ns]')
     # side='right' → その日付「以前」（当日含む）の本数
     bar_counts = np.searchsorted(spy_dates_arr, gap_dt_arr, side='right')
-    kept = [d for d, n in zip(gap_dates, bar_counts) if n >= SPY_LOOKBACK_MIN_BARS]
-    excluded = [d for d, n in zip(gap_dates, bar_counts) if n < SPY_LOOKBACK_MIN_BARS]
-    return kept, excluded
+    return [d for d, n in zip(gap_dates, bar_counts) if n < SPY_LOOKBACK_MIN_BARS]
 
 
 def sync_phase_t5_signals(db, logger: logging.Logger):
@@ -52,36 +51,28 @@ def sync_phase_t5_signals(db, logger: logging.Logger):
         return
     spy_df['date'] = pd.to_datetime(spy_df['date'])
 
-    # 遡り不足ガード（§7-7・§4-8・5-7c）: 例外で止めるのではなく、
-    # 遡りが足りない gap 日付を書き込み対象から外し、警告するだけにする。
+    # 遡り不足ガード（§7-8(1)・5-7d）: gap_dates は除外しない。
+    # 遡りが足りない日付も他の gap 日付と同様に「行として」書き込み、
+    # `spy_above_sma200` / `distribution_days` / `market_phase` / `market_trend_score` は
+    # NULL（判定不能）として保存される（5-9 の calculate_market_signals() 側の対応）。
+    # 警告だけを出す。
     #
-    # 例外で止める形（5-7b まで）は、ホット期間の古い日付に
-    # `market_trend_score` NULL が1件あるだけの正常な修復ケース
-    # （SKILL.md が「再実行でバックフィルされる」と案内している挙動）や、
-    # `--rebuild-from T2 --category` / `--re-calculate` の全削除経路でも
-    # 必ず発火し、毎晩 T5 で落ちて rotate に到達せず Parquet の更新が
-    # 止まっていた（§7-7）。5-9 により遡り不足の日付は
-    # calculate_market_signals() 側で None（NaN）になるため、この日付を
-    # 書き込まなければ偽の値が書かれるリスクも無い。
-    gap_dates, excluded_gap_dates = _filter_insufficient_lookback_dates(gap_dates, spy_df)
-    if excluded_gap_dates:
+    # 除外する形（5-7c まで）は、Parquet 経路（recompute_parquet_signals.py）が
+    # NaN 行を必ず書くのと食い違い、`/available_dates`（MarketSignal テーブルから
+    # 日付一覧を作る）から該当日付が恒久的に消えてしまう欠陥があった（§7-8(1)）。
+    insufficient_dates = _find_insufficient_lookback_dates(gap_dates, spy_df)
+    if insufficient_dates:
         logger.error(
             f"T5: SPY の遡りが {SPY_LOOKBACK_MIN_BARS} 本に満たない日付が "
-            f"{len(excluded_gap_dates)} 件あるため、書き込み対象から除外します"
-            f"（範囲: {min(excluded_gap_dates)} 〜 {max(excluded_gap_dates)}）。"
-            f"残る対象日数は {len(gap_dates)} 件です。SQLite はホット期間"
-            "（直近730日程度）しか保持していないため、この状態で全日付を"
+            f"{len(insufficient_dates)} 件あります"
+            f"（範囲: {min(insufficient_dates)} 〜 {max(insufficient_dates)}）。"
+            "これらの日付は spy_above_sma200 / distribution_days / market_phase / "
+            "market_trend_score を NULL（判定不能）として書き込みます。SQLite は"
+            "ホット期間（直近730日程度）しか保持していないため、この状態で全日付を"
             "再計算すると sma_200 の窓の先頭で SPY の遡りが不足します。"
             "正しい値を入れるには `--rebuild-from T5` など Parquet 基点の"
             "再構築手順を使ってください。"
         )
-    if not gap_dates:
-        logger.error(
-            "T5: 書き込み対象の日付が残っていません（全て SPY の遡り不足で除外"
-            "されました）。`--rebuild-from T5` など Parquet 基点の再構築手順を"
-            "使ってください。"
-        )
-        return
 
     vix_df = pd.DataFrame()
     if vix_sym_id:
