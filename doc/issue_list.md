@@ -732,6 +732,13 @@
   > **この issue を直すまで、本番で `--rebuild-from` 系（`tools/deploy_after_merge.ps1` を含む）を実行しないこと。**
   > 実行すると T5 がまた壊れる。**もう一度リフレッシュしても直らない**（同じ経路で壊れるため）。
 
+  > [!NOTE]
+  > **2026-09-17 進捗**: `doc/in_progress/t5_parquet_rebuild_plan.md`（実装は完了、5-14/5-15 実測済み）に基づき、
+  > `update_pipeline.py --rebuild-from T3` を本体チェックアウトから実行し本番修復済み。8/29世代との比較で
+  > SPY由来コア4列がP2以降で完全一致することをオーケストレーターが確認、上のCAUTIONの実害は解消している。
+  > **ただし正式クローズは5-16（型3シナリオ再評価・別セッション確認中）の完了後**（計画書5-17）。
+  > それまでは本チェックボックスは`[ ]`のまま残す。
+
   - **事象**: T5 を全日付で再計算すると、SQLite の `daily_prices` にある SPY だけ（ホット期間 約503本）で計算するため、
     窓の先頭199本で `sma_200` が遡り不足になり、MTS の SPY 由来列（`market_phase` / `spy_above_sma200` /
     `spy_sma200_rising`）が誤った値で保存される。**SPY は 2010-04-01 から Parquet にあり正解の値は存在するのに、
@@ -887,7 +894,14 @@
 
 ## P2 — 中（体感改善・保守性・運用安全性）
 
-- [ ] 🟡 **`rs_ratio_eN`/`rs_momentum_eN` が極端な価格レンジを持つ銘柄でNULLになる（pandas `.rolling().std()` の数値精度問題、2026-09-12 発見）**
+- [x] 🟡 **`rs_ratio_eN`/`rs_momentum_eN` が極端な価格レンジを持つ銘柄でNULLになる（pandas `.rolling().std()` の数値精度問題、2026-09-12 発見・2026-09-17 解決）**
+
+  > [!NOTE]
+  > **2026-09-17 解決済み。** `doc/completed/rs_rolling_std_precision_plan.md` 参照。
+  > 対応案2（numpyでの独立計算、`rolling_std_independent()`をnumba `@njit`で実装）を採用し、
+  > `rs_std`/`roc_std`を`.rolling().std()`からこれに置き換えた。棚卸しで判明していた6銘柄
+  > （SOXS/SQQQ/BOIL/NVVE/FAZ/MNTS）の異常NULLは解消。`update_pipeline.py --rebuild-from T3`
+  > で本番反映済み（実データで確認: 直近データのNULL 0件）。性能影響は全銘柄換算+70秒程度で許容範囲。
   - **事象**: `relative_strength.py` の `rs_ratio_e{n}` は
     `rs_ema.rolling(window=n).std()` を**全履歴（2010年〜）に対して一括計算**している。
     `SOXS`（過去9回の併合で2010年代の価格が数十億〜数千億ドル相当という桁外れの値になる）で、
@@ -918,6 +932,17 @@
     銘柄全般を洗い出す棚卸しをすれば範囲が確定できる。
   - 関連: `backend/indicators/relative_strength.py`、
     `doc/completed/moomoo_split_verification_plan.md`（発見の経緯）
+
+- [ ] 🟡 **ダッシュボードが `market_trend_score`/`distribution_days` の NULL を 0 に潰して表示する（2026-09-16 コードレビューで発見）**
+  - **事象**: `dashboard_router.py` の `market_trend_score or 0.0` / `distribution_days or 0` が、
+    T5の遡り不足で意図的にNULLになっている日付（フェーズ「判定不能」）を「MTS 0.0（最も弱気）・
+    Distribution Days 0（最良）」という矛盾した値で表示してしまう。`trend_score_history`の折れ線も
+    その区間だけ0に落ちて「暴落」に見える
+  - **対応案**: `DashboardResponse`の該当2フィールドをOptional化し、フロントのメーター・折れ線を
+    中立表示にする
+  - **スコープ拡大のため保留**: APIスキーマ＋フロントの両方に影響するため、`t5_parquet_rebuild_plan.md`
+    （5-9e）ではスコープ外として切り出した。別セッションで対応予定
+  - 関連: `backend/api/dashboard_router.py`、`doc/completed/t5_parquet_rebuild_plan.md` §7-9(3)
 
 - [x] 🟠 **監査スクリプト2本が `backend/paths.py` を通さず、ワークツリーのプロビジョニングが効かない（2026-09-10 発見・2026-09-11 解決）**
 

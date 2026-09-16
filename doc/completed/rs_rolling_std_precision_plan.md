@@ -1,8 +1,9 @@
 # `rs_ratio_eN`/`rs_momentum_eN` の rolling std 数値精度問題 計画書
 
-- **ステータス**: ⏸️ 実装・検証完了、本番昇格待ち（T5 SQLite基点問題のfreeze解除待ち。§5参照）
+- **ステータス**: ✅ 完了（本番昇格済み。T5 SQLite基点問題(`t5_parquet_rebuild_plan.md`)の解消に伴い
+  `update_pipeline.py --rebuild-from T3` で本番反映）
 - **実施者**: Claude（オーケストレーター実行、2026-09-12セッション継続）
-- **開始日**: 2026-09-12 / **完了日**: —
+- **開始日**: 2026-09-12 / **完了日**: 2026-09-17
 - **作業ブランチ**: `worktree-rs-std-precision`（`.claude/worktrees/rs-std-precision`、
   `--mode write`でsandboxプロビジョニング済み）。**変更種別B**
   （`backend/indicators/relative_strength.py` の指標計算ロジック変更）。
@@ -137,14 +138,16 @@ NULL以外の扱い（警告付きスキップ等）にする。
       既知の問題を抱えており、今回の検証目的には`calc_relative_strength`の直接サンプル検証
       （300銘柄+既知6銘柄+対照1銘柄）で十分と判断）
 - [x] pytest全件パスを確認する（1693 passed、既存スイートに回帰なし）
-- [ ] **本番へ昇格する（ブロック中）**: `t5-sqlite-rebuild-freeze`（2026-09-11〜）により
-      `--rebuild-from`系・`deploy_after_merge`を**本番実行しない**運用ルールが敷かれている
-      （T5のmarket_signals全日付再計算がSQLite基点のままでMTSが壊れる問題が未クローズ）。
-      本変更はT3のみの修正だが、通常の昇格経路（`--rebuild-from T3`）がT4/T5までcascadeする
-      ため、そのままでは使えない。**ユーザーに昇格方法を確認する**（T5問題のクローズを待つか、
-      T5をcascadeさせない昇格手段があるか等）
-- [ ] `doc/issue_list.md` P2該当項目を更新（解決を反映）
-- [ ] 計画書を`doc/completed/`へ移動する（本番昇格完了後）
+- [x] **本番へ昇格する**（2026-09-17）: `t5_parquet_rebuild_plan.md`（②）の実装がmainにmergeされ、
+      T5がParquet基点の新しい再構築手順（`_rebuild_from_parquet()`）に置き換わったため、
+      `update_pipeline.py --rebuild-from T3` を通常実行するだけでT3→T4→T5がParquet全期間から
+      安全に再計算されるようになった。ユーザーがこのコマンドを実行し、本番Parquetに本変更
+      （`rolling_std_independent()`）が反映されたことを確認済み（棚卸しで判明していた
+      SOXS/SQQQ/BOIL/NVVE/FAZ/MNTSの直近データで`rs_ratio_e21`/`rs_ratio_e14`のNULLが
+      0件になっていることをオーケストレーターが実データで検証）。`db_health_check.py --all
+      --check-nulls`でも回帰なし（3296銘柄中、要対応7件はいずれも新規上場銘柄のウォームアップ由来）
+- [x] `doc/issue_list.md` P2該当項目を更新（解決を反映）
+- [x] 計画書を`doc/completed/`へ移動する（本番昇格完了後）
 
 ### 作業中メモ
 
