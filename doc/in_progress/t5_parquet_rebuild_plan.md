@@ -246,7 +246,68 @@ T5 の全日付再計算（`Saved 501〜503 signal records`）は4回: 08-29 16:
 
 ### 作業中メモ
 
-**現在地: 5-7d・5-9c は実装ワーカーが実装完了（未検収）。5-14 に進む前に、修正後の 5-11 相当の実走再確認が必要。**
+**現在地: 5-7d・5-9c・5-7e・5-9d は実装ワーカーが実装完了（未検収）。5-14 に進む前に、修正後の 5-11 相当の実走再確認が必要。**
+
+**5-7e の実装（2026-09-16・実装ワーカー）**: `sync_phase_t5_signals()` の完了判定が
+`market_trend_score` の非 NULL だけを見ていたため、5-7d で NULL 行として書いた
+遡り不足日付が毎回 `gap_dates` に戻り、T5 が収束しない不具合（§7-9）を修正した。
+- `gap_dates_candidate`（従来の `gap_dates` と同じ計算）から
+  `_find_insufficient_lookback_dates()` で遡り不足日付を検出し、そのうち
+  **既に `MarketSignal` 行が存在する日付**（`MarketSignal.date.in_(...)` で
+  存在確認）を `gap_dates` から除外する。遡りが十分なのにスコアが NULL の日付
+  （NULL バックフィル対象）は `insufficient_set` に入らないため、この除外の
+  対象外のまま毎回再計算対象に残る（回帰防止）
+- 除外後に `gap_dates` が空になったら、書き込みを一切行わず
+  `logger.info("No gaps or missing scores detected in Phase 5 (...)")` で早期 return
+  （delete/insert もクエリも発生しない）
+- 警告（`logger.error`）は「**今回新たに** NULL 行として書き込む日付」
+  （`newly_insufficient_dates` = `insufficient_dates` − 既に書き込み済みの日付）が
+  あるときだけ出す。これにより同じ日付で毎晩警告が出続けることがなくなる
+- `logger.error` の文面を「NULL になる列を断定しない」表現に修正（5-9d の指摘も
+  同時に解消。どの列が NULL になるかは遡り本数により異なるため）
+- `_find_insufficient_lookback_dates()` の docstring を「収束のための除外判断は
+  この関数ではなく呼び出し側が持つ」ことが分かるように更新
+- テスト追加（`test_t5_lookback_guard.py`）:
+  - `TestConvergesOnSecondRun`: 1回目は NULL 行が書かれ警告が出ることを確認した後、
+    2回目を実行して**警告が出ない・`logger.info` の早期 return メッセージが出る・
+    MarketSignal 行の `id`（autoincrement）が変わっていない**（= delete/insert が
+    一切走っていない証拠）ことを確認。**これが指摘の核心を担保するテスト**
+  - `TestSufficientLookbackNullScoreNotFilteredAcrossRuns`: 遡りが十分（220本）だが
+    既に NULL 行が存在する日付を用意し、実行後に**遡り不足の警告に含まれず・
+    実際に値が入る**（= gap から除外されず再計算されたことの証拠）ことを確認
+    （NULL バックフィルの回帰防止）
+  - 既存5テストは無変更で通過
+- pytest 全体: **1753 passed / 0 failed**（1747 + 5-7e 2件 + 5-9d 4件）
+- コミット `439b02f`
+
+**5-9d の実装（2026-09-16・実装ワーカー）**: `market_signals.py` の `phase()` の
+判定不能ガードが `spy_sma200_rising` の None を見ていなかった問題を修正した。
+- `spy_sma200_rising` は `sma_200.shift(20)` 由来のため、`sma_200` が算出され
+  始めた直後の20本（200〜219本目、0-indexed 199〜218）で None になる。この帯で
+  `spy_above_sma200 == 0` かつ `follow_through_day != 1` のとき、既存の
+  `row.get('spy_sma200_rising') == 0` は `None == 0` が False になるため
+  `RALLY_ATTEMPT` を捏造していた（本来は判定不能）
+- 修正: `spy_above_sma200 == 0 and follow_through_day == 1`（FTD で確定する枝）の
+  **次の** `elif row['spy_above_sma200'] == 0:` 分岐にのみ、`spy_sma200_rising`
+  が `None` なら `None`（判定不能）を返すチェックを追加した。FTD で確定する枝
+  （`follow_through_day == 1`）と BULL/CORRECTION 側（`spy_above_sma200 == 1`）は
+  `spy_sma200_rising` を全く参照しないコード経路のため、このチェックの影響を
+  受けない（コードレビュー観点で「巻き込んでいないこと」を担保）
+- `sma_50`/`sma_200` 付近のコメントの、5-7b で入れて 5-7d で撤去済みの
+  「Parquet にも同等以上の履歴が無いと判断して通した場合」という古い記述
+  （§9-3 の指摘）を、現行の除外なし方式（§7-8(1)・5-7d）に合わせて修正した
+- `t5_signals.py` の `logger.error` 文面修正は 5-7e のコミットに含めた
+  （同じブロックを編集したため。5-9d の指摘内容そのもの）
+- テスト追加（`test_market_signals_lookback_nan.py::TestPhaseUndeterminedWhenSpySma200RisingIsNone`）。
+  下降トレンド（`spy_above_sma200=0` 固定）と上昇トレンド（`spy_above_sma200=1` 固定）
+  の合成 SPY データで実際に `calculate_market_signals()` を実行し、以下を確認:
+  - 200〜219本目・FTD 無し → `market_phase` が `None`
+  - 同じ帯で FTD あり（+2%急騰＋出来高増を1日差し込む）→ `market_phase` が
+    `RALLY_ATTEMPT`（確定できるので判定不能にしない）
+  - `spy_above_sma200 == 1` 側は同じ帯でも `market_phase` が `BULL`（従来どおり）
+  - 220本目以降は既存の分類（下降トレンドで `BEAR`）が回帰していないこと
+- pytest 全体: **1753 passed / 0 failed**（5-7e と合わせて計6件追加、内訳は上記）
+- コミット `e8733a6`
 
 **5-7d の実装（2026-09-16・実装ワーカー）**: `_filter_insufficient_lookback_dates`（除外＋警告）を
 `_find_insufficient_lookback_dates`（検出のみ・警告用）に置き換えた。
