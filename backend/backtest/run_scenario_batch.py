@@ -596,11 +596,16 @@ def main():
 
             if strat_runs:
                 df_runs = pd.DataFrame(strat_runs)
+                # CAGR 幾何平均・中央値・相加平均
+                cagr_factors = np.maximum(1.0 + df_runs['cagr'] / 100.0, 1e-4)
+                cagr_geo = (np.exp(np.mean(np.log(cagr_factors))) - 1.0) * 100.0
+                cagr_med = df_runs['cagr'].median()
+                cagr_avg = df_runs['cagr'].mean()
                 print(
                     f"    Done ({len(strat_runs)}/{num_runs} runs, {format_elapsed(time.time() - block_start)}). "
                     f"Return (Avg): {df_runs['total_return_pct'].mean():.2f}% | "
                     f"MaxDD (Avg): {df_runs['max_drawdown_pct'].mean():.2f}% | "
-                    f"CAGR (Avg): {df_runs['cagr'].mean():.2f}%"
+                    f"CAGR (Geo): {cagr_geo:.2f}% (Med: {cagr_med:.2f}%, Avg: {cagr_avg:.2f}%)"
                 )
                 if len(strat_runs) < num_runs:
                     # 平均値は成功分だけで算出されるため、件数を見ないと

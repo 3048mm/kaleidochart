@@ -281,3 +281,83 @@ def test_chart_data_exposes_rs_dot_age_columns(seed_chart_data):
     assert "rs_red_dot_age" in data[-1], "chart API が rs_red_dot_age を返していない"
     # 旧フラグ名が復活していないこと（0/1 と経過日数は意味が反転する）
     assert "is_rs_blue_dot" not in data[-1], "旧フラグ is_rs_blue_dot が復活している"
+
+
+# ============================================================
+# GET /chart/{symbol_id}/zone_break
+# ============================================================
+
+from api.chart_router import build_zone_break_response
+
+
+#: `backend/tests/indicators/test_zone_break.py::test_フリップ反転` と同じ系列
+#: （検証済みの期待値: bar14でフリップ確定、is_bull=False、zb_ssl=5、zb_bsl=15）。
+#: high/low/close を個別に持つ必要があるため専用のシーダーを使う。
+_ZB_FLIP_HIGH = [10, 11, 10, 12, 11, 13, 12, 15, 13, 9, 8, 10, 10, 9, 8]
+_ZB_FLIP_LOW = [9, 10, 9, 10, 10, 11, 11, 12, 11, 7, 6, 8, 7, 5, 6]
+_ZB_FLIP_CLOSE = [9.5, 10.5, 9.5, 11, 10.5, 12, 11.5, 14, 12, 8, 7, 9, 8, 7, 6.5]
+
+
+def _seed_zone_break_ohlc(session, high, low, close, symbol_id=1, ticker="AAPL"):
+    session.add(Symbol(id=symbol_id, ticker=ticker, name=ticker, category="個別", active=1))
+    for k in range(len(high)):
+        session.add(DailyPrice(
+            symbol_id=symbol_id, date=_SP_BASE_DATE + timedelta(days=k),
+            open=float(close[k]), high=float(high[k]), low=float(low[k]),
+            close=float(close[k]), volume=1000,
+        ))
+    session.commit()
+    return session
+
+
+def test_zone_break_reports_current_direction_and_levels(db_session):
+    """フリップ確定後の状態（is_bull=False, zb_ssl=5, zb_bsl=15）がそのまま返ること。"""
+    resp = build_zone_break_response(
+        symbol_id=1,
+        db=_seed_zone_break_ohlc(db_session, _ZB_FLIP_HIGH, _ZB_FLIP_LOW, _ZB_FLIP_CLOSE),
+    )
+
+    assert resp["current_direction"] == "bear"
+    assert resp["metadata"]["ticker"] == "AAPL"
+    assert resp["metadata"]["bars"] == len(_ZB_FLIP_HIGH)
+
+    current_ssl = [lv for lv in resp["ssl_levels"] if lv["is_current"]]
+    current_bsl = [lv for lv in resp["bsl_levels"] if lv["is_current"]]
+    assert len(current_ssl) == 1 and current_ssl[0]["price"] == pytest.approx(5.0)
+    assert len(current_bsl) == 1 and current_bsl[0]["price"] == pytest.approx(15.0)
+
+
+def test_zone_break_unknown_symbol_returns_404(db_session):
+    with pytest.raises(HTTPException) as exc:
+        build_zone_break_response(symbol_id=999, db=db_session)
+
+    assert exc.value.status_code == 404
+
+
+def test_zone_break_insufficient_data_returns_empty(db_session):
+    """データ不足はエラーではなく空で返す（構造ピボットと同じ方針）。"""
+    resp = build_zone_break_response(
+        symbol_id=1,
+        db=_seed_zone_break_ohlc(db_session, [100, 99], [98, 97], [99, 98]),
+    )
+
+    assert resp["ssl_levels"] == []
+    assert resp["bsl_levels"] == []
+    assert resp["fvg_boxes"] == []
+    # is_bull の初期値は True（未確定のままフラットに終わるため）
+    assert resp["current_direction"] == "bull"
+
+
+def test_zone_break_response_shape(db_session):
+    """レスポンスの必須キーが揃っていること。"""
+    resp = build_zone_break_response(
+        symbol_id=1,
+        db=_seed_zone_break_ohlc(db_session, _ZB_FLIP_HIGH, _ZB_FLIP_LOW, _ZB_FLIP_CLOSE),
+    )
+
+    assert {"metadata", "ssl_levels", "bsl_levels", "fvg_boxes", "current_direction"} <= set(resp)
+    for lv in resp["ssl_levels"] + resp["bsl_levels"]:
+        assert {"kind", "price", "start_date", "end_date", "is_current"} <= set(lv)
+    for box in resp["fvg_boxes"]:
+        assert {"kind", "left_date", "right_date", "top", "bottom",
+                "invalidated", "is_current"} <= set(box)

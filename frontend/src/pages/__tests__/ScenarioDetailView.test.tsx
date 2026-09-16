@@ -18,6 +18,9 @@ vi.mock('../../config/appConfig', () => ({
 const mockSummary = {
   is_monte_carlo: true,
   cagr: 0.1774,
+  cagr_geo: 0.1774,
+  cagr_med: 0.1750,
+  cagr_avg: 0.1800,
   cagr_max: 0.25,
   cagr_min: 0.10,
   profit_factor: 1.35,
@@ -68,11 +71,13 @@ describe('ScenarioDetailView Component', () => {
     // Wait for the data to be loaded
     await waitFor(() => {
       // Check if CAGR card is rendered
-      expect(screen.queryByText('CAGR (10回平均)')).not.toBeNull();
+      expect(screen.queryByText('CAGR (10回幾何平均)')).not.toBeNull();
     });
 
     // Check CAGR value
     expect(screen.queryByText('17.74%')).not.toBeNull();
+    // Check subtext contains 最良, 最悪, and 中央値
+    expect(screen.queryByText(/\(最良: 25\.0% \/ 最悪: 10\.0% \/ 中央値: 17\.5%\)/)).not.toBeNull();
     // Check Profit Factor value
     expect(screen.queryByText('1.35')).not.toBeNull();
     // Check Max Drawdown value

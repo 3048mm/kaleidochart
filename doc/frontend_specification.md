@@ -77,6 +77,15 @@
             （`buildStructureSegments` / `buildStructureMarkers`）。**両端の日付が
             ローソク足のデータに存在しない線分は捨てる** — lightweight-charts は
             データに無い時刻を渡すと描画が壊れるため。
+    *   **Zone Break (SSL/BSL/FVG)**: 「ZoneBreak」トグルで表示。ON のときだけ
+        `GET /api/chart/{id}/zone_break` を取得する（**既定は OFF** — バックテストで
+        単体のエッジが確認できなかったため。経緯: `doc/completed/zone_break_plan.md` §6）。
+        *   **SSL/BSL の現在区間**: 色分けした実線（SSL=緑寄り、BSL=赤寄り）。
+        *   **FVG ボックス**: lightweight-charts v4 に矩形描画の標準APIが無いため、
+            上端・下端の2本の線分（輪郭のみ）で表現。無効化済みは薄いグレーの点線。
+        *   線分の組み立ては `src/api/zoneBreak.ts` の純関数
+            （`buildZoneBreakLevelSegments` / `buildZoneBreakFvgSegments`）。
+            構造ピボットと同じく、ローソク足のデータに無い日付の線分は捨てる。
     *   **出来高 (Volume)**: 下部のヒストグラムペイン。
     *   **データ履歴テーブル (`SymbolDataTable`)**: ページ下部に、OHLC、出来高、**時価総額（Market Cap）**、および各種テクニカル指標の数値を時系列で一覧表示。ミネルヴィニの VCP 判定などに必要なボラティリティ収縮（VCR）などもここで確認可能。
 *   **各種マーカー表示**:

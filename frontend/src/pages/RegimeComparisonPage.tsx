@@ -68,18 +68,20 @@ function calcCagrFromEquity(equity: BacktestEquityPoint[], initialCap: number): 
 const PanelCard: React.FC<PanelCardProps> = ({ model, data, initialEquity, isActive, onClick }) => {
   const { summary, equity, loading, error } = data;
 
-  const cagr = summary?.cagr_avg !== undefined
-    ? summary.cagr_avg
+  const cagr = summary?.cagr_geo !== undefined
+    ? summary.cagr_geo
     : summary?.cagr !== undefined
       ? summary.cagr
-      : calcCagrFromEquity(equity, initialEquity);
+      : summary?.cagr_avg !== undefined
+        ? summary.cagr_avg
+        : calcCagrFromEquity(equity, initialEquity);
 
   const maxDD = summary?.max_drawdown_avg ?? summary?.max_drawdown;
   const winRate = summary?.win_rate_avg ?? summary?.win_rate;
   const trades = summary?.total_trades_avg ?? summary?.total_trades;
   const pf = summary?.profit_factor_avg ?? summary?.profit_factor;
   const avgTradePnlPct = summary?.avg_trade_pnl_pct_avg ?? summary?.avg_trade_pnl_pct;
-  const finalCap = summary?.final_capital_avg ?? summary?.final_capital;
+  const finalCap = summary?.final_capital_geo ?? summary?.final_capital ?? summary?.final_capital_avg;
   const cagrMax = summary?.cagr_max;
   const cagrMin = summary?.cagr_min;
 

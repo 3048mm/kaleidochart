@@ -593,6 +593,8 @@ class BacktestScenarioSummary(BaseModel):
     is_monte_carlo: Optional[bool] = None
     runs_count: Optional[int] = None
     cagr_avg: Optional[float] = None
+    cagr_geo: Optional[float] = None
+    cagr_med: Optional[float] = None
     cagr_max: Optional[float] = None
     cagr_min: Optional[float] = None
     max_drawdown_avg: Optional[float] = None
@@ -602,6 +604,8 @@ class BacktestScenarioSummary(BaseModel):
     total_trades_avg: Optional[int] = None
     profit_factor_avg: Optional[float] = None
     final_capital_avg: Optional[float] = None
+    final_capital_geo: Optional[float] = None
+    final_capital_med: Optional[float] = None
     final_capital_max: Optional[float] = None
     final_capital_min: Optional[float] = None
     avg_trade_pnl_pct: Optional[float] = None

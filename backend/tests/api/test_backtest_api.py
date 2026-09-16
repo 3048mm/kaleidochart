@@ -362,8 +362,116 @@ def test_monte_carlo_summary_exposes_run_info(client, mc_scenario_dir):
     assert data["end_date"] == "2026-12-31"
     assert data["initial_capital"] == 100000.0
     assert data["consider_tax"] == pytest.approx(load_tax_rate())
-    # 総リターンは final_capital の平均 (110000 + 90000) / 2 = 100000 に対して 0%
-    assert data["total_return_pct"] == pytest.approx(0.0)
+    # 総リターンは final_capital の幾何平均 sqrt(110000 * 90000) = 99498.74 に対して 約 -0.50%
+    expected_geo_final = (110000.0 * 90000.0) ** 0.5
+    expected_return_pct = (expected_geo_final / 100000.0 - 1.0) * 100.0
+    assert data["total_return_pct"] == pytest.approx(expected_return_pct)
+    assert data["final_capital"] == pytest.approx(expected_geo_final)
+    assert data["final_capital_geo"] == pytest.approx(expected_geo_final)
+    assert data["final_capital_avg"] == pytest.approx(100000.0)
+    assert data["final_capital_med"] == pytest.approx(100000.0)
+
+    # CAGR: 代表値は幾何平均
+    assert data["cagr"] == pytest.approx(data["cagr_geo"])
+    assert data["cagr_geo"] < data["cagr_avg"]  # AM-GM 不等式: 幾何平均 < 相加平均
+
+
+def test_get_scenario_summary_monte_carlo_cagr_geometric_mean(client, tmp_path, monkeypatch):
+    """3本の非対称 MC run で幾何平均・中央値・相加平均が正確に算出されることの検証。"""
+    import api.backtest_router
+    monkeypatch.setattr(api.backtest_router, "OUTPUT_DIR", str(tmp_path))
+
+    base = tmp_path / "scenario" / "B1" / "full_position"
+    base.mkdir(parents=True)
+
+    # 1年（365.25日）で計算を簡単にする
+    # run0: 100000 -> 144000 (CAGR +44%)
+    # run1: 100000 -> 100000 (CAGR 0%)
+    # run2: 100000 -> 64000  (CAGR -36%)
+    caps = [144000.0, 100000.0, 64000.0]
+    for idx, f_cap in enumerate(caps):
+        r_dir = base / f"run_{idx}"
+        r_dir.mkdir(parents=True)
+        summary_data = {
+            "start_date": "2025-01-01",
+            "end_date": "2026-01-01",
+            "initial_capital": 100000.0,
+            "final_capital": f_cap,
+            "profit_factor": 1.2,
+            "max_drawdown": {"pct": 10.0, "amount": 10000.0},
+            "win_rate": 0.5,
+            "total_trades": 10,
+        }
+        with open(r_dir / "scenario_summary.json", "w", encoding="utf-8") as f:
+            json.dump(summary_data, f)
+        (r_dir / "scenario_trade_logs.csv").write_text("ticker\n", encoding="utf-8")
+
+    resp = client.get("/api/backtest/scenario/B1__full_position/summary")
+    assert resp.status_code == 200
+    data = resp.json()
+
+    # 相加平均 CAGR: (0.44 + 0.0 - 0.36) / 3 = 0.08 / 3 ≈ 0.02667
+    # 幾何平均 CAGR: (1.44 * 1.0 * 0.64) ** (1/3) - 1 = (0.9216) ** (1/3) - 1 ≈ 0.97314 - 1 = -0.02686
+    # 中央値 CAGR: 0.0
+    import math
+    expected_geo = (1.44 * 1.0 * 0.64) ** (1.0 / 3.0) - 1.0
+    expected_avg = (0.44 + 0.0 - 0.36) / 3.0
+    expected_med = 0.0
+
+    # 1年が厳密には (2026-01-01 - 2025-01-01).days / 365.25 = 365 / 365.25 なので
+    # backtest_router の years 計算に合わせる
+    years = 365 / 365.25
+    cagr_0 = (144000.0 / 100000.0) ** (1 / years) - 1.0
+    cagr_1 = (100000.0 / 100000.0) ** (1 / years) - 1.0
+    cagr_2 = (64000.0 / 100000.0) ** (1 / years) - 1.0
+    exact_geo = math.exp((math.log(1 + cagr_0) + math.log(1 + cagr_1) + math.log(1 + cagr_2)) / 3.0) - 1.0
+    exact_avg = (cagr_0 + cagr_1 + cagr_2) / 3.0
+    exact_med = cagr_1
+
+    assert data["cagr"] == pytest.approx(exact_geo)
+    assert data["cagr_geo"] == pytest.approx(exact_geo)
+    assert data["cagr_avg"] == pytest.approx(exact_avg)
+    assert data["cagr_med"] == pytest.approx(exact_med)
+    assert data["cagr_max"] == pytest.approx(cagr_0)
+    assert data["cagr_min"] == pytest.approx(cagr_2)
+    # AM-GM 不等式: 幾何平均 < 相加平均
+    assert data["cagr_geo"] < data["cagr_avg"]
+
+
+def test_get_scenario_summary_monte_carlo_cagr_bankruptcy_guard(client, tmp_path, monkeypatch):
+    """破産（final_capital <= 0 や cagr <= -1.0）の run が混ざっても例外にならず安全に下限ガードが働くこと。"""
+    import api.backtest_router
+    monkeypatch.setattr(api.backtest_router, "OUTPUT_DIR", str(tmp_path))
+
+    base = tmp_path / "scenario" / "B2" / "full_position"
+    base.mkdir(parents=True)
+
+    caps = [120000.0, 0.0]  # run1 は完全破産
+    for idx, f_cap in enumerate(caps):
+        r_dir = base / f"run_{idx}"
+        r_dir.mkdir(parents=True)
+        summary_data = {
+            "start_date": "2025-01-01",
+            "end_date": "2026-01-01",
+            "initial_capital": 100000.0,
+            "final_capital": f_cap,
+            "profit_factor": 1.0,
+            "max_drawdown": {"pct": 100.0, "amount": 100000.0},
+            "win_rate": 0.0,
+            "total_trades": 5,
+        }
+        with open(r_dir / "scenario_summary.json", "w", encoding="utf-8") as f:
+            json.dump(summary_data, f)
+        (r_dir / "scenario_trade_logs.csv").write_text("ticker\n", encoding="utf-8")
+
+    resp = client.get("/api/backtest/scenario/B2__full_position/summary")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["is_monte_carlo"] is True
+    # エラーで落ちずに幾何平均・代表値が計算されていること
+    assert data["cagr_geo"] is not None
+    assert data["final_capital_geo"] is not None
+    assert data["cagr_geo"] <= data["cagr_avg"]
 
 
 def test_resolve_consider_tax_prefers_run_params(monkeypatch):

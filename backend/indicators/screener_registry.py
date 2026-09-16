@@ -262,6 +262,28 @@ _SPECIAL_SPECS = {
             'pivot_tol', 'base_vol_dry_max',
         ),
     ),
+    # --- Direction via Zone Break（フリップ = isBreak_bl 由来の反転） ---
+    'is_zone_break_bull_flip': FilterSpec(
+        key='is_zone_break_bull_flip', kind='special', column=None, op=None,
+        requires=('is_zone_break_bull',),
+        prev_requires=('is_zone_break_bull',),
+    ),
+    'is_zone_break_bear_flip': FilterSpec(
+        key='is_zone_break_bear_flip', kind='special', column=None, op=None,
+        requires=('is_zone_break_bull',),
+        prev_requires=('is_zone_break_bull',),
+    ),
+    # --- Direction via Zone Break（継続ブレイク = isConf_bl 由来の継続） ---
+    'is_zone_break_bull_breakout': FilterSpec(
+        key='is_zone_break_bull_breakout', kind='special', column=None, op=None,
+        requires=('is_zone_break_bull', 'zb_bsl'),
+        prev_requires=('is_zone_break_bull', 'zb_bsl'),
+    ),
+    'is_zone_break_bear_breakout': FilterSpec(
+        key='is_zone_break_bear_breakout', kind='special', column=None, op=None,
+        requires=('is_zone_break_bull', 'zb_ssl'),
+        prev_requires=('is_zone_break_bull', 'zb_ssl'),
+    ),
 }
 
 
@@ -280,6 +302,9 @@ VIRTUAL_COLUMNS: frozenset = frozenset({
     # 構造ピボット (LL-HL)。実カラムは sp_pivot / sp_hl の2つだけで、
     # 距離・幅はここから close で正規化して導く
     'sp_dist_pivot_pct', 'sp_range_pct', 'sp_risk_pct',
+    # Direction via Zone Break。実カラムは zb_ssl / zb_bsl の2つだけで、
+    # close からの距離をここで正規化して導く
+    'zb_dist_ssl_pct', 'zb_dist_bsl_pct',
 })
 
 

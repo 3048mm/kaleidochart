@@ -169,7 +169,10 @@ def test_calculate_indicators_protection():
         'rs_trend_s21': 1.005122,
         'rs_value_e5': 0.401790,
         'rs_ratio_e21': 1.610011,
-        'rs_momentum_e21': None,
+        # rs_momentum_e21: 旧pandas .rolling().std() では非常に小さい正当な分散を
+        # 誤って0.0/NULLにしていた（数値精度問題。doc/completed/rs_rolling_std_precision_plan.md）。
+        # 修正後は独立計算により正しい非NULL値になる。
+        'rs_momentum_e21': -1.5909704215098808,
         'vol_surge_21': 1.000976,
         'vol_accum_days_5': 0.000000,
         'vol_surge_rel_spy_21': 1.000777,

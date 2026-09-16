@@ -6,6 +6,7 @@ from .volatility import calc_volatility
 from .relative_strength import calc_relative_strength
 from .volume_and_trends import calc_volume_and_trends
 from .structure_pivot import counter_trend_series, structure_pivot_series
+from .zone_break import zone_break_series
 
 # Export calculate_market_signals so that update_pipeline can import it from here if needed
 # or it can import it directly. We'll expose it here for backward compatibility.
@@ -59,6 +60,19 @@ def calculate_indicators(df_daily: pd.DataFrame, df_spy: pd.DataFrame = None) ->
         df['low'].to_numpy(dtype=float),
         df['close'].to_numpy(dtype=float),
     )
+
+    # 6. Direction via Zone Break。価格のみから決まるので SPY 非依存。
+    #    確定遅延は無い（当日の確定closeだけでブレイク判定が決まる。フラクタル自体の
+    #    確定は1本遅れるが先読みではない。doc/completed/zone_break_plan.md §3.1 参照）
+    is_bull, zb_ssl, zb_bsl, is_weak = zone_break_series(
+        df['high'].to_numpy(dtype=float),
+        df['low'].to_numpy(dtype=float),
+        df['close'].to_numpy(dtype=float),
+    )
+    df['is_zone_break_bull'] = is_bull
+    df['zb_ssl'] = zb_ssl
+    df['zb_bsl'] = zb_bsl
+    df['is_zone_break_weak'] = is_weak
 
     # Sanitize: replace np.nan with None for SQLAlchemy
     df = df.replace({np.nan: None})

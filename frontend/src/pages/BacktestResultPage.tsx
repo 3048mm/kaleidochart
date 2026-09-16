@@ -525,12 +525,14 @@ export const BacktestResultPage: React.FC<{ hideHeader?: boolean }> = ({ hideHea
           {/* KPI Metrics Row */}
           <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
             {renderKPICard(
-              summary.is_monte_carlo ? 'CAGR (10回平均)' : 'CAGR (年平均成長率)',
+              summary.is_monte_carlo ? 'CAGR (10回幾何平均)' : 'CAGR (年平均成長率)',
               `${(summary.cagr * 100).toFixed(2)}%`,
-              'ベンチマークを凌駕する実質年利換算値',
+              summary.is_monte_carlo
+                ? '複利成長率の幾何平均（典型値）'
+                : 'ベンチマークを凌駕する実質年利換算値',
               summary.cagr >= 0 ? 'good' : 'bad',
               summary.is_monte_carlo && summary.cagr_max !== undefined && summary.cagr_min !== undefined
-                ? `(最良: ${(summary.cagr_max * 100).toFixed(1)}% / 最悪: ${(summary.cagr_min * 100).toFixed(1)}%)`
+                ? `(最良: ${(summary.cagr_max * 100).toFixed(1)}% / 最悪: ${(summary.cagr_min * 100).toFixed(1)}%${summary.cagr_med !== undefined ? ` / 中央値: ${(summary.cagr_med * 100).toFixed(1)}%` : ''})`
                 : undefined
             )}
             {renderKPICard(
