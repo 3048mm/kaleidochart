@@ -14,7 +14,10 @@ def _find_insufficient_lookback_dates(gap_dates: list, spy_df: pd.DataFrame) -> 
 
     書き込み対象からは**外さない**——遡り不足の日付も他の gap 日付と同様に
     行として書き込む（5-9 により該当列は None/NaN になるので偽の値は入らない）。
-    ここで検出した日付は `logger.error` の警告にのみ使う。
+    ここで検出した日付は `logger.error` の警告と、収束判定（§7-9・5-7e。
+    呼び出し側 `sync_phase_t5_signals()` が既存行の有無で gap から外すかどうかを
+    判断する）に使う。この関数自体は「遡り不足かどうか」の検出だけを行い、
+    収束のための除外判断は持たない。
     `spy_df` は日付昇順（呼び出し側で `order_by(DailyPrice.date)` 済み）なので、
     日付ごとにフルスキャンせず `np.searchsorted` で本数を数える。
 
@@ -36,12 +39,12 @@ def sync_phase_t5_signals(db, logger: logging.Logger):
     spy_sym_id = db.query(Symbol.id).filter(Symbol.ticker == "SPY").scalar()
     vix_sym_id = db.query(Symbol.id).filter(Symbol.ticker == "^VIX").scalar()
     vxv_sym_id = db.query(Symbol.id).filter(Symbol.ticker == "^VIX3M").scalar()
-    
+
     t3_dates = {r[0] for r in db.query(Indicator.date).distinct().filter(Indicator.symbol_id == spy_sym_id).all()}
     t5_completed_dates = {r[0] for r in db.query(MarketSignal.date).filter(MarketSignal.market_trend_score.is_not(None)).all()}
-    gap_dates = sorted(list(t3_dates - t5_completed_dates))
-    
-    if not gap_dates:
+    gap_dates_candidate = sorted(list(t3_dates - t5_completed_dates))
+
+    if not gap_dates_candidate:
         logger.info("No gaps or missing scores detected in Phase 5.")
         return
 
@@ -53,21 +56,49 @@ def sync_phase_t5_signals(db, logger: logging.Logger):
 
     # 遡り不足ガード（§7-8(1)・5-7d）: gap_dates は除外しない。
     # 遡りが足りない日付も他の gap 日付と同様に「行として」書き込み、
-    # `spy_above_sma200` / `distribution_days` / `market_phase` / `market_trend_score` は
-    # NULL（判定不能）として保存される（5-9 の calculate_market_signals() 側の対応）。
-    # 警告だけを出す。
+    # 遡り本数に応じて一部の列（spy_above_sma200 / distribution_days /
+    # spy_sma200_rising / market_phase / market_trend_score のいずれか）が
+    # NULL（判定不能）として保存される（5-9・5-9d の calculate_market_signals() 側の対応。
+    # どの列が NULL になるかは遡り本数により異なるため、警告文面では断定しない）。
     #
-    # 除外する形（5-7c まで）は、Parquet 経路（recompute_parquet_signals.py）が
-    # NaN 行を必ず書くのと食い違い、`/available_dates`（MarketSignal テーブルから
-    # 日付一覧を作る）から該当日付が恒久的に消えてしまう欠陥があった（§7-8(1)）。
-    insufficient_dates = _find_insufficient_lookback_dates(gap_dates, spy_df)
-    if insufficient_dates:
+    # 収束（§7-9・5-7e）: 遡り不足の日付を毎回そのまま書き直すと、NULL 行として
+    # 書いた日付が次回も `t5_completed_dates`（market_trend_score が非 NULL）に
+    # 入らず gap_dates_candidate に残り続け、T5 が永久に収束しない
+    # （delete/insert が毎晩走り、`min_gap_date` も前に進まない）。
+    # 「遡り不足」かつ「既に MarketSignal 行が存在する」日付は、今回書いても
+    # 同じ NULL 行になるだけなので gap から外す。遡りが十分なのに
+    # market_trend_score が NULL の日付（NULL バックフィル）は対象外のまま残す。
+    insufficient_dates = _find_insufficient_lookback_dates(gap_dates_candidate, spy_df)
+    insufficient_set = set(insufficient_dates)
+    already_written_insufficient = set()
+    if insufficient_set:
+        already_written_insufficient = {
+            r[0] for r in db.query(MarketSignal.date)
+            .filter(MarketSignal.date.in_(list(insufficient_set)))
+            .all()
+        }
+
+    gap_dates = [d for d in gap_dates_candidate if d not in already_written_insufficient]
+
+    if not gap_dates:
+        logger.info(
+            "No gaps or missing scores detected in Phase 5 "
+            "(remaining candidates were already written as NULL rows due to insufficient SPY lookback)."
+        )
+        return
+
+    # 今回**新たに** NULL 行として書き込む日付だけを警告する。既に NULL 行として
+    # 書き込み済みの日付は上で gap から外されているため、ここには含まれない
+    # （毎晩同じ警告が出続けることはない）。
+    newly_insufficient_dates = [d for d in insufficient_dates if d not in already_written_insufficient]
+    if newly_insufficient_dates:
         logger.error(
             f"T5: SPY の遡りが {SPY_LOOKBACK_MIN_BARS} 本に満たない日付が "
-            f"{len(insufficient_dates)} 件あります"
-            f"（範囲: {min(insufficient_dates)} 〜 {max(insufficient_dates)}）。"
-            "これらの日付は spy_above_sma200 / distribution_days / market_phase / "
-            "market_trend_score を NULL（判定不能）として書き込みます。SQLite は"
+            f"{len(newly_insufficient_dates)} 件あります"
+            f"（範囲: {min(newly_insufficient_dates)} 〜 {max(newly_insufficient_dates)}）。"
+            "これらの日付は遡り本数に応じて一部の列（spy_above_sma200 / distribution_days / "
+            "spy_sma200_rising / market_phase / market_trend_score のいずれか）が "
+            "NULL（判定不能）として書き込まれます。SQLite は"
             "ホット期間（直近730日程度）しか保持していないため、この状態で全日付を"
             "再計算すると sma_200 の窓の先頭で SPY の遡りが不足します。"
             "正しい値を入れるには `--rebuild-from T5` など Parquet 基点の"

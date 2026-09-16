@@ -1,4 +1,4 @@
-"""T5（market_signals）の遡り不足ガードのテスト（計画書 §3.4・§4-1・§7-7・§4-8・§7-8(1)・5-7d）。
+"""T5（market_signals）の遡り不足ガードのテスト（計画書 §3.4・§4-1・§7-7・§4-8・§7-8(1)・5-7d・§7-9・5-7e）。
 
 SQLite はホット期間（直近730日程度）しか SPY の価格を保持しないため、
 `--rebuild-from T2 --category` / `--re-calculate` のように `market_signals` を
@@ -16,6 +16,15 @@ None（NaN）＝ NULL として保存される（判定不能）。遡り不足�
 5-7c までの「除外」方式は、Parquet 経路（`recompute_parquet_signals.py`）が
 NaN 行を必ず書くのと食い違い、`/available_dates`（MarketSignal テーブルから
 日付一覧を作る）から該当日付が恒久的に消えてしまう欠陥があった（§7-8(1)）。
+
+**5-7e（§7-9）**: 5-7d は「行として書く」ようにしたが、完了判定
+（`t5_completed_dates` = `market_trend_score` が非 NULL）は変えなかったため、
+NULL 行で書いた日付が毎回 gap_dates に戻り、T5 が収束しない不具合があった。
+本ファイルの `TestConvergesOnSecondRun` がこの収束を担保する: 遡り不足
+かつ既に MarketSignal 行が存在する日付は gap から外れ、2回目以降は
+警告も delete/insert も発生しない。遡りが十分なのにスコアが NULL の日付
+（NULL バックフィル対象）はこの除外の対象外で、従来どおり毎回再計算対象に
+残る（`TestSufficientLookbackNullScoreNotFilteredAcrossRuns`）。
 """
 
 import logging
@@ -219,3 +228,81 @@ class TestLookbackBoundary:
         assert "1 件" in combined  # 219本の1日だけが警告対象（220本は対象外）
         assert str(boundary_219) in combined
         assert str(boundary_220) not in combined
+
+
+class TestConvergesOnSecondRun:
+    """§7-9・5-7e の核心: 遡り不足で NULL 行を書いた日付は、次回以降 gap から
+    外れて収束する。外れないと、毎晩 delete/insert が走り続け、`min_gap_date`
+    も前に進まないため breadth クエリの日付フィルタ最適化が恒久的に無効化される。
+    """
+
+    def test_second_run_has_no_warning_and_does_not_rewrite_the_row(self, db_session, caplog):
+        start_date = date(2024, 1, 1)
+        dates = _seed_spy_history(db_session, n_bars=SPY_LOOKBACK_MIN_BARS + 50, start_date=start_date)
+        repair_date = dates[0]
+        _mark_completed(db_session, dates[1:])
+
+        # 1回目: 遡り不足の repair_date が NULL 行として書かれ、警告が出る。
+        with caplog.at_level(logging.ERROR):
+            sync_phase_t5_signals(db_session, logging.getLogger("test"))
+
+        first_run_errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert first_run_errors, "1回目は遡り不足の警告が出るはず"
+
+        signal_after_first = db_session.query(MarketSignal).filter(MarketSignal.date == repair_date).first()
+        assert signal_after_first is not None
+        assert signal_after_first.market_trend_score is None
+        first_run_id = signal_after_first.id
+
+        caplog.clear()
+
+        # 2回目: repair_date は既に NULL 行として存在するため gap_dates から外れる。
+        # 警告も delete/insert も発生しない（早期 return で終わる）。
+        with caplog.at_level(logging.INFO):
+            sync_phase_t5_signals(db_session, logging.getLogger("test"))
+
+        second_run_errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert not second_run_errors, "2回目は gap_dates が空になるので警告が出ないはず"
+        info_messages = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
+        assert any("No gaps or missing scores detected" in m for m in info_messages)
+
+        signal_after_second = db_session.query(MarketSignal).filter(MarketSignal.date == repair_date).first()
+        assert signal_after_second is not None
+        # delete/insert が走っていれば id（autoincrement）が変わる。2回目は
+        # 一切触っていない証拠として id が変化していないことを確認する。
+        assert signal_after_second.id == first_run_id
+
+
+class TestSufficientLookbackNullScoreNotFilteredAcrossRuns:
+    """遡りが十分なのに market_trend_score が NULL の日付（NULL バックフィル対象）
+    は、5-7e の収束処理（遡り不足×既存行の除外）の対象外である。既に
+    MarketSignal 行が存在していても、遡り不足ではないので毎回再計算対象に残る
+    （5-7e の回帰防止: 「既存行があれば外す」を遡り不足以外にまで広げていないこと）。
+    """
+
+    def test_stays_in_gap_and_gets_recomputed_despite_existing_null_row(self, db_session, caplog):
+        start_date = date(2024, 1, 1)
+        n_bars = SPY_LOOKBACK_MIN_BARS + 50
+        dates = _seed_spy_history(db_session, n_bars=n_bars, start_date=start_date)
+        backfill_date = dates[SPY_LOOKBACK_MIN_BARS - 1]  # 遡り220本（十分）
+        other_dates = [d for d in dates if d != backfill_date]
+        _mark_completed(db_session, other_dates)
+
+        # 遡りは十分だが、過去に何らかの理由で NULL のまま保存された行を再現する
+        # （5-7e 以前に書かれた NULL バックフィル対象、という想定）。
+        db_session.add(MarketSignal(date=backfill_date, market_trend_score=None))
+        db_session.commit()
+
+        with caplog.at_level(logging.INFO):
+            sync_phase_t5_signals(db_session, logging.getLogger("test"))
+
+        # 遡りが十分なので「遡り不足」の警告には含まれない。
+        error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        combined = " ".join(r.getMessage() for r in error_records)
+        assert str(backfill_date) not in combined
+
+        signal = db_session.query(MarketSignal).filter(MarketSignal.date == backfill_date).first()
+        assert signal is not None
+        # 既存行があっても gap_dates から外れず再計算され、遡りが十分なので
+        # 実際に値が入る（= 5-7e の除外条件が遡り不足以外に及んでいないことの証拠）。
+        assert signal.market_trend_score is not None
