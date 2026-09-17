@@ -76,6 +76,12 @@ body {
   grid-template-rows: var(--header-h) 1fr;
   grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
   height: 100vh;
+  /* モバイルはアドレスバーの表示/非表示で可視高さが変わる。100vh は
+     アドレスバー分を含む「大きい」高さで確定してしまい、その分だけ
+     内部スクロール（.app-main）が「溢れていない」と誤判定されて
+     一覧の最後の行に到達できなくなる（dvh 未対応ブラウザは無効な
+     宣言として無視し、上の 100vh にフォールバックする）。 */
+  height: 100dvh;
   width: 100vw;
   max-width: 100vw;
   overflow: hidden;
