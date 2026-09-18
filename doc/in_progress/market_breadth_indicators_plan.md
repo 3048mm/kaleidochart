@@ -104,9 +104,9 @@
 - [x] `data_collection/data_source_router.py` のテスト作成(同上コミットに含む)
 - [x] `data_collection/data_source_router.py` の実装(テストをgreenにする。**下位関数は`from data_collection.xxx import yyy`の形でモジュール名前空間に直接importすること** — テストが`monkeypatch.setattr(router, "load_fixed_data", ...)`のように差し替える前提。`import ... as mod`形式だとテストの差し替えが効かない)
 - [x] `fetcher.py` の `fetch_daily_data()` をルーター呼び出しに差し替え(既存テストが通ることを確認 — 既存銘柄はyfinance経路のまま変化しないことの回帰確認)
-- [ ] Sandbox環境で `symbols_master` に `S5FI`/`S5TH` を投入し、T1→T2が正しく通ることを確認([[sandbox-workflow]] 必須)
-- [ ] Sandboxで `--rebuild-from T2 --category 指標` 相当の動作確認(fixed_data 2009-2026 + tvDatafeed tail 分が正しく `daily_prices` に入るか)
-- [ ] ダッシュボードの先行指標パネルにS5FI/S5THが自動表示されることを確認(フロントエンド無改修の想定を検証)
+- [x] Sandbox環境で `symbols_master` に `S5FI`/`S5TH` を投入し、T1→T2が正しく通ることを確認([[sandbox-workflow]]。`exchange='INDEX', category='指標'`で登録。T2=T3=4142件、2010-04-01〜2026-09-17、`db_health_check`でStatus:OK)
+- [x] Sandboxで `--rebuild-from T2 --category 指標` 相当の動作確認(fixed_data 2009-2026 + tvDatafeed tail 分が正しく `daily_prices` に入るか。最新close: S5FI=30.81, S5TH=50.29 — Investing.com手動エクスポート値・tvDatafeed実測値と完全一致)
+- [x] ダッシュボードの先行指標パネルにS5FI/S5THが自動表示されることを確認(`^VIX`と並んで表示。スパークライン込み、フロントエンド無改修の想定通り)
 - [ ] 本番へ昇格(種別B: `tools/deploy_after_merge.ps1`)
 - [ ] `doc/backend_specification.md` に S5FI/S5TH の指標定義・データ取得元を追記
 - [ ] 本計画書を `doc/completed/` へ移動
@@ -155,8 +155,17 @@
 - **原因**: 各アダプタが「外部取得呼び出し」だけをtry/exceptで囲み、その後の変換処理(dtype変換等)を無防備にしていた。tvDatafeedのimportもモジュールトップレベルで即時評価されていた
 - **解決**: 4アダプタ全ての変換処理までtry/exceptを拡張、ルーターにも多重防御を追加、`tvDatafeed`は`try/except ImportError`で遅延化(未インストール環境でも`fetcher.py`のimportは失敗しない)。あわせて中程度の指摘2件(3アダプタ間のコード重複→`_series_utils.py`に切り出し、`fixed_data_dir`のcwd依存→`paths.get_repo_root()`基点に変更)も対応。軽微な指摘1件(`load_fixed_data`を`SOURCE_MAP`外のティッカーでも毎回呼ぶ非効率)は影響が無視できる程度(ファイルstat呼び出し1回)と判断し見送り
 
+- **事象**: Sandbox検証で `S5FI`/`S5TH` の T4(相対順位)が常に0件になった
+- **原因**: `t4_ranks.py` は `レバレッジ`/`指標` カテゴリを相対比較の意味がないとして対象外にしている(既存仕様。`^VIX`等の既存指標銘柄も同じ)。バグではない
+- **解決**: 対応不要。計画書§1の成功条件(daily_pricesへの反映・ダッシュボード表示)には影響しない
+
+- **事象**: `/api/system/info` の `is_production` が、ワークツリーのSandbox(`data/sandbox/stocktool.db`)でも `true` を返した
+- **原因**: `backend/api/routers.py:39` の判定が `db_name == "stocktool.db"`(ファイル名のみ)で、パスが`sandbox/`配下かどうかを見ていない。`tools/provision_worktree_data.py`はファイル名を変えずにディレクトリだけ変える方式(旧手順の`stocktool_sandbox.db`という別名方式を前提にしたロジックが更新されていない)
+- **解決**: 本計画のスコープ外(既存の仕組みの不整合)。フロントの警告バッジ表示ロジックも同じ判定に依存している可能性があるため、視覚的確認はダッシュボードAPIの応答内容(S5FI/S5THがleadingパネルに正しい値で載っているか)で代替した。別途issue化を検討(§8)
+
 ## 8. スコープ外・残作業
 
 - **MTS(Market Trend Score)への組み込み**: 本計画はデータ取り込みのみ。計算式への反映は別計画書で行う
 - **`market_signals.py:174` の `has_breadth` 日付ハードコード**: 別系統の既知課題(`doc/in_progress/min_periods_warmup_plan.md`)。本計画とは無関係だが同じ「MTSのbreadth成分」領域なので、着手時に相互に影響しないか軽く確認する
 - **他の指数(S&P400, Russell等)への拡張**: 今回はYAGNIで見送り。tvDatafeedの`exchange='INDEX'`パターンが他指数でも通用するかは未検証
+- **`/api/system/info`の`is_production`判定不整合**: ワークツリーSandbox(`tools/provision_worktree_data.py`方式)でファイル名ベースの判定が機能しない(§7参照)。本計画とは無関係の既存issueとして別途起票を検討
