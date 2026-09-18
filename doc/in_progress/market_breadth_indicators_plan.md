@@ -95,15 +95,15 @@
 
 - [x] `data/fixed_data/` の既存2ファイルをコミット(`.gitignore`変更は不要と判明。実装時メモ参照)
 - [x] `data_collection/fixed_data_loader.py` のテスト作成(TDD red、test-writerに委譲。commit `a905236`→cherry-pick `91ae8d5`で取り込み済み)
-- [ ] `data_collection/fixed_data_loader.py` の実装(テストをgreenにする)
+- [x] `data_collection/fixed_data_loader.py` の実装(テストをgreenにする)
 - [x] `requirements.txt` に `tvdatafeed-enhanced==2.2.1` / `websocket-client==1.9.2` を追加し、venvへインストール
 - [x] `data_collection/tvdatafeed_client.py` のテスト作成(同上コミットに含む)
-- [ ] `data_collection/tvdatafeed_client.py` の実装(テストをgreenにする。`TvDatafeed`はモジュール名前空間に直接importすること — テストが`monkeypatch.setattr(mod, "TvDatafeed", ...)`で差し替える前提)
+- [x] `data_collection/tvdatafeed_client.py` の実装(テストをgreenにする。`TvDatafeed`はモジュール名前空間に直接importすること — テストが`monkeypatch.setattr(mod, "TvDatafeed", ...)`で差し替える前提)
 - [x] `data_collection/historyofmarket_client.py` のテスト作成(同上コミットに含む)
-- [ ] `data_collection/historyofmarket_client.py` の実装(テストをgreenにする)
+- [x] `data_collection/historyofmarket_client.py` の実装(テストをgreenにする)
 - [x] `data_collection/data_source_router.py` のテスト作成(同上コミットに含む)
-- [ ] `data_collection/data_source_router.py` の実装(テストをgreenにする。**下位関数は`from data_collection.xxx import yyy`の形でモジュール名前空間に直接importすること** — テストが`monkeypatch.setattr(router, "load_fixed_data", ...)`のように差し替える前提。`import ... as mod`形式だとテストの差し替えが効かない)
-- [ ] `fetcher.py` の `fetch_daily_data()` をルーター呼び出しに差し替え(既存テストが通ることを確認 — 既存銘柄はyfinance経路のまま変化しないことの回帰確認)
+- [x] `data_collection/data_source_router.py` の実装(テストをgreenにする。**下位関数は`from data_collection.xxx import yyy`の形でモジュール名前空間に直接importすること** — テストが`monkeypatch.setattr(router, "load_fixed_data", ...)`のように差し替える前提。`import ... as mod`形式だとテストの差し替えが効かない)
+- [x] `fetcher.py` の `fetch_daily_data()` をルーター呼び出しに差し替え(既存テストが通ることを確認 — 既存銘柄はyfinance経路のまま変化しないことの回帰確認)
 - [ ] Sandbox環境で `symbols_master` に `S5FI`/`S5TH` を投入し、T1→T2が正しく通ることを確認([[sandbox-workflow]] 必須)
 - [ ] Sandboxで `--rebuild-from T2 --category 指標` 相当の動作確認(fixed_data 2009-2026 + tvDatafeed tail 分が正しく `daily_prices` に入るか)
 - [ ] ダッシュボードの先行指標パネルにS5FI/S5THが自動表示されることを確認(フロントエンド無改修の想定を検証)
@@ -142,6 +142,14 @@
 - **事象**: 計画時、`data/fixed_data/` をコミットするには `.gitignore` に例外追加が必要と想定していた
 - **原因**: `.gitignore:77` の `data/*.csv` は gitignore の仕様上 `/` を越えて一致しない(直下のCSVのみが対象)ため、`data/fixed_data/*.csv` はそもそも無視されていなかった
 - **解決**: `git check-ignore -v data/fixed_data/S5FI.csv` で無視されないことを確認。`.gitignore` の変更をスキップし、そのまま `git add` した(§2.1/§3 の記載を修正済み)
+
+- **事象**: `data_source_router.fetch_data()` で `end_date=None`(「今日まで取得」の意味)の場合、fixed_dataが要求範囲を完全にカバーしているかの判定ができない
+- **原因**: 「完全カバー」の判定は `remaining_start > remaining_end` で行うが、`remaining_end`(=`end_date`)が`None`だと比較できない
+- **解決**: `end_date is None` の場合は常に「完全カバーではない」とみなし、残り範囲の取得(tvDatafeed等)に進む実装にした(implementerの判断。fixed_data後の最新データも取りに行く動きになり、日次更新の実運用と整合するため妥当と判断し承認)
+
+- **事象**: 実装完了報告で「`test_scan_price_anomalies.py::test_report_writes_csv_even_with_matched_rows` が `UnicodeEncodeError: cp932...` で1件失敗」と報告されたが、オーケストレーターが同テストを別のPowerShellプロセスで再実行したところ **PASSED** した
+- **原因**: コンソールのコードページ(cp932 vs UTF-8)がプロセスごとに異なることに起因する既存の環境依存の問題で、本タスクの変更とは無関係(implementer自身もstashで変更を退避した状態で再現することを確認済み)
+- **解決**: 実装側の対応不要と判断。既知の環境依存問題として記録のみ
 
 ## 8. スコープ外・残作業
 
