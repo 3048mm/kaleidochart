@@ -51,9 +51,20 @@ def fetch_data(
     source = SOURCE_MAP.get(ticker, "yfinance")
 
     if source == "tvdatafeed":
-        remaining_df = fetch_from_tvdatafeed(ticker, remaining_start, remaining_end)
+        # 多重防御: アダプタ側は自前で例外を握るが、万が一漏れても
+        # ここで握ってフォールバック経路へ合流させる。
+        try:
+            remaining_df = fetch_from_tvdatafeed(ticker, remaining_start, remaining_end)
+        except Exception as e:
+            logger.warning(f"[{ticker}] tvdatafeed呼び出しで予期しない例外: {e}")
+            remaining_df = pd.DataFrame()
+
         if remaining_df is None or remaining_df.empty:
-            remaining_df = fetch_from_historyofmarket(ticker, remaining_start, remaining_end)
+            try:
+                remaining_df = fetch_from_historyofmarket(ticker, remaining_start, remaining_end)
+            except Exception as e:
+                logger.warning(f"[{ticker}] historyofmarket呼び出しで予期しない例外: {e}")
+                remaining_df = pd.DataFrame()
     else:
         remaining_df = yfinance_fetcher(ticker, remaining_start, end_date, progress)
 

@@ -12,7 +12,16 @@ import logging
 from datetime import date, datetime
 
 import pandas as pd
-from tvDatafeed import TvDatafeed, Interval
+
+from data_collection._series_utils import filter_date_range, normalize_columns
+
+try:
+    from tvDatafeed import TvDatafeed, Interval
+except ImportError:
+    # tvdatafeed-enhanced未インストールの環境(別マシン・古いvenv・CI等)でも
+    # fetcher.py のimport自体が失敗して全銘柄のyfinance取得が止まらないようにする。
+    TvDatafeed = None
+    Interval = None
 
 logger = logging.getLogger(__name__)
 
@@ -36,40 +45,41 @@ def fetch_from_tvdatafeed(
     """tvDatafeed経由でティッカーの日次データを取得し、指定範囲でフィルタして返す。
 
     例外・None・空データはいずれも空DataFrameで返す(呼び出し元に伝播させない)。
+    取得後の変換・フィルタ処理も含め、関数の主要処理全体を1つのtry/exceptで
+    囲む(volumeがNaN等の場合の`.astype("int64")`失敗等が呼び出し元に伝播し、
+    t2_prices.pyのループで全銘柄の更新が止まるのを防ぐため)。
     """
-    if tv_client is None:
-        tv_client = TvDatafeed()
-
-    n_bars = _calc_n_bars(start_date)
+    if tv_client is None and TvDatafeed is None:
+        logger.error(f"[{ticker}] tvDatafeed(tvdatafeed-enhanced)が未インストールのため取得できません。")
+        return pd.DataFrame()
 
     try:
+        if tv_client is None:
+            tv_client = TvDatafeed()
+
+        n_bars = _calc_n_bars(start_date)
+
         hist_df = tv_client.get_hist(
             symbol=ticker, exchange=exchange, interval=Interval.in_daily, n_bars=n_bars
         )
+
+        if hist_df is None or hist_df.empty:
+            logger.warning(f"[{ticker}] tvDatafeedからデータが返りませんでした。")
+            return pd.DataFrame()
+
+        df = hist_df.reset_index()
+        df = df.rename(columns={"datetime": "date"})
+        df["date"] = df["date"].apply(lambda dt: dt.date() if isinstance(dt, datetime) else dt)
+
+        for col in ["open", "high", "low", "close"]:
+            df[col] = df[col].astype(float)
+        df["volume"] = df["volume"].astype("int64")
+
+        df = normalize_columns(df)
+        df = filter_date_range(df, start_date, end_date)
+
+        df = df.sort_values("date").reset_index(drop=True)
+        return df
     except Exception as e:
         logger.warning(f"[{ticker}] tvDatafeed取得に失敗しました: {e}")
         return pd.DataFrame()
-
-    if hist_df is None or hist_df.empty:
-        logger.warning(f"[{ticker}] tvDatafeedからデータが返りませんでした。")
-        return pd.DataFrame()
-
-    df = hist_df.reset_index()
-    df = df.rename(columns={"datetime": "date"})
-    df["date"] = df["date"].apply(lambda dt: dt.date() if isinstance(dt, datetime) else dt)
-
-    for col in ["open", "high", "low", "close"]:
-        df[col] = df[col].astype(float)
-    df["volume"] = df["volume"].astype("int64")
-
-    df = df[["date", "open", "high", "low", "close", "volume"]]
-
-    start_date_val = pd.to_datetime(start_date).date()
-    if end_date is None:
-        df = df[df["date"] >= start_date_val]
-    else:
-        end_date_val = pd.to_datetime(end_date).date()
-        df = df[(df["date"] >= start_date_val) & (df["date"] <= end_date_val)]
-
-    df = df.sort_values("date").reset_index(drop=True)
-    return df

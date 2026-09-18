@@ -13,6 +13,8 @@ import logging
 
 import pandas as pd
 
+from data_collection._series_utils import filter_date_range, normalize_columns
+
 logger = logging.getLogger(__name__)
 
 _BREADTH_URL = "https://historyofmarket.com/api/sp500/breadth.json"
@@ -54,41 +56,38 @@ def fetch_from_historyofmarket(
         logger.warning(f"[{ticker}] historyofmarket.comが非200を返しました。")
         return pd.DataFrame()
 
+    # この関数はtvDatafeed失敗時の安全網(フォールバック)なので、JSON取得後の
+    # パース処理全体もtry/exceptで囲む(それ自体が例外で落ちると安全網にならない)。
     try:
         payload = response.json()
+
+        series = (payload or {}).get("series") or []
+        if not series:
+            return pd.DataFrame()
+
+        rows = []
+        for item in series:
+            if field not in item or "date" not in item:
+                continue
+            rows.append({"date": item["date"], "close": item[field]})
+
+        if not rows:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(rows)
+        df["date"] = pd.to_datetime(df["date"]).dt.date
+        df["close"] = df["close"].astype(float)
+        df["open"] = df["close"]
+        df["high"] = df["close"]
+        df["low"] = df["close"]
+        df["volume"] = 0
+        df["volume"] = df["volume"].astype("int64")
+
+        df = normalize_columns(df)
+        df = filter_date_range(df, start_date, end_date)
+
+        df = df.sort_values("date").reset_index(drop=True)
+        return df
     except Exception as e:
         logger.warning(f"[{ticker}] historyofmarket.comのJSON parseに失敗しました: {e}")
         return pd.DataFrame()
-
-    series = (payload or {}).get("series") or []
-    if not series:
-        return pd.DataFrame()
-
-    rows = []
-    for item in series:
-        if field not in item or "date" not in item:
-            continue
-        rows.append({"date": item["date"], "close": item[field]})
-
-    if not rows:
-        return pd.DataFrame()
-
-    df = pd.DataFrame(rows)
-    df["date"] = pd.to_datetime(df["date"]).dt.date
-    df["close"] = df["close"].astype(float)
-    df["open"] = df["close"]
-    df["high"] = df["close"]
-    df["low"] = df["close"]
-    df["volume"] = 0
-    df["volume"] = df["volume"].astype("int64")
-
-    start_date_val = pd.to_datetime(start_date).date()
-    if end_date is None:
-        df = df[df["date"] >= start_date_val]
-    else:
-        end_date_val = pd.to_datetime(end_date).date()
-        df = df[(df["date"] >= start_date_val) & (df["date"] <= end_date_val)]
-
-    df = df[["date", "open", "high", "low", "close", "volume"]]
-    df = df.sort_values("date").reset_index(drop=True)
-    return df
