@@ -13,6 +13,8 @@ ensure_ca_bundle()
 import yfinance as yf  # noqa: E402
 from datetime import datetime, timedelta  # noqa: E402
 
+from data_collection.data_source_router import fetch_data as _route_fetch_data  # noqa: E402
+
 logger = logging.getLogger(__name__)
 
 def _normalize_ticker(ticker: str) -> str:
@@ -33,7 +35,18 @@ def _normalize_ticker(ticker: str) -> str:
 
 def fetch_daily_data(ticker: str, start_date: str, end_date: str = None, progress: str = "") -> pd.DataFrame:
     """
-    yfinanceを用いて指定銘銘柄の株価データを取得します。
+    指定銘柄の株価データを取得します。
+
+    実体は data_source_router.fetch_data() への薄い委譲です。
+    通常銘柄はyfinance経路のまま変化しませんが、S5FI/S5TH等の
+    特例銘柄はルーターがfixed_data/tvDatafeed/historyofmarketへ振り分けます。
+    """
+    return _route_fetch_data(ticker, start_date, end_date, progress, yfinance_fetcher=_fetch_from_yfinance)
+
+
+def _fetch_from_yfinance(ticker: str, start_date: str, end_date: str = None, progress: str = "") -> pd.DataFrame:
+    """
+    yfinanceを用いて指定銘柄の株価データを取得します。
     例外ハンドリング(Volume欠損値)やffillによる欠損日補完を行います。
     """
     # Normalize ticker symbol for yfinance (e.g., BRK/B -> BRK-B)
