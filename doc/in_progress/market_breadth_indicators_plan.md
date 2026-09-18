@@ -108,7 +108,7 @@
 - [x] Sandboxで `--rebuild-from T2 --category 指標` 相当の動作確認(fixed_data 2009-2026 + tvDatafeed tail 分が正しく `daily_prices` に入るか。最新close: S5FI=30.81, S5TH=50.29 — Investing.com手動エクスポート値・tvDatafeed実測値と完全一致)
 - [x] ダッシュボードの先行指標パネルにS5FI/S5THが自動表示されることを確認(`^VIX`と並んで表示。スパークライン込み、フロントエンド無改修の想定通り)
 - [ ] 本番へ昇格(種別B: `tools/deploy_after_merge.ps1`)
-- [ ] `doc/backend_specification.md` に S5FI/S5TH の指標定義・データ取得元を追記
+- [x] `doc/backend_specification.md` に S5FI/S5TH の指標定義・データ取得元を追記
 - [ ] 本計画書を `doc/completed/` へ移動
 
 ### 作業中メモ
