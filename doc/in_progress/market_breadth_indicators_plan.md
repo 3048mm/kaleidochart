@@ -94,11 +94,15 @@
 ## 5. 実装順序と進捗チェックリスト
 
 - [x] `data/fixed_data/` の既存2ファイルをコミット(`.gitignore`変更は不要と判明。実装時メモ参照)
-- [ ] `data_collection/fixed_data_loader.py` の実装 + テスト(`backend/tests/data_collection/test_fixed_data_loader.py`): BOM付きCSVの読み込み、列マッピング、日付範囲での絞り込み
-- [ ] `requirements.txt` に `tvdatafeed-enhanced==2.2.1` / `websocket-client==1.9.2` を追加し、venvへインストール
-- [ ] `data_collection/tvdatafeed_client.py` の実装 + テスト: `exchange='INDEX'` での取得、date→n_bars変換、接続失敗時の挙動(例外を握ってNoneを返す等、既存 `fetch_daily_data` の失敗時契約に合わせる)
-- [ ] `data_collection/historyofmarket_client.py` の実装 + テスト: JSON取得、pct50/pct200→S5FI/S5THへのマッピング、日付範囲フィルタ、2023-07-13より前は空DataFrameを返すこと
-- [ ] `data_collection/data_source_router.py` にルーティングテーブルと分岐ロジックを実装 + テスト: fixed_data優先→tvDatafeed→historyofmarket.comフォールバック→結合、の各分岐(tvDatafeed失敗を模擬してフォールバックが起動することをテストで確認)
+- [x] `data_collection/fixed_data_loader.py` のテスト作成(TDD red、test-writerに委譲。commit `a905236`→cherry-pick `91ae8d5`で取り込み済み)
+- [ ] `data_collection/fixed_data_loader.py` の実装(テストをgreenにする)
+- [x] `requirements.txt` に `tvdatafeed-enhanced==2.2.1` / `websocket-client==1.9.2` を追加し、venvへインストール
+- [x] `data_collection/tvdatafeed_client.py` のテスト作成(同上コミットに含む)
+- [ ] `data_collection/tvdatafeed_client.py` の実装(テストをgreenにする。`TvDatafeed`はモジュール名前空間に直接importすること — テストが`monkeypatch.setattr(mod, "TvDatafeed", ...)`で差し替える前提)
+- [x] `data_collection/historyofmarket_client.py` のテスト作成(同上コミットに含む)
+- [ ] `data_collection/historyofmarket_client.py` の実装(テストをgreenにする)
+- [x] `data_collection/data_source_router.py` のテスト作成(同上コミットに含む)
+- [ ] `data_collection/data_source_router.py` の実装(テストをgreenにする。**下位関数は`from data_collection.xxx import yyy`の形でモジュール名前空間に直接importすること** — テストが`monkeypatch.setattr(router, "load_fixed_data", ...)`のように差し替える前提。`import ... as mod`形式だとテストの差し替えが効かない)
 - [ ] `fetcher.py` の `fetch_daily_data()` をルーター呼び出しに差し替え(既存テストが通ることを確認 — 既存銘柄はyfinance経路のまま変化しないことの回帰確認)
 - [ ] Sandbox環境で `symbols_master` に `S5FI`/`S5TH` を投入し、T1→T2が正しく通ることを確認([[sandbox-workflow]] 必須)
 - [ ] Sandboxで `--rebuild-from T2 --category 指標` 相当の動作確認(fixed_data 2009-2026 + tvDatafeed tail 分が正しく `daily_prices` に入るか)
