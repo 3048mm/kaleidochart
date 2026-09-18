@@ -13,7 +13,7 @@
 全てのバックエンド資産は `backend/` フォルダ配下に整理されています。
 *   **`backend/api/`**: FastAPI ベースのWeb APIサーバー
 *   **`backend/db/`**: SQLAlchemy によるデータベースモデルと接続プール管理（`stocktool.db` / `user_data.db` / `universe.db` の3系統）
-*   **`backend/data_collection/`**: 外部データ取得。`yfinance`（`fetcher.py`）/ 銘柄定義の同期（`universe_sync.py`・`sheet_importer.py`）/ **SEC EDGAR**（`sec_client.py`・`sec_corporate_actions.py`）
+*   **`backend/data_collection/`**: 外部データ取得。`yfinance`（`fetcher.py`）/ 銘柄定義の同期（`universe_sync.py`・`sheet_importer.py`）/ **SEC EDGAR**（`sec_client.py`・`sec_corporate_actions.py`）/ **データ取得元ルーター**（`data_source_router.py` — ティッカーごとに yfinance / `tvDatafeed`（`tvdatafeed_client.py`）/ `historyofmarket.com`（`historyofmarket_client.py`、tvDatafeed失敗時のフォールバック）/ 静的CSV（`fixed_data_loader.py`）へ振り分ける。振り分け表はコード内辞書 `SOURCE_MAP`。`fetcher.fetch_daily_data()` はこのルーターへの薄い委譲）
 *   **`backend/indicators/`**: 移動平均、ATR、RSI等のテクニカルおよび独自スコア計算ロジック（価格アノマリー分類 `price_anomaly.py` を含む）
 *   **`backend/pipeline/`**: T1〜T5 のオーケストレータと各フェーズ、Parquet 世代管理（`parquet_cache_manager.py`）、排他ロック（`pipeline_lock.py`）
 *   **`backend/scripts/`**: バッチ処理スクリプト (`update_pipeline.py`, `daily_sync_job.py` 等) と運用ツール
@@ -59,7 +59,7 @@
 | :--- | :--- | :--- |
 | `id` | INTEGER | 主キー。内部的なID管理に使用。 |
 | `ticker` | STRING | 銘柄のティッカーシンボル（例: AAPL, SPY, _PHNC_）。 |
-| `exchange` | STRING | 取引所コード（NYSE, NASDAQ 等）。仮想インデックスは `VIRTUAL`。 |
+| `exchange` | STRING | 取引所コード（NYSE, NASDAQ 等）。仮想インデックスは `VIRTUAL`。実在取引所を持たない算出指標（`S5FI`/`S5TH`等）は `INDEX`。 |
 | `name` | STRING | 銘柄名称。 |
 | `category` | STRING | 銘柄の分類（市場, 指標, セクタ, テーマ, 個別, レバレッジ）。 |
 | `asset_class` | STRING | 資産クラス・属性（Industryなど）。 |
@@ -494,7 +494,7 @@ S&P500（SPY）の動向や市場全体の統計から算出される、市場�
 | 階層 | テーブル名 | ソース (Source) | 最新基準 (Standard) | 追いつき判定・更新ロジック |
 | :--- | :--- | :--- | :--- | :--- |
 | **Phase 1** | `symbols` | Spreadsheet | - | **全件名寄せ (Full Sync)**: 銘柄情報の Upsert。新規銘柄検出時は T2 フル取得モードをトリガー。 |
-| **Phase 2** | `prices` (Real) | yfinance API | **SPY** | **SPY主導のバッチ取得**: SPYを最新化し、各銘柄の `MAX(date)` との差分を 50件単位のバッチで yf から取得。 |
+| **Phase 2** | `prices` (Real) | yfinance API(既定)。ティッカーにより`data_source_router.py`が別経路へ振り分け | **SPY** | **SPY主導のバッチ取得**: SPYを最新化し、各銘柄の `MAX(date)` との差分を 50件単位のバッチで yf から取得。`S5FI`/`S5TH`（`category='指標'`、市場ブレッド指標）はyfinanceに存在しないため、静的CSV(`data/fixed_data/`、Investing.com手動エクスポート)→`tvDatafeed`（TradingView非公式、`exchange='INDEX'`）→`historyofmarket.com`（tvDatafeed失敗時のフォールバック）の順で取得。 |
 | **Phase 2+** | `prices` (Virtual) | 構成銘柄の T2 | 構成銘柄の最新 | **内部合成**: 構成銘柄の T2 が揃った最新日までテーマ指数の価格を再合成。 |
 | **Phase 3** | `indicators` | `daily_prices` | T2 最新日 | **銘柄別計算**: `T2.MAX(date) > T3.MAX(date)` 的差分を算出。RS計算のため SPY の T3 を最優先。 |
 | **Phase 4** | `relative_ranks` | `indicators` | T3 最新日 | **日付別計算**: `T3.MAX(date) > T4.MAX(date)` 的不足日を **Delete-Insert** で一括生成。 |
