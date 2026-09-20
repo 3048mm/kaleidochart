@@ -1737,6 +1737,19 @@
 
 （get_db_session commit およびテーマ詳細 N+1 は 2026-07-16 完了、完了済みセクション参照）
 
+- [ ] 🟡 **`/api/system/info` の `is_production` 判定がワークツリーSandboxで機能しない（2026-09-20 発見）**
+  - **事象**: `backend/api/routers.py:39` の `is_production = db_name == "stocktool.db"` は**ファイル名のみ**で判定しており、パスが `data/sandbox/` 配下かどうかを見ていない。`tools/provision_worktree_data.py --mode write`(2026-09-01導入)はファイル名を変えずディレクトリだけ`<worktree>/data/sandbox/`に変える方式のため、ワークツリーSandboxに対して `is_production: true` を返してしまう
+  - **想定される影響**: `sandbox-workflow` スキルが検証手順として挙げている「フロントエンドのオレンジ色警告バッジ表示」が、同じ判定ロジックに依存しているなら**ワークツリーSandboxでは表示されない**可能性がある（未検証）。誤って本番だと思い込むリスクは低い（DBパス自体はSandboxを正しく指しているため実データは安全）が、視覚的な確認手順が機能しない
+  - **発見の経緯**: `doc/completed/market_breadth_indicators_plan.md`(S5FI/S5TH取り込み)のSandbox検証中、`/api/system/info` が `is_production: true` を返したため気づいた。視覚的確認はダッシュボードAPIの応答内容で代替した
+  - **対応案**（未着手）: `db_path` が `data/sandbox/` または `.claude/worktrees/` 配下かどうかも判定に含める。あるいは `paths.py` 側に「現在Sandboxを掴んでいるか」を返す既存ヘルパーがあれば流用する
+
+- [ ] 🟡 **`tools/deploy_after_merge.ps1` が新規銘柄の追加を伴う種別Bの変更を想定していない（2026-09-20 発見）**
+  - **事象**: `backend/scripts/deploy_after_merge.py` は `update_pipeline.py --skip-sync` で実行する設計（`-RebuildFrom All` でも `--skip-sync` は付いたまま）。`--skip-sync` は T1(`universe.db`→`symbols`同期)を常にスキップするため、**merge前に `universe.db` へ新規銘柄を登録していても、このスクリプトは本番へ反映しない**
+  - **想定される設計意図**: 「既存銘柄の指標ロジック変更」の昇格に特化し、`symbols`/`theme_constituents`はワークスペースのParquetスナップショットのまま保持することで、昇格対象を純粋な計算ロジック差分に絞る意図と推測される（未確認）
+  - **実害**: 新規銘柄の追加を伴う種別Bの変更のたびに、`deploy_after_merge.ps1`とは別に手動オンボード作業（対象銘柄限定でT1〜T5を直接実行 → Parquetアーカイブ → SQLiteパージ）が必要になる。AIGオンボード時（日次パイプラインの自律チェックが新規銘柄を想定していない問題）と同型の設計ギャップ
+  - **発見の経緯**: `doc/completed/market_breadth_indicators_plan.md`(S5FI/S5TH取り込み)の本番昇格時。`-DryRun`実行後に気づき、新規銘柄反映は手動オンボードで代替した（同計画書§7に手順の詳細）
+  - **対応案**（未着手）: `deploy_after_merge.py`に「新規銘柄も同期する」オプション（`--skip-sync`を外す、または新規銘柄だけT1を通す）を追加する。設計判断が要るため`doc/in_progress/deploy_after_merge_plan.md`側で検討
+
 ## P3 — 低（将来フェーズ・プロセス系）
 
 - [ ] **moomoo API 知見の活用アイデア（2026-09-12 起票、未検証・要判断）**

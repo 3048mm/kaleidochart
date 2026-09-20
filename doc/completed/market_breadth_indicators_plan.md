@@ -1,8 +1,8 @@
 # S&P500市場ブレッド指標(S5FI/S5TH)取り込み 計画書
 
-- **ステータス**: 🚧 進行中
+- **ステータス**: ✅ 完了(S5FI/S5THが`stocktool.db`/Parquetに`category='指標'`として本番反映済み。ダッシュボード先行指標パネルに表示確認済み)
 - **実施者**: AI エージェント(Claude Sonnet 5)
-- **開始日**: 2026-09-19 / **完了日**: —
+- **開始日**: 2026-09-19 / **完了日**: 2026-09-20
 - **作業ブランチ**: `worktree-feat-market-breadth-indicators`
 - **対象 issue / 関連ドキュメント**: なし(新規)。関連(スコープ外・別系統): `doc/in_progress/min_periods_warmup_plan.md`(`market_signals.py:174` の `has_breadth` 日付ハードコードは同じ「MTS の breadth 成分」領域だが、SPY 自身の `breadth_sma50` の話で本計画とは別問題)
 
@@ -107,9 +107,9 @@
 - [x] Sandbox環境で `symbols_master` に `S5FI`/`S5TH` を投入し、T1→T2が正しく通ることを確認([[sandbox-workflow]]。`exchange='INDEX', category='指標'`で登録。T2=T3=4142件、2010-04-01〜2026-09-17、`db_health_check`でStatus:OK)
 - [x] Sandboxで `--rebuild-from T2 --category 指標` 相当の動作確認(fixed_data 2009-2026 + tvDatafeed tail 分が正しく `daily_prices` に入るか。最新close: S5FI=30.81, S5TH=50.29 — Investing.com手動エクスポート値・tvDatafeed実測値と完全一致)
 - [x] ダッシュボードの先行指標パネルにS5FI/S5THが自動表示されることを確認(`^VIX`と並んで表示。スパークライン込み、フロントエンド無改修の想定通り)
-- [ ] 本番へ昇格(種別B: `tools/deploy_after_merge.ps1`)
+- [x] 本番へ昇格。**`tools/deploy_after_merge.ps1`は使わなかった**(§7参照。`-DryRun`で既存銘柄への悪影響が無いことのみ確認に使用)。新規銘柄登録は本番`universe.db`へS5FI/S5TH追加(バックアップ後)→対象銘柄限定でT1〜T5実行(AIGオンボード時と同手法)→`rotate_and_archive_to_parquet`/`purge_sqlite_cache_older_than_2_years`→`db_health_check`(Status:OK)→本番ダッシュボードAPIで表示確認(S5FI=27.83, S5TH=49.5, 2026-09-18時点)
 - [x] `doc/backend_specification.md` に S5FI/S5TH の指標定義・データ取得元を追記
-- [ ] 本計画書を `doc/completed/` へ移動
+- [x] 本計画書を `doc/completed/` へ移動
 
 ### 作業中メモ
 
@@ -163,9 +163,17 @@
 - **原因**: `backend/api/routers.py:39` の判定が `db_name == "stocktool.db"`(ファイル名のみ)で、パスが`sandbox/`配下かどうかを見ていない。`tools/provision_worktree_data.py`はファイル名を変えずにディレクトリだけ変える方式(旧手順の`stocktool_sandbox.db`という別名方式を前提にしたロジックが更新されていない)
 - **解決**: 本計画のスコープ外(既存の仕組みの不整合)。フロントの警告バッジ表示ロジックも同じ判定に依存している可能性があるため、視覚的確認はダッシュボードAPIの応答内容(S5FI/S5THがleadingパネルに正しい値で載っているか)で代替した。別途issue化を検討(§8)
 
+- **事象**: mainマージ後、`tools/deploy_after_merge.ps1`(既定`-RebuildFrom T3`)をそのまま実行しても、新規登録した`S5FI`/`S5TH`は本番に反映されないと判明した
+- **原因**: `backend/scripts/deploy_after_merge.py`は`update_pipeline.py --skip-sync`(+`--skip-fetch`、`All`指定時のみ`--re-calculate`)で実行する設計。`--skip-sync`によりT1(`universe.db`→`symbols`同期)が常にスキップされるため、このツールは「既存銘柄の指標ロジック変更」の昇格専用であり、「新規銘柄の追加」を想定していない(AIGオンボード時に発見した「日次更新の自律チェックが新規銘柄オンボードを想定していない」のと同種の設計ギャップ)
+- **解決**: `deploy_after_merge.ps1 -DryRun`は「今回のコード変更(ルーター化)が既存銘柄に悪影響を与えないか」の検証だけに使用(結果: 新規NG 0件、既存ベースライン内)。新規銘柄の登録・反映は別途、本番`universe.db`へのS5FI/S5TH追加(バックアップ後)→対象銘柄限定でT1〜T5を直接実行(AIGオンボード時と同じ手法)→`rotate_and_archive_to_parquet`/`purge_sqlite_cache_older_than_2_years`、を手動で実施した。**この設計ギャップは本計画のスコープ外の既存issueとして別途起票を検討**(§8)
+- **事象**: PowerShellで`deploy_after_merge.ps1 -DryRun *> logfile`のように全ストリームリダイレクトすると、スクリプト内の`$ErrorActionPreference='Stop'`とpython.exeのログ出力(stderr)が干渉し、実際は正常動作中のプロセスが`NativeCommandError`で即座に打ち切られた
+- **原因**: PowerShell 5.1の既知の癖(ネイティブコマンドのstderrリダイレクトが`ErrorRecord`にラップされ、`$ErrorActionPreference=Stop`下で終端エラーに格上げされる)
+- **解決**: リダイレクトを外し(このツールは標準出力を自動キャプチャするため元々不要だった)再実行して解消。既知の環境ノウハウとして記録
+
 ## 8. スコープ外・残作業
 
 - **MTS(Market Trend Score)への組み込み**: 本計画はデータ取り込みのみ。計算式への反映は別計画書で行う
 - **`market_signals.py:174` の `has_breadth` 日付ハードコード**: 別系統の既知課題(`doc/in_progress/min_periods_warmup_plan.md`)。本計画とは無関係だが同じ「MTSのbreadth成分」領域なので、着手時に相互に影響しないか軽く確認する
 - **他の指数(S&P400, Russell等)への拡張**: 今回はYAGNIで見送り。tvDatafeedの`exchange='INDEX'`パターンが他指数でも通用するかは未検証
 - **`/api/system/info`の`is_production`判定不整合**: ワークツリーSandbox(`tools/provision_worktree_data.py`方式)でファイル名ベースの判定が機能しない(§7参照)。本計画とは無関係の既存issueとして別途起票を検討
+- **`deploy_after_merge.py`が新規銘柄の追加を想定していない**: `--skip-sync`固定によりT1(symbols同期)が常にスキップされる設計。新規銘柄を伴う種別Bの変更では毎回今回と同じ手動オンボード作業が必要になる(§7参照)。`doc/in_progress/deploy_after_merge_plan.md`側での対応要否を別途検討
