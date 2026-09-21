@@ -4,6 +4,7 @@ from numba import njit
 
 # We can import calculate_ema_tv from the newly created moving_averages
 from .moving_averages import calculate_ema_tv
+from .incremental_merge import finalize_incremental_column, prev_self_seed
 
 # ============================================================
 # 数値的に頑健な rolling std（rs_ratio_eN / rs_momentum_eN 用）
@@ -79,24 +80,32 @@ RS_DOT_WARMUP_BARS = 252   # rolling(252, min_periods=1) 由来の偽点灯を�
 def _rs_dot_age_kernel(blue, red, cap, warmup, sentinel, use_state, seed_prev_b, seed_prev_r):
     """Numba-accelerated RS dot age counter.
 
+    コア更新式（ブルー/レッドの点灯・継続・失効判定）は use_state の
+    True/False を問わず共通（単一実装）。「どこから始めるか」
+    （i=0 or 最終行のみ）と「シードをどう用意するか」だけが変わる
+    （T3 増分化計画 5-4b。`_ema_kernel` と同じパターン）。
+
     use_state=False（既定の全期間計算）: 従来どおり。`i < warmup` の区間は
         母集団（rolling(252, min_periods=1)）が252本に満たない可能性があるため
         無条件でカウント未開始（sentinel）にする。このガードの意味は変えない。
-    use_state=True（増分計算。T3 増分化計画 5-4）: 呼び出し元は既に実履歴が
-        warmup 本を超えていることが保証された状態（state が存在する＝過去に
-        一度全期間計算が通っている）で呼んでいるため、渡された配列内の相対位置
-        （`i`）で warmup 判定をする意味が無い（配列そのものが直近の一部分でしか
-        ないため、絶対位置とズレる）。この場合はガードを適用せず、
-        seed_prev_b/seed_prev_r（前日の保存値）をそのまま初期値として使う。
+    use_state=True（増分計算）: 供給された前日行（末尾から2番目。既に実値が
+        入っている）を seed_prev_b/seed_prev_r としてそのまま使い、
+        最終行だけを1歩計算する。warmup ガードは適用しない（供給された履歴が
+        既に十分長いことが増分呼び出しの前提のため）。
     """
     n = blue.shape[0]
     ba = np.full(n, sentinel, np.int32)
     ra = np.full(n, sentinel, np.int32)
     if use_state:
+        start_idx = n - 2
+        ba[start_idx] = seed_prev_b
+        ra[start_idx] = seed_prev_r
         prev_b, prev_r = seed_prev_b, seed_prev_r
+        loop_start = start_idx + 1
     else:
         prev_b, prev_r = sentinel, sentinel
-    for i in range(n):
+        loop_start = 0
+    for i in range(loop_start, n):
         if (not use_state) and i < warmup:
             # 母集団が 252 本に満たない区間はカウントを開始しない
             prev_b, prev_r = sentinel, sentinel
@@ -141,9 +150,9 @@ def compute_rs_dot_age(blue, red, cap: int = RS_DOT_AGE_MAX,
 
     Args:
         blue / red: 1銘柄分の時系列の点灯フラグ（bool 配列。日付昇順）。
-        prev_blue_age / prev_red_age: 増分計算用。前日の保存値（state）。
+        prev_blue_age / prev_red_age: 増分計算用。前日の保存値。
             指定すると warmup ガード（i<warmup は無条件 sentinel）を適用せず、
-            この値をそのまま継続の初期値として使う（T3 増分化計画 5-4）。
+            この値をシードに最終行だけを1歩計算する（T3 増分化計画 5-4b）。
             どちらも None（既定）なら現行どおり全期間計算。
 
     Returns:
@@ -163,13 +172,22 @@ def compute_rs_dot_age(blue, red, cap: int = RS_DOT_AGE_MAX,
     )
 
 
-def calc_relative_strength(df: pd.DataFrame, df_spy: pd.DataFrame = None, state: dict = None) -> pd.DataFrame:
+def calc_relative_strength(df: pd.DataFrame, df_spy: pd.DataFrame = None, state: bool = None) -> pd.DataFrame:
     """Calculate Relative Strength and RRG (Relative Rotation Graph) factors.
     Requires df_spy to be passed. If not passed, RS features will not be calculated.
 
     Args:
-        state: 増分計算用の前日値辞書。None（既定）なら現行どおり全期間計算。
+        state: 増分計算のフラグ（truthy で増分モード。T3 増分化計画 5-4b）。
+            RECURSIVE 型列（`rs_value_eN` / `rs_roc_ema_N` / `rs_macd_signal_21` /
+            `rs_blue_dot_age` / `rs_red_dot_age`）は、前日シードを df 自身の
+            供給済み履歴（最終行の1つ前の行）から取り出し、最終行だけを1歩
+            計算した上で供給済み履歴とマージする。WINDOW 型列（`rs_ratio_eN` /
+            `rs_momentum_eN` / `rs_trend_sN` 等）は、入力（マージ済みの
+            RECURSIVE 型列、または生価格）が全行にわたって実値になっているため、
+            通常どおり計算すれば正しい（`incremental_merge.py` 参照）。
+            None/False（既定）なら現行どおり全期間計算。
     """
+    incremental = bool(state)
     close = df['close']
 
     if df_spy is None or df_spy.empty:
@@ -194,11 +212,13 @@ def calc_relative_strength(df: pd.DataFrame, df_spy: pd.DataFrame = None, state:
     )
     rs = df['rs_value']
 
-    # rs_value_e5 (Smoothing for rs_trend)
-    rs_ema_5 = calculate_ema_tv(rs, 5, prev_ema=(state.get('rs_value_e5') if state else None))
+    # rs_value_e5 (Smoothing for rs_trend) — RECURSIVE
+    prev_rs_value_e5 = prev_self_seed(df, 'rs_value_e5', incremental)
+    rs_ema_5 = calculate_ema_tv(rs, 5, prev_ema=prev_rs_value_e5)
+    rs_ema_5 = finalize_incremental_column(df, 'rs_value_e5', rs_ema_5, incremental)
     df['rs_value_e5'] = rs_ema_5
 
-    # rs_trend_sN = rs_value_e5 / SMA(rs_value, N)
+    # rs_trend_sN = rs_value_e5 / SMA(rs_value, N) — WINDOW（マージ済みrs_ema_5と生rsのみに依存）
     for n in [5, 14, 21, 63, 200]:
         rs_sma = rs.rolling(window=n, min_periods=max(1, n//2)).mean()
         df[f'rs_trend_s{n}'] = np.where(
@@ -207,14 +227,17 @@ def calc_relative_strength(df: pd.DataFrame, df_spy: pd.DataFrame = None, state:
 
     # rs_value_eN, rs_ratio_eN, rs_momentum_eN (Refined JdK methodology)
     for n in [5, 14, 21, 63, 200]:
-        # 1. rs_value_eN (Smoothing of rs_value)
+        # 1. rs_value_eN (Smoothing of rs_value) — RECURSIVE
         if n == 5:
             rs_ema = rs_ema_5
         else:
-            rs_ema = calculate_ema_tv(rs, n, prev_ema=(state.get(f'rs_value_e{n}') if state else None))
+            prev_rs_value_en = prev_self_seed(df, f'rs_value_e{n}', incremental)
+            rs_ema = calculate_ema_tv(rs, n, prev_ema=prev_rs_value_en)
+            rs_ema = finalize_incremental_column(df, f'rs_value_e{n}', rs_ema, incremental)
             df[f'rs_value_e{n}'] = rs_ema
-        
-        # 2. rs_ratio_eN (Z-score of rs_value_eN over n days)
+
+        # 2. rs_ratio_eN (Z-score of rs_value_eN over n days) — WINDOW
+        #    rs_ema は上でマージ済み（全行が実値）のため、通常どおり計算すればよい。
         rs_mean = rs_ema.rolling(window=n, min_periods=max(1, n//2)).mean()
         rs_std  = rolling_std_independent(rs_ema, n, max(1, n//2))
         df[f'rs_ratio_e{n}'] = np.where(
@@ -226,12 +249,14 @@ def calc_relative_strength(df: pd.DataFrame, df_spy: pd.DataFrame = None, state:
         ratio_offset = ratio_val + 100.0
         # Standard daily RRG uses a 14-day ROC period.
         roc = (ratio_offset / ratio_offset.shift(14)) * 100.0
-        
-        # Smooth the ROC recursively
-        roc_ema = calculate_ema_tv(roc, n, prev_ema=(state.get(f'rs_roc_ema_{n}') if state else None))
+
+        # Smooth the ROC recursively — RECURSIVE
+        prev_roc_ema = prev_self_seed(df, f'rs_roc_ema_{n}', incremental)
+        roc_ema = calculate_ema_tv(roc, n, prev_ema=prev_roc_ema)
+        roc_ema = finalize_incremental_column(df, f'rs_roc_ema_{n}', roc_ema, incremental)
         df[f'rs_roc_ema_{n}'] = roc_ema
-        
-        # Standardize the smoothed ROC
+
+        # Standardize the smoothed ROC — WINDOW（マージ済みroc_emaに依存）
         roc_mean = roc_ema.rolling(window=n, min_periods=max(1, n//2)).mean()
         roc_std  = rolling_std_independent(roc_ema, n, max(1, n//2))
         df[f'rs_momentum_e{n}'] = np.where(
@@ -256,19 +281,29 @@ def calc_relative_strength(df: pd.DataFrame, df_spy: pd.DataFrame = None, state:
         & (rs <= rs_252_low) & (close > close_252_low)
     ).to_numpy()
 
+    # RECURSIVE
+    prev_blue_age = prev_self_seed(df, 'rs_blue_dot_age', incremental)
+    prev_red_age = prev_self_seed(df, 'rs_red_dot_age', incremental)
     blue_age, red_age = compute_rs_dot_age(
         blue_lit, red_lit,
-        prev_blue_age=(state.get('rs_blue_dot_age') if state else None),
-        prev_red_age=(state.get('rs_red_dot_age') if state else None),
+        prev_blue_age=prev_blue_age,
+        prev_red_age=prev_red_age,
     )
-    df['rs_blue_dot_age'] = blue_age
-    df['rs_red_dot_age'] = red_age
+    df['rs_blue_dot_age'] = finalize_incremental_column(
+        df, 'rs_blue_dot_age', pd.Series(blue_age, index=df.index), incremental
+    )
+    df['rs_red_dot_age'] = finalize_incremental_column(
+        df, 'rs_red_dot_age', pd.Series(red_age, index=df.index), incremental
+    )
 
     # --- RS-MACD(5, 21, 5) ---
+    # rs_macd_line_21 — WINDOW（マージ済みのrs_value_e5・rs_value_e21のみに依存）
     df['rs_macd_line_21'] = df['rs_value_e5'] - df['rs_value_e21']
-    df['rs_macd_signal_21'] = calculate_ema_tv(
-        df['rs_macd_line_21'], 5, prev_ema=(state.get('rs_macd_signal_21') if state else None)
-    )
+    # rs_macd_signal_21 — RECURSIVE
+    prev_macd_signal = prev_self_seed(df, 'rs_macd_signal_21', incremental)
+    macd_signal = calculate_ema_tv(df['rs_macd_line_21'], 5, prev_ema=prev_macd_signal)
+    df['rs_macd_signal_21'] = finalize_incremental_column(df, 'rs_macd_signal_21', macd_signal, incremental)
+    # rs_macd_hist_21 — WINDOW
     df['rs_macd_hist_21'] = df['rs_macd_line_21'] - df['rs_macd_signal_21']
 
     return df

@@ -1,59 +1,41 @@
 """calculate_indicators の増分計算(state)と全期間計算の等価性テスト（TDD）。
 
-計画書: doc/in_progress/t3_incremental_plan.md §3.1, §3.3, 5-4, 5-5
+計画書: doc/in_progress/t3_incremental_plan.md §3.1, §3.3, 5-4, 5-4b, 5-5
 
 固定する点:
 1. `state=None` のときの出力が現行実装と完全に一致すること
    （5-4 の絶対条件。`backend/tests/indicators` の既存テスト群が全期間計算の
    出力を保護しているため、本ファイルでは重複させない）
-2. 「増分1歩の結果 == 全期間再計算の最終行」
-   （全列を比較する。NaN 同士は一致とみなす。分類を誤った列があれば、
+2. 「増分1歩の結果 == 全期間再計算の最終行」（全67列を比較する。NaN 同士は
+   一致とみなす。分類を誤った列や、供給履歴の配線を誤った列があれば、
    このテストが検出する）
 
-## 増分呼び出しの入力契約（本ファイルが検証する設計）
+## 増分呼び出しの入力契約（5-4b。本ファイルが検証する設計）
 
-- `K = max_lookback() + margin`（レジストリの WINDOW/RECURSIVE 双方の lookback
-  最大値から導出。ハードコードしない）
-- `df`（生価格）= 全履歴の直近 `K+1` 本。先頭1本が「state の日付」（コンテキスト行。
-  shift(1) 等の起点として raw price が必要なだけで、この行自体の出力は使わない）、
-  残り `K` 本が「新規に計算される行」
-- `state` = 全履歴を `state=None` で計算した結果のうち、上記コンテキスト行
-  （df の先頭行）の日付の RECURSIVE 列（`prev_self=True`）の値
-  （`recursive_column_names()` で機械的に導出）
+5-4/5-5 版は「生価格 K+1 本」＋コンテキスト行1本分のスカラー state（RECURSIVE
+型列の前日値のみ）を入力とし、RECURSIVE 型列を毎回コンテキスト行から窓全体
+（K本）を再帰的に歩き直していた。この設計では WINDOW 型列（`rs_ratio_eN` 等）
+が増分ウィンドウ内でしか rolling 窓を作れず、窓が育つまでの区間（最大 N-1
+行）が不正確な値になり、それが `roc`（14日ROC）経由で `rs_roc_ema_N` の
+再帰入力に混入すると、α の小さい列（N=200 で約0.01）では窓を伸ばしても
+汚染が解消しきらなかった（`rs_roc_ema_63`/`rs_momentum_e63`/
+`rs_roc_ema_200`/`rs_momentum_e200` の4列が未収束のまま残っていた）。
 
-## 既知の未解決事項（5-4/5-5 実装時に発見。オーケストレーターへの報告事項）
+5-4b は入力契約を「生価格 K+1 本」から「生価格 K+1 本 ＋ 保存済み T3
+中間列 K 本」に拡張して解決する:
 
-`rs_roc_ema_63` / `rs_roc_ema_200`（および下流の `rs_momentum_e63` / `rs_momentum_e200`）は、
-レジストリが宣言する lookback（15 / 200）だけでは増分1歩の結果が全期間再計算に
-収束しないことが実測で判明した。
-
-原因: `rs_roc_ema_N` は「RECURSIVE(EMA) の入力が WINDOW(`rs_ratio_eN`) で、その
-WINDOW の入力がさらに RECURSIVE(`rs_value_eN`)」という二重の入れ子になっている。
-`rs_value_eN` 自体は state から1歩で厳密に継続できる（実測: df 全体で誤差0）が、
-`rs_ratio_eN` は「直近N行の `rs_value_eN`」を必要とする WINDOW 型のため、state
-境界の直後（最大 N-1 行）は、df に含まれる生価格の範囲内でしか `rs_value_eN` の
-「窓」が埋まらず、本来より小さい窓で計算された不正確な値になる。この不正確な
-`rs_ratio_eN` が `rs_roc_ema_N` の再帰ステップに（14日ROC経由で）混入すると、
-`rs_roc_ema_N` の α=2/(N+1) が小さい（N=200 で約0.01）ため半減期が長く
-（1ステップで約1%しか収束しない）、K=252+余裕程度の増分ウィンドウでは
-数千行分の「汚染」を解消しきれない（実測: K=2000 でもなお絶対誤差 ~5e-8。
-K=max_lookback()+50=302 では `rs_momentum_e200` の誤差が絶対値1.93に達し、
-符号すら反転する）。
-
-これは以下のいずれかの設計変更が必要で、本タスク（5-4/5-5）の範囲を超えるため
-実装せず、計画書のオーケストレーターに報告する:
-  a) `rs_ratio_eN` / `rs_roc_ema_N` の「直近N行」を、生価格からの再構築ではなく
-     保存済み T3 列（`rs_value_eN` / `rs_ratio_eN` の履歴）から読む経路を
-     別途用意する（実装依頼プロンプトが「difficulty 2」として想定していた論点）
-  b) `rs_value_eN` の state 継続元の日付を `rs_roc_ema_N` とは別に
-     （N 日分先行させて）持つ、多段 state 設計にする
-  c) `rs_momentum_e200` 自体を退役・再設計する
-     （`doc/in_progress/t3_incremental_plan.md` §8 に既に候補として記載あり）
-
-このテストでは該当4列を `KNOWN_UNCONVERGED_COLUMNS` として明示的に除外し、
-残り列については NaN 同士は一致、それ以外は `rtol=atol=1e-9` の厳密一致を固定する。
-除外4列は「非NaNの値が出力されること」だけを確認する
-（レジストリの分類自体・実装の配線自体が壊れていないことの最低限の担保）。
+- `df`（生価格）＝ 全履歴の直近 `K+1` 本。生の価格列は全行に値がある
+- **同じ `df` に、保存済み T3 列（`INDICATOR_COLUMN_REGISTRY` の全列）が
+  行 0..K-1 に実値として入っている。最終行（K）だけが NaN**（＝これから
+  計算する日。raw price 列のみを持つ行として供給する）
+- `K = max_lookback()`（+余裕）。5-4b の設計では RECURSIVE 型列は
+  「供給された行K-1の値をシードに最終行だけ計算」、WINDOW 型列は
+  「マージ済みの実値だけに依存する通常の計算」になるため、収束を待つ必要が
+  なくなり、レジストリの宣言する lookback だけで厳密一致する
+  （詳細: `backend/indicators/incremental_merge.py` モジュール docstring）
+- `state=True`（真偽フラグ）を渡すことで増分モードを有効にする。個々の
+  RECURSIVE 型列の前日シードは、外部から辞書で渡すのではなく、関数が
+  df 自身の供給済み履歴（最終行の1つ前の行）から機械的に導出する
 """
 import math
 
@@ -61,14 +43,7 @@ import numpy as np
 import pandas as pd
 
 from indicators.calculate import calculate_indicators
-from indicators.incremental_state_registry import max_lookback, recursive_column_names
-
-# 5-4/5-5 実装時点で未解決（モジュール docstring 参照）。
-# 解消したらここから外し、通常の厳密一致チェックに合流させること。
-KNOWN_UNCONVERGED_COLUMNS = frozenset({
-    'rs_roc_ema_63', 'rs_momentum_e63',
-    'rs_roc_ema_200', 'rs_momentum_e200',
-})
+from indicators.incremental_state_registry import max_lookback
 
 
 def _make_series(n: int, seed: int, base: float, vol: float, spike_every: int = 45):
@@ -98,11 +73,23 @@ def _is_nan_like(v) -> bool:
     return v is None or (isinstance(v, float) and math.isnan(v))
 
 
+# calculate_indicators が内部で SPY とマージして作る列。T3 の実列（DBに保存される列）
+# ではないため、「供給済み履歴」として渡す history から除く（5-4b の入力契約は
+# INDICATOR_COLUMN_REGISTRY の列のみを供給する。SPY 側の生価格は df_spy として
+# 別途・独立に渡すのが本来の契約）。
+_NON_PERSISTED_MERGE_COLUMNS = ['spy_close', 'spy_volume']
+
+_RAW_PRICE_COLUMNS = ['date', 'open', 'high', 'low', 'close', 'volume']
+
+
 class TestIncrementalMatchesFullRecompute:
-    """「増分1歩の結果 == 全期間再計算の最終行」の等価性テスト（計画書 5-5）。"""
+    """「増分1歩の結果 == 全期間再計算の最終行」の等価性テスト（計画書 5-5、5-4bで再設計）。"""
+
+    N_TOTAL = 1400  # 1,000本以上・値が変化し続ける現実的な系列（5-5 の要求）
+    MARGIN = 10  # max_lookback() ちょうどでも理論上は足りるが、境界の丸め誤差を避ける余裕
 
     def _build_full_and_incremental(self):
-        n_total = 1400  # 1,000本以上・値が変化し続ける現実的な系列（5-5 の要求）
+        n_total = self.N_TOTAL
         dates = pd.bdate_range('2019-01-02', periods=n_total).date
 
         px = _make_series(n_total, seed=1, base=100.0, vol=1.2)
@@ -115,51 +102,41 @@ class TestIncrementalMatchesFullRecompute:
         full_res = calculate_indicators(df_full, spy_full, state=None)
 
         # K はレジストリの lookback 最大値から導出する（ハードコードしない）。
-        # +50 は「窓がフルに埋まってから何本か経過した状態」を作るための余裕
-        # （境界ちょうどだと rolling(min_periods=...) が全期間計算と異なる
-        # 窓サイズを使う一瞬の遷移域に入りかねないため）。
-        margin = 50
-        k = max_lookback() + margin
-        k_total = k + 1  # 先頭1本はコンテキスト行（state の日付そのもの）
+        k = max_lookback() + self.MARGIN
+        k_total = k + 1  # 供給履歴K本 + 新規計算する最終行1本
         state_idx = n_total - k_total
-        assert state_idx > 500, 'state 自体が十分に settle した位置から取れるよう、全履歴を長くしてください'
+        assert state_idx > 500, 'oracle 自体が十分に settle した位置から取れるよう、全履歴を長くしてください'
 
-        state_row = full_res.iloc[state_idx]
-        state = {col: state_row[col] for col in recursive_column_names()}
+        # 供給する履歴（行0..K-1）: 生価格 + 保存済みT3列（すべて実値）。
+        # spy_close/spy_volume は T3 の実列ではない（calc_relative_strength が
+        # df_spy から都度導出する）ため除く。
+        history = (
+            full_res.iloc[state_idx: state_idx + k]
+            .drop(columns=_NON_PERSISTED_MERGE_COLUMNS, errors='ignore')
+            .reset_index(drop=True)
+        )
+        # 新規に計算する最終行（行K）: 生価格のみ（T3列は無い＝concat後にNaNになる）。
+        new_row_raw = df_full.iloc[[state_idx + k]][_RAW_PRICE_COLUMNS].reset_index(drop=True)
+        df_inc = pd.concat([history, new_row_raw], ignore_index=True, sort=False)
 
-        df_inc = df_full.iloc[state_idx:].reset_index(drop=True)
-        spy_inc = spy_full.iloc[state_idx:].reset_index(drop=True)
+        spy_inc = spy_full.iloc[state_idx: state_idx + k_total].reset_index(drop=True)
 
-        # 被験: 直近K+1本（コンテキスト行+K本）を state ありで計算
-        got_res = calculate_indicators(df_inc, spy_inc, state=state)
+        # 被験: 増分モード（state=True）。K+1本のうち最終行だけを新規計算する。
+        got_res = calculate_indicators(df_inc, spy_inc, state=True)
 
-        return full_res.iloc[-1], got_res.iloc[-1]
+        return full_res.iloc[-1], got_res.iloc[-1], full_res, k_total
 
     def test_dot_lighting_events_exist_in_window(self):
         """自己修復性の前提（テストデータの健全性チェック）。
 
         `rs_blue_dot_age`/`rs_red_dot_age` は state 継続時に warmup ガードを
-        バイパスする設計（実装依頼プロンプトの「想定される難所」1点目。
-        `_rs_dot_age_kernel` の `use_state` 引数を参照）になっている。
-        これが正しく機能していることは、増分ウィンドウ内にドット点灯
-        （age=0）が実際に発生するテストデータでなければ検証できない
+        バイパスする設計（`_rs_dot_age_kernel` の `use_state` 引数を参照）に
+        なっている。これが正しく機能していることは、増分ウィンドウ内にドット
+        点灯（age=0）が実際に発生するテストデータでなければ検証できない
         （点灯が一度も無いと age は sentinel に飽和したまま何を見ても
         変わらず、テストとして無意味になる）。
         """
-        ref_row, _ = self._build_full_and_incremental()
-        # ref_row 自体は「対象日1行」なので、ここでは _build 内で使った
-        # full_res 全体を再計算して点灯回数を数える方が趣旨に合うため、
-        # 直接 calculate_indicators を呼び直す。
-        n_total = 1400
-        dates = pd.bdate_range('2019-01-02', periods=n_total).date
-        px = _make_series(n_total, seed=1, base=100.0, vol=1.2)
-        df_full = pd.DataFrame({'date': dates}).join(px)
-        spy_px = _make_series(n_total, seed=2, base=300.0, vol=2.0)
-        spy_full = pd.DataFrame({'date': dates}).join(spy_px)
-        full_res = calculate_indicators(df_full, spy_full, state=None)
-
-        margin = 50
-        k_total = max_lookback() + margin + 1
+        _, _, full_res, k_total = self._build_full_and_incremental()
         window = full_res.iloc[-k_total:]
         blue_lightings = int((window['rs_blue_dot_age'] == 0).sum())
         red_lightings = int((window['rs_red_dot_age'] == 0).sum())
@@ -169,46 +146,31 @@ class TestIncrementalMatchesFullRecompute:
         )
 
     def test_incremental_matches_full_recompute_for_all_columns(self):
-        ref_row, got_row = self._build_full_and_incremental()
+        """全67列が rtol=atol=1e-9 で厳密一致すること（5-4bで未収束4列の除外を撤廃）。"""
+        ref_row, got_row, _, _ = self._build_full_and_incremental()
 
-        hard_mismatches = []
-        unconverged_are_defined = {}
-
+        mismatches = []
         for col in ref_row.index:
             if col == 'date':
                 continue
             a, b = ref_row[col], got_row[col]
             a_nan, b_nan = _is_nan_like(a), _is_nan_like(b)
 
-            if col in KNOWN_UNCONVERGED_COLUMNS:
-                # 既知の未解決列（モジュール docstring 参照）: 分類・配線自体が
-                # 壊れていないことだけを見る（非NaNであること）。値の一致は問わない。
-                unconverged_are_defined[col] = not b_nan
-                continue
-
             if a_nan and b_nan:
                 continue
             if a_nan != b_nan:
-                hard_mismatches.append((col, a, b, 'NaN不一致'))
+                mismatches.append((col, a, b, 'NaN不一致'))
                 continue
             try:
                 af, bf = float(a), float(b)
             except (TypeError, ValueError):
                 if a != b:
-                    hard_mismatches.append((col, a, b, '非数値の不一致'))
+                    mismatches.append((col, a, b, '非数値の不一致'))
                 continue
             if not math.isclose(af, bf, rel_tol=1e-9, abs_tol=1e-9):
-                hard_mismatches.append((col, af, bf, 'rtol/atol=1e-9で不一致'))
+                mismatches.append((col, af, bf, 'rtol/atol=1e-9で不一致'))
 
-        assert not hard_mismatches, (
-            f'{len(hard_mismatches)}列で増分計算が全期間再計算と一致しませんでした:\n'
-            + '\n'.join(f'  {c}: ref={a!r} got={b!r} ({reason})' for c, a, b, reason in hard_mismatches)
-        )
-
-        # 既知の未解決列（KNOWN_UNCONVERGED_COLUMNS）は、配線が生きていて
-        # 非NaNの値を返すことだけを確認する（モジュール docstring 参照）。
-        assert unconverged_are_defined == {c: True for c in KNOWN_UNCONVERGED_COLUMNS}, (
-            f'既知の未解決列のうち非NaNでなかったもの: '
-            f'{[c for c, ok in unconverged_are_defined.items() if not ok]}\n'
-            'レジストリの分類や配線自体が壊れている可能性があります（数値の精度問題とは別）。'
+        assert not mismatches, (
+            f'{len(mismatches)}列で増分計算が全期間再計算と一致しませんでした:\n'
+            + '\n'.join(f'  {c}: ref={a!r} got={b!r} ({reason})' for c, a, b, reason in mismatches)
         )

@@ -327,9 +327,13 @@ if len(INDICATOR_COLUMN_REGISTRY) != len(_ENTRIES):
 def recursive_column_names() -> Tuple[str, ...]:
     """RECURSIVE 型（`prev_self=True`）の列名一覧（ソート済み）。
 
-    `calculate_indicators(df, spy_df, state=None)` の `state` 引数が持つべき
-    キー集合はこれと一致する（5-4）。レジストリから機械的に導出することで、
-    将来 RECURSIVE 列が追加・削除されても呼び出し側の実装を直す必要がない。
+    5-4b で `calculate_indicators(df, spy_df, state=True)` の増分呼び出しは、
+    RECURSIVE 列の前日シードを外部のスカラー辞書ではなく df 自身の供給済み
+    履歴（最終行の1つ前の行）から直接取り出す設計に変わった
+    （`backend/indicators/incremental_merge.py` の `prev_self_seed` 参照）。
+    そのため呼び出し側の実装は本関数を必須では使わないが、
+    「df に供給すべき列（＝RECURSIVE型の全列）」を機械的に列挙する用途
+    （5-6 の T3 ワーカー実装や検証）のために残す。
     """
     return tuple(sorted(
         name for name, spec in INDICATOR_COLUMN_REGISTRY.items() if spec.prev_self
@@ -339,8 +343,12 @@ def recursive_column_names() -> Tuple[str, ...]:
 def max_lookback() -> int:
     """全列（RECURSIVE の inputs 由来の遡りも含む）の lookback 最大値。
 
-    `calculate_indicators` を増分呼び出しする際に必要な生価格の遡り本数
-    （T3 増分化計画 5-5 の等価性テストで使う K の算出根拠）。
+    `calculate_indicators` を増分呼び出しする際に、df に供給すべき履歴の
+    行数 K の算出根拠（T3 増分化計画 5-4b の等価性テストで使う）。
+    5-4b の設計では、RECURSIVE 型列は「供給された行K-1の値をシードに
+    最終行だけを計算」、WINDOW 型列は「マージ済みの実値だけに依存する
+    通常の計算」になるため、K はレジストリの宣言する lookback（収束を
+    待つ必要がない、各列が直接必要とする行数）だけで足りる。
     lookback が未確定（None）の列は対象外とする（5-3b 時点では全列確定済み）。
     """
     values = [spec.lookback for spec in INDICATOR_COLUMN_REGISTRY.values() if spec.lookback is not None]

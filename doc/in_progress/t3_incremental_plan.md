@@ -285,6 +285,22 @@ daily_prices: 2024-09-18 〜 2026-09-18 / 504 営業日 / 3,360銘柄
       `rs_roc_ema_200`/`rs_momentum_e200`）は未解決のまま KNOWN_UNCONVERGED として
       除外**（詳細は §7 の「5-4/5-5: rs_roc_ema_N の多段依存が収束しない」）。
       `backend/tests/indicators/test_calculate_incremental_equivalence.py`
+- [x] **5-4b** 5-4/5-5 で残った4列の未収束を解消 — **完了（2026-09-22）**。
+      §7「5-4b: 増分呼び出しの入力契約を拡張して4列の未収束を解消」参照。
+      §7 の対処案1（保存済み T3 列を df 自体に供給する経路を別途用意する）を採用。
+      `KNOWN_UNCONVERGED_COLUMNS` の除外を撤廃し、**67列すべてが rtol=atol=1e-9
+      で厳密一致**することを確認（除外ゼロ）。
+      変更ファイル: `backend/indicators/incremental_merge.py`（新規）、
+      `backend/indicators/moving_averages.py`・`volatility.py`・
+      `relative_strength.py`（RECURSIVE型列の前日シードをdf自身の供給済み履歴から
+      直接導出し、最終行だけを1歩計算した上で供給済み履歴とマージする設計に変更。
+      `calculate_ema_tv`/`_td9_kernel`/`_atr_wilder_kernel`/`_rs_dot_age_kernel`は
+      式そのものは変えず「どこからシードするか」「どの行を計算するか」だけを
+      パラメータ化）、`backend/indicators/calculate.py`（docstring更新のみ）、
+      `backend/indicators/incremental_state_registry.py`（docstring更新のみ）、
+      `backend/tests/indicators/test_calculate_incremental_equivalence.py`
+      （増分呼び出しの入力契約を「生価格K+1本」から「生価格K+1本＋保存済み
+      T3中間列K本」に変更するテストへ全面改訂）。
 - [ ] **5-6** T3 ワーカーを増分呼び出しへ変更（§3.2）＋フォールバック（§3.5）
 - [ ] **5-7** 更新窓の実装（§3.4。(c) は 5-2 で決めた N 日を書き直す）
 - [ ] **5-8** pytest 全件パス
@@ -408,6 +424,62 @@ RECURSIVE 列（`rs_value_eN`・`rs_roc_ema_N`）を保存済み前日値から�
 判断が必要。** 現状のまま 5-6 に進むと、`rs_roc_ema_63/200`・`rs_momentum_e63/200`
 （表示専用・戦略未使用）が増分経路で不正確な値のまま日次更新され続ける
 （現状の「日次で毎回SMA再シード」より改善するとは限らない）。
+
+### 5-4b: 増分呼び出しの入力契約を拡張して4列の未収束を解消（2026-09-22）
+
+**オーケストレーター判断: 上記の対処案1（保存済み T3 列を df 自体に供給する経路を
+別途用意する）を採用。**
+
+**根本原因の再診断**: 5-4/5-5 の実装は「`state` をスカラー辞書とし、増分ウィンドウ
+K本の先頭で再帰系をシードして窓全体（K本）を再帰的に歩き直す」設計だった。この
+設計だと `rs_ratio_eN`（WINDOW型。`rs_value_eN` の直近N本のZ-score）が増分
+ウィンドウ内でしか rolling 窓を作れず、窓がN本育つまでの区間（最大N-1行）では、
+本来より小さい窓で計算された不正確な値になる。この不正確な `rs_ratio_eN` が
+`roc`（14日ROC）経由で `rs_roc_ema_N` の再帰ステップに混入すると、α が小さい列
+（N=200で約0.01）では半減期が長く、増分ウィンドウをいくら伸ばしても（K=2000でも）
+汚染が解消しきらなかった。**「K を増やしても解決しない」ことは前任者がK=2000で
+確認済みであり、これは正しい診断だった**（問題は窓の長さではなく、
+「履歴の中間値を再計算していること」自体にあった）。
+
+**採用した設計**: 増分呼び出しの入力を「生価格 K+1 本」から「生価格 K+1 本 ＋
+保存済み T3 中間列 K 本」に拡張した。呼び出し元は、直近 K+1 行の DataFrame
+（`df`）を渡す。生の価格列（open/high/low/close/volume）は全行に値があるが、
+**T3 の計算列（`indicators` テーブル相当の列）は行 0..K-1 に保存済みの実値が
+入っており、最終行（K）だけが NaN**（＝これから計算する日）という契約にした。
+
+この契約のもとで:
+
+- **RECURSIVE 型列**（`ema_*`・`rs_value_eN`・`rs_roc_ema_N`・`td9`・`atr_14`・
+  `rs_macd_signal_21`・`rs_blue/red_dot_age`）は、供給された行 K-1（既に実値が
+  入っている）をシードにし、**最終行 K だけを1歩計算**する。計算式自体は
+  `state=None` と同じ関数（`_ema_kernel`/`_td9_kernel`/`_atr_wilder_kernel`/
+  `_rs_dot_age_kernel`）を使い、「どこからシードするか」（0行目 or K-1行目）と
+  「どこまで計算するか」（全行 or 最終行のみ）だけをパラメータ化した
+  （単一実装を維持）。計算結果を供給済みの履歴（行0..K-1）とマージする処理は
+  `backend/indicators/incremental_merge.py` の `finalize_incremental_column`
+  に切り出し、全RECURSIVE型列で共通利用する。
+- **WINDOW 型列**（`rs_ratio_eN`・`rs_momentum_eN`・`rs_trend_sN`・`sma_*` 等）は
+  **変更不要**。RECURSIVE型列側でマージ済み（行0..K-1が供給済みの実値、行Kが
+  新規計算値）になった入力に対して、従来どおりの rolling 計算を適用するだけで
+  正しい値になる（「窓が増分ウィンドウ内でしか育たない」問題は、RECURSIVE型列を
+  毎回再構築するのをやめたことで構造的に消える）。
+
+この設計変更により、`rs_ratio_eN` の rolling 窓は常に「保存済みの実値」から
+組み立てられるため、`roc` に汚染された値が混入することがなくなり、収束を待つ
+必要がなくなった（K はレジストリの宣言する lookback を満たすだけで厳密一致する。
+テストでは `K = max_lookback() + margin(10)` を使用。理論上は margin=0 でも
+足りるはずだが、境界の丸め誤差を避けるための保守的な余裕）。
+
+**結果**: `KNOWN_UNCONVERGED_COLUMNS` による4列の除外を撤廃し、
+**67列すべてが rtol=atol=1e-9 で厳密一致**することを実測で確認した
+（`test_incremental_matches_full_recompute_for_all_columns`）。
+
+**5-6（T3 ワーカー実装）への申し送り**: 5-6 では、T3 ワーカーが SQLite の
+`indicators` テーブルから直近 `max_lookback()` 本の保存済み行（全列）を読み、
+生価格の新規行と結合した DataFrame を `calculate_indicators(df, spy_df,
+state=True)` に渡す実装にする必要がある（単に「前日の行」だけを渡す旧設計では
+不十分）。`recursive_column_names()`（レジストリ）で「df に供給すべき列」を
+機械的に列挙できる。
 
 ## 8. スコープ外・残作業（issue_list へ起票する）
 
