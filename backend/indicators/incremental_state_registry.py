@@ -322,3 +322,26 @@ if len(INDICATOR_COLUMN_REGISTRY) != len(_ENTRIES):
     _names = [spec.name for spec in _ENTRIES]
     _dupes = sorted({n for n in _names if _names.count(n) > 1})
     raise AssertionError(f'INDICATOR_COLUMN_REGISTRY に重複登録があります: {_dupes}')
+
+
+def recursive_column_names() -> Tuple[str, ...]:
+    """RECURSIVE 型（`prev_self=True`）の列名一覧（ソート済み）。
+
+    `calculate_indicators(df, spy_df, state=None)` の `state` 引数が持つべき
+    キー集合はこれと一致する（5-4）。レジストリから機械的に導出することで、
+    将来 RECURSIVE 列が追加・削除されても呼び出し側の実装を直す必要がない。
+    """
+    return tuple(sorted(
+        name for name, spec in INDICATOR_COLUMN_REGISTRY.items() if spec.prev_self
+    ))
+
+
+def max_lookback() -> int:
+    """全列（RECURSIVE の inputs 由来の遡りも含む）の lookback 最大値。
+
+    `calculate_indicators` を増分呼び出しする際に必要な生価格の遡り本数
+    （T3 増分化計画 5-5 の等価性テストで使う K の算出根拠）。
+    lookback が未確定（None）の列は対象外とする（5-3b 時点では全列確定済み）。
+    """
+    values = [spec.lookback for spec in INDICATOR_COLUMN_REGISTRY.values() if spec.lookback is not None]
+    return max(values) if values else 0

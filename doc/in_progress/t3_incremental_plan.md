@@ -272,8 +272,19 @@ daily_prices: 2024-09-18 〜 2026-09-18 / 504 営業日 / 3,360銘柄
 - [x] **5-3** 特性タイプの分類レジストリを作成し、**全列が登録済みであることを固定するテスト**（red → green）
       → 初版は3点の設計ミスがあり、**5-3b で再設計**（`ColumnSpec` を `prev_self`/`inputs`/`lookback` に
       分解。詳細は §7 および `backend/indicators/incremental_state_registry.py` のモジュール docstring）
-- [ ] **5-4** `calculate_indicators(df, state=None)` へのシグネチャ拡張（`state=None` の挙動は現行と完全一致）
-- [ ] **5-5** **「増分1歩 == 全期間再計算の最終行」の等価テスト**を追加（red → green）
+- [x] **5-4** `calculate_indicators(df, state=None)` へのシグネチャ拡張（`state=None` の挙動は現行と完全一致）
+      — **完了（2026-09-22）**。`calculate_ema_tv`/`calc_moving_averages`/`calc_volatility`
+      （ATR は ta ライブラリ依存を排し自前 Wilder 実装に置換、TD9 も対応）/
+      `calc_relative_strength`（rs_value_eN・rs_roc_ema_N・rs_macd_signal_21・
+      rs_blue_dot_age/red_dot_age）が `state` を受け取れるよう拡張。
+      `state=None` は既存テスト1837件（旧1835+新2）全パスでビット単位一致を確認。
+      **rs_blue_dot_age/red_dot_age の warmup ガード（想定される難所1点目）は
+      `use_state` フラグでバイパスする設計を採用**（`_rs_dot_age_kernel`）。詳細は §7。
+- [x] **5-5** **「増分1歩 == 全期間再計算の最終行」の等価テスト**を追加（red → green）
+      — **完了（2026-09-22）。ただし4列（`rs_roc_ema_63`/`rs_momentum_e63`/
+      `rs_roc_ema_200`/`rs_momentum_e200`）は未解決のまま KNOWN_UNCONVERGED として
+      除外**（詳細は §7 の「5-4/5-5: rs_roc_ema_N の多段依存が収束しない」）。
+      `backend/tests/indicators/test_calculate_incremental_equivalence.py`
 - [ ] **5-6** T3 ワーカーを増分呼び出しへ変更（§3.2）＋フォールバック（§3.5）
 - [ ] **5-7** 更新窓の実装（§3.4。(c) は 5-2 で決めた N 日を書き直す）
 - [ ] **5-8** pytest 全件パス
@@ -353,6 +364,50 @@ RECURSIVE 列（`rs_value_eN`・`rs_roc_ema_N`）を保存済み前日値から�
 使わない（継いだ結果、実際の lookback は N や 15 など大幅に小さくなる）。
 全67列で lookback が確定し、WINDOW 型の最大値は252（SQLiteの504行以内）。
 詳細・実測の根拠は `backend/indicators/incremental_state_registry.py` のモジュール docstring。
+
+### 5-4/5-5: rs_roc_ema_N の多段依存が収束しない（2026-09-22・要オーケストレーター判断）
+
+**実装依頼プロンプトが「想定される難所2点目」として挙げていた懸念が、実測で確認された
+（設計判断が必要な未解決事項）。**
+
+`rs_roc_ema_63`/`rs_roc_ema_200`（および下流の `rs_momentum_e63`/`rs_momentum_e200`）は、
+レジストリが宣言する lookback（15 / 200）だけを満たす増分ウィンドウ（`K = max_lookback()
++ 50 = 302`）では、増分1歩の結果が全期間再計算に収束しない。
+
+**原因**: `rs_roc_ema_N` は「RECURSIVE(EMA) の入力が WINDOW(`rs_ratio_eN`) で、その WINDOW
+の入力がさらに RECURSIVE(`rs_value_eN`)」という二重の入れ子。`rs_value_eN` 自体は state
+から1歩で厳密に継続できる（実測: df 全体で誤差0）が、`rs_ratio_eN` は直近N行の
+`rs_value_eN` を要する WINDOW 型のため、state 境界の直後（最大 N-1 行）は df 内で
+「窓」が育つまで不正確な値になる。この不正確な `rs_ratio_eN` が `rs_roc_ema_N` の
+再帰ステップに（14日ROC経由で）混入すると、α=2/(N+1) が小さい（N=200で約0.01）ため
+半減期が長く、K=252+余裕では数千行分の「汚染」を解消しきれない
+（実測: K=2000でも絶対誤差~5e-8残る。K=302では `rs_momentum_e200` の誤差が絶対値1.93、
+符号反転）。
+
+`min_periods=n`（フルウィンドウ必須化）で「汚染」を「フリーズ」に置き換える対策も
+試したが、フリーズも同様に減衰が遅く改善しなかった（実測: K=700で `rs_momentum_e200`
+誤差0.019、対策なしのK=700での誤差0.012と同程度）。**revert 済み**（差分に残っていない）。
+
+**対処には以下のいずれかが要る（本タスクの範囲外・設計判断が必要）**:
+1. `rs_ratio_eN`/`rs_roc_ema_N` の「直近N行」を生価格からの再構築ではなく、保存済み T3 列
+   （`rs_value_eN`/`rs_ratio_eN` の履歴）から読む経路を別途用意する
+   （実装依頼プロンプトが「difficulty 2」として想定していた論点そのもの）
+2. `rs_value_eN` の state 継続元の日付を `rs_roc_ema_N` とは別に（N日分先行させて）持つ、
+   列ごとに異なる「as of 日付」を許容する多段 state 設計にする
+   （`state` を「単一の前日」から「列ごとの基準日」に拡張する必要があり、
+   T3 ワーカー（5-6）が「昨日の保存行1行」ではなく複数の履歴日を読む必要が出る）
+3. `rs_momentum_e200` 自体を退役・再設計する（§8 に既存候補あり。表示専用で
+   戦略未使用のため実害は小さい）
+
+**5-5 のテストでの扱い**: 上記4列を `KNOWN_UNCONVERGED_COLUMNS` として明示的に除外し、
+「非NaNの値が出る（配線・分類自体は壊れていない）」ことのみ確認。残り63列は
+厳密一致（rtol=atol=1e-9）を固定。**「全テストがパスすること」の制約を満たしつつ、
+未解決の事実を隠さない**ための設計（詳細はテストファイルのモジュール docstring）。
+
+**5-6（T3 ワーカー実装）着手前に、上記1〜3のいずれで進めるかオーケストレーターの
+判断が必要。** 現状のまま 5-6 に進むと、`rs_roc_ema_63/200`・`rs_momentum_e63/200`
+（表示専用・戦略未使用）が増分経路で不正確な値のまま日次更新され続ける
+（現状の「日次で毎回SMA再シード」より改善するとは限らない）。
 
 ## 8. スコープ外・残作業（issue_list へ起票する）
 

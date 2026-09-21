@@ -76,14 +76,28 @@ RS_DOT_WARMUP_BARS = 252   # rolling(252, min_periods=1) 由来の偽点灯を�
 
 
 @njit(cache=True)
-def _rs_dot_age_kernel(blue, red, cap, warmup, sentinel):
-    """Numba-accelerated RS dot age counter."""
+def _rs_dot_age_kernel(blue, red, cap, warmup, sentinel, use_state, seed_prev_b, seed_prev_r):
+    """Numba-accelerated RS dot age counter.
+
+    use_state=False（既定の全期間計算）: 従来どおり。`i < warmup` の区間は
+        母集団（rolling(252, min_periods=1)）が252本に満たない可能性があるため
+        無条件でカウント未開始（sentinel）にする。このガードの意味は変えない。
+    use_state=True（増分計算。T3 増分化計画 5-4）: 呼び出し元は既に実履歴が
+        warmup 本を超えていることが保証された状態（state が存在する＝過去に
+        一度全期間計算が通っている）で呼んでいるため、渡された配列内の相対位置
+        （`i`）で warmup 判定をする意味が無い（配列そのものが直近の一部分でしか
+        ないため、絶対位置とズレる）。この場合はガードを適用せず、
+        seed_prev_b/seed_prev_r（前日の保存値）をそのまま初期値として使う。
+    """
     n = blue.shape[0]
     ba = np.full(n, sentinel, np.int32)
     ra = np.full(n, sentinel, np.int32)
-    prev_b, prev_r = sentinel, sentinel
+    if use_state:
+        prev_b, prev_r = seed_prev_b, seed_prev_r
+    else:
+        prev_b, prev_r = sentinel, sentinel
     for i in range(n):
-        if i < warmup:
+        if (not use_state) and i < warmup:
             # 母集団が 252 本に満たない区間はカウントを開始しない
             prev_b, prev_r = sentinel, sentinel
             continue
@@ -116,7 +130,9 @@ def _rs_dot_age_kernel(blue, red, cap, warmup, sentinel):
 
 def compute_rs_dot_age(blue, red, cap: int = RS_DOT_AGE_MAX,
                        warmup: int = RS_DOT_WARMUP_BARS,
-                       sentinel: int = RS_DOT_AGE_NONE):
+                       sentinel: int = RS_DOT_AGE_NONE,
+                       prev_blue_age: int = None,
+                       prev_red_age: int = None):
     """点灯フラグ列から (rs_blue_dot_age, rs_red_dot_age) を導出する。
 
     T3（`calc_relative_strength`）と Parquet バックフィル
@@ -125,6 +141,10 @@ def compute_rs_dot_age(blue, red, cap: int = RS_DOT_AGE_MAX,
 
     Args:
         blue / red: 1銘柄分の時系列の点灯フラグ（bool 配列。日付昇順）。
+        prev_blue_age / prev_red_age: 増分計算用。前日の保存値（state）。
+            指定すると warmup ガード（i<warmup は無条件 sentinel）を適用せず、
+            この値をそのまま継続の初期値として使う（T3 増分化計画 5-4）。
+            どちらも None（既定）なら現行どおり全期間計算。
 
     Returns:
         (np.ndarray[int32], np.ndarray[int32])
@@ -135,12 +155,20 @@ def compute_rs_dot_age(blue, red, cap: int = RS_DOT_AGE_MAX,
         raise ValueError('blue / red の長さが一致していません')
     if blue_arr.shape[0] == 0:
         return np.zeros(0, np.int32), np.zeros(0, np.int32)
-    return _rs_dot_age_kernel(blue_arr, red_arr, int(cap), int(warmup), int(sentinel))
+    use_state = prev_blue_age is not None and prev_red_age is not None
+    seed_b = int(prev_blue_age) if use_state else int(sentinel)
+    seed_r = int(prev_red_age) if use_state else int(sentinel)
+    return _rs_dot_age_kernel(
+        blue_arr, red_arr, int(cap), int(warmup), int(sentinel), use_state, seed_b, seed_r
+    )
 
 
-def calc_relative_strength(df: pd.DataFrame, df_spy: pd.DataFrame = None) -> pd.DataFrame:
+def calc_relative_strength(df: pd.DataFrame, df_spy: pd.DataFrame = None, state: dict = None) -> pd.DataFrame:
     """Calculate Relative Strength and RRG (Relative Rotation Graph) factors.
     Requires df_spy to be passed. If not passed, RS features will not be calculated.
+
+    Args:
+        state: 増分計算用の前日値辞書。None（既定）なら現行どおり全期間計算。
     """
     close = df['close']
 
@@ -167,7 +195,7 @@ def calc_relative_strength(df: pd.DataFrame, df_spy: pd.DataFrame = None) -> pd.
     rs = df['rs_value']
 
     # rs_value_e5 (Smoothing for rs_trend)
-    rs_ema_5 = calculate_ema_tv(rs, 5)
+    rs_ema_5 = calculate_ema_tv(rs, 5, prev_ema=(state.get('rs_value_e5') if state else None))
     df['rs_value_e5'] = rs_ema_5
 
     # rs_trend_sN = rs_value_e5 / SMA(rs_value, N)
@@ -183,7 +211,7 @@ def calc_relative_strength(df: pd.DataFrame, df_spy: pd.DataFrame = None) -> pd.
         if n == 5:
             rs_ema = rs_ema_5
         else:
-            rs_ema = calculate_ema_tv(rs, n)
+            rs_ema = calculate_ema_tv(rs, n, prev_ema=(state.get(f'rs_value_e{n}') if state else None))
             df[f'rs_value_e{n}'] = rs_ema
         
         # 2. rs_ratio_eN (Z-score of rs_value_eN over n days)
@@ -200,7 +228,7 @@ def calc_relative_strength(df: pd.DataFrame, df_spy: pd.DataFrame = None) -> pd.
         roc = (ratio_offset / ratio_offset.shift(14)) * 100.0
         
         # Smooth the ROC recursively
-        roc_ema = calculate_ema_tv(roc, n)
+        roc_ema = calculate_ema_tv(roc, n, prev_ema=(state.get(f'rs_roc_ema_{n}') if state else None))
         df[f'rs_roc_ema_{n}'] = roc_ema
         
         # Standardize the smoothed ROC
@@ -228,13 +256,19 @@ def calc_relative_strength(df: pd.DataFrame, df_spy: pd.DataFrame = None) -> pd.
         & (rs <= rs_252_low) & (close > close_252_low)
     ).to_numpy()
 
-    blue_age, red_age = compute_rs_dot_age(blue_lit, red_lit)
+    blue_age, red_age = compute_rs_dot_age(
+        blue_lit, red_lit,
+        prev_blue_age=(state.get('rs_blue_dot_age') if state else None),
+        prev_red_age=(state.get('rs_red_dot_age') if state else None),
+    )
     df['rs_blue_dot_age'] = blue_age
     df['rs_red_dot_age'] = red_age
 
     # --- RS-MACD(5, 21, 5) ---
     df['rs_macd_line_21'] = df['rs_value_e5'] - df['rs_value_e21']
-    df['rs_macd_signal_21'] = calculate_ema_tv(df['rs_macd_line_21'], 5)
+    df['rs_macd_signal_21'] = calculate_ema_tv(
+        df['rs_macd_line_21'], 5, prev_ema=(state.get('rs_macd_signal_21') if state else None)
+    )
     df['rs_macd_hist_21'] = df['rs_macd_line_21'] - df['rs_macd_signal_21']
 
     return df

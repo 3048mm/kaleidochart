@@ -12,36 +12,45 @@ from .zone_break import zone_break_series
 # or it can import it directly. We'll expose it here for backward compatibility.
 from .market_signals import calculate_market_signals
 
-def calculate_indicators(df_daily: pd.DataFrame, df_spy: pd.DataFrame = None) -> pd.DataFrame:
+def calculate_indicators(df_daily: pd.DataFrame, df_spy: pd.DataFrame = None, state: dict = None) -> pd.DataFrame:
     """
     日足データ(T2)を受け取り、テクニカル指標とSPYとの相対評価を算出して返す純粋な関数。
-    
+
+    単一実装・2つの入口にする（T3 増分化計画 5-4）。
+    - state=None（既定）: 現行と完全に同一の挙動。全期間計算
+      （`--rebuild-from T3` や検証オラクルが使う）
+    - state あり: RECURSIVE 型の列（`backend/indicators/incremental_state_registry.py`
+      の `prev_self=True` な列）が、渡された前日値からシードを作り直さずに継続する。
+      `state` のキーはそれら列名、値は前日の保存値
+      （例: `{'ema_200': 123.45, 'atr_14': 2.34, ...}`）
+
     Args:
         df_daily: 対象銘柄の日足DataFrame (date, open, high, low, close, volume)
         df_spy:   SPYの日足DataFrame (date, close, volume) — RS系・Relative Volume計算に使用
+        state:    増分計算用の前日値辞書。None なら現行どおり全期間計算
     Returns:
         各種インジケーターカラムが追加されたDataFrame
     """
     df = df_daily.copy()
     df = df.sort_values('date').reset_index(drop=True)
-    
+
     # Returns (Prev Close Base)
     df['change_1d_pct'] = df['close'].pct_change() * 100
     df['change_1w_pct'] = df['close'].pct_change(5) * 100
     df['change_1m_pct'] = df['close'].pct_change(20) * 100
-    
+
     if df.empty:
         return df
 
     # 1. Moving Averages
-    df = calc_moving_averages(df)
-    
+    df = calc_moving_averages(df, state)
+
     # 2. Volatility (Requires MAs)
-    df = calc_volatility(df)
-    
+    df = calc_volatility(df, state)
+
     # 3. Relative Strength (Requires SPY and MAs for dots)
-    df = calc_relative_strength(df, df_spy)
-    
+    df = calc_relative_strength(df, df_spy, state)
+
     # 4. Volume and Trends (Requires MAs and SPY)
     df = calc_volume_and_trends(df)
 
