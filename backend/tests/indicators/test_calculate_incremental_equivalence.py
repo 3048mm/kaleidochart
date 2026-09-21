@@ -6,9 +6,30 @@
 1. `state=None` のときの出力が現行実装と完全に一致すること
    （5-4 の絶対条件。`backend/tests/indicators` の既存テスト群が全期間計算の
    出力を保護しているため、本ファイルでは重複させない）
-2. 「増分1歩の結果 == 全期間再計算の最終行」（全67列を比較する。NaN 同士は
+2. 「増分1歩の結果 == 全期間再計算の最終行」（63列を比較する。NaN 同士は
    一致とみなす。分類を誤った列や、供給履歴の配線を誤った列があれば、
    このテストが検出する）
+3. `zb_ssl`/`zb_bsl`/`is_zone_break_bull`/`is_zone_break_weak` の4列は
+   上記2とは**別の判定基準**を使う（5-4c）。詳細は下記「zb_* の判定基準について」。
+
+## zb_* の判定基準について（5-4c）
+
+`zone_break` の内部状態は確定した反転（BOS）ごとにリセットされるが、
+トレンドレッグの長さに上限が無い（移植元 Pine Script の性質）ため、
+必要履歴本数が**原理的に非有界**（300銘柄実測: 中央値120本・p99 250本・
+最大2,400本、250本超が2〜3/300銘柄）。そのため `zb_ssl`/`zb_bsl`/
+`is_zone_break_bull`/`is_zone_break_weak` の4列は「全履歴との厳密一致」を
+達成できない（これは増分化が新たに生じさせた問題ではなく、現行実装も
+SQLite の504行だけで日次計算しているため同じ制約を持つ。約1%の銘柄で
+全履歴計算と値が異なりうる。詳細: doc/backend_specification.md、
+doc/in_progress/t3_incremental_plan.md §8）。
+
+このため、この4列は**比較対象を「全履歴で計算した値」から
+「ホットウィンドウ（`HOT_WINDOW_BARS`=504本）だけで全期間計算した値」に
+差し替える**（除外はしない）。これは「現行実装と同等（回帰が無い）」ことの
+確認であり、「厳密解である」ことの確認ではない。他の63列との厳密一致
+テストとは判定基準そのものが異なるため、別のテストメソッドに分離している
+（`test_zone_break系4列はホットウィンドウでの全期間計算と一致する`）。
 
 ## 増分呼び出しの入力契約（5-4b。本ファイルが検証する設計）
 
@@ -43,7 +64,7 @@ import numpy as np
 import pandas as pd
 
 from indicators.calculate import calculate_indicators
-from indicators.incremental_state_registry import max_lookback
+from indicators.incremental_state_registry import HOT_WINDOW_BARS, max_lookback
 
 
 def _make_series(n: int, seed: int, base: float, vol: float, spike_every: int = 45):
@@ -73,6 +94,33 @@ def _is_nan_like(v) -> bool:
     return v is None or (isinstance(v, float) and math.isnan(v))
 
 
+def _find_mismatches(columns, row_a: pd.Series, row_b: pd.Series):
+    """2つの行（Series）を指定列だけ rtol=atol=1e-9 で突き合わせ、不一致を列挙する。
+
+    複数のテストメソッド（63列の全期間一致・zb_*のホットウィンドウ一致）で
+    比較ロジックを共有するための共通ヘルパー。
+    """
+    mismatches = []
+    for col in columns:
+        a, b = row_a[col], row_b[col]
+        a_nan, b_nan = _is_nan_like(a), _is_nan_like(b)
+
+        if a_nan and b_nan:
+            continue
+        if a_nan != b_nan:
+            mismatches.append((col, a, b, 'NaN不一致'))
+            continue
+        try:
+            af, bf = float(a), float(b)
+        except (TypeError, ValueError):
+            if a != b:
+                mismatches.append((col, a, b, '非数値の不一致'))
+            continue
+        if not math.isclose(af, bf, rel_tol=1e-9, abs_tol=1e-9):
+            mismatches.append((col, af, bf, 'rtol/atol=1e-9で不一致'))
+    return mismatches
+
+
 # calculate_indicators が内部で SPY とマージして作る列。T3 の実列（DBに保存される列）
 # ではないため、「供給済み履歴」として渡す history から除く（5-4b の入力契約は
 # INDICATOR_COLUMN_REGISTRY の列のみを供給する。SPY 側の生価格は df_spy として
@@ -88,7 +136,15 @@ class TestIncrementalMatchesFullRecompute:
     N_TOTAL = 1400  # 1,000本以上・値が変化し続ける現実的な系列（5-5 の要求）
     MARGIN = 10  # max_lookback() ちょうどでも理論上は足りるが、境界の丸め誤差を避ける余裕
 
-    def _build_full_and_incremental(self):
+    def _build_full_and_incremental(self, k=None):
+        """全期間計算オラクルと増分計算の結果を作る。
+
+        Args:
+            k: 供給する履歴本数。None（既定）なら `max_lookback() + MARGIN`
+                （63列の厳密一致テスト用）。zb_* の「ホットウィンドウでの
+                全期間計算」との一致を見る専用テスト（5-4c）では
+                `k=HOT_WINDOW_BARS` を明示的に渡す。
+        """
         n_total = self.N_TOTAL
         dates = pd.bdate_range('2019-01-02', periods=n_total).date
 
@@ -102,7 +158,8 @@ class TestIncrementalMatchesFullRecompute:
         full_res = calculate_indicators(df_full, spy_full, state=None)
 
         # K はレジストリの lookback 最大値から導出する（ハードコードしない）。
-        k = max_lookback() + self.MARGIN
+        if k is None:
+            k = max_lookback() + self.MARGIN
         k_total = k + 1  # 供給履歴K本 + 新規計算する最終行1本
         state_idx = n_total - k_total
         assert state_idx > 500, 'oracle 自体が十分に settle した位置から取れるよう、全履歴を長くしてください'
@@ -124,7 +181,7 @@ class TestIncrementalMatchesFullRecompute:
         # 被験: 増分モード（state=True）。K+1本のうち最終行だけを新規計算する。
         got_res = calculate_indicators(df_inc, spy_inc, state=True)
 
-        return full_res.iloc[-1], got_res.iloc[-1], full_res, k_total
+        return full_res.iloc[-1], got_res.iloc[-1], full_res, k_total, df_full, spy_full
 
     def test_dot_lighting_events_exist_in_window(self):
         """自己修復性の前提（テストデータの健全性チェック）。
@@ -136,7 +193,7 @@ class TestIncrementalMatchesFullRecompute:
         （点灯が一度も無いと age は sentinel に飽和したまま何を見ても
         変わらず、テストとして無意味になる）。
         """
-        _, _, full_res, k_total = self._build_full_and_incremental()
+        _, _, full_res, k_total, _, _ = self._build_full_and_incremental()
         window = full_res.iloc[-k_total:]
         blue_lightings = int((window['rs_blue_dot_age'] == 0).sum())
         red_lightings = int((window['rs_red_dot_age'] == 0).sum())
@@ -145,32 +202,71 @@ class TestIncrementalMatchesFullRecompute:
             'rs_blue_dot_age/rs_red_dot_age の warmup バイパス設計を検証できない'
         )
 
+    # 5-4c: zone_break系4列は必要履歴が原理的に非有界なため、このテストの判定基準
+    # （全履歴で計算した値との厳密一致）を満たせない。除外はせず、判定基準そのものを
+    # 変えた別テスト（test_zone_break系4列はホットウィンドウでの全期間計算と一致する）
+    # で比較する（モジュール docstring「zb_* の判定基準について」参照）。
+    ZONE_BREAK_HOT_WINDOW_COLUMNS = (
+        'zb_ssl', 'zb_bsl', 'is_zone_break_bull', 'is_zone_break_weak',
+    )
+
     def test_incremental_matches_full_recompute_for_all_columns(self):
-        """全67列が rtol=atol=1e-9 で厳密一致すること（5-4bで未収束4列の除外を撤廃）。"""
-        ref_row, got_row, _, _ = self._build_full_and_incremental()
+        """zb_*以外の63列が rtol=atol=1e-9 で厳密一致すること（5-4bで未収束4列の除外を撤廃）。
 
-        mismatches = []
-        for col in ref_row.index:
-            if col == 'date':
-                continue
-            a, b = ref_row[col], got_row[col]
-            a_nan, b_nan = _is_nan_like(a), _is_nan_like(b)
+        zone_break系4列（ZONE_BREAK_HOT_WINDOW_COLUMNS）は判定基準が異なるため、
+        この厳密一致テストの対象から除く（比較しないのではなく、比較先を変えて
+        別テストで検証する。5-4c）。
+        """
+        ref_row, got_row, _, _, _, _ = self._build_full_and_incremental()
 
-            if a_nan and b_nan:
-                continue
-            if a_nan != b_nan:
-                mismatches.append((col, a, b, 'NaN不一致'))
-                continue
-            try:
-                af, bf = float(a), float(b)
-            except (TypeError, ValueError):
-                if a != b:
-                    mismatches.append((col, a, b, '非数値の不一致'))
-                continue
-            if not math.isclose(af, bf, rel_tol=1e-9, abs_tol=1e-9):
-                mismatches.append((col, af, bf, 'rtol/atol=1e-9で不一致'))
+        columns = [
+            col for col in ref_row.index
+            if col != 'date' and col not in self.ZONE_BREAK_HOT_WINDOW_COLUMNS
+        ]
+        mismatches = _find_mismatches(columns, ref_row, got_row)
 
         assert not mismatches, (
             f'{len(mismatches)}列で増分計算が全期間再計算と一致しませんでした:\n'
             + '\n'.join(f'  {c}: ref={a!r} got={b!r} ({reason})' for c, a, b, reason in mismatches)
+        )
+
+
+class TestZoneBreakHotWindowEquivalence:
+    """zb_ssl/zb_bsl/is_zone_break_bull/is_zone_break_weak 専用の等価性テスト（5-4c）。
+
+    `TestIncrementalMatchesFullRecompute` は「全履歴で計算した値」との厳密一致を
+    正としているが、zone_break系4列は必要履歴が原理的に非有界（モジュール
+    docstring「zb_* の判定基準について」参照）なため、それを満たせない。
+    この4列だけは判定基準を「ホットウィンドウ（`HOT_WINDOW_BARS`=504本）だけで
+    全期間計算した値」に差し替え、増分呼び出しがそれと一致すること
+    （＝現行実装との同等性・回帰が無いこと）を確認する。
+
+    `zone_break_series`/`structure_pivot_series`（backend/indicators/calculate.py）
+    は `state` の値に関わらず df の生価格列だけから無条件に計算されるため、
+    「同じ生価格ウィンドウに対する増分呼び出し(state=True)」と
+    「同じ生価格ウィンドウに対する全期間計算(state=None)」は実装上常に一致する。
+    本テストはこの契約——「zb_*の増分結果は、供給したウィンドウの生価格だけで
+    決まる」——を固定する回帰テストである（将来この4列の計算方法が変わって
+    契約が崩れたとき、または供給ウィンドウの長さがずれたときに検出する）。
+    """
+
+    def test_zone_break系4列はホットウィンドウでの全期間計算と一致する(self):
+        base = TestIncrementalMatchesFullRecompute()
+        _, got_row, _, k_total, df_full, spy_full = base._build_full_and_incremental(k=HOT_WINDOW_BARS)
+        assert k_total == HOT_WINDOW_BARS + 1
+
+        # 「現行実装」＝ SQLite が保持する直近 HOT_WINDOW_BARS 本の生価格だけを使い、
+        # 毎回ゼロから計算する（state=None）。増分呼び出しが使ったのと同じ末尾の
+        # 生価格ウィンドウに揃える。
+        df_hot = df_full.tail(k_total).reset_index(drop=True)
+        spy_hot = spy_full.tail(k_total).reset_index(drop=True)
+        hot_row = calculate_indicators(df_hot, spy_hot, state=None).iloc[-1]
+
+        mismatches = _find_mismatches(
+            TestIncrementalMatchesFullRecompute.ZONE_BREAK_HOT_WINDOW_COLUMNS, hot_row, got_row,
+        )
+
+        assert not mismatches, (
+            f'{len(mismatches)}列で増分計算がホットウィンドウでの全期間計算と一致しませんでした:\n'
+            + '\n'.join(f'  {c}: hot={a!r} got={b!r} ({reason})' for c, a, b, reason in mismatches)
         )

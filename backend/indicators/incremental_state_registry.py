@@ -89,6 +89,13 @@ RAW_PRICE_COLUMNS: FrozenSet[str] = frozenset({
     'open', 'high', 'low', 'close', 'volume', 'spy_close', 'spy_volume',
 })
 
+# ホットキャッシュ（stocktool.db）が保持する営業日数。5-4c で `zb_ssl`/`zb_bsl`/
+# `is_zone_break_bull`/`is_zone_break_weak` の lookback に使う値の名前付き定数。
+# これらの列は原理的に必要履歴が非有界（下記 _ENTRIES のコメント参照）なため、
+# 「有界だから504で足りる」のではなく「ホットウィンドウ全体＝現行の日次計算と
+# 同等の近似解にする」という意味でこの値を選んでいる。マジックナンバー化を避けるため定数化。
+HOT_WINDOW_BARS = 504
+
 
 @dataclass(frozen=True)
 class ColumnSpec:
@@ -291,28 +298,59 @@ _ENTRIES: Tuple[ColumnSpec, ...] = (
     # 値が変わる」(c)ではないことは確認済み。さらに5-3bの前方切り詰め実測（8銘柄・
     # rtol=1e-9）で、直近60本の生価格（high/low/close）があれば全履歴と一致することを
     # 確認したため、状態機械であっても短い生価格窓から再構築できる＝WINDOW に分類する。
-    # lookback は実測60本に余裕を持たせて250とする。
+    # 5-4c で 300銘柄に実測を拡大しても中央値/p90/p99/最大が全て120本で揃い、
+    # 250本超は0/300（sp_* は zb_* と異なり実際に有界）。lookback は実測120本に
+    # 余裕を持たせて250のまま維持する（下げる積極的な理由が無いため）。
     _window('sp_pivot', inputs=('high', 'low', 'close'), lookback=250,
-            note='5-3b実測: 60本の生価格で全履歴と一致（前方切り詰め）。余裕を持たせ250'),
+            note='5-4c実測(300銘柄): 中央値/p90/p99/最大とも120本で全履歴と一致（前方切り詰め）。'
+                 '250本超0/300で有界と確認済み。余裕を持たせ250'),
     _window('sp_hl', inputs=('high', 'low', 'close'), lookback=250,
-            note='5-3b実測: 60本の生価格で全履歴と一致（前方切り詰め）。余裕を持たせ250'),
+            note='5-4c実測(300銘柄): 中央値/p90/p99/最大とも120本で全履歴と一致（前方切り詰め）。'
+                 '250本超0/300で有界と確認済み。余裕を持たせ250'),
     _window('sp_counter', inputs=('high', 'low', 'close'), lookback=250,
-            note='5-3b実測: 60本の生価格で全履歴と一致（前方切り詰め）。余裕を持たせ250'),
+            note='5-4c実測(300銘柄): 中央値/p90/p99/最大とも120本で全履歴と一致（前方切り詰め）。'
+                 '250本超0/300で有界と確認済み。余裕を持たせ250'),
 
     # --- Direction via Zone Break ---
     # zone_break.py の _zone_break_scan は sp_pivot 以上に多くの内部状態
     # （ssl_bl/bsl_bl/int_ssl_bl/int_bsl_br/is_conf_bl/is_break_bl/is_weak_of に加え、
-    # 全履歴のフラクタル・FVGリスト）を持つ状態機械。5-2 の実測で(c)ではないと確認済み。
-    # 5-3bの前方切り詰め実測で60〜120本の生価格で全履歴と一致することを確認したため、
-    # sp_* と同じくWINDOWに分類する（余裕を持たせ250）。
-    _window('is_zone_break_bull', inputs=('high', 'low', 'close'), lookback=250,
-            note='5-3b実測: 60本の生価格で全履歴と一致（前方切り詰め）。余裕を持たせ250'),
-    _window('zb_ssl', inputs=('high', 'low', 'close'), lookback=250,
-            note='5-3b実測: 60本の生価格で全履歴と一致（前方切り詰め）。余裕を持たせ250'),
-    _window('zb_bsl', inputs=('high', 'low', 'close'), lookback=250,
-            note='5-3b実測: 60本の生価格で全履歴と一致（前方切り詰め）。余裕を持たせ250'),
-    _window('is_zone_break_weak', inputs=('high', 'low', 'close'), lookback=250,
-            note='5-3b実測: 120本の生価格で全履歴と一致（前方切り詰め）。余裕を持たせ250'),
+    # 全履歴のフラクタル・FVGリスト）を持つ状態機械。5-2 の実測で「未来のバーで値が変わる」
+    # (c)ではないと確認済みだが、必要履歴本数自体は sp_* と違い**原理的に非有界**である。
+    # zone_break の内部状態は確定した反転（BOS）ごとにリセットされるが、トレンドレッグの
+    # 長さに上限が無い（移植元Pine Scriptの性質）ため、リセットの間隔が銘柄・期間によって
+    # 数千本に及ぶことがある。5-4c で300銘柄実測した結果:
+    #   列                    中央値 p90  p99  最大    >250本の銘柄数
+    #   is_zone_break_bull    120   120  250  250     0/300
+    #   zb_ssl                120   120  250  2400    2/300
+    #   zb_bsl                120   120  251  2400    3/300
+    #   is_zone_break_weak    120   120  250  400     1/300
+    # このためこの4列だけは WINDOW のまま lookback=HOT_WINDOW_BARS(504) とする。
+    # **これは厳密解ではない**: 504本はホットキャッシュ（SQLite）が保持する全営業日数と
+    # 同じ値であり、「増分計算が現行の日次計算（SQLiteの504行で毎回ゼロから計算）と
+    # 同じ結果になる」ことしか保証しない。全履歴（Parquet）から計算した場合と異なる値に
+    # なりうる銘柄が実測で300銘柄中2〜3銘柄（約1%）存在し、これは増分化以前から
+    # 本番が抱えていた既存の不正確さ（本計画が新たに作る問題ではない）。
+    # 詳細: doc/backend_specification.md、doc/in_progress/t3_incremental_plan.md §8。
+    _window('is_zone_break_bull', inputs=('high', 'low', 'close'), lookback=HOT_WINDOW_BARS,
+            note='5-4c実測(300銘柄): 中央値120/p90 120/p99 250/最大250、250本超0/300。'
+                 'zone_break系は原理的に非有界（トレンドレッグ長に上限なし）なため、'
+                 'lookback=504(HOT_WINDOW_BARS)はホットウィンドウ全体＝現行の日次計算と'
+                 '同等の近似解であり厳密解ではない'),
+    _window('zb_ssl', inputs=('high', 'low', 'close'), lookback=HOT_WINDOW_BARS,
+            note='5-4c実測(300銘柄): 中央値120/p90 120/p99 250/最大2400、250本超2/300。'
+                 'zone_break系は原理的に非有界（トレンドレッグ長に上限なし）なため、'
+                 'lookback=504(HOT_WINDOW_BARS)はホットウィンドウ全体＝現行の日次計算と'
+                 '同等の近似解であり厳密解ではない（約1%の銘柄で全履歴計算と値が異なりうる）'),
+    _window('zb_bsl', inputs=('high', 'low', 'close'), lookback=HOT_WINDOW_BARS,
+            note='5-4c実測(300銘柄): 中央値120/p90 120/p99 251/最大2400、250本超3/300。'
+                 'zone_break系は原理的に非有界（トレンドレッグ長に上限なし）なため、'
+                 'lookback=504(HOT_WINDOW_BARS)はホットウィンドウ全体＝現行の日次計算と'
+                 '同等の近似解であり厳密解ではない（約1%の銘柄で全履歴計算と値が異なりうる）'),
+    _window('is_zone_break_weak', inputs=('high', 'low', 'close'), lookback=HOT_WINDOW_BARS,
+            note='5-4c実測(300銘柄): 中央値120/p90 120/p99 250/最大400、250本超1/300。'
+                 'zone_break系は原理的に非有界（トレンドレッグ長に上限なし）なため、'
+                 'lookback=504(HOT_WINDOW_BARS)はホットウィンドウ全体＝現行の日次計算と'
+                 '同等の近似解であり厳密解ではない'),
 )
 
 INDICATOR_COLUMN_REGISTRY: Mapping[str, ColumnSpec] = {spec.name: spec for spec in _ENTRIES}

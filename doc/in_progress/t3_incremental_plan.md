@@ -301,6 +301,22 @@ daily_prices: 2024-09-18 〜 2026-09-18 / 504 営業日 / 3,360銘柄
       `backend/tests/indicators/test_calculate_incremental_equivalence.py`
       （増分呼び出しの入力契約を「生価格K+1本」から「生価格K+1本＋保存済み
       T3中間列K本」に変更するテストへ全面改訂）。
+- [x] **5-4c** `zone_break` 系4列（`zb_ssl`/`zb_bsl`/`is_zone_break_bull`/
+      `is_zone_break_weak`）の必要履歴が非有界と判明したことへの対応 — **完了
+      （2026-09-22・ユーザー判断: 案A採用）**。詳細は §8「`zone_break` の必要履歴が
+      有界でない」参照。lookback を `HOT_WINDOW_BARS`（504）に設定し、等価性テストの
+      判定基準をこの4列だけ「504本での全期間計算と一致」に変更（除外はしない）。
+      仕様書にも厳密解でないことを明記。
+      変更ファイル: `backend/indicators/incremental_state_registry.py`
+      （`HOT_WINDOW_BARS` 定数を追加、対象4列の lookback を250→504に変更、
+      note に非有界性と実測分布を明記）、
+      `backend/tests/indicators/test_incremental_state_registry.py`
+      （lookback上限テストを対象4列除外＋専用テストに分離、代表値テストを更新）、
+      `backend/tests/indicators/test_calculate_incremental_equivalence.py`
+      （63列の厳密一致テストから対象4列を除外し、`TestZoneBreakHotWindowEquivalence`
+      で「504本での全期間計算」との一致を別途検証する設計に変更）、
+      `doc/backend_specification.md`（3.4節 zone_break の説明に厳密解でない旨と
+      実測分布を追記）。
 - [ ] **5-6** T3 ワーカーを増分呼び出しへ変更（§3.2）＋フォールバック（§3.5）
 - [ ] **5-7** 更新窓の実装（§3.4。(c) は 5-2 で決めた N 日を書き直す）
 - [ ] **5-8** pytest 全件パス
@@ -496,3 +512,25 @@ state=True)` に渡す実装にする必要がある（単に「前日の行」�
 - **`rs_momentum_e200` の積み方が過剰かもしれない** — 200期間の処理を4段積んでおり、
   必要遡りが 610本（A-full 後は810本 ≒ 3年3ヶ月）。表示専用で戦略からは使われていない。
   退役または再設計の候補（①の §4-7 の議論から分離）
+- 🟠 **`zone_break` の必要履歴が有界でない — ホットウィンドウ計算では約1%の銘柄が不正確**
+  （5-4c・ユーザー判断 2026-09-22）。`is_zone_break_bull`/`zb_ssl`/`zb_bsl`/
+  `is_zone_break_weak` は `zone_break` の内部状態が確定した反転（BOS）ごとにリセットされる
+  一方、トレンドレッグの長さに上限が無い（移植元 Pine Script の性質）ため、必要履歴本数が
+  原理的に非有界。300銘柄実測（2026-09-22）:
+
+  | 列 | 中央値 | p90 | p99 | 最大 | >250本 |
+  |---|---|---|---|---|---|
+  | `sp_pivot`/`sp_hl`/`sp_counter` | 120 | 120 | 120 | 120 | 0/300 |
+  | `is_zone_break_bull` | 120 | 120 | 250 | 250 | 0/300 |
+  | `zb_ssl` | 120 | 120 | 250 | 2,400 | 2/300 |
+  | `zb_bsl` | 120 | 120 | 251 | 2,400 | 3/300 |
+  | `is_zone_break_weak` | 120 | 120 | 250 | 400 | 1/300 |
+
+  ユーザー判断（案A採用）に基づき、`incremental_state_registry.py` の `zb_ssl`/`zb_bsl`/
+  `is_zone_break_bull`/`is_zone_break_weak` の lookback を `HOT_WINDOW_BARS`（504。SQLite
+  ホットウィンドウ全体）に設定し、「厳密解ではない」ことを `doc/backend_specification.md` に
+  明記した。**これは増分化が新たに生じさせた問題ではない** — 増分化以前の日次実装も
+  SQLite の504行だけで毎回ゼロから再計算していたため、同じ約1%の銘柄は既に本番で不正確な
+  値を持っている（構造上同一の制約）。真の恒久対応（例: Parquet 全履歴から直近リセット位置を
+  特定してから増分計算する、など）は別途検討が必要で、本計画のスコープ外。
+  `doc/issue_list.md` への転記はオーケストレーターが行う（§4-3 に準じた運用）。

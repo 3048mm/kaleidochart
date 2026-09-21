@@ -6,7 +6,9 @@
 1. T3（`Indicator` モデル）の全列（id/symbol_id/date を除く）がレジストリに登録済み
    （逆にレジストリにあって Indicator に無い列も検出する）
 2. TWO_SIDED（(c) 両側参照）に分類された列が存在しない（5-2 の実測結果の固定）
-3. WINDOW 型の lookback 最大値が 252 以下（SQLite の504行に収まることの担保。5-3b）
+3. WINDOW 型の lookback 最大値が 252 以下（SQLite の504行に収まることの担保。5-3b）。
+   ただし zone_break系4列（`zb_ssl`/`zb_bsl`/`is_zone_break_bull`/`is_zone_break_weak`）は
+   5-4c で原理的に非有界と判明したため例外とし、HOT_WINDOW_BARS(504) 以下であることのみ担保する
 4. RECURSIVE 型は prev_self=True（5-3b）
 5. inputs の列名がすべて有効（生の価格列 or Indicator 実列。5-3b）
 """
@@ -14,6 +16,7 @@ import pytest
 
 from db.models import Indicator
 from indicators.incremental_state_registry import (
+    HOT_WINDOW_BARS,
     RAW_PRICE_COLUMNS,
     ColumnKind,
     ColumnSpec,
@@ -126,18 +129,41 @@ class TestInputsAreValidColumnNames:
 
 
 class TestLookbackBound:
-    """WINDOW 型 lookback の上限（SQLite の504行に収まることの担保。5-3b）。"""
+    """WINDOW 型 lookback の上限（SQLite の504行に収まることの担保。5-3b/5-4c）。"""
+
+    # 5-4c: zone_break系4列は原理的に非有界（トレンドレッグ長に上限なし）と実測で判明した
+    # ため、意図的に HOT_WINDOW_BARS(504) まで引き上げた特例。他の WINDOW 型列とは別枠で扱う
+    # （incremental_state_registry.py の _ENTRIES コメント参照）。
+    _HOT_WINDOW_EXEMPT_COLUMNS = frozenset({
+        'zb_ssl', 'zb_bsl', 'is_zone_break_bull', 'is_zone_break_weak',
+    })
 
     def test_window型のlookback最大値が252以下(self):
         window_lookbacks = [
-            spec.lookback for spec in INDICATOR_COLUMN_REGISTRY.values()
+            spec.lookback for name, spec in INDICATOR_COLUMN_REGISTRY.items()
             if spec.kind is ColumnKind.WINDOW and spec.lookback is not None
+            and name not in self._HOT_WINDOW_EXEMPT_COLUMNS
         ]
         assert window_lookbacks, 'WINDOW 型で lookback が確定している列が1つもありません'
         assert max(window_lookbacks) <= 252, (
             f'WINDOW 型の lookback 最大値が252を超えています: {max(window_lookbacks)}\n'
             'SQLite の保持期間（504行）を圧迫するため設計を見直してください。'
+            '（zone_break系4列は既知の例外として _HOT_WINDOW_EXEMPT_COLUMNS で除外済み）'
         )
+
+    def test_zone_break系4列はHOT_WINDOW_BARSに固定されている(self):
+        """5-4c: zone_break系（zb_ssl/zb_bsl/is_zone_break_bull/is_zone_break_weak）は
+        必要履歴が原理的に非有界（300銘柄実測で最大2,400本）と判明したため、
+        「有界だから252以下」ではなく「ホットウィンドウ全体＝現行の日次計算と同等」という
+        意味で HOT_WINDOW_BARS(504) を割り当てている（厳密解ではない）。
+        詳細: doc/backend_specification.md、doc/in_progress/t3_incremental_plan.md §8。
+        """
+        for name in sorted(self._HOT_WINDOW_EXEMPT_COLUMNS):
+            spec = INDICATOR_COLUMN_REGISTRY[name]
+            assert spec.kind is ColumnKind.WINDOW, f'{name}: WINDOW 型である想定です'
+            assert spec.lookback == HOT_WINDOW_BARS, (
+                f'{name}: lookback が HOT_WINDOW_BARS({HOT_WINDOW_BARS}) と一致しません: {spec.lookback}'
+            )
 
     def test_lookback未確定の列を一覧する(self):
         """可視化目的。lookback=None の列があっても失敗させない。"""
@@ -164,10 +190,11 @@ class TestKnownLookbackValues:
         ('sp_pivot', ColumnKind.WINDOW, 250),
         ('sp_hl', ColumnKind.WINDOW, 250),
         ('sp_counter', ColumnKind.WINDOW, 250),
-        ('zb_ssl', ColumnKind.WINDOW, 250),
-        ('zb_bsl', ColumnKind.WINDOW, 250),
-        ('is_zone_break_bull', ColumnKind.WINDOW, 250),
-        ('is_zone_break_weak', ColumnKind.WINDOW, 250),
+        # zone_break系4列は5-4cで原理的に非有界と判明したためHOT_WINDOW_BARS(504)に変更
+        ('zb_ssl', ColumnKind.WINDOW, HOT_WINDOW_BARS),
+        ('zb_bsl', ColumnKind.WINDOW, HOT_WINDOW_BARS),
+        ('is_zone_break_bull', ColumnKind.WINDOW, HOT_WINDOW_BARS),
+        ('is_zone_break_weak', ColumnKind.WINDOW, HOT_WINDOW_BARS),
         ('dist_52w_high_pct', ColumnKind.WINDOW, 252),
         ('is_trend_template', ColumnKind.WINDOW, 252),
     ])
