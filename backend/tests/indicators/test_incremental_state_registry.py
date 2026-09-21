@@ -1,16 +1,20 @@
 """incremental_state_registry.py のテスト。
 
-計画書: doc/in_progress/t3_incremental_plan.md §3.3, 5-3
+計画書: doc/in_progress/t3_incremental_plan.md §3.3, 5-3, 5-3b（再設計）
 
-固定する2点:
+固定する点:
 1. T3（`Indicator` モデル）の全列（id/symbol_id/date を除く）がレジストリに登録済み
    （逆にレジストリにあって Indicator に無い列も検出する）
 2. TWO_SIDED（(c) 両側参照）に分類された列が存在しない（5-2 の実測結果の固定）
+3. WINDOW 型の lookback 最大値が 252 以下（SQLite の504行に収まることの担保。5-3b）
+4. RECURSIVE 型は prev_self=True（5-3b）
+5. inputs の列名がすべて有効（生の価格列 or Indicator 実列。5-3b）
 """
 import pytest
 
 from db.models import Indicator
 from indicators.incremental_state_registry import (
+    RAW_PRICE_COLUMNS,
     ColumnKind,
     ColumnSpec,
     INDICATOR_COLUMN_REGISTRY,
@@ -71,56 +75,103 @@ class TestNoTwoSidedColumns:
 class TestColumnSpecInvariants:
     """ColumnSpec 自体の型不変条件（実装ミスの検出）。"""
 
-    def test_recursive型は状態列を持つ(self):
+    def test_recursive型はprev_selfがTrueでinputsを持つ(self):
         for name, spec in INDICATOR_COLUMN_REGISTRY.items():
             if spec.kind is ColumnKind.RECURSIVE:
-                assert spec.state_columns, f'{name}: RECURSIVE 型なのに state_columns が空です'
-                assert spec.lookback is None, f'{name}: RECURSIVE 型なのに lookback が設定されています'
+                assert spec.prev_self is True, f'{name}: RECURSIVE 型なのに prev_self が True ではありません'
+                assert spec.inputs, f'{name}: RECURSIVE 型なのに inputs が空です（当日分の入力が必要）'
 
-    def test_window型は状態列を持たない(self):
+    def test_window型はprev_selfがFalse(self):
         for name, spec in INDICATOR_COLUMN_REGISTRY.items():
             if spec.kind is ColumnKind.WINDOW:
-                assert spec.state_columns == (), f'{name}: WINDOW 型なのに state_columns が設定されています'
+                assert spec.prev_self is False, f'{name}: WINDOW 型なのに prev_self が True です'
 
-    def test_recursive型の状態列名はindicator列として実在する(self):
-        model_columns = _indicator_model_columns()
-        for name, spec in INDICATOR_COLUMN_REGISTRY.items():
-            if spec.kind is ColumnKind.RECURSIVE:
-                for state_col in spec.state_columns:
-                    assert state_col in model_columns, (
-                        f'{name}: state_columns の "{state_col}" が Indicator の実列にありません'
-                    )
-
-    def test_lookbackが設定されている場合は非負整数(self):
+    def test_lookbackが設定されている場合は1以上の整数(self):
         for name, spec in INDICATOR_COLUMN_REGISTRY.items():
             if spec.lookback is not None:
-                assert isinstance(spec.lookback, int) and spec.lookback >= 0, (
-                    f'{name}: lookback は0以上の整数である必要があります（実際: {spec.lookback!r}）'
+                assert isinstance(spec.lookback, int) and spec.lookback >= 1, (
+                    f'{name}: lookback は1以上の整数である必要があります（実際: {spec.lookback!r}）'
                 )
 
     def test_不正な組み合わせはpost_initで例外になる(self):
+        # RECURSIVE なのに prev_self=False
         with pytest.raises(ValueError):
-            ColumnSpec(name='dummy', kind=ColumnKind.RECURSIVE, state_columns=())
+            ColumnSpec(name='dummy', kind=ColumnKind.RECURSIVE, prev_self=False, inputs=('close',), lookback=1)
+        # RECURSIVE なのに inputs が空
         with pytest.raises(ValueError):
-            ColumnSpec(name='dummy', kind=ColumnKind.RECURSIVE, state_columns=('dummy',), lookback=5)
+            ColumnSpec(name='dummy', kind=ColumnKind.RECURSIVE, prev_self=True, inputs=())
+        # WINDOW なのに prev_self=True
         with pytest.raises(ValueError):
-            ColumnSpec(name='dummy', kind=ColumnKind.WINDOW, state_columns=('dummy',))
+            ColumnSpec(name='dummy', kind=ColumnKind.WINDOW, prev_self=True, inputs=('close',))
+        # lookback が1未満
+        with pytest.raises(ValueError):
+            ColumnSpec(name='dummy', kind=ColumnKind.WINDOW, inputs=('close',), lookback=0)
+
+
+class TestInputsAreValidColumnNames:
+    """inputs に書かれた列名が、生価格列か Indicator 実列のどちらかであること（5-3b）。"""
+
+    def test_全列のinputsが有効な列名である(self):
+        valid = RAW_PRICE_COLUMNS | _indicator_model_columns()
+        invalid = {
+            (name, input_name)
+            for name, spec in INDICATOR_COLUMN_REGISTRY.items()
+            for input_name in spec.inputs
+            if input_name not in valid
+        }
+        assert not invalid, (
+            f'inputs が生価格列にも Indicator 実列にも無い組み合わせ: {sorted(invalid)}\n'
+            'RAW_PRICE_COLUMNS への追加漏れ、または列名のタイポの可能性があります。'
+        )
+
+
+class TestLookbackBound:
+    """WINDOW 型 lookback の上限（SQLite の504行に収まることの担保。5-3b）。"""
+
+    def test_window型のlookback最大値が252以下(self):
+        window_lookbacks = [
+            spec.lookback for spec in INDICATOR_COLUMN_REGISTRY.values()
+            if spec.kind is ColumnKind.WINDOW and spec.lookback is not None
+        ]
+        assert window_lookbacks, 'WINDOW 型で lookback が確定している列が1つもありません'
+        assert max(window_lookbacks) <= 252, (
+            f'WINDOW 型の lookback 最大値が252を超えています: {max(window_lookbacks)}\n'
+            'SQLite の保持期間（504行）を圧迫するため設計を見直してください。'
+        )
+
+    def test_lookback未確定の列を一覧する(self):
+        """可視化目的。lookback=None の列があっても失敗させない。"""
+        unresolved = sorted(
+            name for name, spec in INDICATOR_COLUMN_REGISTRY.items() if spec.lookback is None
+        )
+        print(f'lookback 未確定の列（{len(unresolved)}件）: {unresolved}')
 
 
 class TestKnownLookbackValues:
-    """本番実測で判明している4値がレジストリに正しく反映されていること（回帰固定）。"""
+    """5-3b の設計（計算式を読んで導出した値）の回帰固定。"""
 
-    @pytest.mark.parametrize('name,expected', [
-        ('rs_trend_s200', 99),
-        ('rs_ratio_e200', 298),
-        ('rs_momentum_e200', 610),
+    @pytest.mark.parametrize('name,expected_kind,expected_lookback', [
+        ('ema_200', ColumnKind.RECURSIVE, 1),
+        ('atr_14', ColumnKind.RECURSIVE, 2),
+        ('td9', ColumnKind.RECURSIVE, 5),
+        ('rs_value_e200', ColumnKind.RECURSIVE, 1),
+        ('rs_roc_ema_200', ColumnKind.RECURSIVE, 15),
+        ('rs_blue_dot_age', ColumnKind.RECURSIVE, 252),
+        ('rs_red_dot_age', ColumnKind.RECURSIVE, 252),
+        ('rs_trend_s200', ColumnKind.WINDOW, 200),
+        ('rs_ratio_e200', ColumnKind.WINDOW, 200),
+        ('rs_momentum_e200', ColumnKind.WINDOW, 200),
+        ('sp_pivot', ColumnKind.WINDOW, 250),
+        ('sp_hl', ColumnKind.WINDOW, 250),
+        ('sp_counter', ColumnKind.WINDOW, 250),
+        ('zb_ssl', ColumnKind.WINDOW, 250),
+        ('zb_bsl', ColumnKind.WINDOW, 250),
+        ('is_zone_break_bull', ColumnKind.WINDOW, 250),
+        ('is_zone_break_weak', ColumnKind.WINDOW, 250),
+        ('dist_52w_high_pct', ColumnKind.WINDOW, 252),
+        ('is_trend_template', ColumnKind.WINDOW, 252),
     ])
-    def test_window型の実測値(self, name, expected):
+    def test_代表列の分類とlookback(self, name, expected_kind, expected_lookback):
         spec = INDICATOR_COLUMN_REGISTRY[name]
-        assert spec.kind is ColumnKind.WINDOW
-        assert spec.lookback == expected
-
-    def test_rs_roc_ema_200はrecursive型で実測値がnoteに記載されている(self):
-        spec = INDICATOR_COLUMN_REGISTRY['rs_roc_ema_200']
-        assert spec.kind is ColumnKind.RECURSIVE
-        assert '511' in spec.note
+        assert spec.kind is expected_kind
+        assert spec.lookback == expected_lookback
