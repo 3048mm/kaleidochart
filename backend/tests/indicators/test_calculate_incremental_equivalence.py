@@ -12,7 +12,7 @@
 3. `zb_ssl`/`zb_bsl`/`is_zone_break_bull`/`is_zone_break_weak` の4列は
    上記2とは**別の判定基準**を使う（5-4c）。詳細は下記「zb_* の判定基準について」。
 
-## zb_* の判定基準について（5-4c）
+## zb_* の判定基準について（5-4c・5-4e で見直し）
 
 `zone_break` の内部状態は確定した反転（BOS）ごとにリセットされるが、
 トレンドレッグの長さに上限が無い（移植元 Pine Script の性質）ため、
@@ -25,10 +25,16 @@ SQLite の504行だけで日次計算しているため同じ制約を持つ。�
 doc/in_progress/t3_incremental_plan.md §8）。
 
 このため、この4列は**比較対象を「全履歴で計算した値」から
-「ホットウィンドウ（`HOT_WINDOW_BARS`=504本）だけで全期間計算した値」に
-差し替える**（除外はしない）。これは「現行実装と同等（回帰が無い）」ことの
-確認であり、「厳密解である」ことの確認ではない。他の63列との厳密一致
-テストとは判定基準そのものが異なるため、別のテストメソッドに分離している
+「`ZONE_BREAK_LOOKBACK`（400本。5-4e）だけで全期間計算した値」に差し替える**
+（除外はしない）。5-4c 版は `HOT_WINDOW_BARS`（504本＝SQLiteの保持行数）を
+そのまま使っていたが、これは `max_lookback()+1` が保持行数を1行超えマージンが
+ゼロだった。5-4e でユーザー判断により `ZONE_BREAK_LOOKBACK`（400。
+`incremental_state_registry.py` 参照）に見直し、SQLiteの保持行数に対して
+約100行のマージンを確保した。400と600〜2400の間で精度が変わらないと
+実測で確認済みのため、比較対象を400本に変えても検出力は変わらない。
+これは「現行実装と同等（回帰が無い）」ことの確認であり、「厳密解である」
+ことの確認ではない。他の63列との厳密一致テストとは判定基準そのものが
+異なるため、別のテストメソッドに分離している
 （`test_zone_break系4列はホットウィンドウでの全期間計算と一致する`）。
 
 ## 増分呼び出しの入力契約（5-4b。本ファイルが検証する設計）
@@ -64,7 +70,7 @@ import numpy as np
 import pandas as pd
 
 from indicators.calculate import calculate_indicators
-from indicators.incremental_state_registry import HOT_WINDOW_BARS, max_lookback
+from indicators.incremental_state_registry import ZONE_BREAK_LOOKBACK, max_lookback
 
 
 def _make_series(n: int, seed: int, base: float, vol: float, spike_every: int = 45):
@@ -142,8 +148,8 @@ class TestIncrementalMatchesFullRecompute:
         Args:
             k: 供給する履歴本数。None（既定）なら `max_lookback() + MARGIN`
                 （63列の厳密一致テスト用）。zb_* の「ホットウィンドウでの
-                全期間計算」との一致を見る専用テスト（5-4c）では
-                `k=HOT_WINDOW_BARS` を明示的に渡す。
+                全期間計算」との一致を見る専用テスト（5-4c・5-4e）では
+                `k=ZONE_BREAK_LOOKBACK` を明示的に渡す。
             state_idx: 供給履歴の開始位置（全履歴中のインデックス）。None（既定）なら
                 「十分に settle した位置」（末尾から k_total 本）を自動算出する。
                 供給履歴にその銘柄自身の窓の先頭（atr_pct_14 の立ち上がりゼロ等）を
@@ -242,14 +248,17 @@ class TestIncrementalMatchesFullRecompute:
 
 
 class TestZoneBreakHotWindowEquivalence:
-    """zb_ssl/zb_bsl/is_zone_break_bull/is_zone_break_weak 専用の等価性テスト（5-4c）。
+    """zb_ssl/zb_bsl/is_zone_break_bull/is_zone_break_weak 専用の等価性テスト（5-4c・5-4e）。
 
     `TestIncrementalMatchesFullRecompute` は「全履歴で計算した値」との厳密一致を
     正としているが、zone_break系4列は必要履歴が原理的に非有界（モジュール
     docstring「zb_* の判定基準について」参照）なため、それを満たせない。
-    この4列だけは判定基準を「ホットウィンドウ（`HOT_WINDOW_BARS`=504本）だけで
+    この4列だけは判定基準を「`ZONE_BREAK_LOOKBACK`（400本。5-4e）だけで
     全期間計算した値」に差し替え、増分呼び出しがそれと一致すること
-    （＝現行実装との同等性・回帰が無いこと）を確認する。
+    （＝実際にT3ワーカーが供給する窓での計算との同等性・回帰が無いこと）を確認する。
+    5-4c 版は `HOT_WINDOW_BARS`（504本）を使っていたが、5-4e でレジストリの
+    lookback を見直した（ZONE_BREAK_LOOKBACK docstring 参照）ため、比較窓も
+    実際にレジストリが宣言する値に揃えている。
 
     `zone_break_series`/`structure_pivot_series`（backend/indicators/calculate.py）
     は `state` の値に関わらず df の生価格列だけから無条件に計算されるため、
@@ -262,10 +271,10 @@ class TestZoneBreakHotWindowEquivalence:
 
     def test_zone_break系4列はホットウィンドウでの全期間計算と一致する(self):
         base = TestIncrementalMatchesFullRecompute()
-        _, got_row, _, k_total, df_full, spy_full = base._build_full_and_incremental(k=HOT_WINDOW_BARS)
-        assert k_total == HOT_WINDOW_BARS + 1
+        _, got_row, _, k_total, df_full, spy_full = base._build_full_and_incremental(k=ZONE_BREAK_LOOKBACK)
+        assert k_total == ZONE_BREAK_LOOKBACK + 1
 
-        # 「現行実装」＝ SQLite が保持する直近 HOT_WINDOW_BARS 本の生価格だけを使い、
+        # 「実際にT3ワーカーが供給する窓」＝ ZONE_BREAK_LOOKBACK(400) 本の生価格だけを使い、
         # 毎回ゼロから計算する（state=None）。増分呼び出しが使ったのと同じ末尾の
         # 生価格ウィンドウに揃える。
         df_hot = df_full.tail(k_total).reset_index(drop=True)
@@ -400,11 +409,19 @@ class TestSuppliedHistoryDtypeRegression:
     def test_incremental_does_not_raise_when_supplied_rows_are_fewer_than_max_lookback_plus_one(self):
         """供給行数が `max_lookback() + 1` に満たなくてもクラッシュしないこと。
 
-        `max_lookback()`（= `HOT_WINDOW_BARS` = 504）は SQLite ホットキャッシュの
-        保持行数上限と同じ値のため、T3ワーカー（5-6）が「K+1行ちょうど」を要求すると
-        SQLiteの保持行数（504）では1本足りない。ワーカーは「利用可能な行すべて
-        （最大 K+1 行）」を読む設計になる必要があるが、その場合でも
-        `calculate_indicators` 側がクラッシュしないことをここで固定する
+        5-4d 時点では `max_lookback()`（当時は `HOT_WINDOW_BARS` = 504 と同値。
+        zone_break系4列の lookback だった）が SQLite ホットキャッシュの保持行数
+        上限と一致していたため、T3ワーカーが「K+1行ちょうど」を要求すると
+        SQLiteの保持行数では1本足りない、という実運用シナリオが存在した。
+        5-4e で zone_break系4列の lookback を `ZONE_BREAK_LOOKBACK`（400）に
+        下げたことで `max_lookback()+1`（401）は `HOT_WINDOW_BARS`（504）に
+        対して約100行のマージンを持つようになり、このシナリオ自体は基本的に
+        発生しなくなった。
+
+        それでも「供給行数が要求に満たない場合でもクラッシュしない」という
+        防御的な性質自体は、新規上場銘柄（保有履歴がそもそも少ない）など
+        別の理由でも成立してほしい普遍的な要件のため、`max_lookback()` を
+        意図的に1本下回る行数を供給してテストを維持する
         （5-4d で確認。WINDOW型は `min_periods` により行数不足でも例外にならず、
         RECURSIVE型は `prev_self_seed` が `len(df) >= 2` しか要求しないため、
         設計上は安全なはずだが、将来の変更でこの前提が壊れていないかを検出する）。
@@ -418,13 +435,10 @@ class TestSuppliedHistoryDtypeRegression:
         spy_full = pd.DataFrame({'date': dates}).join(spy_px)
         full_res = calculate_indicators(df_full, spy_full, state=None)
 
-        # SQLiteの保持行数上限(HOT_WINDOW_BARS=504)しか読めない状況を再現する
-        # （max_lookback()+1=505 に対して1本不足）。
-        supplied_total = HOT_WINDOW_BARS
-        assert supplied_total < max_lookback() + 1, (
-            'このテストの前提（504 < max_lookback()+1）が崩れています。'
-            'max_lookback() の値が変わった場合はテストの意図を見直してください'
-        )
+        # `max_lookback() + 1` にちょうど1本足りない供給行数を意図的に作る
+        # （HOT_WINDOW_BARS には依存しない。5-4e でマージンが生まれたため）。
+        supplied_total = max_lookback()
+        assert supplied_total < max_lookback() + 1
         history = (
             full_res.iloc[-supplied_total:-1]
             .drop(columns=_NON_PERSISTED_MERGE_COLUMNS, errors='ignore')
@@ -433,7 +447,7 @@ class TestSuppliedHistoryDtypeRegression:
         new_row_raw = df_full.iloc[[-1]][_RAW_PRICE_COLUMNS].reset_index(drop=True)
         df_inc = pd.concat([history, new_row_raw], ignore_index=True, sort=False)
         spy_inc = spy_full.iloc[-supplied_total:].reset_index(drop=True)
-        assert len(df_inc) == supplied_total == HOT_WINDOW_BARS
+        assert len(df_inc) == supplied_total
 
         got_res = calculate_indicators(df_inc, spy_inc, state=True)
         assert not got_res.empty

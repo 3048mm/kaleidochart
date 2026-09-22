@@ -336,6 +336,31 @@ daily_prices: 2024-09-18 〜 2026-09-18 / 504 営業日 / 3,360銘柄
       `_build_full_and_incremental`に`state_idx`引数を追加（既定は従来どおり
       末尾settle位置。5-4dのテストのみ`state_idx=0`を明示指定）。
       pytest全件 1843 passed, 1 skipped（旧1839+新規4）。
+- [x] **5-4e** `zone_break` 系4列の lookback を見直し、SQLite保持行数に対する
+      マージンを確保 — **完了（2026-09-22・ユーザー判断）**。詳細は §7「5-4e:
+      zone_break系のlookbackがHOT_WINDOW_BARSちょうどでマージンゼロだった件」参照。
+      lookback を `HOT_WINDOW_BARS`(504) から `ZONE_BREAK_LOOKBACK`(400) に変更し、
+      `max_lookback()+1`(401) が `HOT_WINDOW_BARS`(504) に対して約103行のマージンを
+      持つようにした。
+      変更ファイル: `backend/indicators/incremental_state_registry.py`
+      （`ZONE_BREAK_LOOKBACK` 定数を新規追加。`HOT_WINDOW_BARS - _ZONE_BREAK_MARGIN_BARS`
+      として算出し、マージンが定数の引き算からコード上で読み取れる形にした。
+      対象4列の lookback を `HOT_WINDOW_BARS` → `ZONE_BREAK_LOOKBACK` に変更、
+      note を更新）、
+      `backend/tests/indicators/test_incremental_state_registry.py`
+      （代表値固定テストの期待値を `ZONE_BREAK_LOOKBACK` に更新、
+      `test_max_lookback_plus_oneがHOT_WINDOW_BARSに対してマージンを持つ` を新設し
+      `max_lookback()+1 <= HOT_WINDOW_BARS` を不変条件として固定）、
+      `backend/tests/indicators/test_calculate_incremental_equivalence.py`
+      （`TestZoneBreakHotWindowEquivalence` の比較窓を `HOT_WINDOW_BARS` →
+      `ZONE_BREAK_LOOKBACK` に変更。`test_incremental_does_not_raise_when_supplied_rows_are_fewer_than_max_lookback_plus_one`
+      は「SQLiteの保持行数(504)がmax_lookback()+1(505)より1本少ない」という
+      5-4d時点の実運用シナリオが前提だったが、マージン確保後は成立しなくなったため、
+      `HOT_WINDOW_BARS` への依存を外し `max_lookback()` を直接1本下回る供給行数に
+      差し替えて防御的性質のテストとして維持）、
+      `doc/backend_specification.md`（3.4節の警告ブロックを400本採用・根拠・
+      マージンの説明に更新）。
+      pytest全件 1844 passed, 1 skipped（旧1843+新規1: マージン不変条件テスト）。
 - [ ] **5-6** T3 ワーカーを増分呼び出しへ変更（§3.2）＋フォールバック（§3.5）
 - [ ] **5-7** 更新窓の実装（§3.4。(c) は 5-2 で決めた N 日を書き直す）
 - [ ] **5-8** pytest 全件パス
@@ -582,6 +607,47 @@ RECURSIVE型列は `prev_self_seed` が `len(df) >= 2` しか要求しないた�
 K+1行）」を読む実装にすればよい（`calculate_indicators` 側はその行数を
 そのまま受け入れる）。
 
+### 5-4e: zone_break系のlookbackがHOT_WINDOW_BARSちょうどでマージンゼロだった件（2026-09-22）
+
+5-4c で `zb_ssl`/`zb_bsl`/`is_zone_break_bull`/`is_zone_break_weak` の lookback に
+`HOT_WINDOW_BARS`（504。SQLiteの保持行数の実測値）をそのまま設定していたが、
+これは §7「5-4d」で申し送った通り `max_lookback() + 1 = 505` が保持行数504を
+**1行超える**構成であり、**マージンがゼロ**だった。5-4d 時点では
+「`calculate_indicators` 側は供給行数不足でもクラッシュしない」ことを確認して
+コード側の対処を見送ったが、これは「クラッシュしない」ことの確認であって
+「正しい値になる」ことの確認ではない。730暦日に含まれる営業日数は祝日配置で
+年によって500〜505程度に揺れるため、保持行数が504を下回る年には
+`zb_*` 系の lookback 要求（505本）を満たせない状態が発生しうる。
+
+**ユーザー判断（2026-09-22）**: 「zb_* の lookback は減らしてもいい。ちゃんと
+SQLite の保有数からマージンをつけて」。
+
+**対処**: 300銘柄実測（5-4cで既出、離散点 120/250/400/600/900/1300/1800/2400
+でのみ測定）を再検討したところ、**400と600〜2,400の間で精度が変わらない**
+——400本で全履歴と一致しなかった銘柄（`zb_ssl`2/300・`zb_bsl`3/300・
+`is_zone_break_weak`1/300）は2,400本まで遡っても一致しなかった（測定点の間に
+該当銘柄が無く、収束していない）。したがって400本より大きくしても得るものが
+無く、読み出し量が増えるだけと判断し、**lookbackを400に変更**した。
+
+`ZONE_BREAK_LOOKBACK = HOT_WINDOW_BARS - _ZONE_BREAK_MARGIN_BARS`
+（504 - 104 = 400）という形で定義し、マージンがコード上の引き算から読み取れる
+ようにした。結果、`max_lookback() + 1`（401）は `HOT_WINDOW_BARS`（504）に対して
+**103行のマージン**を持つ。
+
+**テストでの不変条件化**: `test_incremental_state_registry.py` に
+`test_max_lookback_plus_oneがHOT_WINDOW_BARSに対してマージンを持つ` を新設し、
+`max_lookback() + 1 <= HOT_WINDOW_BARS` を固定した。将来どれかの列の lookback を
+引き上げてこの不変条件が壊れたら、このテストが検出する。
+
+**5-6（T3ワーカー実装）への申し送りの更新**: §7「5-4d」の申し送りにあった
+「SQLiteの保持行数504では`K+1=505`本に1本足りないため、ワーカーは『利用可能な
+行すべて（最大K+1行）』を読む設計にする」という前提は、5-4e の見直しにより
+**基本的には発生しなくなった**（`K+1=401` に対しSQLiteは504本保持しており
+約100行の余裕がある）。ただし新規上場銘柄など保有履歴がそもそも少ないケースは
+引き続き起こりうるため、「利用可能な行すべてを読む」設計自体は変更不要
+（`calculate_indicators` は行数不足でもクラッシュしないことは5-4dで確認済み、
+5-4eでもこの防御的性質のテストは維持している）。
+
 ## 8. スコープ外・残作業（issue_list へ起票する）
 
 - 🟠 **遡及的な価格修正（株式統合・分割補正）の後に T3 が再計算されない** —
@@ -612,10 +678,16 @@ K+1行）」を読む実装にすればよい（`calculate_indicators` 側はそ
   | `is_zone_break_weak` | 120 | 120 | 250 | 400 | 1/300 |
 
   ユーザー判断（案A採用）に基づき、`incremental_state_registry.py` の `zb_ssl`/`zb_bsl`/
-  `is_zone_break_bull`/`is_zone_break_weak` の lookback を `HOT_WINDOW_BARS`（504。SQLite
-  ホットウィンドウ全体）に設定し、「厳密解ではない」ことを `doc/backend_specification.md` に
-  明記した。**これは増分化が新たに生じさせた問題ではない** — 増分化以前の日次実装も
-  SQLite の504行だけで毎回ゼロから再計算していたため、同じ約1%の銘柄は既に本番で不正確な
-  値を持っている（構造上同一の制約）。真の恒久対応（例: Parquet 全履歴から直近リセット位置を
-  特定してから増分計算する、など）は別途検討が必要で、本計画のスコープ外。
-  `doc/issue_list.md` への転記はオーケストレーターが行う（§4-3 に準じた運用）。
+  `is_zone_break_bull`/`is_zone_break_weak` の lookback を設定し、「厳密解ではない」ことを
+  `doc/backend_specification.md` に明記した。**これは増分化が新たに生じさせた問題ではない**
+  — 増分化以前の日次実装も SQLite の504行だけで毎回ゼロから再計算していたため、同じ約1%の
+  銘柄は既に本番で不正確な値を持っている（構造上同一の制約）。真の恒久対応（例: Parquet
+  全履歴から直近リセット位置を特定してから増分計算する、など）は別途検討が必要で、本計画の
+  スコープ外。`doc/issue_list.md` への転記はオーケストレーターが行う（§4-3 に準じた運用）。
+
+  > [!NOTE]
+  > 5-4c 版は lookback を `HOT_WINDOW_BARS`（504。SQLiteホットウィンドウ全体）に設定して
+  > いたが、これは `max_lookback()+1=505` が SQLite の保持行数504を1行超えマージンが
+  > ゼロだった。5-4e（2026-09-22・ユーザー判断）で `ZONE_BREAK_LOOKBACK`（400）に見直し、
+  > `HOT_WINDOW_BARS` に対して約103行のマージンを確保した。400と600〜2,400の間で精度が
+  > 変わらないと実測で確認済みのため、この見直しによる精度低下は無い。詳細は §7「5-4e」。

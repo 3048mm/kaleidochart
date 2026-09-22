@@ -89,12 +89,32 @@ RAW_PRICE_COLUMNS: FrozenSet[str] = frozenset({
     'open', 'high', 'low', 'close', 'volume', 'spy_close', 'spy_volume',
 })
 
-# ホットキャッシュ（stocktool.db）が保持する営業日数。5-4c で `zb_ssl`/`zb_bsl`/
-# `is_zone_break_bull`/`is_zone_break_weak` の lookback に使う値の名前付き定数。
-# これらの列は原理的に必要履歴が非有界（下記 _ENTRIES のコメント参照）なため、
-# 「有界だから504で足りる」のではなく「ホットウィンドウ全体＝現行の日次計算と
-# 同等の近似解にする」という意味でこの値を選んでいる。マジックナンバー化を避けるため定数化。
+# ホットキャッシュ（stocktool.db）が保持する営業日数（実測）。730暦日に含まれる
+# 営業日数は祝日配置で前後する（実測504、年により500〜505程度）。
 HOT_WINDOW_BARS = 504
+
+# zb_ssl / zb_bsl / is_zone_break_bull / is_zone_break_weak の lookback（5-4e）。
+#
+# 5-4c では暫定的に `HOT_WINDOW_BARS`（504）をそのまま lookback に設定していたが、
+# これは SQLite の保持行数そのものであり、`max_lookback() + 1 = 505` が保持行数を
+# 1行超える＝**マージンがゼロ**だった（保持行数が実測で500〜505の間で揺れる年には
+# 壊れる）。5-4e でユーザー判断により見直した。
+#
+# **400 を選んだ根拠**（300銘柄実測・2026-09-22。測定した lookback は離散点
+# 120/250/400/600/900/1300/1800/2400 のみ）:
+#   - `is_zone_break_bull`: 最大 250
+#   - `is_zone_break_weak`: 最大 400
+#   - `zb_ssl`: p99=250、2/300 銘柄が 2400（400〜2400 の間の測定点では収束せず）
+#   - `zb_bsl`: p99=251、3/300 銘柄が 2400（同上）
+# **400 と 600〜2400 の間で精度は変わらない**——400 で収束しなかった銘柄
+# （2〜3/300）は 2400 まで拡張しても収束しなかった（測定点の間に該当銘柄が無い）。
+# よって 400 より大きくしても正しさは向上せず、読み出し量が増えるだけ。
+#
+# **マージンの確保**: `ZONE_BREAK_LOOKBACK + 1`（=401）は `HOT_WINDOW_BARS`（504）に
+# 対して `_ZONE_BREAK_MARGIN_BARS` 行の余裕を持つ。730暦日に含まれる営業日数が
+# 年によって500〜505程度で揺れることへの安全マージンとして必要。
+_ZONE_BREAK_MARGIN_BARS = 104
+ZONE_BREAK_LOOKBACK = HOT_WINDOW_BARS - _ZONE_BREAK_MARGIN_BARS  # = 400
 
 
 @dataclass(frozen=True)
@@ -324,33 +344,39 @@ _ENTRIES: Tuple[ColumnSpec, ...] = (
     #   zb_ssl                120   120  250  2400    2/300
     #   zb_bsl                120   120  251  2400    3/300
     #   is_zone_break_weak    120   120  250  400     1/300
-    # このためこの4列だけは WINDOW のまま lookback=HOT_WINDOW_BARS(504) とする。
-    # **これは厳密解ではない**: 504本はホットキャッシュ（SQLite）が保持する全営業日数と
-    # 同じ値であり、「増分計算が現行の日次計算（SQLiteの504行で毎回ゼロから計算）と
-    # 同じ結果になる」ことしか保証しない。全履歴（Parquet）から計算した場合と異なる値に
-    # なりうる銘柄が実測で300銘柄中2〜3銘柄（約1%）存在し、これは増分化以前から
-    # 本番が抱えていた既存の不正確さ（本計画が新たに作る問題ではない）。
+    # このためこの4列だけは WINDOW のまま lookback=ZONE_BREAK_LOOKBACK(400) とする
+    # （5-4e。5-4c版は HOT_WINDOW_BARS(504) そのものを使っていたが、それだと
+    # `max_lookback()+1=505` が SQLite の保持行数を1行超えマージンがゼロだった。
+    # ZONE_BREAK_LOOKBACK の根拠と HOT_WINDOW_BARS に対するマージンは同定数の
+    # docstring コメント参照）。
+    # **これは厳密解ではない**: 400と600〜2400の間で精度が変わらないと実測で
+    # 確認済みのため、これより大きくしても正しさは向上しない。全履歴（Parquet）
+    # から計算した場合と異なる値になりうる銘柄が実測で300銘柄中2〜3銘柄（約1%）
+    # 存在し、これは増分化以前から本番が抱えていた既存の不正確さ
+    # （本計画が新たに作る問題ではない）。
     # 詳細: doc/backend_specification.md、doc/in_progress/t3_incremental_plan.md §8。
-    _window('is_zone_break_bull', inputs=('high', 'low', 'close'), lookback=HOT_WINDOW_BARS,
+    _window('is_zone_break_bull', inputs=('high', 'low', 'close'), lookback=ZONE_BREAK_LOOKBACK,
             note='5-4c実測(300銘柄): 中央値120/p90 120/p99 250/最大250、250本超0/300。'
                  'zone_break系は原理的に非有界（トレンドレッグ長に上限なし）なため、'
-                 'lookback=504(HOT_WINDOW_BARS)はホットウィンドウ全体＝現行の日次計算と'
-                 '同等の近似解であり厳密解ではない'),
-    _window('zb_ssl', inputs=('high', 'low', 'close'), lookback=HOT_WINDOW_BARS,
+                 'lookback=400(ZONE_BREAK_LOOKBACK)はHOT_WINDOW_BARS(504)にマージンを'
+                 '確保した近似解であり厳密解ではない（5-4e）'),
+    _window('zb_ssl', inputs=('high', 'low', 'close'), lookback=ZONE_BREAK_LOOKBACK,
             note='5-4c実測(300銘柄): 中央値120/p90 120/p99 250/最大2400、250本超2/300。'
                  'zone_break系は原理的に非有界（トレンドレッグ長に上限なし）なため、'
-                 'lookback=504(HOT_WINDOW_BARS)はホットウィンドウ全体＝現行の日次計算と'
-                 '同等の近似解であり厳密解ではない（約1%の銘柄で全履歴計算と値が異なりうる）'),
-    _window('zb_bsl', inputs=('high', 'low', 'close'), lookback=HOT_WINDOW_BARS,
+                 'lookback=400(ZONE_BREAK_LOOKBACK)はHOT_WINDOW_BARS(504)にマージンを'
+                 '確保した近似解であり厳密解ではない（約1%の銘柄で全履歴計算と値が'
+                 '異なりうる。5-4e）'),
+    _window('zb_bsl', inputs=('high', 'low', 'close'), lookback=ZONE_BREAK_LOOKBACK,
             note='5-4c実測(300銘柄): 中央値120/p90 120/p99 251/最大2400、250本超3/300。'
                  'zone_break系は原理的に非有界（トレンドレッグ長に上限なし）なため、'
-                 'lookback=504(HOT_WINDOW_BARS)はホットウィンドウ全体＝現行の日次計算と'
-                 '同等の近似解であり厳密解ではない（約1%の銘柄で全履歴計算と値が異なりうる）'),
-    _window('is_zone_break_weak', inputs=('high', 'low', 'close'), lookback=HOT_WINDOW_BARS,
+                 'lookback=400(ZONE_BREAK_LOOKBACK)はHOT_WINDOW_BARS(504)にマージンを'
+                 '確保した近似解であり厳密解ではない（約1%の銘柄で全履歴計算と値が'
+                 '異なりうる。5-4e）'),
+    _window('is_zone_break_weak', inputs=('high', 'low', 'close'), lookback=ZONE_BREAK_LOOKBACK,
             note='5-4c実測(300銘柄): 中央値120/p90 120/p99 250/最大400、250本超1/300。'
                  'zone_break系は原理的に非有界（トレンドレッグ長に上限なし）なため、'
-                 'lookback=504(HOT_WINDOW_BARS)はホットウィンドウ全体＝現行の日次計算と'
-                 '同等の近似解であり厳密解ではない'),
+                 'lookback=400(ZONE_BREAK_LOOKBACK)はHOT_WINDOW_BARS(504)にマージンを'
+                 '確保した近似解であり厳密解ではない（5-4e）'),
 )
 
 INDICATOR_COLUMN_REGISTRY: Mapping[str, ColumnSpec] = {spec.name: spec for spec in _ENTRIES}
