@@ -343,3 +343,150 @@ def test_resolve_tax_rate_falls_back_to_config_when_none():
         assert resolve_tax_rate(None) == pytest.approx(0.2)
         m.assert_called_once_with()
 
+
+# ---------------------------------------------------------------------------
+# validate_jobs_studies (事前一括検証)
+# ---------------------------------------------------------------------------
+from backend.backtest.run_scenario_batch import validate_jobs_studies
+
+
+def test_validate_jobs_studies_empty_jobs():
+    """空ジョブリストなら何もしない。"""
+    validate_jobs_studies([], "dummy.db")
+
+
+def test_validate_jobs_studies_db_not_found(tmp_path):
+    """Optuna DB が存在しない場合、即座にエラー。"""
+    non_existent = str(tmp_path / "no_such.db")
+    jobs = [{"name": "j1", "strategy_code": "A", "source": "optuna", "study_name": "s1"}]
+    with pytest.raises(ValueError, match="Optuna DB ファイルが存在しません"):
+        validate_jobs_studies(jobs, non_existent)
+
+
+def test_validate_jobs_studies_all_valid(tmp_path):
+    """全ジョブの study が存在する場合、正常終了。"""
+    db_file = tmp_path / "opt.db"
+    db_file.touch()
+
+    jobs = [
+        {"name": "j1", "strategy_code": "A", "source": "optuna", "study_name": "study_a"},
+        {"name": "j2", "strategy_codes": ["B1", "B2"], "source": "optuna", "study_names": ["study_b1", "study_b2"]},
+        {"name": "j3", "strategy_code": "C", "source": "manual", "base_study_name": "study_c"},
+        {"name": "j4", "strategy_code": "D", "source": "manual"},  # base_study なし
+    ]
+
+    def mock_load_study(study_name, storage):
+        mock_st = MagicMock()
+        mock_st.best_trial.params = {"p": 1}
+        return mock_st
+
+    with patch("optuna.load_study", side_effect=mock_load_study):
+        validate_jobs_studies(jobs, str(db_file))
+
+
+def test_validate_jobs_studies_missing_study_single(tmp_path):
+    """単一戦略ジョブの study が存在しない場合、集約エラーで報告。"""
+    db_file = tmp_path / "opt.db"
+    db_file.touch()
+
+    jobs = [{"name": "job_a", "strategy_code": "A", "source": "optuna", "study_name": "missing_study"}]
+
+    def mock_load_study(study_name, storage):
+        raise KeyError(f"No study with name '{study_name}' exists.")
+
+    with patch("optuna.load_study", side_effect=mock_load_study):
+        with pytest.raises(ValueError) as exc_info:
+            validate_jobs_studies(jobs, str(db_file))
+        err = str(exc_info.value)
+        assert "job_a" in err
+        assert "missing_study" in err
+        assert "DB に存在しません" in err
+
+
+def test_validate_jobs_studies_aggregates_multiple_errors(tmp_path):
+    """複数のジョブでエラーがある場合、すべてのエラーを1回でまとめて報告する。"""
+    db_file = tmp_path / "opt.db"
+    db_file.touch()
+
+    jobs = [
+        {"name": "job_1", "strategy_code": "A", "source": "optuna", "study_name": "missing_1"},
+        {"name": "job_2", "strategy_code": "B", "source": "optuna"},  # study_name 欠落
+        {"name": "job_3", "strategy_code": "C", "source": "unknown_src"},  # 不正な source
+        {"name": "job_4", "strategy_code": "D", "source": "manual", "base_study_name": "missing_base"},
+    ]
+
+    def mock_load_study(study_name, storage):
+        raise KeyError(f"No study with name '{study_name}' exists.")
+
+    with patch("optuna.load_study", side_effect=mock_load_study):
+        with pytest.raises(ValueError) as exc_info:
+            validate_jobs_studies(jobs, str(db_file))
+        err = str(exc_info.value)
+        assert "4 件の問題が見つかりました" in err
+        assert "job_1" in err and "missing_1" in err
+        assert "job_2" in err and "study_name" in err
+        assert "job_3" in err and "未知の source" in err
+        assert "job_4" in err and "missing_base" in err
+
+
+def test_validate_jobs_studies_no_completed_trials(tmp_path):
+    """study はあるが完了した trial がない場合のエラー報告。"""
+    db_file = tmp_path / "opt.db"
+    db_file.touch()
+
+    jobs = [{"name": "job_empty", "strategy_code": "A", "source": "optuna", "study_name": "empty_study"}]
+
+    def mock_load_study(study_name, storage):
+        mock_st = MagicMock()
+        type(mock_st).best_trial = property(fget=MagicMock(side_effect=ValueError("Record does not exist.")))
+        return mock_st
+
+    with patch("optuna.load_study", side_effect=mock_load_study):
+        with pytest.raises(ValueError) as exc_info:
+            validate_jobs_studies(jobs, str(db_file))
+        err = str(exc_info.value)
+        assert "job_empty" in err
+        assert "empty_study" in err
+        assert "完了したトライアルがありません" in err
+
+
+def test_main_aborts_immediately_on_invalid_studies(capsys, monkeypatch, tmp_path):
+    """main() 実行時、ジョブに無効な study があれば MC 実行に入らず即座に sys.exit(1) すること。"""
+    from backend.backtest.run_scenario_batch import main
+
+    jobs_toml = tmp_path / "jobs.toml"
+    jobs_toml.write_text("""
+[[job]]
+name = "bad_job"
+strategy_code = "A"
+source = "optuna"
+study_name = "non_existent_study"
+""", encoding="utf-8")
+
+    db_file = tmp_path / "opt.db"
+    db_file.touch()
+
+    monkeypatch.setattr(
+        "backend.backtest.run_scenario_batch.load_scenario_batch_jobs",
+        lambda p: [{"name": "bad_job", "strategy_code": "A", "source": "optuna", "study_name": "non_existent_study"}],
+    )
+    monkeypatch.setattr(
+        "backend.backtest.run_scenario_batch.parse_args",
+        lambda argv=None: (None, False, None),
+    )
+
+    def mock_load_study(study_name, storage):
+        raise KeyError("not found")
+
+    with patch("optuna.load_study", side_effect=mock_load_study):
+        with pytest.raises(SystemExit) as exc_info:
+            main(db_path_override=str(db_file))
+        assert exc_info.value.code == 1
+
+    captured = capsys.readouterr()
+    assert "[ERROR] シナリオバッチ開始前検証エラー" in captured.out
+    assert "bad_job" in captured.out
+    assert "non_existent_study" in captured.out
+
+
+

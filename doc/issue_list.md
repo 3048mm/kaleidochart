@@ -1384,7 +1384,19 @@
   - **対応案**: `optuna.storages.JournalStorage` + `JournalFileBackend`（並行書き込み向けに用意されたバックエンド）への移行。既存 `data/optimization_trials.db` からの study 移行手順と、`Cannot tell a COMPLETE trial` が本当に再発しないことの検証（少トライアルで `n_jobs=2,4,8` を実測）がセットで必要。
   - **注意**: `run_optimization.bat` は戦略ごとに別プロセスを起動するため、**バッチ実行中に設定を変えると次の戦略から条件が変わる**。検証は必ず実行していないときに行う。
 
-- [ ] **`run_scenario_batch.py` が「参照先の Optuna study が存在しない」ジョブを黙ってスキップする**（2026-08-18 発見）
+- [x] 🟠 **`run_scenario_batch.py` が「参照先の Optuna study が存在しない」ジョブを黙ってスキップする（2026-08-18 発見 / 2026-09-22 解決）**
+
+  > [!NOTE]
+  > **2026-09-22 解決済み。** バッチ実行開始前の一括事前検証（`validate_jobs_studies()`）を導入した。
+  >
+  > - **開始前一括検証**: 全ジョブ（単一・複数・manual 問わず）の定義と必要な Optuna study の存在、
+  >   完了 trial の有無を MC ループに入る前に一括で検査。
+  > - **エラー集約報告**: 1つでも study が欠落している場合、15個中15個目で落ちるような途中失敗を防ぎ、
+  >   開始直後に全問題ジョブ・study をまとめて一覧表示して `sys.exit(1)` で停止する。
+  > - **サイレントスキップ撤廃**: パラメータ読み込みループ内の `Skipping` 処理を撤廃し、
+  >   万一の失敗時も即時エラー停止（fail-loud）へ統一。
+  > - テスト: `backend/tests/backtest/test_scenario_batch_jobs.py` に単体・集約エラー・結合テスト7件追加（計36件 PASS）。
+
   - **経緯**: 最適化結果の study を `_without_tax` へ退避リネームした後、`data/scenario_batch_jobs.toml` の `study_name`（`A_momentum_breakout` 等）が実在しなくなり、**14ジョブ中13が対象外**になっていた。
   - **問題は名前の不一致そのものではなく、それが検知されないこと**: `run_scenario_batch.py:386-389` は `Skipping {name}: Optuna params not found in study '...'` を1行出して `continue` するだけで、バッチは正常終了する。出力フォルダができないことに気づくまで分からない。**「設定したのに効いていない」型の失敗**（流動性床・`is_trend_template` と同型）。
   - **今回の実害はゼロ**: 再最適化すると study は config の戦略名（`optimization_runner.py:709` の `study_name = actual_name`）で作り直されるため、参照は自動的に復旧した。ただし**退避リネーム運用を続ける限り再発する**。

@@ -204,6 +204,115 @@ def resolve_job_strategy_specs(job: dict):
     return [job["strategy_code"]], [job.get("study_name")], False
 
 
+def validate_jobs_studies(jobs: list[dict], db_path: str) -> None:
+    """全ジョブの定義および必要な Optuna study の存在・整合性を一括検証する。
+
+    バッチ実行のループに入る前にすべてのジョブを検査し、1つでも study の欠落や
+    不正な設定があれば、すべてのエラーをまとめて報告して ValueError を送出する。
+    これにより、長時間のバッチ処理が途中のジョブで突然失敗したり、
+    存在しない study がサイレントにスキップされる事態を防ぐ。
+
+    Args:
+        jobs: 実行対象のジョブのリスト。
+        db_path: Optuna の SQLite DB のパス。
+
+    Raises:
+        ValueError: いずれかのジョブで study が見つからない、または設定不正がある場合。
+    """
+    if not jobs:
+        return
+
+    errors: list[str] = []
+
+    # Optuna DB の存在が必要かどうか
+    needs_optuna_db = any(
+        job.get("source", "optuna") == "optuna"
+        or (job.get("source") == "manual" and job.get("base_study_name"))
+        for job in jobs
+    )
+
+    if needs_optuna_db and not os.path.exists(db_path):
+        raise ValueError(
+            f"シナリオバッチ開始前検証エラー: Optuna DB ファイルが存在しません: {db_path}"
+        )
+
+    storage_url = f"sqlite:///{db_path}"
+
+    for job in jobs:
+        job_name = job.get("name", "<unnamed>")
+        source = job.get("source", "optuna")
+
+        if source not in ("optuna", "manual"):
+            errors.append(
+                f"ジョブ '{job_name}': 未知の source '{source}' です "
+                f"('optuna' または 'manual' を指定してください)"
+            )
+            continue
+
+        try:
+            strategy_codes, study_names, is_multi = resolve_job_strategy_specs(job)
+        except ValueError as e:
+            errors.append(str(e))
+            continue
+
+        if source == "optuna":
+            for strategy_code, study_name in zip(strategy_codes, study_names):
+                if not study_name:
+                    errors.append(
+                        f"ジョブ '{job_name}' (strategy={strategy_code}): "
+                        f"'study_name' が指定されていません"
+                    )
+                    continue
+
+                try:
+                    study = optuna.load_study(study_name=study_name, storage=storage_url)
+                    _ = study.best_trial.params
+                except KeyError:
+                    errors.append(
+                        f"ジョブ '{job_name}' (strategy={strategy_code}): "
+                        f"Optuna study '{study_name}' が DB に存在しません"
+                    )
+                except ValueError as ve:
+                    errors.append(
+                        f"ジョブ '{job_name}' (strategy={strategy_code}): "
+                        f"Optuna study '{study_name}' に完了したトライアルがありません ({ve})"
+                    )
+                except Exception as ex:
+                    errors.append(
+                        f"ジョブ '{job_name}' (strategy={strategy_code}): "
+                        f"Optuna study '{study_name}' の読み込みに失敗しました: {ex}"
+                    )
+
+        elif source == "manual":
+            base_study_name = job.get("base_study_name")
+            if base_study_name:
+                try:
+                    study = optuna.load_study(study_name=base_study_name, storage=storage_url)
+                    _ = study.best_trial.params
+                except KeyError:
+                    errors.append(
+                        f"ジョブ '{job_name}': base_study_name で指定された "
+                        f"Optuna study '{base_study_name}' が DB に存在しません"
+                    )
+                except ValueError as ve:
+                    errors.append(
+                        f"ジョブ '{job_name}': base_study_name で指定された "
+                        f"Optuna study '{base_study_name}' に完了したトライアルがありません ({ve})"
+                    )
+                except Exception as ex:
+                    errors.append(
+                        f"ジョブ '{job_name}': base_study_name で指定された "
+                        f"Optuna study '{base_study_name}' の読み込みに失敗しました: {ex}"
+                    )
+
+    if errors:
+        msg = (
+            f"シナリオバッチ開始前検証エラー: {len(errors)} 件の問題が見つかりました。\n"
+            + "\n".join(f"  - {err}" for err in errors)
+        )
+        raise ValueError(msg)
+
+
 def run_single_mc_scenario(strat: str, model: str, run_idx: int,
                            start_date: str, end_date: str,
                            preset_toml_path: str, project_root: str,
@@ -408,13 +517,13 @@ def resolve_tax_rate(tax_override):
     return load_tax_rate()
 
 
-def main():
+def main(argv=None, db_path_override: str = None, jobs_path_override: str = None):
     _s = os.path.dirname(os.path.abspath(__file__))
     project_root_here = os.path.dirname(os.path.dirname(_s))  # stocktool/
-    db_path = os.path.join(project_root_here, "data", "optimization_trials.db")
-    jobs_path = os.path.join(project_root_here, "data", "scenario_batch_jobs.toml")
+    db_path = db_path_override or os.path.join(project_root_here, "data", "optimization_trials.db")
+    jobs_path = jobs_path_override or os.path.join(project_root_here, "data", "scenario_batch_jobs.toml")
 
-    job_names, list_jobs_only, tax_override = parse_args()
+    job_names, list_jobs_only, tax_override = parse_args(argv)
 
     all_jobs = load_scenario_batch_jobs(jobs_path)
     if not all_jobs:
@@ -431,6 +540,13 @@ def main():
 
     try:
         jobs = filter_jobs_by_names(all_jobs, job_names)
+    except ValueError as e:
+        print(f"[ERROR] {e}")
+        sys.exit(1)
+
+    # バッチ実行前に全ジョブの定義・Optuna study の存在を一括検証する
+    try:
+        validate_jobs_studies(jobs, db_path)
     except ValueError as e:
         print(f"[ERROR] {e}")
         sys.exit(1)
@@ -486,44 +602,35 @@ def main():
 
         # Load parameters（戦略ごとに1つずつ）
         strategies = []  # [(strategy_code, best_params), ...] -> generate_preset_toml に渡す
-        job_skip = False
         for strategy_code, study_name in zip(strategy_codes, study_names):
             best_params = {}
             if source == "optuna":
                 if not study_name:
-                    if is_multi:
-                        print(
-                            f"[ERROR] ジョブ '{strat_name}': 'study_name' が指定されていません "
-                            f"(strategy={strategy_code})"
-                        )
-                        sys.exit(1)
-                    print(f"  Skipping {strat_name}: 'study_name' is missing for optuna source.")
-                    job_skip = True
-                    break
+                    print(
+                        f"[ERROR] ジョブ '{strat_name}': 'study_name' が指定されていません "
+                        f"(strategy={strategy_code})"
+                    )
+                    sys.exit(1)
                 best_params = get_best_params_from_db(db_path, study_name)
                 if not best_params:
-                    if is_multi:
-                        print(
-                            f"[ERROR] ジョブ '{strat_name}': Optuna params not found in study "
-                            f"'{study_name}' (strategy={strategy_code})"
-                        )
-                        sys.exit(1)
-                    print(f"  Skipping {strat_name}: Optuna params not found in study '{study_name}'")
-                    job_skip = True
-                    break
+                    print(
+                        f"[ERROR] ジョブ '{strat_name}': Optuna params not found in study "
+                        f"'{study_name}' (strategy={strategy_code})"
+                    )
+                    sys.exit(1)
             elif source == "manual":
                 base_study_name = job.get("base_study_name")
                 if base_study_name:
                     best_params = get_best_params_from_db(db_path, base_study_name)
                     if not best_params:
-                        best_params = {}
+                        print(
+                            f"[ERROR] ジョブ '{strat_name}': Optuna params not found in base_study "
+                            f"'{base_study_name}'"
+                        )
+                        sys.exit(1)
                 else:
                     best_params = {}
             strategies.append((strategy_code, best_params))
-
-        if job_skip:
-            blocks_done += n_models
-            continue
 
         # Apply manual parameter overrides（全戦略に同じ上書きを適用）
         override_params = job.get("override_params", {})
