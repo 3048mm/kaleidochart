@@ -132,3 +132,119 @@ def test_summary_separates_ng_and_stale(health_db):
     assert ng == ["BROKEN"]
     assert "要対応 1銘柄" in out
     assert "上流待ち 1銘柄" in out
+
+
+# ============================================================
+# RECURSIVE型状態列のNULLチェック（T3増分化計画5-6b）
+# ============================================================
+#
+# 本番レジストリ（`incremental_state_registry.recursive_column_names`）の全列に
+# 依存しないよう、`hc.recursive_column_names`/`hc.max_lookback` を小さい固定値へ
+# 差し替える。ema_200（非RS系）と rs_value_e200（RS系。SPYでは構造的にNULL）の
+# 2列・K=3行で挙動を確認する。
+
+@pytest.fixture
+def recursive_health_db(tmp_path, monkeypatch):
+    db = tmp_path / "health_recursive_test.db"
+    con = sqlite3.connect(db)
+    con.executescript("""
+        CREATE TABLE symbols (id INTEGER PRIMARY KEY, ticker TEXT, active INTEGER);
+        CREATE TABLE daily_prices (id INTEGER PRIMARY KEY AUTOINCREMENT, symbol_id INTEGER, date TEXT);
+        CREATE TABLE indicators (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, symbol_id INTEGER, date TEXT,
+            ema_200 REAL, rs_value_e200 REAL
+        );
+    """)
+    con.commit()
+    monkeypatch.setattr(hc, "DB_PATH", str(db))
+    monkeypatch.setattr(hc, "recursive_column_names", lambda: ("ema_200", "rs_value_e200"))
+    monkeypatch.setattr(hc, "max_lookback", lambda: 3)
+
+    def add(sym_id, ticker, rows):
+        """rows: [(date, ema_200, rs_value_e200), ...]（daily_prices にも同数のT2行を入れる）"""
+        con.execute("INSERT INTO symbols VALUES (?, ?, 1)", (sym_id, ticker))
+        con.executemany("INSERT INTO daily_prices (symbol_id, date) VALUES (?, ?)",
+                        [(sym_id, d) for d, _, _ in rows])
+        con.executemany(
+            "INSERT INTO indicators (symbol_id, date, ema_200, rs_value_e200) VALUES (?, ?, ?, ?)",
+            [(sym_id,) + r for r in rows],
+        )
+        con.commit()
+
+    yield add, con
+    con.close()
+
+
+def _status_recursive(ticker, check_recursive_state):
+    import io
+    from contextlib import redirect_stdout
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        ng = hc.check_symbol_health(all_active=True, check_recursive_state=check_recursive_state)
+    return ng, buf.getvalue()
+
+
+_SPY_ROWS = [(f"2026-07-{d:02d}", 100.0 + d, None) for d in range(28, 32)]  # SPY: rs_value_e200は構造的にNULL
+
+
+def test_recursive_null_detected_when_flag_enabled(recursive_health_db):
+    """RECURSIVE型列に NULL がある銘柄は、フラグ有効時に NG として検出される。"""
+    add, _ = recursive_health_db
+    add(1, "SPY", _SPY_ROWS)
+    # 直近K=3行のうち1行の ema_200 が NULL（同期済み・件数一致・CRITICAL_COLUMNSのnullは未チェック）。
+    add(2, "BROKEN_T3", [
+        ("2026-07-29", 50.0, 1.0),
+        ("2026-07-30", None, 1.0),
+        ("2026-07-31", 52.0, 1.0),
+    ])
+
+    ng, out = _status_recursive("BROKEN_T3", check_recursive_state=True)
+
+    assert "BROKEN_T3" in ng
+    assert "[BROKEN_T3] Status: NG" in out
+    assert "RECURSIVE状態列NULL検知" in out
+    assert "ema_200" in out
+
+
+def test_recursive_null_not_checked_by_default(recursive_health_db):
+    """フラグ未指定（デフォルト）では RECURSIVE 列は見ない（既存挙動を壊さない）。"""
+    add, _ = recursive_health_db
+    add(1, "SPY", _SPY_ROWS)
+    add(2, "BROKEN_T3", [
+        ("2026-07-29", 50.0, 1.0),
+        ("2026-07-30", None, 1.0),
+        ("2026-07-31", 52.0, 1.0),
+    ])
+
+    ng, out = _status_recursive("BROKEN_T3", check_recursive_state=False)
+
+    assert "BROKEN_T3" not in ng
+    assert "RECURSIVE状態列NULL検知" not in out
+
+
+def test_recursive_null_excludes_spy_rs_columns(recursive_health_db):
+    """SPY自身の rs_ 系列（構造的にNULL）は誤検出しない。"""
+    add, _ = recursive_health_db
+    add(1, "SPY", _SPY_ROWS)  # rs_value_e200 は全行NULLだが構造的に正常
+
+    ng, out = _status_recursive("SPY", check_recursive_state=True)
+
+    assert "SPY" not in ng
+    assert "RECURSIVE状態列NULL検知" not in out
+
+
+def test_recursive_null_absent_when_all_present(recursive_health_db):
+    """NULLが無ければ検出されない（OK銘柄はノイズを出さない）。"""
+    add, _ = recursive_health_db
+    add(1, "SPY", _SPY_ROWS)
+    add(2, "CLEAN", [
+        ("2026-07-29", 50.0, 1.0),
+        ("2026-07-30", 51.0, 1.0),
+        ("2026-07-31", 52.0, 1.0),
+    ])
+
+    ng, out = _status_recursive("CLEAN", check_recursive_state=True)
+
+    assert "CLEAN" not in ng
+    assert "[CLEAN] Status:" not in out
+    assert "RECURSIVE状態列NULL検知" not in out

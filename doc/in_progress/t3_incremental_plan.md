@@ -361,7 +361,10 @@ daily_prices: 2024-09-18 〜 2026-09-18 / 504 営業日 / 3,360銘柄
       `doc/backend_specification.md`（3.4節の警告ブロックを400本採用・根拠・
       マージンの説明に更新）。
       pytest全件 1844 passed, 1 skipped（旧1843+新規1: マージン不変条件テスト）。
-- [ ] **5-6** T3 ワーカーを増分呼び出しへ変更（§3.2）＋フォールバック（§3.5）
+- [x] **5-6** T3 ワーカーを増分呼び出しへ変更（§3.2）＋フォールバック（§3.5）
+      — **完了（2026-09-22）**。詳細は §7「5-6: T3 ワーカーの増分化」参照。
+- [x] **5-6b** オーケストレーターの検収で判明した「フォールバックが無言」問題への対処
+      — **完了（2026-09-22）**。詳細は §7「5-6b: フォールバックの可視化」参照。
 - [ ] **5-7** 更新窓の実装（§3.4。(c) は 5-2 で決めた N 日を書き直す）
 - [ ] **5-8** pytest 全件パス
 - [ ] **5-9** **§6 の受け入れ検証**（1銘柄・Parquet 全履歴と全列全日付一致）
@@ -372,7 +375,12 @@ daily_prices: 2024-09-18 〜 2026-09-18 / 504 営業日 / 3,360銘柄
       （3回繰り返している再発見を止めるため）
 - [ ] **5-14** `doc/issue_list.md` へ §8 の2件を起票
 - [ ] **5-15** `/code-review` をブランチ単位で1回通す（種別 B）
-- [ ] **5-16** merge →（移行シードとして）T3 フル再計算 → 昇格
+- [ ] **5-16** merge →（移行シードとして）T3 フル再計算 → 昇格。
+      **フル再計算で状態を seed してからでないと増分経路は発動しない**（検収で実証済み。
+      §7「5-6b」参照）。現行の本番 SQLite は `rs_roc_ema_200` 等12列が既に不正確な値
+      （NULLまたは遡り不足）を持っており、増分条件（直近K行のRECURSIVE列にNaNが無い）を
+      満たせないため、5-16 のフル再計算を経ずに日次だけ流しても増分経路には決して
+      入らない（フォールバックし続ける）。順序は必ず「フル再計算 → 以降の日次で増分」。
 - [ ] **5-17** 計画書を `doc/completed/` へ移動
 
 ### 作業中メモ
@@ -647,6 +655,128 @@ SQLite の保有数からマージンをつけて」。
 引き続き起こりうるため、「利用可能な行すべてを読む」設計自体は変更不要
 （`calculate_indicators` は行数不足でもクラッシュしないことは5-4dで確認済み、
 5-4eでもこの防御的性質のテストは維持している）。
+
+### 5-6: T3 ワーカーの増分化（2026-09-22）
+
+`t3_indicators.py` の `_calculate_t3_worker` を、5-4b で確定した入力契約
+（生価格 K+1 本 ＋ 保存済み T3 中間列 K 本、K=`max_lookback()`）どおりに
+増分呼び出しを組み立てる実装に変更した。
+
+**分岐条件**（§3.5 のフォールバックをそのまま実装）:
+
+1. `t3_max is None`（保存済み T3 行が無い）→ 全期間計算（`df_price` 全体を渡す。
+   現行の全行読み込みがそのままフォールバック経路になる）
+2. `daily_prices` の `date > t3_max` の行数が **ちょうど1でない**（0または2以上）
+   → 全期間計算
+3. `indicators` から `date <= t3_max` を新しい順に `LIMIT K` 件読んだ結果が
+   **K件に満たない** → 全期間計算
+4. RECURSIVE型列（`recursive_column_names()`。前日値を継ぐ列。`ema_*` /
+   `rs_value_eN` / `rs_roc_ema_N` / `td9` / `atr_14` / `rs_macd_signal_21` /
+   `rs_blue_dot_age` / `rs_red_dot_age`）の供給履歴K行のいずれかに NaN がある
+   → 全期間計算
+
+**WINDOW型列は NULL チェック対象外にした理由**: `calc_moving_averages` /
+`structure_pivot_series` / `zone_break_series` 等、WINDOW型列を計算する箇所は
+いずれも `state` を受け取らず、常に生価格（または同一呼び出し内で先に
+計算し直された他のWINDOW/RECURSIVE列）から**無条件に上書き計算**する
+（`calculate_indicators` 内で毎回全行再計算）。そのため df に供給した
+WINDOW型列の値そのものは一切読まれず、NULL であっても実害が無い
+（`sp_pivot`/`sp_counter` は排他関係のため、供給履歴のどの行でも
+必ずどちらかが NULL — これを NULL チェック対象に含めると増分経路が
+常にフォールバックしてしまう）。RECURSIVE型列だけが `finalize_incremental_column`
+経由で供給履歴をそのまま（行0..K-1）使い、それが WINDOW型列（`rs_ratio_eN`等）
+のローリング計算の入力になるため、NULL チェックは RECURSIVE型列に限定した。
+
+上記のいずれにも該当しない場合、`indicators` から読んだ K 行（日付昇順に戻す）を
+`daily_prices` から読んだ同じ K 日分の生価格と `date` で内部結合し、新規1日分の
+生価格行（`daily_prices` のみ、T3列は無し＝concat後に NaN）と連結して
+`calculate_indicators(df_inc, spy_df, state=True)` を呼ぶ。生価格は指示どおり
+必ず `daily_prices` から読み（`indicators` 側の生価格相当列は使わない）、
+供給する T3 列は `INDICATOR_COLUMN_REGISTRY` から機械的に導出した
+（手書きリストなし）。`spy_df` は従来どおり親プロセスが読んだ全履歴をそのまま
+渡している（`calc_relative_strength` は日付で left-merge するため、
+渡す範囲が増分窓より広くても問題ない）。SPY 取得失敗時に書き込みを止める
+`date <= spy_latest_date` のガードは変更していない。
+
+**テスト**: `backend/tests/pipeline/test_t3_indicators.py`（新規）。
+`_calculate_t3_worker` を multiprocessing.Pool を介さず直接呼び出し、
+`indicators.calculate.calculate_indicators` をスパイに差し替えて実際に
+渡された `state` 引数を記録する方式で分岐を検証した。
+
+- `test_normal_daily_uses_incremental_path` — 保存済み行がK本以上・新規1日
+  ぶんの通常の日次で `state=True` が使われることを固定
+- `test_incremental_result_matches_full_recompute` — 増分経路で書かれた行が
+  全期間計算（オラクル）の同じ日付の行と rtol=atol=1e-9 で一致することを固定
+  （zone_break系4列は非有界性が既知のため比較対象から除外。§8参照。
+  それ以外の全列で一致を確認）
+- `test_no_saved_t3_rows_falls_back` / `test_insufficient_saved_rows_falls_back`
+  / `test_multi_day_gap_falls_back` / `test_null_state_column_falls_back` —
+  上記フォールバック条件1〜4それぞれで `state=None` に落ちることを固定
+
+pytest全件 1850 passed, 1 skipped（旧1844+新規6）。
+
+**5-7（更新窓の実装）への申し送り**: §3.4 により (c) TWO_SIDED 型列が
+存在しないと確定済みのため、5-7 は「当日のみ更新」で完了するはずで、
+5-6 の実装（新規1行のみ `delta_df` として返す）は既にこの要件を満たしている
+可能性が高い。5-7 で追加実装が必要か、5-6 の実装で既に充足しているかの
+確認をオーケストレーターに委ねる。
+
+### 5-6b: フォールバックの可視化（2026-09-22）
+
+**オーケストレーターの検収で判明した設計上の穴への対処。** 5-6 の実装は正しく動作するが、
+実データ（本番相当の SQLite）で検証したところ以下が判明した:
+
+- 12銘柄すべてがフォールバック（増分経路が一度も発動しない）
+- 理由: 増分条件「直近K行のRECURSIVE列にNaNが無い」を `rs_roc_ema_200` のNULLが
+  満たさない（3,360銘柄中3,338銘柄が該当。§1.1 の不具合そのもの）
+- フォールバックは現行の504本再計算なので、12列に不正確な値
+  （`rs_roc_ema_200` はNULL）を書く
+- 結果、**一度フォールバックすると翌日以降も増分が使えない**（フォールバックの入力自体が
+  不正確なため、増分条件を再び満たせない）
+
+**ユーザー判断（2026-09-22）**: 「フォールバックが発生したらT3リフレッシュすべき」が
+本計画の前提であり、自動復帰は目的ではない。フォールバックが書いた値は12列が不正確なので、
+復帰するかどうかに関係なくリフレッシュ対象。**したがって「一度落ちると復帰しない」は
+仕様として正しい。危険なのは復帰しないことではなく、誰も気づかないこと**
+（本番で4日間気づかれなかった）。フォールバック経路をParquet基点にする等の
+「自動的に正しくする」実装は採用しない。
+
+**対処（4点）**:
+
+1. **`_calculate_t3_worker` の戻り値を `(ticker, sid, records, fallback_reason)` の
+   4要素タプルに拡張**（`backend/pipeline/phases/t3_indicators.py`）。§3.5 の4条件に
+   対応する識別子 `FALLBACK_REASON_NO_SAVED_ROWS` /
+   `FALLBACK_REASON_INSUFFICIENT_ROWS` / `FALLBACK_REASON_MULTI_DAY_GAP` /
+   `FALLBACK_REASON_NULL_RECURSIVE_COLUMN`（NULL列名を `"識別子:列名,列名"` の形式で
+   付与）を新設。増分経路が成立した場合は `fallback_reason=None`
+   （不変条件: `df_inc is not None <=> fallback_reason is None`）。
+2. **`sync_phase_t3_indicators` がフェーズ終了時に集計してログ出力**
+   （`_log_fallback_summary` 新設）。0件のときは INFO
+   「全銘柄が増分経路で計算されました」に留め、1件以上のときは WARNING で
+   件数と理由内訳（列名等のdetailは落としカテゴリだけで集計）・
+   `--rebuild-from T3` の推奨を出す。
+3. **`tools/db_health_check.py` に `--check-recursive-state` フラグを追加**。
+   `recursive_column_names()`（レジストリ）から対象列を機械的に取得し、
+   直近 `max_lookback()` 行にNULLがある銘柄をNGとして検出する。SPYの `rs_` 系列
+   （構造的にNULLが正常）のみ除外し、他の閾値によるノイズ抑制は行わない
+   （現在の本番データは3,338/3,360銘柄が該当し大量検出するのが正しい挙動）。
+4. **`doc/backend_specification.md` §3.4 に増分計算とフォールバックの関係を明記**
+   （フォールバックは例外状態・書かれた値は不正確・T3リフレッシュが必要である旨）。
+   計画書 §5-16（昇格手順）に「フル再計算で状態をseedしてからでないと増分経路は
+   発動しない」ことを明記。
+
+**テスト**: `backend/tests/pipeline/test_t3_indicators.py` に
+`TestLogFallbackSummary`（2件: 0件時はINFOのみ・1件以上時はWARNING+内訳）を追加し、
+既存のフォールバック系4テストに `fallback_reason` の値そのものの検証を追加した。
+`backend/tests/tools/test_db_health_check.py` に
+`test_recursive_null_detected_when_flag_enabled` /
+`test_recursive_null_not_checked_by_default` /
+`test_recursive_null_excludes_spy_rs_columns` /
+`test_recursive_null_absent_when_all_present` の4件を追加
+（`hc.recursive_column_names`/`hc.max_lookback` を小さい固定値へ差し替えて
+本番レジストリ全列に依存しない構成にした）。
+
+pytest全件 1856 passed, 1 skipped（旧1850+新規6）。
 
 ## 8. スコープ外・残作業（issue_list へ起票する）
 
