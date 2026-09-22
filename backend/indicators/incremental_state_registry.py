@@ -66,10 +66,61 @@ note に理由を書く。** 5-3b 時点では全列で確定できている（�
 3. WINDOW 型の lookback 最大値が **252 以下**（SQLite の504行に収まることの担保）
 4. RECURSIVE 型は `prev_self=True`
 5. `inputs` の列名がすべて有効（生の価格列 or Indicator 実列）
+6. `warmup_bars` が設定されている列は0以上の整数（5-6c）
 
 `calculate_indicators` の実装（`backend/indicators/calculate.py` 等）は本レジストリ作成時点では
 **変更していない**。分類の正しさ自体（増分1歩 == 全期間再計算の最終行）は、計画書 5-5 の
 等価性テストで別途検証する（誤分類があればそちらで検出される設計）。
+
+## warmup_bars（5-6c・ユーザー提案）
+
+`lookback`（増分計算が inputs から必要とする行数）とは**別の軸**。ユーザー提案の新しい
+健全性チェック向けの属性で、意味は「**演算上必要な日数がある銘柄なら、その列は NULL に
+ならない**」という一般則を検査可能にすること。
+
+`rs_roc_ema_200`/`rs_momentum_e200` が全銘柄で NULL になった今回の不具合（§1.1）は、
+この検査があれば初日に検出できた。`--check-recursive-state`（5-6b）は「増分計算の**状態**が
+壊れていないか」を見るのに対し、本属性を使う `--check-warmup-nulls`
+（`tools/db_health_check.py`）は「**指標そのものが出るべき値を出しているか**」を見る、
+目的の異なる検査。
+
+- **意味**: 銘柄の価格履歴の**先頭から数えて何本目（0始まり）でこの列が非NULLになるか**。
+  T3 の保存行数（`t3_count`）がこの値を**超えていれば**、最新行は非NULLであるべき
+  （`t3_count > warmup_bars` ⟹ 最新行が非NULL）。
+- **実測**: 本番 Parquet・`category='個別'`・active・2,400本以上の履歴を持つ120銘柄で、
+  前方から1本ずつ価格を足しながら「この列が初めて非NULLになった本数」を測定
+  （2026-09-22）。67列中64列は**中央値＝最小値＝最頻値**の構造的な定数だった
+  （銘柄によらず一定）。スクリプト・全数値は §7 の計画書エントリと
+  `tmp/verify_warmup_thresholds.py` を参照。
+- **`vol_surge_21`/`vol_surge_rel_spy_21` は中央値ではなく最大値（13）を採用**——
+  中央値は0だが実測の最大が13だったため、安全側（過検出しない側）に寄せた。
+- **例外（`warmup_bars=None`）**: `sp_pivot`/`sp_hl`/`sp_counter` の3列。これらは
+  **イベント駆動**（構造がいつ最初に現れるかが銘柄の値動き次第）で、実測でも
+  最小9〜最大337本とばらついたため、「履歴が何本あれば非NULLになる」という
+  閾値を置けない。`--check-warmup-nulls` の対象から機械的に除外される
+  （`columns_with_warmup_threshold()` が `warmup_bars is not None` の列だけを返す）。
+  `sp_pivot`/`sp_counter` は仕様上排他（同じ行でどちらか一方が必ずNULL）だが、
+  「少なくとも一方が非NULL」という対の規則は実データでの偽陽性ゼロを確認できて
+  いないため導入していない（単純に両方とも例外扱い）。
+- **全数値の検証（2026-09-23 実施・結果は未収束）**: 上記の実測は**2,400本以上の履歴を持つ
+  120銘柄**のサンプルである。本番の全銘柄（3,362件）に対して
+  `tmp/verify_warmup_thresholds.py` で当てたところ、**偽陽性ゼロにはならなかった**。
+  内訳は以下の3種類で、**閾値はまだ確定していない**。
+
+  1. **構造的に NULL（除外が必要）** — SPY の `rs_*` 全列（自身との RS は計算しない）、
+     `^VIX`/`^VIX3M`/SPY の出来高由来列（`vol_surge_21` / `vol_surge_rel_spy_21` /
+     `up_down_vol_ratio_50`）。`--check-recursive-state`（5-6b）は SPY の `rs_*` を
+     既に除外しており、本フラグにも同種の除外が要る。
+  2. **閾値の誤り** — `atr_14`/`atr_pct_14` を 0 としたが、価格が12〜18行しかない
+     新規上場7銘柄で NULL だった。Wilder 実装は14本未満で例外を投げて NaN になるため、
+     真のウォームアップは 0 ではない。サンプルを長期履歴銘柄に限ったことによる見落とし。
+  3. **本物の異常（検出されるべきもの）** — `rs_roc_ema_200` が NULL の40銘柄
+     （個別25・テーマ12・指標2・市場1）は、511本以上の履歴があるのに値が無い。
+     偽陽性ではなく、調査すべき実在の異常と考えられる。
+
+  したがって **`--check-warmup-nulls` は現時点で「そのまま運用できる検査」ではなく、
+  閾値調整が残っている**。opt-in フラグなので既定の健全性チェックには影響しない。
+  残作業は `doc/issue_list.md` に起票済み。
 """
 from dataclasses import dataclass, field
 from enum import Enum, auto
@@ -126,6 +177,7 @@ class ColumnSpec:
     prev_self: bool = False                   # 自列の前日保存値を継ぐか（RECURSIVE は True 必須）
     inputs: Tuple[str, ...] = field(default_factory=tuple)  # 参照する列（生価格 or 保存済みT3列）
     lookback: Optional[int] = None             # inputs から何行必要か（当日のみなら1。未確定なら None）
+    warmup_bars: Optional[int] = None          # 銘柄の先頭から何本目(0始まり)で非NULLになるか（5-6c。lookbackとは別軸）
     note: str = ''                             # 補足
 
     def __post_init__(self):
@@ -139,19 +191,24 @@ class ColumnSpec:
                 raise ValueError(f'{self.name}: {self.kind.name} 型に prev_self=True は使いません')
         if self.lookback is not None and self.lookback < 1:
             raise ValueError(f'{self.name}: lookback は1以上である必要があります（当日のみなら1）')
+        if self.warmup_bars is not None and self.warmup_bars < 0:
+            raise ValueError(f'{self.name}: warmup_bars は0以上である必要があります')
 
 
-def _recursive(name: str, inputs: Tuple[str, ...], lookback: int, note: str = '') -> ColumnSpec:
+def _recursive(name: str, inputs: Tuple[str, ...], lookback: int, warmup_bars: Optional[int] = None,
+                note: str = '') -> ColumnSpec:
     """RECURSIVE 型のショートハンド。前日の自列値（prev_self）に加え、当日分の inputs/lookback を持つ。"""
     return ColumnSpec(
         name=name, kind=ColumnKind.RECURSIVE, prev_self=True,
-        inputs=inputs, lookback=lookback, note=note,
+        inputs=inputs, lookback=lookback, warmup_bars=warmup_bars, note=note,
     )
 
 
-def _window(name: str, inputs: Tuple[str, ...] = (), lookback: Optional[int] = None, note: str = '') -> ColumnSpec:
+def _window(name: str, inputs: Tuple[str, ...] = (), lookback: Optional[int] = None,
+            warmup_bars: Optional[int] = None, note: str = '') -> ColumnSpec:
     """WINDOW 型のショートハンド。"""
-    return ColumnSpec(name=name, kind=ColumnKind.WINDOW, inputs=inputs, lookback=lookback, note=note)
+    return ColumnSpec(name=name, kind=ColumnKind.WINDOW, inputs=inputs, lookback=lookback,
+                       warmup_bars=warmup_bars, note=note)
 
 
 # ============================================================
@@ -161,156 +218,176 @@ _ENTRIES: Tuple[ColumnSpec, ...] = (
     # --- Simple Moving Averages ---
     # close.rolling(window=N, min_periods=1).mean()。min_periods=1 は「NaN を返すかどうか」の
     # 閾値にすぎず、集計対象の窓自体は常に直近N本（履歴がN本以上ある本番銘柄では常にこれ）。
-    _window('sma_5', inputs=('close',), lookback=5),
-    _window('sma_21', inputs=('close',), lookback=21),
-    _window('sma_50', inputs=('close',), lookback=50),
-    _window('sma_63', inputs=('close',), lookback=63),
-    _window('sma_150', inputs=('close',), lookback=150),
-    _window('sma_200', inputs=('close',), lookback=200),
+    _window('sma_5', inputs=('close',), lookback=5, warmup_bars=0),
+    _window('sma_21', inputs=('close',), lookback=21, warmup_bars=0),
+    _window('sma_50', inputs=('close',), lookback=50, warmup_bars=0),
+    _window('sma_63', inputs=('close',), lookback=63, warmup_bars=0),
+    _window('sma_150', inputs=('close',), lookback=150, warmup_bars=0),
+    _window('sma_200', inputs=('close',), lookback=200, warmup_bars=0),
 
     # --- Exponential Moving Averages ---
     # calculate_ema_tv は前日の EMA 値から _ema_kernel で継ぐ再帰計算（moving_averages.py）。
     # 当日の close だけあれば1ステップ進められる。
-    _recursive('ema_5', inputs=('close',), lookback=1, note='_ema_kernel の1ステップ'),
-    _recursive('ema_21', inputs=('close',), lookback=1, note='_ema_kernel の1ステップ'),
-    _recursive('ema_50', inputs=('close',), lookback=1, note='_ema_kernel の1ステップ'),
-    _recursive('ema_63', inputs=('close',), lookback=1, note='_ema_kernel の1ステップ'),
-    _recursive('ema_150', inputs=('close',), lookback=1, note='_ema_kernel の1ステップ'),
-    _recursive('ema_200', inputs=('close',), lookback=1, note='_ema_kernel の1ステップ'),
+    _recursive('ema_5', inputs=('close',), lookback=1, warmup_bars=4, note='_ema_kernel の1ステップ'),
+    _recursive('ema_21', inputs=('close',), lookback=1, warmup_bars=20, note='_ema_kernel の1ステップ'),
+    _recursive('ema_50', inputs=('close',), lookback=1, warmup_bars=49, note='_ema_kernel の1ステップ'),
+    _recursive('ema_63', inputs=('close',), lookback=1, warmup_bars=62, note='_ema_kernel の1ステップ'),
+    _recursive('ema_150', inputs=('close',), lookback=1, warmup_bars=149, note='_ema_kernel の1ステップ'),
+    _recursive('ema_200', inputs=('close',), lookback=1, warmup_bars=199, note='_ema_kernel の1ステップ'),
 
     # --- Volatility ---
     # _td9_kernel（volatility.py）は res[i-1]（前日の td9 自身）と close[i] vs close[i-4] の
     # 比較で決まる。close は当日〜4日前の5行が要る。
-    _recursive('td9', inputs=('close',), lookback=5, note='close[i] と close[i-4] の比較（_td9_kernel）'),
+    _recursive('td9', inputs=('close',), lookback=5, warmup_bars=0,
+               note='close[i] と close[i-4] の比較（_td9_kernel）'),
     # ta.volatility.AverageTrueRange は Wilder の再帰平滑化
     # （atr[i] = (atr[i-1]*(window-1) + true_range[i]) / window）。TR[i] の算出に
     # 前日 close が要るため、当日〜前日の high/low/close で2行必要。
-    _recursive('atr_14', inputs=('high', 'low', 'close'), lookback=2,
+    _recursive('atr_14', inputs=('high', 'low', 'close'), lookback=2, warmup_bars=0,
                note='Wilder再帰平滑化。TR[i]の算出にclose[i-1]が要るため2行（5-3bで再分類）'),
     # 同日の atr_14/close から決まる派生値（履歴不要）。
-    _window('atr_pct_14', inputs=('atr_14', 'close'), lookback=1, note='atr_14/close*100 の当日値のみ'),
+    _window('atr_pct_14', inputs=('atr_14', 'close'), lookback=1, warmup_bars=0,
+            note='atr_14/close*100 の当日値のみ'),
     # (high-low)/low を rolling(21) するだけの単純窓。
-    _window('adr_pct_21', inputs=('high', 'low'), lookback=21, note='(high-low)/low の21日単純窓'),
+    _window('adr_pct_21', inputs=('high', 'low'), lookback=21, warmup_bars=0, note='(high-low)/low の21日単純窓'),
     # close.pct_change() = close[i]/close[i-1]-1。2行必要。
-    _window('change_1d_pct', inputs=('close',), lookback=2, note='close.pct_change()。close[i-1]まで2行'),
+    _window('change_1d_pct', inputs=('close',), lookback=2, warmup_bars=1,
+            note='close.pct_change()。close[i-1]まで2行'),
     # close.pct_change(5) = close[i]/close[i-5]-1。6行必要。
-    _window('change_1w_pct', inputs=('close',), lookback=6, note='close.pct_change(5)。close[i-5]まで6行'),
+    _window('change_1w_pct', inputs=('close',), lookback=6, warmup_bars=5,
+            note='close.pct_change(5)。close[i-5]まで6行'),
     # close.pct_change(20) = close[i]/close[i-20]-1。21行必要。
-    _window('change_1m_pct', inputs=('close',), lookback=21, note='close.pct_change(20)。close[i-20]まで21行'),
+    _window('change_1m_pct', inputs=('close',), lookback=21, warmup_bars=20,
+            note='close.pct_change(20)。close[i-20]まで21行'),
     # ((close/sma_50*100-100)/atr_pct_14) の当日値のみ。sma_50/atr_pct_14 は別途維持される。
-    _window('sma50_atr_mult', inputs=('close', 'sma_50', 'atr_pct_14'), lookback=1,
+    _window('sma50_atr_mult', inputs=('close', 'sma_50', 'atr_pct_14'), lookback=1, warmup_bars=13,
             note='sma_50・atr_pct_14 は別途維持されるため当日値のみで決まる'),
 
     # --- Relative Strength (vs SPY) ---
     # close/spy_close の当日値のみで決まる（履歴不要）。
-    _window('rs_value', inputs=('close', 'spy_close'), lookback=1, note='close/spy_close の当日値のみ'),
+    _window('rs_value', inputs=('close', 'spy_close'), lookback=1, warmup_bars=0,
+            note='close/spy_close の当日値のみ'),
 
     # rs_trend_sN = rs_value_e5（RECURSIVE、当日値のみ要） / rolling(rs_value, N).mean()。
     # rolling窓の分だけ rs_value がN行要る。
-    _window('rs_trend_s5', inputs=('rs_value_e5', 'rs_value'), lookback=5,
+    _window('rs_trend_s5', inputs=('rs_value_e5', 'rs_value'), lookback=5, warmup_bars=4,
             note='rs_value_e5(当日値) / rolling(rs_value, 5).mean()'),
-    _window('rs_trend_s14', inputs=('rs_value_e5', 'rs_value'), lookback=14,
+    _window('rs_trend_s14', inputs=('rs_value_e5', 'rs_value'), lookback=14, warmup_bars=6,
             note='rs_value_e5(当日値) / rolling(rs_value, 14).mean()'),
-    _window('rs_trend_s21', inputs=('rs_value_e5', 'rs_value'), lookback=21,
+    _window('rs_trend_s21', inputs=('rs_value_e5', 'rs_value'), lookback=21, warmup_bars=9,
             note='rs_value_e5(当日値) / rolling(rs_value, 21).mean()'),
-    _window('rs_trend_s63', inputs=('rs_value_e5', 'rs_value'), lookback=63,
+    _window('rs_trend_s63', inputs=('rs_value_e5', 'rs_value'), lookback=63, warmup_bars=30,
             note='rs_value_e5(当日値) / rolling(rs_value, 63).mean()'),
-    _window('rs_trend_s200', inputs=('rs_value_e5', 'rs_value'), lookback=200,
+    _window('rs_trend_s200', inputs=('rs_value_e5', 'rs_value'), lookback=200, warmup_bars=99,
             note='rs_value_e5(当日値) / rolling(rs_value, 200).mean()。'
                  '旧版の実測値99は「rs_value_e5をゼロから再構築する場合」の値で、'
                  'rs_value_e5をRECURSIVE継続する5-3b設計では使わない'),
 
     # rs_value_eN: calculate_ema_tv(rs_value, N) によるEMA。RECURSIVE、当日の rs_value のみ要る。
-    _recursive('rs_value_e5', inputs=('rs_value',), lookback=1, note='EMA(rs_value, 5) の1ステップ'),
-    _recursive('rs_value_e14', inputs=('rs_value',), lookback=1, note='EMA(rs_value, 14) の1ステップ'),
-    _recursive('rs_value_e21', inputs=('rs_value',), lookback=1, note='EMA(rs_value, 21) の1ステップ'),
-    _recursive('rs_value_e63', inputs=('rs_value',), lookback=1, note='EMA(rs_value, 63) の1ステップ'),
-    _recursive('rs_value_e200', inputs=('rs_value',), lookback=1, note='EMA(rs_value, 200) の1ステップ'),
+    _recursive('rs_value_e5', inputs=('rs_value',), lookback=1, warmup_bars=4, note='EMA(rs_value, 5) の1ステップ'),
+    _recursive('rs_value_e14', inputs=('rs_value',), lookback=1, warmup_bars=13, note='EMA(rs_value, 14) の1ステップ'),
+    _recursive('rs_value_e21', inputs=('rs_value',), lookback=1, warmup_bars=20, note='EMA(rs_value, 21) の1ステップ'),
+    _recursive('rs_value_e63', inputs=('rs_value',), lookback=1, warmup_bars=62, note='EMA(rs_value, 63) の1ステップ'),
+    _recursive('rs_value_e200', inputs=('rs_value',), lookback=1, warmup_bars=199, note='EMA(rs_value, 200) の1ステップ'),
 
     # rs_ratio_eN: rs_value_eN（RECURSIVE） の rolling(N) Z-score（独立計算のrolling std）。
     # rs_value_eN 自体はN行分の生値を要さず、rolling窓の分だけ rs_value_eN がN行要る。
-    _window('rs_ratio_e5', inputs=('rs_value_e5',), lookback=5, note='rolling(rs_value_e5, 5) のZ-score'),
-    _window('rs_ratio_e14', inputs=('rs_value_e14',), lookback=14, note='rolling(rs_value_e14, 14) のZ-score'),
-    _window('rs_ratio_e21', inputs=('rs_value_e21',), lookback=21, note='rolling(rs_value_e21, 21) のZ-score'),
-    _window('rs_ratio_e63', inputs=('rs_value_e63',), lookback=63, note='rolling(rs_value_e63, 63) のZ-score'),
-    _window('rs_ratio_e200', inputs=('rs_value_e200',), lookback=200,
+    _window('rs_ratio_e5', inputs=('rs_value_e5',), lookback=5, warmup_bars=5,
+            note='rolling(rs_value_e5, 5) のZ-score'),
+    _window('rs_ratio_e14', inputs=('rs_value_e14',), lookback=14, warmup_bars=19,
+            note='rolling(rs_value_e14, 14) のZ-score'),
+    _window('rs_ratio_e21', inputs=('rs_value_e21',), lookback=21, warmup_bars=29,
+            note='rolling(rs_value_e21, 21) のZ-score'),
+    _window('rs_ratio_e63', inputs=('rs_value_e63',), lookback=63, warmup_bars=92,
+            note='rolling(rs_value_e63, 63) のZ-score'),
+    _window('rs_ratio_e200', inputs=('rs_value_e200',), lookback=200, warmup_bars=298,
             note='rolling(rs_value_e200, 200) のZ-score。旧版の実測値298は'
                  'rs_value_e200をゼロから再構築する場合の値で5-3b設計では使わない'),
 
     # rs_roc_ema_eN: rs_ratio_eN（WINDOW） の14日ROCをEMA平滑化。RECURSIVE。
     # roc[i] = ratio_offset[i]/ratio_offset[i-14]*100 なので rs_ratio_eN は当日〜14日前の15行要る。
-    _recursive('rs_roc_ema_5', inputs=('rs_ratio_e5',), lookback=15,
+    _recursive('rs_roc_ema_5', inputs=('rs_ratio_e5',), lookback=15, warmup_bars=23,
                note='roc = rs_ratio_e5[i]/rs_ratio_e5[i-14] を14日ROCしてEMA。15行'),
-    _recursive('rs_roc_ema_14', inputs=('rs_ratio_e14',), lookback=15,
+    _recursive('rs_roc_ema_14', inputs=('rs_ratio_e14',), lookback=15, warmup_bars=46,
                note='roc = rs_ratio_e14[i]/rs_ratio_e14[i-14] を14日ROCしてEMA。15行'),
-    _recursive('rs_roc_ema_21', inputs=('rs_ratio_e21',), lookback=15,
+    _recursive('rs_roc_ema_21', inputs=('rs_ratio_e21',), lookback=15, warmup_bars=63,
                note='roc = rs_ratio_e21[i]/rs_ratio_e21[i-14] を14日ROCしてEMA。15行'),
-    _recursive('rs_roc_ema_63', inputs=('rs_ratio_e63',), lookback=15,
+    _recursive('rs_roc_ema_63', inputs=('rs_ratio_e63',), lookback=15, warmup_bars=168,
                note='roc = rs_ratio_e63[i]/rs_ratio_e63[i-14] を14日ROCしてEMA。15行'),
-    _recursive('rs_roc_ema_200', inputs=('rs_ratio_e200',), lookback=15,
+    _recursive('rs_roc_ema_200', inputs=('rs_ratio_e200',), lookback=15, warmup_bars=511,
                note='roc = rs_ratio_e200[i]/rs_ratio_e200[i-14] を14日ROCしてEMA。15行。'
                     '旧版の実測値511は「rs_ratio_e200をゼロから再構築する場合」の値で、'
                     'rs_ratio_e200を継続する5-3b設計では使わない'),
 
     # rs_momentum_eN: rs_roc_ema_eN（RECURSIVE） の rolling(N) Z-score。WINDOW。
-    _window('rs_momentum_e5', inputs=('rs_roc_ema_5',), lookback=5, note='rolling(rs_roc_ema_5, 5) のZ-score'),
-    _window('rs_momentum_e14', inputs=('rs_roc_ema_14',), lookback=14, note='rolling(rs_roc_ema_14, 14) のZ-score'),
-    _window('rs_momentum_e21', inputs=('rs_roc_ema_21',), lookback=21, note='rolling(rs_roc_ema_21, 21) のZ-score'),
-    _window('rs_momentum_e63', inputs=('rs_roc_ema_63',), lookback=63, note='rolling(rs_roc_ema_63, 63) のZ-score'),
-    _window('rs_momentum_e200', inputs=('rs_roc_ema_200',), lookback=200,
+    _window('rs_momentum_e5', inputs=('rs_roc_ema_5',), lookback=5, warmup_bars=24,
+            note='rolling(rs_roc_ema_5, 5) のZ-score'),
+    _window('rs_momentum_e14', inputs=('rs_roc_ema_14',), lookback=14, warmup_bars=52,
+            note='rolling(rs_roc_ema_14, 14) のZ-score'),
+    _window('rs_momentum_e21', inputs=('rs_roc_ema_21',), lookback=21, warmup_bars=72,
+            note='rolling(rs_roc_ema_21, 21) のZ-score'),
+    _window('rs_momentum_e63', inputs=('rs_roc_ema_63',), lookback=63, warmup_bars=198,
+            note='rolling(rs_roc_ema_63, 63) のZ-score'),
+    _window('rs_momentum_e200', inputs=('rs_roc_ema_200',), lookback=200, warmup_bars=610,
             note='rolling(rs_roc_ema_200, 200) のZ-score。旧版の実測値610は'
                  'rs_roc_ema_200をゼロから再構築する場合の値で5-3b設計では使わない'),
 
     # --- RS-MACD(5, 21, 5) ---
     # rs_macd_line_21 = rs_value_e5 - rs_value_e21（どちらもRECURSIVEとして別途継続されている
     # 列の当日値どうしの差分）。追加の生値遡りは不要。
-    _window('rs_macd_line_21', inputs=('rs_value_e5', 'rs_value_e21'), lookback=1,
+    _window('rs_macd_line_21', inputs=('rs_value_e5', 'rs_value_e21'), lookback=1, warmup_bars=20,
             note='rs_value_e5 - rs_value_e21 の当日値差分（両者は別途RECURSIVEで継続）'),
     # rs_macd_signal_21 = EMA(rs_macd_line_21, 5)。RECURSIVE。
-    _recursive('rs_macd_signal_21', inputs=('rs_macd_line_21',), lookback=1,
+    _recursive('rs_macd_signal_21', inputs=('rs_macd_line_21',), lookback=1, warmup_bars=24,
                note='EMA(rs_macd_line_21, 5) の1ステップ'),
     # rs_macd_hist_21 = rs_macd_line_21 - rs_macd_signal_21（同上、追加の生値遡り不要）。
-    _window('rs_macd_hist_21', inputs=('rs_macd_line_21', 'rs_macd_signal_21'), lookback=1,
+    _window('rs_macd_hist_21', inputs=('rs_macd_line_21', 'rs_macd_signal_21'), lookback=1, warmup_bars=24,
             note='rs_macd_line_21 - rs_macd_signal_21 の当日値差分'),
 
     # --- Volume ---
-    _window('vol_surge_21', inputs=('volume',), lookback=21, note='volume.rolling(21) の単純窓'),
-    _window('vol_surge_rel_spy_21', inputs=('vol_surge_21', 'spy_volume'), lookback=21,
+    # vol_surge_21/vol_surge_rel_spy_21 の warmup_bars=13 は実測の中央値(0)ではなく最大値。
+    # 中央値=最小値=最頻値が構造的定数になる他列と異なり、この2列は分位によりばらつき
+    # 最大13だったため、安全側（過検出しない側）に寄せて13を採用している（5-6c）。
+    _window('vol_surge_21', inputs=('volume',), lookback=21, warmup_bars=13,
+            note='volume.rolling(21) の単純窓'),
+    _window('vol_surge_rel_spy_21', inputs=('vol_surge_21', 'spy_volume'), lookback=21, warmup_bars=13,
             note='vol_surge_21(当日値) / SPY側vol_surge。spy_vol_sma_21がspy_volumeの21日窓を要る'),
     # close.diff() を経由するため、up_vol の rolling(50) には close が51行（i-50まで）要る。
-    _window('up_down_vol_ratio_50', inputs=('close', 'volume'), lookback=51,
+    _window('up_down_vol_ratio_50', inputs=('close', 'volume'), lookback=51, warmup_bars=49,
             note='close.diff()経由のrolling(50)。close.diff()[i-49]がclose[i-50]を要るため51行'),
     # is_accum の rolling(5) の各日が vol_sma_21（21行窓）を要るため、最古で i-24 まで25行。
-    _window('vol_accum_days_5', inputs=('close', 'volume'), lookback=25,
+    _window('vol_accum_days_5', inputs=('close', 'volume'), lookback=25, warmup_bars=0,
             note='rolling(5)の各日がvol_sma_21(21日窓)を要るため i-24 まで25行'),
-    _window('avg_dollar_volume_21', inputs=('close', 'volume'), lookback=21,
+    _window('avg_dollar_volume_21', inputs=('close', 'volume'), lookback=21, warmup_bars=0,
             note='(close*volume).rolling(21) の単純窓'),
 
     # --- Price Range from Highs ---
-    _window('dist_63d_high_pct', inputs=('high', 'close'), lookback=63, note='high.rolling(63).max() の単純窓'),
-    _window('dist_52w_high_pct', inputs=('high', 'close'), lookback=252, note='high.rolling(252).max() の単純窓'),
+    _window('dist_63d_high_pct', inputs=('high', 'close'), lookback=63, warmup_bars=0,
+            note='high.rolling(63).max() の単純窓'),
+    _window('dist_52w_high_pct', inputs=('high', 'close'), lookback=252, warmup_bars=0,
+            note='high.rolling(252).max() の単純窓'),
 
     # --- RS Leading Signals ---
     # cur_b/cur_r は prev_b/prev_r（自分自身の前日値）を継ぐ（_rs_dot_age_kernel）。
     # ただし当日の blue_lit/red_lit フラグ自体は rs_252_high/low・close_252_high/low
     # （どちらも rolling(252, min_periods=1)）で決まるため、rs_value・close を252行要る
     # （実装確認済み: relative_strength.py の rs_252_high/rs_252_low/blue_lit/red_lit）。
-    _recursive('rs_blue_dot_age', inputs=('rs_value', 'close'), lookback=252,
+    _recursive('rs_blue_dot_age', inputs=('rs_value', 'close'), lookback=252, warmup_bars=0,
                note='当日フラグ(blue_lit)の算出にrolling(252)のrs_value・closeが要る（実装確認済み）'),
-    _recursive('rs_red_dot_age', inputs=('rs_value', 'close'), lookback=252,
+    _recursive('rs_red_dot_age', inputs=('rs_value', 'close'), lookback=252, warmup_bars=0,
                note='当日フラグ(red_lit)の算出にrolling(252)のrs_value・closeが要る（実装確認済み）'),
 
     # --- Volatility Contraction ---
     # Simple ATR(10)/Simple ATR(50)。close.shift(1) を経由するため close は51行
     # （atr_50の最古項が close[i-50] を要る）、high/lowは50行で足りる。
-    _window('vcr', inputs=('high', 'low', 'close'), lookback=51,
+    _window('vcr', inputs=('high', 'low', 'close'), lookback=51, warmup_bars=49,
             note='atr_50=tr_vals.rolling(50).mean()。tr_valsがclose.shift(1)を要るため51行'),
 
     # --- Trend Quality ---
     # sma_50/150/200（当日値のみ、別途維持） + sma_200.shift(20)（21行） +
     # max_252d=high.rolling(252).max()（252行）の合成。
     _window('is_trend_template', inputs=('close', 'sma_50', 'sma_150', 'sma_200', 'high'), lookback=252,
-            note='sma_200.shift(20)は21行、max_252dは252行。最大の252行が支配的'),
+            warmup_bars=20, note='sma_200.shift(20)は21行、max_252dは252行。最大の252行が支配的'),
 
     # --- Structure Pivot (LL-HL) ---
     # structure_pivot.py の _scan_for_length は curr_price/curr_idx/prev_idx/is_setup/
@@ -321,15 +398,25 @@ _ENTRIES: Tuple[ColumnSpec, ...] = (
     # 5-4c で 300銘柄に実測を拡大しても中央値/p90/p99/最大が全て120本で揃い、
     # 250本超は0/300（sp_* は zb_* と異なり実際に有界）。lookback は実測120本に
     # 余裕を持たせて250のまま維持する（下げる積極的な理由が無いため）。
-    _window('sp_pivot', inputs=('high', 'low', 'close'), lookback=250,
+    # warmup_bars は意図的に None（5-6c）。sp_pivot/sp_hl/sp_counter は構造が最初に
+    # 現れる時期が銘柄の値動き次第の**イベント駆動**（LL-HLパターンが形成されて初めて
+    # 値が付く）であり、「履歴が何本あれば必ず非NULLになる」という閾値を置けない
+    # （実測で最小9〜最大337本とばらついた。5-6c検証: tmp/verify_warmup_thresholds.py）。
+    # なお sp_pivot と sp_counter は仕様上排他（同じ行でどちらか一方が必ずNULL）だが、
+    # 「少なくとも一方が非NULL」という対の規則は実データでの偽陽性ゼロを確認できて
+    # いないため導入せず、単純に両方とも例外扱いにしている。
+    _window('sp_pivot', inputs=('high', 'low', 'close'), lookback=250, warmup_bars=None,
             note='5-4c実測(300銘柄): 中央値/p90/p99/最大とも120本で全履歴と一致（前方切り詰め）。'
-                 '250本超0/300で有界と確認済み。余裕を持たせ250'),
-    _window('sp_hl', inputs=('high', 'low', 'close'), lookback=250,
+                 '250本超0/300で有界と確認済み。余裕を持たせ250。'
+                 'warmup_bars はイベント駆動のため None（5-6c）'),
+    _window('sp_hl', inputs=('high', 'low', 'close'), lookback=250, warmup_bars=None,
             note='5-4c実測(300銘柄): 中央値/p90/p99/最大とも120本で全履歴と一致（前方切り詰め）。'
-                 '250本超0/300で有界と確認済み。余裕を持たせ250'),
-    _window('sp_counter', inputs=('high', 'low', 'close'), lookback=250,
+                 '250本超0/300で有界と確認済み。余裕を持たせ250。'
+                 'warmup_bars はイベント駆動のため None（5-6c）'),
+    _window('sp_counter', inputs=('high', 'low', 'close'), lookback=250, warmup_bars=None,
             note='5-4c実測(300銘柄): 中央値/p90/p99/最大とも120本で全履歴と一致（前方切り詰め）。'
-                 '250本超0/300で有界と確認済み。余裕を持たせ250'),
+                 '250本超0/300で有界と確認済み。余裕を持たせ250。'
+                 'warmup_bars はイベント駆動のため None（5-6c）'),
 
     # --- Direction via Zone Break ---
     # zone_break.py の _zone_break_scan は sp_pivot 以上に多くの内部状態
@@ -355,24 +442,33 @@ _ENTRIES: Tuple[ColumnSpec, ...] = (
     # 存在し、これは増分化以前から本番が抱えていた既存の不正確さ
     # （本計画が新たに作る問題ではない）。
     # 詳細: doc/backend_specification.md、doc/in_progress/t3_incremental_plan.md §8。
+    # zb_ssl/zb_bsl/is_zone_break_bull/is_zone_break_weak の warmup_bars は5-6c実測で0
+    # （先頭行から非NULL）。これは「必要履歴が非有界」（lookback列を参照。5-4c/5-4e）と
+    # 矛盾しない——zone_break_series はフラットな初期状態から常に何らかの値を返す実装で、
+    # NULLになること自体が無い（値が全履歴計算と一致するかは別問題。5-6cは「NULLかどうか」
+    # だけを見る）。
     _window('is_zone_break_bull', inputs=('high', 'low', 'close'), lookback=ZONE_BREAK_LOOKBACK,
+            warmup_bars=0,
             note='5-4c実測(300銘柄): 中央値120/p90 120/p99 250/最大250、250本超0/300。'
                  'zone_break系は原理的に非有界（トレンドレッグ長に上限なし）なため、'
                  'lookback=400(ZONE_BREAK_LOOKBACK)はHOT_WINDOW_BARS(504)にマージンを'
                  '確保した近似解であり厳密解ではない（5-4e）'),
     _window('zb_ssl', inputs=('high', 'low', 'close'), lookback=ZONE_BREAK_LOOKBACK,
+            warmup_bars=0,
             note='5-4c実測(300銘柄): 中央値120/p90 120/p99 250/最大2400、250本超2/300。'
                  'zone_break系は原理的に非有界（トレンドレッグ長に上限なし）なため、'
                  'lookback=400(ZONE_BREAK_LOOKBACK)はHOT_WINDOW_BARS(504)にマージンを'
                  '確保した近似解であり厳密解ではない（約1%の銘柄で全履歴計算と値が'
                  '異なりうる。5-4e）'),
     _window('zb_bsl', inputs=('high', 'low', 'close'), lookback=ZONE_BREAK_LOOKBACK,
+            warmup_bars=0,
             note='5-4c実測(300銘柄): 中央値120/p90 120/p99 251/最大2400、250本超3/300。'
                  'zone_break系は原理的に非有界（トレンドレッグ長に上限なし）なため、'
                  'lookback=400(ZONE_BREAK_LOOKBACK)はHOT_WINDOW_BARS(504)にマージンを'
                  '確保した近似解であり厳密解ではない（約1%の銘柄で全履歴計算と値が'
                  '異なりうる。5-4e）'),
     _window('is_zone_break_weak', inputs=('high', 'low', 'close'), lookback=ZONE_BREAK_LOOKBACK,
+            warmup_bars=0,
             note='5-4c実測(300銘柄): 中央値120/p90 120/p99 250/最大400、250本超1/300。'
                  'zone_break系は原理的に非有界（トレンドレッグ長に上限なし）なため、'
                  'lookback=400(ZONE_BREAK_LOOKBACK)はHOT_WINDOW_BARS(504)にマージンを'
@@ -417,3 +513,18 @@ def max_lookback() -> int:
     """
     values = [spec.lookback for spec in INDICATOR_COLUMN_REGISTRY.values() if spec.lookback is not None]
     return max(values) if values else 0
+
+
+def columns_with_warmup_threshold() -> Mapping[str, int]:
+    """`warmup_bars` が確定している列名 → 閾値の対応（5-6c）。
+
+    T3 の保存行数（`t3_count`）がこの閾値を**超えている**銘柄は、対応する列の
+    最新行が非NULLであるべき。`tools/db_health_check.py --check-warmup-nulls`
+    が使う。イベント駆動で閾値を置けない列（`sp_pivot`/`sp_hl`/`sp_counter`。
+    `warmup_bars=None`）は戻り値に含まれない＝機械的にチェック対象から除外される。
+    """
+    return {
+        name: spec.warmup_bars
+        for name, spec in INDICATOR_COLUMN_REGISTRY.items()
+        if spec.warmup_bars is not None
+    }

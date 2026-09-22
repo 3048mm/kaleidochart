@@ -248,3 +248,142 @@ def test_recursive_null_absent_when_all_present(recursive_health_db):
     assert "CLEAN" not in ng
     assert "[CLEAN] Status:" not in out
     assert "RECURSIVE状態列NULL検知" not in out
+
+
+# ============================================================
+# ウォームアップ本数超過NULLチェック（T3増分化計画5-6c・ユーザー提案）
+# ============================================================
+#
+# --check-recursive-state（増分計算の「状態」チェック）とは別のもの。こちらは
+# 「指標そのものが出るべき値を出しているか」（T3行数が演算上必要な本数=warmup_bars を
+# 超えているのに最新行がNULLでないか）を見る。本番レジストリの全列に依存しないよう、
+# `hc.columns_with_warmup_threshold` を小さい固定値へ差し替える。
+
+@pytest.fixture
+def warmup_health_db(tmp_path, monkeypatch):
+    db = tmp_path / "health_warmup_test.db"
+    con = sqlite3.connect(db)
+    con.executescript("""
+        CREATE TABLE symbols (id INTEGER PRIMARY KEY, ticker TEXT, active INTEGER);
+        CREATE TABLE daily_prices (id INTEGER PRIMARY KEY AUTOINCREMENT, symbol_id INTEGER, date TEXT);
+        CREATE TABLE indicators (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, symbol_id INTEGER, date TEXT,
+            ema_200 REAL, rs_value_e200 REAL
+        );
+    """)
+    con.commit()
+    monkeypatch.setattr(hc, "DB_PATH", str(db))
+    # ema_200 は warmup_bars=2（3行以上あれば最新行は非NULLであるべき）、
+    # rs_value_e200 は warmup_bars=0（1行でも非NULLであるべき。SPYのrs_系列は除外）。
+    monkeypatch.setattr(hc, "columns_with_warmup_threshold", lambda: {"ema_200": 2, "rs_value_e200": 0})
+
+    def add(sym_id, ticker, rows):
+        """rows: [(date, ema_200, rs_value_e200), ...]（daily_prices にも同数のT2行を入れる）"""
+        con.execute("INSERT INTO symbols VALUES (?, ?, 1)", (sym_id, ticker))
+        con.executemany("INSERT INTO daily_prices (symbol_id, date) VALUES (?, ?)",
+                        [(sym_id, d) for d, _, _ in rows])
+        con.executemany(
+            "INSERT INTO indicators (symbol_id, date, ema_200, rs_value_e200) VALUES (?, ?, ?, ?)",
+            [(sym_id,) + r for r in rows],
+        )
+        con.commit()
+
+    yield add, con
+    con.close()
+
+
+def _status_warmup(ticker, check_warmup_nulls):
+    import io
+    from contextlib import redirect_stdout
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        ng = hc.check_symbol_health(all_active=True, check_warmup_nulls=check_warmup_nulls)
+    return ng, buf.getvalue()
+
+
+# SPY 自身は他テストの基準日算出に必要（--all は SPY 欠損だと即エラーになる）。
+# rs_value_e200 は構造的にNULLだが、ema_200 は warmup_bars=2 を超える3行で非NULLにしておく。
+_SPY_ROWS_WARMUP = [
+    ("2026-07-29", 100.0, None),
+    ("2026-07-30", 101.0, None),
+    ("2026-07-31", 102.0, None),
+]
+
+
+def test_warmup_null_detected_when_flag_enabled(warmup_health_db):
+    """T3行数が warmup_bars を超えているのに最新行がNULLなら、フラグ有効時にNGとして検出される。"""
+    add, _ = warmup_health_db
+    add(1, "SPY", _SPY_ROWS_WARMUP)
+    # 3行（t3_count=3 > warmup_bars=2）で最新行の ema_200 が NULL。
+    add(2, "BROKEN_WARMUP", [
+        ("2026-07-29", 50.0, 1.0),
+        ("2026-07-30", 51.0, 1.0),
+        ("2026-07-31", None, 1.0),
+    ])
+
+    ng, out = _status_warmup("BROKEN_WARMUP", check_warmup_nulls=True)
+
+    assert "BROKEN_WARMUP" in ng
+    assert "[BROKEN_WARMUP] Status: NG" in out
+    assert "ウォームアップ超過NULL検知" in out
+    assert "ema_200" in out
+
+
+def test_warmup_null_not_checked_by_default(warmup_health_db):
+    """フラグ未指定（デフォルト）では検出しない（既存挙動を壊さない）。"""
+    add, _ = warmup_health_db
+    add(1, "SPY", _SPY_ROWS_WARMUP)
+    add(2, "BROKEN_WARMUP", [
+        ("2026-07-29", 50.0, 1.0),
+        ("2026-07-30", 51.0, 1.0),
+        ("2026-07-31", None, 1.0),
+    ])
+
+    ng, out = _status_warmup("BROKEN_WARMUP", check_warmup_nulls=False)
+
+    assert "BROKEN_WARMUP" not in ng
+    assert "ウォームアップ超過NULL検知" not in out
+
+
+def test_warmup_null_not_flagged_when_below_threshold(warmup_health_db):
+    """T3行数が warmup_bars 以下（演算上まだ非NULLになるべきでない）なら、NULLでも検出しない。"""
+    add, _ = warmup_health_db
+    add(1, "SPY", _SPY_ROWS_WARMUP)
+    # 2行（t3_count=2 <= warmup_bars=2）で ema_200 が NULL（ウォームアップ中の正常なNULL）。
+    add(2, "STILL_WARMING_UP", [
+        ("2026-07-30", None, 1.0),
+        ("2026-07-31", None, 1.0),
+    ])
+
+    ng, out = _status_warmup("STILL_WARMING_UP", check_warmup_nulls=True)
+
+    assert "STILL_WARMING_UP" not in ng
+    assert "ウォームアップ超過NULL検知" not in out
+
+
+def test_warmup_null_excludes_spy_rs_columns(warmup_health_db):
+    """SPY自身の rs_ 系列（構造的にNULL）は誤検出しない。"""
+    add, _ = warmup_health_db
+    add(1, "SPY", _SPY_ROWS_WARMUP)
+
+    ng, out = _status_warmup("SPY", check_warmup_nulls=True)
+
+    assert "SPY" not in ng
+    assert "ウォームアップ超過NULL検知" not in out
+
+
+def test_warmup_null_absent_when_all_present(warmup_health_db):
+    """NULLが無ければ検出されない（OK銘柄はノイズを出さない）。"""
+    add, _ = warmup_health_db
+    add(1, "SPY", _SPY_ROWS_WARMUP)
+    add(2, "CLEAN", [
+        ("2026-07-29", 50.0, 1.0),
+        ("2026-07-30", 51.0, 1.0),
+        ("2026-07-31", 52.0, 1.0),
+    ])
+
+    ng, out = _status_warmup("CLEAN", check_warmup_nulls=True)
+
+    assert "CLEAN" not in ng
+    assert "[CLEAN] Status:" not in out
+    assert "ウォームアップ超過NULL検知" not in out

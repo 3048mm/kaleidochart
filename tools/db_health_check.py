@@ -12,7 +12,11 @@ for _p in (project_root, os.path.join(project_root, "backend")):
         sys.path.insert(0, _p)
 
 import paths
-from indicators.incremental_state_registry import recursive_column_names, max_lookback
+from indicators.incremental_state_registry import (
+    columns_with_warmup_threshold,
+    max_lookback,
+    recursive_column_names,
+)
 
 # `__file__` 起点で `data/stocktool.db` を組み立てると、ワークツリーでは
 # 存在しない DB を指し、`sqlite3.connect()` が**0 バイトの空DBを黙って作る**。
@@ -32,12 +36,13 @@ def get_connection():
     return sqlite3.connect(DB_PATH)
 
 def check_symbol_health(ticker: str = None, all_active: bool = False, check_nulls: bool = False,
-                         check_recursive_state: bool = False):
+                         check_recursive_state: bool = False, check_warmup_nulls: bool = False):
     """
     1. SPYの最新日と比較してT2（日足）が揃っているか確認
     2. T2の行数とT3（インジケーター）の行数が一致しているか確認
     3. (Optional) 特定カラムのNULLチェック
     4. (Optional) RECURSIVE型状態列（T3増分化計画）のNULLチェック
+    5. (Optional) ウォームアップ本数超過NULLチェック（T3増分化計画5-6c）
     """
     conn = get_connection()
 
@@ -45,7 +50,13 @@ def check_symbol_health(ticker: str = None, all_active: bool = False, check_null
     # --check-recursive-state 指定時のみ使う（未指定時は従来どおりレジストリに触れない）。
     recursive_cols = recursive_column_names() if check_recursive_state else ()
     recursive_lookback = max_lookback() if check_recursive_state else 0
-    
+
+    # ウォームアップ本数（列ごとに異なる閾値）もレジストリから機械的に取得する。
+    # --check-recursive-state（増分計算の「状態」が壊れていないか）とは目的が異なり、
+    # こちらは「指標そのものが出るべき値を出しているか」（T3の行数が演算上必要な
+    # 本数を超えているのに最新行がNULLになっていないか）を見る（5-6c・ユーザー提案）。
+    warmup_thresholds = columns_with_warmup_threshold() if check_warmup_nulls else {}
+
     # SPYの最新日を取得
     spy_latest = conn.execute("SELECT max(date) FROM daily_prices WHERE symbol_id = (SELECT id FROM symbols WHERE ticker='SPY')").fetchone()[0]
     if not spy_latest:
@@ -149,10 +160,36 @@ def check_symbol_health(ticker: str = None, all_active: bool = False, check_null
                     if any(row[idx] is None for row in rows):
                         recursive_null_cols.append(col)
 
+        # ウォームアップ本数超過NULLチェック (オプション・T3増分化計画5-6c・ユーザー提案)
+        #
+        # 「演算上必要な日数がある銘柄なら、その列は NULL にならない」という一般則の検査。
+        # T3の保存行数（t3_count）が列ごとの warmup_bars（レジストリ実測値）を超えているのに
+        # 最新行がNULLの列を検出する。上の --check-recursive-state（増分計算の「状態」が
+        # 壊れていないか）とは目的が異なり、こちらは「指標そのものが出るべき値を出しているか」
+        # を見る。イベント駆動で閾値を置けない列（sp_pivot/sp_hl/sp_counter）は
+        # columns_with_warmup_threshold() が機械的に除外している。
+        warmup_null_cols = []
+        if check_warmup_nulls and t3_count > 0 and not is_empty_virtual_theme:
+            cols_to_check = {
+                c: w for c, w in warmup_thresholds.items()
+                if not (t == 'SPY' and c.startswith('rs_'))
+            }
+            if cols_to_check:
+                col_sql = ', '.join(f'"{c}"' for c in cols_to_check)
+                latest_row = conn.execute(f"""
+                    SELECT {col_sql} FROM indicators
+                    WHERE symbol_id = {sym_id}
+                    ORDER BY date DESC LIMIT 1
+                """).fetchone()
+                if latest_row:
+                    for idx, (col, warmup_bars) in enumerate(cols_to_check.items()):
+                        if t3_count > warmup_bars and latest_row[idx] is None:
+                            warmup_null_cols.append(col)
+
         # 判定
         is_synced = (t2_latest >= spy_latest) if t2_latest else False
         is_consistent = (t2_count == t3_count)
-        has_nulls = len(null_info) > 0 or len(recursive_null_cols) > 0
+        has_nulls = len(null_info) > 0 or len(recursive_null_cols) > 0 or len(warmup_null_cols) > 0
 
         if is_empty_virtual_theme:
             status = "NG"
@@ -190,6 +227,7 @@ def check_symbol_health(ticker: str = None, all_active: bool = False, check_null
             "Consistent": consistent_str,
             "Nulls": null_str,
             "RecursiveNulls": recursive_null_cols if recursive_null_cols else "None",
+            "WarmupNulls": warmup_null_cols if warmup_null_cols else "None",
         }
         results.append(res)
 
@@ -204,6 +242,8 @@ def check_symbol_health(ticker: str = None, all_active: bool = False, check_null
                     print(f"  - NULL検知: {null_info}")
                 if recursive_null_cols:
                     print(f"  - RECURSIVE状態列NULL検知（T3増分化計画5-6b。--rebuild-from T3推奨）: {recursive_null_cols}")
+                if warmup_null_cols:
+                    print(f"  - ウォームアップ超過NULL検知（T3増分化計画5-6c。--rebuild-from T3推奨）: {warmup_null_cols}")
 
     conn.close()
 
@@ -302,6 +342,12 @@ if __name__ == "__main__":
                          help='RECURSIVE型状態列（ema_*/rs_value_e*/rs_roc_ema_*等）の直近保存行にNULLがないか検出する'
                               '（T3増分化計画5-6b）。該当銘柄は日次T3の増分経路が発動せず不正確な値が書かれ続ける。'
                               '--rebuild-from T3 でのリフレッシュ前は大量検出するのが正常な挙動')
+    parser.add_argument('--check-warmup-nulls', action='store_true',
+                         help='T3の行数が列ごとの演算上必要な本数（warmup_bars。レジストリ実測値）を'
+                              '超えているのに最新行がNULLの列を検出する（T3増分化計画5-6c・ユーザー提案）。'
+                              '--check-recursive-state（増分計算の状態チェック）とは目的が異なり、'
+                              '指標そのものが出るべき値を出しているかを見る。'
+                              'sp_pivot/sp_hl/sp_counterはイベント駆動のため対象外')
     parser.add_argument('--parquet', action='store_true', default=True, help='Check Parquet Master Cache health')
     parser.add_argument('--db-path', type=str, help='Check a specific SQLite DB (default: data/stocktool.db). Parquet dir is resolved next to it.')
     parser.add_argument('--ng-out', type=str, help='NG 銘柄ティッカーを1行1件で書き出すファイルパス（deploy_after_merge のベースライン比較用）')
@@ -319,11 +365,13 @@ if __name__ == "__main__":
 
     if args.ticker or args.all:
         ng = check_symbol_health(ticker=args.ticker, all_active=args.all, check_nulls=args.check_nulls,
-                                  check_recursive_state=args.check_recursive_state)
+                                  check_recursive_state=args.check_recursive_state,
+                                  check_warmup_nulls=args.check_warmup_nulls)
     else:
         # Default behavior: if no symbol arguments, check SPY as standard check
         ng = check_symbol_health(ticker='SPY', all_active=False, check_nulls=args.check_nulls,
-                                  check_recursive_state=args.check_recursive_state)
+                                  check_recursive_state=args.check_recursive_state,
+                                  check_warmup_nulls=args.check_warmup_nulls)
 
     # NG 銘柄リストの書き出し（BOM なし UTF-8。NG ゼロでも空ファイルを書き「実行済み」を示す）
     if args.ng_out:

@@ -25,6 +25,7 @@ from indicators.incremental_state_registry import (
     ColumnKind,
     ColumnSpec,
     INDICATOR_COLUMN_REGISTRY,
+    columns_with_warmup_threshold,
     max_lookback,
 )
 
@@ -230,3 +231,66 @@ class TestKnownLookbackValues:
         spec = INDICATOR_COLUMN_REGISTRY[name]
         assert spec.kind is expected_kind
         assert spec.lookback == expected_lookback
+
+
+class TestWarmupBars:
+    """warmup_bars（5-6c）の不変条件。
+
+    「演算上必要な日数がある銘柄なら、その列は NULL にならない」という健全性チェック
+    （`tools/db_health_check.py --check-warmup-nulls`）が使う属性の整合性を固定する。
+    """
+
+    # イベント駆動で閾値を置けない例外列（実測で最小9〜最大337本とばらついた）。
+    _EVENT_DRIVEN_EXEMPT_COLUMNS = frozenset({'sp_pivot', 'sp_hl', 'sp_counter'})
+
+    def test_例外列以外は全てwarmup_barsが確定している(self):
+        unresolved = sorted(
+            name for name, spec in INDICATOR_COLUMN_REGISTRY.items()
+            if spec.warmup_bars is None and name not in self._EVENT_DRIVEN_EXEMPT_COLUMNS
+        )
+        assert unresolved == [], (
+            f'warmup_bars が未確定の列があります: {unresolved}\n'
+            '実測して値を設定するか、イベント駆動の例外として'
+            '_EVENT_DRIVEN_EXEMPT_COLUMNS に追加してください。'
+        )
+
+    def test_例外列はwarmup_barsがNone(self):
+        for name in sorted(self._EVENT_DRIVEN_EXEMPT_COLUMNS):
+            assert INDICATOR_COLUMN_REGISTRY[name].warmup_bars is None, (
+                f'{name}: イベント駆動の例外列のはずが warmup_bars が確定しています'
+            )
+
+    def test_warmup_barsは0以上の整数(self):
+        for name, spec in INDICATOR_COLUMN_REGISTRY.items():
+            if spec.warmup_bars is not None:
+                assert isinstance(spec.warmup_bars, int) and spec.warmup_bars >= 0, (
+                    f'{name}: warmup_bars は0以上の整数である必要があります（実際: {spec.warmup_bars!r}）'
+                )
+
+    def test_columns_with_warmup_thresholdは例外列を含まない(self):
+        thresholds = columns_with_warmup_threshold()
+        for name in self._EVENT_DRIVEN_EXEMPT_COLUMNS:
+            assert name not in thresholds, (
+                f'{name}: イベント駆動の例外列が columns_with_warmup_threshold() に含まれています'
+            )
+
+    def test_columns_with_warmup_thresholdは確定列を全て含む(self):
+        thresholds = columns_with_warmup_threshold()
+        expected = {
+            name for name, spec in INDICATOR_COLUMN_REGISTRY.items() if spec.warmup_bars is not None
+        }
+        assert set(thresholds.keys()) == expected
+
+    @pytest.mark.parametrize('name,expected_warmup', [
+        ('sma_200', 0),
+        ('ema_200', 199),
+        ('rs_value_e200', 199),
+        ('rs_ratio_e200', 298),
+        ('rs_roc_ema_200', 511),
+        ('rs_momentum_e200', 610),
+        # 安全側（実測の最大値）を採用した2列。中央値は0だが最大が13だった。
+        ('vol_surge_21', 13),
+        ('vol_surge_rel_spy_21', 13),
+    ])
+    def test_代表列のwarmup_bars(self, name, expected_warmup):
+        assert INDICATOR_COLUMN_REGISTRY[name].warmup_bars == expected_warmup
