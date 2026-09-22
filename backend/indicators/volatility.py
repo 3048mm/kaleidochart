@@ -115,10 +115,17 @@ def calc_volatility(df: pd.DataFrame, state: bool = None) -> pd.DataFrame:
 
     # 5. Distance from SMA50 in ATR multiples
     if 'sma_50' in df.columns:
+        # np.where は全分岐を評価するため、ガードで弾かれるはずの0除算も実際に実行される
+        # （numpy配列同士ならinf/nanになるだけだが、object dtypeが混入するとPythonの
+        # スカラー演算に落ちて ZeroDivisionError になる。5-4d）。np.where の評価順に
+        # 依存しない形にするため、除算の前に0の分母をNaNへ置換して安全化する
+        # （マスクで弾かれる行は元々結果を使わないため、計算結果自体は変わらない）。
+        safe_atr_pct_14 = df['atr_pct_14'].mask(df['atr_pct_14'] == 0)
+        safe_sma_50 = df['sma_50'].mask(df['sma_50'] == 0)
         df['sma50_atr_mult'] = np.where(
             df['atr_pct_14'].isna() | (df['atr_pct_14'] == 0) | df['sma_50'].isna() | (df['sma_50'] == 0),
             np.nan,
-            ((close / df['sma_50'] * 100) - 100) / df['atr_pct_14']
+            ((close / safe_sma_50 * 100) - 100) / safe_atr_pct_14
         )
     else:
         df['sma50_atr_mult'] = np.nan

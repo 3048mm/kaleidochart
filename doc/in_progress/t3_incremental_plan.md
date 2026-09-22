@@ -317,6 +317,25 @@ daily_prices: 2024-09-18 〜 2026-09-18 / 504 営業日 / 3,360銘柄
       で「504本での全期間計算」との一致を別途検証する設計に変更）、
       `doc/backend_specification.md`（3.4節 zone_break の説明に厳密解でない旨と
       実測分布を追記）。
+- [x] **5-4d** オーケストレーターの検収で見つかった、増分経路が実データ（SQLite
+      経由）で `ZeroDivisionError` になる不具合を修正 — **完了（2026-09-22）**。
+      詳細は §7「5-4d: 増分経路が実データで ZeroDivisionError になる不具合」参照。
+      変更ファイル: `backend/indicators/incremental_merge.py`
+      （`normalize_supplied_dtypes` を新規追加。`INDICATOR_COLUMN_REGISTRY` の
+      全列を機械的に走査し `pd.to_numeric(errors='coerce')` でfloat64へ正規化）、
+      `backend/indicators/calculate.py`（`calculate_indicators` の入口で
+      `state` truthy時のみ `normalize_supplied_dtypes` を呼ぶよう追加。`state=None`
+      の分岐には触れていない）、`backend/indicators/volatility.py`
+      （`sma50_atr_mult` の除算を `np.where` の評価順に依存しない形に変更。
+      `.mask(==0)` で0の分母を事前にNaN化してから除算する。計算結果は不変）、
+      `backend/tests/indicators/test_calculate_incremental_equivalence.py`
+      （`TestSuppliedHistoryDtypeRegression` を新設。実データに近い条件
+      ――`calculate_indicators(state=None)`の戻り値そのもの（object dtype）を
+      供給履歴として使い、かつその銘柄自身の窓の先頭（`atr_pct_14`のWilder平滑化
+      シードがリテラル0になる先頭13本）を含む――で再現する回帰テスト4件を追加。
+      `_build_full_and_incremental`に`state_idx`引数を追加（既定は従来どおり
+      末尾settle位置。5-4dのテストのみ`state_idx=0`を明示指定）。
+      pytest全件 1843 passed, 1 skipped（旧1839+新規4）。
 - [ ] **5-6** T3 ワーカーを増分呼び出しへ変更（§3.2）＋フォールバック（§3.5）
 - [ ] **5-7** 更新窓の実装（§3.4。(c) は 5-2 で決めた N 日を書き直す）
 - [ ] **5-8** pytest 全件パス
@@ -496,6 +515,72 @@ K本の先頭で再帰系をシードして窓全体（K本）を再帰的に歩
 state=True)` に渡す実装にする必要がある（単に「前日の行」だけを渡す旧設計では
 不十分）。`recursive_column_names()`（レジストリ）で「df に供給すべき列」を
 機械的に列挙できる。
+
+### 5-4d: 増分経路が実データで ZeroDivisionError になる不具合（2026-09-22）
+
+オーケストレーターの検収（実データ・SQLite sandbox 経由）で、多数の銘柄で
+`ZeroDivisionError: float division by zero`（発生箇所: `volatility.py`
+`sma50_atr_mult` の計算）が見つかった。5-5 の等価性テストは合成データのみで
+検出できていなかった。
+
+**原因は2つの重なり**:
+
+1. `calculate_indicators` の戻り値は、末尾（`calculate.py` の
+   `df.replace({np.nan: None})`）で NaN を None に変換している。これは
+   **同じ DataFrame 内の他の列に NaN があれば、当該列自体に NaN が無くても
+   ほぼ全列が object dtype になる**という pandas の仕様（実測: 67列中58列。
+   `open`/`high`/`low`/`close`/`volume` のような生価格列すら object になる）。
+   増分呼び出しの入力契約（5-4b）はこの戻り値をそのまま「供給済み履歴」として
+   使うため、object dtype がそのまま増分計算の入力に混入する。
+2. `atr_14`（Wilder 再帰平滑化）は先頭 `window-1`（=13）本がリテラルな 0.0
+   （`_atr_wilder_kernel` の `np.zeros` 初期化）になる。SQLite は504行しか
+   保持しないため、増分呼び出しが「利用可能な行すべて」を供給する限り、
+   その窓は必ずその銘柄自身の最古の行（＝この 0.0 が並ぶ区間）を含む。
+
+object dtype の列を `np.where` の分岐に渡すと、**`np.where` は全分岐を評価する
+ため、ガードで弾かれるはずの0除算が Python のスカラー演算として実行され
+`ZeroDivisionError` になる**（numpy 配列同士の演算なら0除算は inf/nan になる
+だけで例外にならない）。5-5 の等価性テストは `state_idx > 500`（十分に settle
+した位置）からしか供給履歴を切り出しておらず、この「窓の先頭」を含んでいな
+かったため検出できなかった。
+
+**対処**:
+
+1. `incremental_merge.py` に `normalize_supplied_dtypes` を追加し、
+   `calculate_indicators` の入口（`state` truthy 時のみ）で
+   `INDICATOR_COLUMN_REGISTRY` の全列を機械的に float64 へ正規化する。
+   `is_zone_break_bull`/`is_zone_break_weak`（DB上はBoolean）も対象に含めるが、
+   これら2列は `calculate_indicators` 内で生価格のみから毎回無条件に
+   上書きされる（どの計算の入力にもならない）ため、floatへ丸めても計算結果に
+   影響しない。
+2. `volatility.py` の `sma50_atr_mult` 計算を、`np.where` の評価順に依存しない
+   形に変更した。除算の前に `.mask(denominator == 0)` で0の分母をNaN化して
+   から割る（マスクで弾かれる行は元々結果を使わないため、計算結果自体は不変）。
+   これは dtype 正規化（1）が将来再び破られた場合の防御でもある。
+
+**回帰テスト**（`test_calculate_incremental_equivalence.py`
+`TestSuppliedHistoryDtypeRegression`）は、合成データを組み立てるのではなく
+**`calculate_indicators(state=None)` の戻り値そのもの**（object dtype に
+なる実際の挙動）を供給履歴として使い、かつ `state_idx=0`
+（`_build_full_and_incremental` に新設した引数）でその銘柄自身の窓の先頭
+（`atr_pct_14` のリテラル0区間）を含めることで、実データと同じ条件を
+再現している。修正前のコードに対してこの4テストのうち2件が
+`ZeroDivisionError` で red になることを確認済み（fix適用前後で目視確認）。
+
+**K が SQLite の保持行数（504）を超える点の確認（5-6 への申し送り）**:
+`max_lookback()` は `HOT_WINDOW_BARS`（=504。zone_break系4列の lookback）と
+同値のため、増分呼び出しが理論上要求する供給行数 `K+1=505` は SQLite の保持
+上限504を1本超える。実測で確認した結果、`calculate_indicators` は供給行数が
+`max_lookback()+1` に満たなくてもクラッシュしない（WINDOW型列は
+`min_periods` により行数不足でも例外にならず単に精度が落ちるだけ、
+RECURSIVE型列は `prev_self_seed` が `len(df) >= 2` しか要求しないため）。
+504行・20行・5行・2行での実行を個別に確認済み（いずれも例外なし）。
+504行ちょうどのケースは
+`test_incremental_does_not_raise_when_supplied_rows_are_fewer_than_max_lookback_plus_one`
+として回帰テスト化した。**コード側の対処は不要と判断**——5-6 の T3 ワーカーは
+計画書の記述どおり「K+1行ちょうど」ではなく「利用可能な行すべて（最大
+K+1行）」を読む実装にすればよい（`calculate_indicators` 側はその行数を
+そのまま受け入れる）。
 
 ## 8. スコープ外・残作業（issue_list へ起票する）
 

@@ -136,7 +136,7 @@ class TestIncrementalMatchesFullRecompute:
     N_TOTAL = 1400  # 1,000本以上・値が変化し続ける現実的な系列（5-5 の要求）
     MARGIN = 10  # max_lookback() ちょうどでも理論上は足りるが、境界の丸め誤差を避ける余裕
 
-    def _build_full_and_incremental(self, k=None):
+    def _build_full_and_incremental(self, k=None, state_idx=None):
         """全期間計算オラクルと増分計算の結果を作る。
 
         Args:
@@ -144,6 +144,10 @@ class TestIncrementalMatchesFullRecompute:
                 （63列の厳密一致テスト用）。zb_* の「ホットウィンドウでの
                 全期間計算」との一致を見る専用テスト（5-4c）では
                 `k=HOT_WINDOW_BARS` を明示的に渡す。
+            state_idx: 供給履歴の開始位置（全履歴中のインデックス）。None（既定）なら
+                「十分に settle した位置」（末尾から k_total 本）を自動算出する。
+                供給履歴にその銘柄自身の窓の先頭（atr_pct_14 の立ち上がりゼロ等）を
+                含めたいテスト（5-4d）では `state_idx=0` を明示的に渡す。
         """
         n_total = self.N_TOTAL
         dates = pd.bdate_range('2019-01-02', periods=n_total).date
@@ -161,8 +165,9 @@ class TestIncrementalMatchesFullRecompute:
         if k is None:
             k = max_lookback() + self.MARGIN
         k_total = k + 1  # 供給履歴K本 + 新規計算する最終行1本
-        state_idx = n_total - k_total
-        assert state_idx > 500, 'oracle 自体が十分に settle した位置から取れるよう、全履歴を長くしてください'
+        if state_idx is None:
+            state_idx = n_total - k_total
+            assert state_idx > 500, 'oracle 自体が十分に settle した位置から取れるよう、全履歴を長くしてください'
 
         # 供給する履歴（行0..K-1）: 生価格 + 保存済みT3列（すべて実値）。
         # spy_close/spy_volume は T3 の実列ではない（calc_relative_strength が
@@ -181,7 +186,12 @@ class TestIncrementalMatchesFullRecompute:
         # 被験: 増分モード（state=True）。K+1本のうち最終行だけを新規計算する。
         got_res = calculate_indicators(df_inc, spy_inc, state=True)
 
-        return full_res.iloc[-1], got_res.iloc[-1], full_res, k_total, df_full, spy_full
+        # 正の参照行は `full_res.iloc[state_idx + k]`（=増分側の新規計算対象と同じ日付）。
+        # state_idx を既定（末尾settle位置）で使う限り常に `iloc[-1]` と同じだが、
+        # 5-4d のように state_idx=0 を明示指定するケースでは異なるため、
+        # `-1` 固定ではなく必ずこちらを使う。
+        ref_row = full_res.iloc[state_idx + k]
+        return ref_row, got_res.iloc[-1], full_res, k_total, df_full, spy_full
 
     def test_dot_lighting_events_exist_in_window(self):
         """自己修復性の前提（テストデータの健全性チェック）。
@@ -270,3 +280,161 @@ class TestZoneBreakHotWindowEquivalence:
             f'{len(mismatches)}列で増分計算がホットウィンドウでの全期間計算と一致しませんでした:\n'
             + '\n'.join(f'  {c}: hot={a!r} got={b!r} ({reason})' for c, a, b, reason in mismatches)
         )
+
+
+class TestSuppliedHistoryDtypeRegression:
+    """5-4d: 増分呼び出しが実データ（SQLite経由）で `ZeroDivisionError` になっていた
+    不具合の回帰テスト。
+
+    ## 前任者のテスト（TestIncrementalMatchesFullRecompute）が検出できなかった理由
+
+    そちらは `state_idx > 500`（十分に settle した位置）からしか供給履歴を切り出して
+    おらず、その銘柄自身の「窓の先頭」（`atr_14` の Wilder 平滑化がリテラル 0.0 で
+    始まる区間、`_atr_wilder_kernel` のシード方式。先頭 `window-1`=13 本）を
+    含んでいなかった。実運用では、増分呼び出しは SQLite が保持する履歴
+    （最大504本）を供給履歴として使うため、**必ずその銘柄自身の窓の先頭を含む**
+    （SQLite は全履歴を持たず、保持している最古の行が供給履歴の先頭になる）。
+
+    ## 合成データが「現実的」である理由
+
+    `calculate_indicators(state=None)` の戻り値は末尾（`calculate.py` の
+    `df.replace({np.nan: None})`）で NaN を None に変換しており、これは
+    **同じ DataFrame 内の他の列に NaN があれば、当該列自体に NaN が無くても
+    ほぼ全列が object dtype になる**（pandas の仕様。実測: 67列中58列、
+    生価格の open/high/low/close/volume すら object になる）。本テストは
+    合成データではなくこの「実際に calculate_indicators が返す戻り値」を
+    そのまま増分呼び出しの供給履歴として使うため、実データ（SQLite経由）と
+    同じ dtype 汚染を再現する。
+    """
+
+    def test_supplied_history_becomes_object_dtype_by_default(self):
+        """前提確認（回帰の記録）: calculate_indicators(state=None) の戻り値は
+        大半の列が object dtype になり、atr_pct_14 の先頭13本はリテラル0になる。
+        これは5-4dが新たに作った挙動ではなく、既存の挙動であることを固定する。
+        """
+        base = TestIncrementalMatchesFullRecompute()
+        n_total = base.N_TOTAL
+        dates = pd.bdate_range('2019-01-02', periods=n_total).date
+        px = _make_series(n_total, seed=1, base=100.0, vol=1.2)
+        df_full = pd.DataFrame({'date': dates}).join(px)
+        spy_px = _make_series(n_total, seed=2, base=300.0, vol=2.0)
+        spy_full = pd.DataFrame({'date': dates}).join(spy_px)
+
+        full_res = calculate_indicators(df_full, spy_full, state=None)
+
+        assert full_res['atr_pct_14'].dtype == object, (
+            '前提: atr_pct_14 が object dtype になること'
+            '（同じ df 内の他列の NaN に引きずられる既存の pandas 挙動）'
+        )
+        assert (full_res['atr_pct_14'].iloc[:13] == 0.0).all(), (
+            '前提: atr_14 の Wilder 平滑化シード方式により先頭13本がリテラル0になること'
+        )
+
+    def test_incremental_does_not_raise_zero_division_when_history_includes_symbol_start(self):
+        """供給履歴が銘柄自身の窓の先頭（atr_pct_14=0.0 の立ち上がり区間、
+        かつ object dtype）を含んでも ZeroDivisionError にならないこと（5-4d の回帰テスト）。
+
+        `TestIncrementalMatchesFullRecompute._build_full_and_incremental` を
+        `state_idx=0` で呼び出す（＝供給履歴の先頭を全履歴の先頭に固定する）ことで、
+        SQLite の保持行数制約下で実際に発生していた状況を再現する。
+        """
+        base = TestIncrementalMatchesFullRecompute()
+        ref_row, got_row, full_res, k_total, df_full, spy_full = (
+            base._build_full_and_incremental(state_idx=0)
+        )
+
+        # 供給履歴（行0..K-1）が実際に object dtype ＋ atr_pct_14=0.0 を含んでいることを
+        # 確認する（このテストが「合成データで再現できていない」状態に静かに劣化するのを防ぐ）。
+        history_atr_pct_14 = full_res['atr_pct_14'].iloc[0: k_total - 1]
+        assert history_atr_pct_14.dtype == object
+        assert (history_atr_pct_14.iloc[:13] == 0.0).all()
+
+        # ZeroDivisionError が送出されないこと自体がこのテストの主目的。
+        # 加えて、増分1歩の結果が全期間再計算の最終行と一致すること
+        # （zb_*以外。5-5と同じ判定基準）も確認する。
+        columns = [
+            col for col in ref_row.index
+            if col != 'date'
+            and col not in TestIncrementalMatchesFullRecompute.ZONE_BREAK_HOT_WINDOW_COLUMNS
+        ]
+        mismatches = _find_mismatches(columns, ref_row, got_row)
+        assert not mismatches, (
+            f'{len(mismatches)}列で増分計算が全期間再計算と一致しませんでした:\n'
+            + '\n'.join(f'  {c}: ref={a!r} got={b!r} ({reason})' for c, a, b, reason in mismatches)
+        )
+
+    def test_incremental_does_not_raise_zero_division_with_explicitly_object_dtype_input(self):
+        """供給列が明示的に object dtype のケース（5-4d が要求する2つ目のケース）。
+
+        T3ワーカーがSQLiteから読んだ結果、境界条件により一部列だけがobject dtype
+        になる場合（列ごとにNaNの有無が異なる等）も含めて、`.astype(object)` で
+        意図的にすべての列をobject化した入力でも例外が出ないことを確認する。
+        """
+        base = TestIncrementalMatchesFullRecompute()
+        n_total = base.N_TOTAL
+        dates = pd.bdate_range('2019-01-02', periods=n_total).date
+        px = _make_series(n_total, seed=1, base=100.0, vol=1.2)
+        df_full = pd.DataFrame({'date': dates}).join(px)
+        spy_px = _make_series(n_total, seed=2, base=300.0, vol=2.0)
+        spy_full = pd.DataFrame({'date': dates}).join(spy_px)
+        full_res = calculate_indicators(df_full, spy_full, state=None)
+
+        k = max_lookback() + base.MARGIN
+        k_total = k + 1
+        state_idx = 0
+
+        history = (
+            full_res.iloc[state_idx: state_idx + k]
+            .drop(columns=_NON_PERSISTED_MERGE_COLUMNS, errors='ignore')
+            .reset_index(drop=True)
+            .astype(object)  # 明示的に全列をobject dtype化する
+        )
+        new_row_raw = df_full.iloc[[state_idx + k]][_RAW_PRICE_COLUMNS].reset_index(drop=True)
+        df_inc = pd.concat([history, new_row_raw], ignore_index=True, sort=False)
+        spy_inc = spy_full.iloc[state_idx: state_idx + k_total].reset_index(drop=True)
+
+        # ZeroDivisionError が出ないことがこのテストの主目的。
+        got_res = calculate_indicators(df_inc, spy_inc, state=True)
+        assert not got_res.empty
+
+    def test_incremental_does_not_raise_when_supplied_rows_are_fewer_than_max_lookback_plus_one(self):
+        """供給行数が `max_lookback() + 1` に満たなくてもクラッシュしないこと。
+
+        `max_lookback()`（= `HOT_WINDOW_BARS` = 504）は SQLite ホットキャッシュの
+        保持行数上限と同じ値のため、T3ワーカー（5-6）が「K+1行ちょうど」を要求すると
+        SQLiteの保持行数（504）では1本足りない。ワーカーは「利用可能な行すべて
+        （最大 K+1 行）」を読む設計になる必要があるが、その場合でも
+        `calculate_indicators` 側がクラッシュしないことをここで固定する
+        （5-4d で確認。WINDOW型は `min_periods` により行数不足でも例外にならず、
+        RECURSIVE型は `prev_self_seed` が `len(df) >= 2` しか要求しないため、
+        設計上は安全なはずだが、将来の変更でこの前提が壊れていないかを検出する）。
+        """
+        base = TestIncrementalMatchesFullRecompute()
+        n_total = base.N_TOTAL
+        dates = pd.bdate_range('2019-01-02', periods=n_total).date
+        px = _make_series(n_total, seed=1, base=100.0, vol=1.2)
+        df_full = pd.DataFrame({'date': dates}).join(px)
+        spy_px = _make_series(n_total, seed=2, base=300.0, vol=2.0)
+        spy_full = pd.DataFrame({'date': dates}).join(spy_px)
+        full_res = calculate_indicators(df_full, spy_full, state=None)
+
+        # SQLiteの保持行数上限(HOT_WINDOW_BARS=504)しか読めない状況を再現する
+        # （max_lookback()+1=505 に対して1本不足）。
+        supplied_total = HOT_WINDOW_BARS
+        assert supplied_total < max_lookback() + 1, (
+            'このテストの前提（504 < max_lookback()+1）が崩れています。'
+            'max_lookback() の値が変わった場合はテストの意図を見直してください'
+        )
+        history = (
+            full_res.iloc[-supplied_total:-1]
+            .drop(columns=_NON_PERSISTED_MERGE_COLUMNS, errors='ignore')
+            .reset_index(drop=True)
+        )
+        new_row_raw = df_full.iloc[[-1]][_RAW_PRICE_COLUMNS].reset_index(drop=True)
+        df_inc = pd.concat([history, new_row_raw], ignore_index=True, sort=False)
+        spy_inc = spy_full.iloc[-supplied_total:].reset_index(drop=True)
+        assert len(df_inc) == supplied_total == HOT_WINDOW_BARS
+
+        got_res = calculate_indicators(df_inc, spy_inc, state=True)
+        assert not got_res.empty
+        assert len(got_res) == supplied_total

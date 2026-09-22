@@ -7,6 +7,7 @@ from .relative_strength import calc_relative_strength
 from .volume_and_trends import calc_volume_and_trends
 from .structure_pivot import counter_trend_series, structure_pivot_series
 from .zone_break import zone_break_series
+from .incremental_merge import normalize_supplied_dtypes
 
 # Export calculate_market_signals so that update_pipeline can import it from here if needed
 # or it can import it directly. We'll expose it here for backward compatibility.
@@ -45,6 +46,16 @@ def calculate_indicators(df_daily: pd.DataFrame, df_spy: pd.DataFrame = None, st
     """
     df = df_daily.copy()
     df = df.sort_values('date').reset_index(drop=True)
+
+    # 増分呼び出し（state truthy）では、供給されたT3列のdtypeを正規化する（5-4d）。
+    # 前回の全期間計算の戻り値は末尾で NaN→None 変換を経ており、履歴のどこかに
+    # 1つでもNaNがあれば列全体がobject dtypeになる（既存の挙動）。object dtypeのまま
+    # np.where の分岐（volatility.py の sma50_atr_mult 等）に渡すと、ガードで弾かれる
+    # はずの0除算がPythonのスカラー演算として実行され ZeroDivisionError になるため、
+    # ここでfloat64へ強制変換して防ぐ。state=None（全期間計算）はdf_dailyに生価格のみ
+    # しか無いため無害だが、挙動を一切変えないという絶対条件のため明示的にガードする。
+    if state:
+        df = normalize_supplied_dtypes(df)
 
     # Returns (Prev Close Base)
     df['change_1d_pct'] = df['close'].pct_change() * 100

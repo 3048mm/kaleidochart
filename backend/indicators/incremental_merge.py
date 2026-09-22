@@ -46,8 +46,50 @@ rolling 窓を作れず、窓が N 本育つまでの区間（最大 N-1 行）�
   rolling 計算はこの実値のみからなる列に対して素直に適用すれば、
   窓が不足することなく正しい値が出る（旧設計の「窓が育つまで不正確」問題は
   RECURSIVE側の再構築をやめたことで消える）。
+
+## 5-4d で見つかった問題（供給列の dtype とゼロ除算）
+
+`calculate_indicators` の戻り値は末尾（`calculate.py` の `df.replace({np.nan: None})`）で
+NaN を None に変換している。これは pandas の仕様上、**履歴のどこかに1つでも NaN があれば
+列全体が object dtype になる**（実測: AAPL/XLB とも67列中58列が object）。増分呼び出しの
+入力契約（5-4b）は、この戻り値をそのまま次の呼び出しの「供給済み履歴」として使うため、
+**object dtype がそのまま増分計算の入力に混入する**。
+
+object dtype のまま `np.where` の分岐（例: `volatility.py` の `sma50_atr_mult`）に渡すと、
+ガードで弾かれるはずの0除算が **Python のスカラー演算として実行され `ZeroDivisionError`**
+になる（`np.where` は全分岐を評価するため。numpy 配列同士の演算なら0除算は inf/nan に
+なるだけで例外にならない）。さらに `atr_14`（Wilder 再帰平滑化）は先頭 `window-1`（=13）本が
+**リテラルな 0.0**（`_atr_wilder_kernel` の `np.zeros` 初期化）になる。SQLite のホットキャッシュは
+504本しか保持しないため、増分呼び出しが「利用可能な行すべて」を供給する限り、
+その窓は必ずその銘柄の最古の行（＝この 0.0 が並ぶ区間）を含む。これが重なって
+`ZeroDivisionError: float division by zero` が実データのほぼ全銘柄で発生していた。
+
+`normalize_supplied_dtypes` は、増分呼び出しの入口で供給された T3 列（数値列）を
+float64 に強制変換し、この問題を解消する。
 """
 import pandas as pd
+
+from .incremental_state_registry import INDICATOR_COLUMN_REGISTRY
+
+
+def normalize_supplied_dtypes(df: pd.DataFrame) -> pd.DataFrame:
+    """増分呼び出しで供給されたT3列（`INDICATOR_COLUMN_REGISTRY` の全列）のdtypeを
+    float64へ正規化する（5-4d）。
+
+    対象列はレジストリから機械的に導出する（手書きリストにしない）。
+    `is_zone_break_bull`/`is_zone_break_weak`（DB上はBoolean）も対象に含めて
+    numeric化するが、これら2列は `calculate_indicators` 内で生価格のみから
+    毎回無条件に上書きされる（`calc_volatility`等どの計算の入力にもならない）ため、
+    floatへ丸めても計算結果に影響しない。
+
+    `pd.to_numeric(..., errors='coerce')` を使うため、None/NaN はNaNへ、
+    True/False は 1.0/0.0 へ揃う。df に該当列が無ければ何もしない
+    （新規上場のフォールバック等、供給履歴が無いケースを壊さないため）。
+    """
+    for col in INDICATOR_COLUMN_REGISTRY:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    return df
 
 
 def finalize_incremental_column(df: pd.DataFrame, col: str, computed: pd.Series, incremental: bool) -> pd.Series:
