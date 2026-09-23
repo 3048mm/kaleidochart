@@ -146,3 +146,47 @@ def test_vol_accum_days_5_warmup_and_values():
     # 妥当な範囲（0〜5）に収まっていること
     tail_values = tail.astype(int)
     assert tail_values.between(0, 5).all()
+
+
+def test_is_trend_template_none_when_max_252d_not_yet_available():
+    """is_trend_template: max_252d（252本ウィンドウ、cond5の分母）がまだ埋まっていない
+    200〜251本の履歴帯では、cond1〜cond4が全て真でも判定不能（None）であるべき。
+
+    現行実装（calc_volume_and_trends）は外側のnp.whereが sma200_20d_ago
+    （sma_200.shift(20)）のNaNしか見ておらず、max_252dのNaNを無視している。
+    cond5 = close >= (max_252d * 0.70) はNaN比較になり例外なくFalseへ落ちる
+    （NaN比較はNaNにならずFalseになる）ため、cond1〜4が真の行では
+    is_trend_template=0（「条件を満たさない」という誤った断定）が保存されてしまう。
+    正しくは None（判定不能）であるべき。
+
+    価格パターン: close = 100 + i*0.1 の緩やかな単調増加（220本）。
+    sma_50 > sma_150 > sma_200、close > sma_50、sma_200 >= sma_200[20日前] が
+    すべて成立する一方、252本に満たないため max_252d は全行NaN。
+    なお sma200_20d_ago（sma_200.shift(20)）が非NaNになるのはこの本数では
+    最終行（position 219）のみ（sma_200 自体が position 199〜219 でしか
+    埋まらないため、20日前を参照できるのはそのうち最後の1点だけ）。
+    """
+    periods = 220
+    closes = [100.0 + i * 0.1 for i in range(periods)]
+    volumes = [1_000_000] * periods
+    res = _make_df(closes=closes, volumes=volumes)
+
+    # 前提確認: この本数では max_252d（252本必要）は全行NaN
+    assert res['dist_52w_high_pct'].apply(pd.isna).all()
+    # 前提確認: 最終行は sma_200 が埋まっており、cond1〜4を評価できる
+    assert not pd.isna(res['sma_200'].iloc[-1])
+
+    # 判定不能な行なので None（NaN）であるべき
+    assert pd.isna(res['is_trend_template'].iloc[-1])
+
+
+def test_is_trend_template_true_when_all_conditions_met_with_full_history():
+    """回帰確認: 252本以上の履歴があり max_252d が埋まっている場合、cond1〜5が
+    すべて満たされる緩やかな上昇トレンドでは従来通り is_trend_template=1 になること。
+    """
+    periods = 260
+    closes = [100.0 + i * 0.1 for i in range(periods)]
+    volumes = [1_000_000] * periods
+    res = _make_df(closes=closes, volumes=volumes)
+
+    assert res['is_trend_template'].iloc[-1] == 1
