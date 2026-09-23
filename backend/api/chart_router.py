@@ -292,7 +292,7 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db), full_range
                         (high - close_prev).abs(),
                         (low - close_prev).abs()
                     ], axis=1).max(axis=1)
-                    df_p["calc_atr_14"] = tr.rolling(window=14, min_periods=1).mean().ffill().fillna(1.0)
+                    df_p["calc_atr_14"] = tr.rolling(window=14, min_periods=14).mean()
                     df_p["calc_atr_pct_14"] = np.where(close == 0, 0.0, (df_p["calc_atr_14"] / close) * 100.0)
                     df_p["calc_sma50_atr_mult"] = np.where(
                         df_p["calc_atr_pct_14"].isna() | (df_p["calc_atr_pct_14"] == 0) | df_p["calc_sma_50"].isna() | (df_p["calc_sma_50"] == 0),

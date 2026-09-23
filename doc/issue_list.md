@@ -1831,6 +1831,51 @@
     ③週次メンテナンスに組み込むか判断
   - 関連: `doc/in_progress/t3_incremental_plan.md` §7-5、`backend/indicators/incremental_state_registry.py`
 
+- [ ] 🟡 **仮想テーマ指数のT3全期間再計算で、SPY参照データの供給不足による警告が大量発生する（2026-09-24 発見・未調査）**
+  - **背景**: `min_periods_warmup_plan.md` の5-6bで `relative_strength.py` の無言ffillに
+    `report_stale_input_gaps()`（`market_signals.py`の`^VIX`/`^VIX3M`と同じ確立済みパターン）を
+    追加したところ、5-11（sandboxでのT3→T4→T5全期間再計算）実行時に、**仮想テーマ指数の
+    T3再計算経路で`spy_close`/`spy_volume`の供給ギャップに対する新規WARNINGが大量に出た**
+    （計算結果自体は5-6b追加時点では不変。ログのみの追加のため、この発見はログが新設された
+    副産物であり、5-6b自体の不具合ではない）。
+  - **推定原因（未検証）**: SQLiteホットキャッシュの730日パージが、SPY本体と仮想テーマ指数
+    （テーマ構成銘柄から合成する指数）とで非対称に効いている可能性がある
+    （仮想テーマ指数の合成経路がSPYの全期間データを前提にしているのに対し、
+     ホットウィンドウ側は730日しか保持しないため、全期間Parquet基点の再計算時に
+     ギャップとして検出される、という仮説）。**根本原因の特定はこの発見の時点では未実施**。
+  - **影響範囲の見積り（未実施）**: 計算結果が実際に不正確になっているのか、単に
+    ffillで吸収されて実害が無いログノイズなのかは未確認。実害があるなら仮想テーマ指数の
+    RS系列の精度に波及する可能性がある。
+  - **再現方法**: sandbox環境で `update_pipeline.py --rebuild-from T3 --skip-fetch --skip-sync`
+    を実行し、`report_stale_input_gaps` のWARNINGログを仮想テーマ指数のsymbol_idで絞り込む。
+  - **対応案**: ①ホットキャッシュ購入経路と仮想テーマ合成経路のSPY参照範囲を揃える
+    ②実害（値のズレ）があるかをまず測定してから優先度を決める
+  - 関連: `doc/completed/min_periods_warmup_plan.md`（5-6b・5-11完了ノート）
+
+- [ ] **`min_periods` 統一後に残った既存ガード2件の要否を再検証する（2026-09-24 起票。旧 issue①の残作業）**
+  - **背景**: `doc/completed/min_periods_warmup_plan.md`（旧issue①）でA-core（`min_periods=window`統一）
+    が完了し、`has_breadth`（`market_signals.py`の日付ハードコード）は同計画の5-8b④で撤去済み。
+    残る `RS_DOT_WARMUP_BARS = 252`（`relative_strength.py:77`、rolling(252, min_periods=1)由来の
+    偽点灯を止めるための本数ガード）は、A-core適用後は原理的に不要になったはずだが、
+    **「撤去しても偽点灯が復活しないこと」の独立検証が必要なため、計画のスコープを
+    膨らませないよう据え置いた**（同計画 §4-7・§8）。
+  - **対応案**: sandboxで`RS_DOT_WARMUP_BARS`を撤去した場合と現状維持の場合で
+    `rs_blue_dot_age`/`rs_red_dot_age`の点灯パターンを突き合わせ、差分が無いことを
+    確認してから撤去する。撤去してもコード量が減るだけで実害は無いため優先度は低い。
+  - 関連: `doc/completed/min_periods_warmup_plan.md` §4-7・§8
+
+- [ ] **`bars_available`（実遡り本数）を診断用の列として追加する（2026-09-24 起票。旧 issue①の残作業）**
+  - **背景**: `doc/completed/min_periods_warmup_plan.md`（旧issue①）の調査時、「この銘柄は
+    何本遡れるか」を都度スクリプトで再計算していた（`tmp/check_minperiods_impact.py`等）。
+    T3に「上場からの営業日カウント」を1列持たせれば、以後は同じ調査をSQLで即座に行える
+    （例: `WHERE bars_available < 200` でウォームアップ未了の銘柄を一覧できる）。
+  - **想定用途**: ①ウォームアップ由来のNULLと「本物の異常によるNULL」の切り分けの高速化
+    （`--check-warmup-nulls`の閾値調整にも使える）②将来のIPO特化スクリーナー
+    （同計画 §8で「本計画では作らない」とされたアイデア）の土台
+  - **優先度が低い理由**: 診断・将来機能のための追加列であり、現行機能に不足があるわけではない。
+    追加にはスキーマ変更（種別C）と全期間再計算が伴う。
+  - 関連: `doc/completed/min_periods_warmup_plan.md` §8
+
 ## P3 — 低（将来フェーズ・プロセス系）
 
 - [ ] **moomoo API 知見の活用アイデア（2026-09-12 起票、未検証・要判断）**
