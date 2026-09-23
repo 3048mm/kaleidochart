@@ -517,7 +517,7 @@ OHLC 系は「価格の NULL は判定不能ではなく本物の異常」なの
       日次が正しく遡れる状態が前提になる。**①の昇格時のフル再計算に、あちらの移行シードを相乗りさせる**
       — **2026-09-23 充足済み**（`t3_incremental_plan.md` は完了・本番昇格済み。`doc/completed/` へ移動済み）
 - [x] **5-1** ワークツリーを作成し `--mode write` でプロビジョニング（種別 B。`tools/provision_worktree_data.py <worktree> --mode write`）— **2026-09-23 完了**（`.claude/worktrees/min-periods-warmup`、ブランチ `worktree-min-periods-warmup`）
-- [ ] **5-2** `backend/tests/indicators/test_moving_averages.py` を新規作成（red）— 遡り199本で `sma_200` が NaN、200本で値が出る
+- [x] **5-2** `backend/tests/indicators/test_moving_averages.py` を新規作成（red）— 遡り199本で `sma_200` が NaN、200本で値が出る — **2026-09-23 完了**（test-writer に委譲・オーケストレーターが独立に pytest 実行し20件が意図通りAssertionErrorで失敗することを確認済み）
 - [ ] **5-3** `moving_averages.py:46` を修正（green）
 - [ ] **5-4** `backend/tests/indicators/test_volatility.py` を新規作成 → `volatility.py:44` を修正
 - [ ] **5-5** `backend/tests/indicators/test_volume_and_trends.py` に追記（既存ファイルあり）→ `volume_and_trends.py` の5箇所を修正
