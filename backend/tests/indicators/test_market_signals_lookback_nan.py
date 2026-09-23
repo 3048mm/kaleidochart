@@ -231,10 +231,15 @@ class TestAtr14DoesNotFakeInsufficientLookback:
         """14本未満の窓では atr_14 が NaN になるべき（1.0 という部分窓由来の
         値に潰れない）。
 
-        `calculate_market_signals()` の戻り値に atr_14 は含まれないため、
-        `market_signals.py` の現行実装（L283-293）の計算式をそのまま複製して
-        検証する。現行実装は `rolling(14, min_periods=1)` のため 14 本未満でも
-        部分窓の平均を「それらしい値」として返してしまう（NaN にならない）。
+        `calculate_market_signals()` の戻り値に atr_14 は含まれない内部変数
+        のため、`market_signals.py` が採るべき**新しい**計算式
+        （`rolling(14, min_periods=14).mean()`。`.ffill().fillna(1.0)` は
+        撤去対象）をテスト内に複製して検証するホワイトボックステスト。
+        実装（`calculate_market_signals`）を直接呼ばないため、実装側が
+        誤って旧式（`min_periods=1` や `.ffill().fillna(1.0)`）のままでも
+        このテスト単体は実装の変更を検知できない――実際の回帰検知は
+        公開API経由で検証する同クラスの他2件が担う。本テストは「新しい
+        仕様の数式自体」を生きた仕様として固定する目的。
         """
         spy_df = _spy_df(n=13)
         close = spy_df['close']
@@ -246,11 +251,11 @@ class TestAtr14DoesNotFakeInsufficientLookback:
             (high - close_prev).abs(),
             (low - close_prev).abs()
         ], axis=1).max(axis=1)
-        # market_signals.py L293 の現行実装をそのまま複製（min_periods=1）。
-        atr_14_current_impl = tr.rolling(14, min_periods=1).mean().ffill().fillna(1.0)
+        # market_signals.py が採るべき新実装（min_periods=14。ffill/fillnaなし）。
+        atr_14_new_impl = tr.rolling(14, min_periods=14).mean()
 
-        # 修正後に期待する挙動: 14本未満の窓は NaN であるべき。
-        assert atr_14_current_impl.isna().all()
+        # 14本未満の窓は NaN であるべき。
+        assert atr_14_new_impl.isna().all()
 
     def test_market_trend_score_is_nan_for_real_zero_true_range(self):
         """OHLC が完全に横ばい（high == low == close で変動なし）で

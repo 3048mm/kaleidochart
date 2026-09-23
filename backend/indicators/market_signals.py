@@ -290,21 +290,19 @@ def calculate_market_signals(
             (high - close_prev).abs(),
             (low - close_prev).abs()
         ], axis=1).max(axis=1)
-        df['atr_14'] = tr.rolling(14, min_periods=1).mean().ffill().fillna(1.0)
+        df['atr_14'] = tr.rolling(14, min_periods=14).mean()
     else:
-        # Fallback if high/low not provided
-        df['atr_14'] = 1.0
-
-    # Avoid zero division
-    df['atr_14'] = np.where(df['atr_14'] > 0, df['atr_14'], 1.0)
+        # high/low が無ければ ATR は計算できない（判定不能）。1.0ドルという
+        # 捏造値ではなく NaN にする（§3.7）。
+        df['atr_14'] = np.nan
 
     # Calculate ATR% (14-day) to match the standard indicator formula
-    df['atr_pct_14'] = np.where(close == 0, 0, (df['atr_14'] / close) * 100)
+    df['atr_pct_14'] = np.where(close == 0, np.nan, (df['atr_14'] / close) * 100)
 
     # Component C1: SPY 50SMA / ATR Distance Score (-4.0 to +8.0)
     # Using SMA50 to match the standard volatility.py sma50_atr_mult formula
     dist_50sma = np.where(
-        df['atr_pct_14'] == 0, 0,
+        df['atr_pct_14'].isna() | (df['atr_pct_14'] == 0), np.nan,
         ((close / df['sma_50'] * 100) - 100) / df['atr_pct_14']
     )
     score_50sma_atr = (dist_50sma - EMA50_ATR_MIN) / (EMA50_ATR_MAX - EMA50_ATR_MIN)
@@ -313,7 +311,7 @@ def calculate_market_signals(
     # Component C2: SPY 200SMA / ATR Distance Score (-4.0 to +16.0)
     # Using SMA200 to match the standard volatility.py sma200_atr_mult formula logic
     dist_200sma = np.where(
-        df['atr_pct_14'] == 0, 0,
+        df['atr_pct_14'].isna() | (df['atr_pct_14'] == 0), np.nan,
         ((close / df['sma_200'] * 100) - 100) / df['atr_pct_14']
     )
     score_200sma_atr = (dist_200sma - EMA200_ATR_MIN) / (EMA200_ATR_MAX - EMA200_ATR_MIN)
