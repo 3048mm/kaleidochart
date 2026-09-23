@@ -82,7 +82,11 @@ def sync_phase_t4_ranks(db, spy_latest_date: Optional[date], logger: logging.Log
     # Build single query to insert all indicators at once (wide format)
     rank_sql_parts = []
     for ind_col, rank_col in indicators_to_rank:
-        rank_sql_parts.append(f"PERCENT_RANK() OVER(PARTITION BY s.category ORDER BY i.{ind_col} ASC) AS {rank_col}")
+        rank_sql_parts.append(
+            f"CASE WHEN i.{ind_col} IS NULL THEN NULL "
+            f"ELSE PERCENT_RANK() OVER (PARTITION BY s.category, (i.{ind_col} IS NULL) ORDER BY i.{ind_col} ASC) "
+            f"END AS {rank_col}"
+        )
     
     rank_cols_joined = ", ".join(r for _, r in indicators_to_rank)
     ranks_joined = ", ".join(rank_sql_parts)

@@ -65,28 +65,34 @@ INDICATORS_TO_RANK: list[tuple[str, str]] = [
 
 
 def percent_rank(s: pd.Series) -> pd.Series:
-    """SQL の ``PERCENT_RANK() OVER(ORDER BY col ASC)`` を再現する。
+    """SQL の ``PERCENT_RANK() OVER(PARTITION BY category, (col IS NULL) ORDER BY col ASC)``
+    （CASE WHEN col IS NULL THEN NULL 込み）を再現する。
 
         PERCENT_RANK = (rank - 1) / (n - 1)
 
-    実装上の必須事項が2つある。どちらも外すと SQLite の結果と一致しない。
+    実装上の必須事項:
 
     1. **同値は最小順位を共有する** → ``method="min"``。
        pandas の既定 ``method="average"`` では一致しない。
-    2. **NULL は最小値として扱う** → NaN を ``-inf`` に置換してから順位付けする。
-       SQLite は NULL を最小とみなすため、NaN を除外すると
-       その銘柄の順位が欠落し、母集団サイズも変わって全体がずれる。
+    2. **NULL は判定不能として母集団から除外し、NaN のまま返す**（2026-09-23改訂・
+       計画5-8c/§3.5）。SQLite側は `CASE WHEN col IS NULL THEN NULL ELSE
+       PERCENT_RANK() OVER(PARTITION BY category, (col IS NULL) ORDER BY col ASC)
+       END` に対応する。旧仕様（NULLを最小値として扱い母集団にも数える）は
+       「正しくない既存を残すぐらいならT3 rebuildすべき」というユーザー判断により撤回した。
 
     ``s.rank(pct=True)`` は ``rank / n`` であり **別物**。使ってはいけない。
-
-    実データ検証: 2026-07-31 の3,190行で SQLite の値と最大誤差 0.000e+00。
     """
-    n = len(s)
-    if n <= 1:
-        # n=1 では (n-1) がゼロ除算になる。SQL の PERCENT_RANK は 0 を返す。
-        return pd.Series(0.0, index=s.index)
-    ranked = s.fillna(-np.inf).rank(method="min", ascending=True)
-    return (ranked - 1.0) / (n - 1.0)
+    result = pd.Series(np.nan, index=s.index)
+    non_null_mask = s.notna()
+    n = int(non_null_mask.sum())
+    if n == 0:
+        return result
+    if n == 1:
+        result.loc[non_null_mask] = 0.0
+        return result
+    ranked = s[non_null_mask].rank(method="min", ascending=True)
+    result.loc[non_null_mask] = (ranked - 1.0) / (n - 1.0)
+    return result
 
 
 def recompute_ranks(
