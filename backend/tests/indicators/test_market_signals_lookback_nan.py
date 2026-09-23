@@ -202,10 +202,72 @@ class TestSufficientLookbackMatchesPreviousBehaviour:
         pd.testing.assert_series_equal(got, want, check_names=False)
 
     def test_market_trend_score_no_exception_and_finite_once_bars_are_sufficient(self):
+        """このテストの目的は「遡りが十分なら例外なく有限値になること」の確認
+        （遡り本数の十分性の回帰防止）であり、VXV推定式フォールバックの有無を
+        検証する趣旨ではない。そのため df_vix/df_vxv を実データ同等に供給し、
+        vxv_vix_ratio が NaN にならない状態で market_trend_score を検証する
+        （5-8b②: VXV推定式フォールバック撤去後は df_vxv 未供給だと
+        vxv_vix_ratio が NaN になり、本テストの意図と無関係な理由で失敗するため）。
+        """
         spy_df = _spy_df(n=SPY_LOOKBACK_MIN_BARS + 30)
-        res = calculate_market_signals(spy_df)
+        df_vix = pd.DataFrame({"date": spy_df["date"], "close": 15.0})
+        df_vxv = pd.DataFrame({"date": spy_df["date"], "close": 16.5})
+        res = calculate_market_signals(spy_df, df_vix=df_vix, df_vxv=df_vxv)
         tail_score = res["market_trend_score"].iloc[SPY_LOOKBACK_MIN_BARS:]
         assert np.isfinite(tail_score.astype(float)).all()
+
+
+class TestVxvVixRatioDoesNotFakeMissingVxv:
+    """`df_vxv`（^VIX3M）が供給されないとき、`vxv_vix_ratio` が推定式
+    （VIXから算出し[0.85, 1.30]にクリップ）で捏造されず、NaN になること
+    （5-8b②・§3.7）。
+
+    実測（本番Parquet）の ^VIX3M/^VIX 比率の値域は [0.744, 1.408] であり、
+    旧実装の推定式は [0.85, 1.30] にクリップしていたため、パニック局面
+    （比率が0.85を大きく下回る場面）が推定式では表現できず消えてしまう
+    危険な暗黙フォールバックだった。
+    """
+
+    def test_vxv_vix_ratio_is_nan_when_df_vxv_is_none(self):
+        """df_vxv=None のとき、vxv_vix_ratio が全行 NaN になること
+        （0.85〜1.30にクリップされた推定値ではないこと）。"""
+        spy_df = _spy_df(n=SPY_LOOKBACK_MIN_BARS + 30)
+        df_vix = pd.DataFrame({"date": spy_df["date"], "close": 15.0})
+        res = calculate_market_signals(spy_df, df_vix=df_vix, df_vxv=None)
+
+        assert res["vxv_vix_ratio"].isna().all()
+
+    def test_vxv_vix_ratio_is_nan_when_df_vxv_is_empty(self):
+        """df_vxv が空DataFrameのときも同様に NaN になること。"""
+        spy_df = _spy_df(n=SPY_LOOKBACK_MIN_BARS + 30)
+        df_vix = pd.DataFrame({"date": spy_df["date"], "close": 15.0})
+        df_vxv_empty = pd.DataFrame(columns=["date", "close"])
+        res = calculate_market_signals(spy_df, df_vix=df_vix, df_vxv=df_vxv_empty)
+
+        assert res["vxv_vix_ratio"].isna().all()
+
+    def test_vxv_vix_ratio_is_not_clipped_estimate_when_df_vxv_missing(self):
+        """VIXが低水準（12.0付近）でも、旧推定式（1.15 - (vix-12)*0.25/23 を
+        [0.85, 1.30]にクリップ）が計算する有限値（この場合は約1.15）になって
+        いないこと。NaN であるべき。"""
+        spy_df = _spy_df(n=SPY_LOOKBACK_MIN_BARS + 30)
+        df_vix = pd.DataFrame({"date": spy_df["date"], "close": 12.0})
+        res = calculate_market_signals(spy_df, df_vix=df_vix, df_vxv=None)
+
+        tail_ratio = res["vxv_vix_ratio"].iloc[SPY_LOOKBACK_MIN_BARS:]
+        assert tail_ratio.isna().all()
+        assert not np.isclose(tail_ratio.fillna(-999).astype(float), 1.15).any()
+
+    def test_logs_warning_when_df_vxv_missing(self, caplog):
+        """df_vxv が無いとき、推定式で黙って埋めるのではなく警告ログを
+        出すこと（フォールバック撤去の意図を明示するログの存在確認）。"""
+        import logging
+        spy_df = _spy_df(n=30)
+        df_vix = pd.DataFrame({"date": spy_df["date"], "close": 15.0})
+        with caplog.at_level(logging.WARNING, logger="indicators.market_signals"):
+            calculate_market_signals(spy_df, df_vix=df_vix, df_vxv=None)
+
+        assert any("VXV" in rec.message or "vxv" in rec.message for rec in caplog.records)
 
 
 class TestAtr14DoesNotFakeInsufficientLookback:
