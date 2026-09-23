@@ -270,6 +270,59 @@ class TestVxvVixRatioDoesNotFakeMissingVxv:
         assert any("VXV" in rec.message or "vxv" in rec.message for rec in caplog.records)
 
 
+class TestVxvVixRatioDoesNotFakeMissingVix:
+    """`df_vix`（^VIX）が供給されないとき、`vix_close = 20.0` の固定値で
+    `vxv_vix_ratio = vxv / 20` という捏造比率を作らず、NaN になること
+    （5-26・R22。VXV 側の推定式撤去（5-8b②）と同じ趣旨の撤去漏れ）。
+
+    vxv_vix_ratio は portfolio_service 経由で現金推奨比率とポジション上限を
+    動かすため、表示だけの問題ではない。
+    """
+
+    def test_vxv_vix_ratio_is_nan_when_df_vix_is_none(self):
+        """df_vix=None かつ df_vxv 有りのとき、vxv_vix_ratio が全行 NaN になること
+        （16.5 / 20.0 = 0.825 という捏造値ではないこと）。"""
+        spy_df = _spy_df(n=SPY_LOOKBACK_MIN_BARS + 30)
+        df_vxv = pd.DataFrame({"date": spy_df["date"], "close": 16.5})
+        res = calculate_market_signals(spy_df, df_vix=None, df_vxv=df_vxv)
+
+        assert res["vxv_vix_ratio"].isna().all()
+        assert not np.isclose(res["vxv_vix_ratio"].fillna(-999).astype(float), 0.825).any()
+
+    def test_vxv_vix_ratio_is_nan_when_df_vix_is_empty(self):
+        """df_vix が空DataFrameのときも同様に NaN になること。"""
+        spy_df = _spy_df(n=SPY_LOOKBACK_MIN_BARS + 30)
+        df_vxv = pd.DataFrame({"date": spy_df["date"], "close": 16.5})
+        df_vix_empty = pd.DataFrame(columns=["date", "close"])
+        res = calculate_market_signals(spy_df, df_vix=df_vix_empty, df_vxv=df_vxv)
+
+        assert res["vxv_vix_ratio"].isna().all()
+
+    def test_market_trend_score_is_nan_not_exception_when_df_vix_missing(self):
+        """VIX 欠損時、MTS は例外を出さず、vxv_vix_ratio が NaN の行では
+        4成分を満たさないため NaN になること（^VIX3M 欠損時と同じ扱い。
+        捏造値で 3成分/4成分スコアを作らない）。"""
+        spy_df = _spy_df(n=SPY_LOOKBACK_MIN_BARS + 30)
+        df_vxv = pd.DataFrame({"date": spy_df["date"], "close": 16.5})
+        res = calculate_market_signals(spy_df, df_vix=None, df_vxv=df_vxv)
+
+        assert res["market_trend_score"].isna().all()
+
+    def test_logs_warning_when_df_vix_missing(self, caplog):
+        """df_vix が無いとき、20.0 で黙って埋めるのではなく、何が欠けていて
+        何を NULL にしたかを示す警告ログを出すこと。"""
+        import logging
+        spy_df = _spy_df(n=30)
+        df_vxv = pd.DataFrame({"date": spy_df["date"], "close": 16.5})
+        with caplog.at_level(logging.WARNING, logger="indicators.market_signals"):
+            calculate_market_signals(spy_df, df_vix=None, df_vxv=df_vxv)
+
+        assert any(
+            rec.levelname == "WARNING" and "^VIX" in rec.message and "vxv_vix_ratio" in rec.message
+            for rec in caplog.records
+        )
+
+
 class TestAtr14DoesNotFakeInsufficientLookback:
     """`atr_14`/`atr_pct_14` が「それらしい値」（1.0 や 0）に潰れず、
     遡り不足（窓14本未満）・high/low欠損・実際のATR=0では NaN になること

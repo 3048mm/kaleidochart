@@ -256,7 +256,14 @@ def calculate_market_signals(
         report_stale_input_gaps(df, 'vix_close', '^VIX')
         df['vix_close'] = df['vix_close'].ffill()
     else:
-        df['vix_close'] = 20.0
+        # VIX が無いのに 20.0 の固定値を入れると vxv_vix_ratio が「VXV / 20」という
+        # 捏造比率になる（5-26・R22。VXV 側の推定式撤去 5-8b② と同じ扱いに揃える）。
+        # NaN にして vxv_vix_ratio を NULL にする。
+        logger.warning(
+            "^VIX データが供給されていません。vix_close を NaN にし、vxv_vix_ratio を NULL にします"
+            "（固定値 20.0 による『VXV / 20』という捏造比率は撤去済み）"
+        )
+        df['vix_close'] = np.nan
 
     df['vxv_vix_ratio'] = None
     if df_vxv is not None and not df_vxv.empty:

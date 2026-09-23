@@ -74,9 +74,12 @@ def _seed_spy_history(db_session, n_bars: int, start_date: date) -> list[date]:
     ^VIX3M(VXV)のDailyPriceも同じ日付範囲で投入する（5-8b②でvxv_vix_ratioの
     推定式フォールバックが撤去されたため、VXVが無いとmarket_trend_scoreが
     NaNになる。本番同様にVXVは常に供給されている前提でテストする）。
+    ^VIX も同様に投入する（5-26で df_vix 欠損時の vix_close=20.0 固定値が撤去され、
+    VIX が無いと vxv_vix_ratio・market_trend_score が NaN になるため）。
     """
     spy = db_session.query(Symbol).filter(Symbol.ticker == "SPY").first()
     vxv = db_session.query(Symbol).filter(Symbol.ticker == "^VIX3M").first()
+    vix = db_session.query(Symbol).filter(Symbol.ticker == "^VIX").first()
     dates = [start_date + timedelta(days=i) for i in range(n_bars)]
     for d in dates:
         db_session.add(DailyPrice(
@@ -87,6 +90,10 @@ def _seed_spy_history(db_session, n_bars: int, start_date: date) -> list[date]:
         db_session.add(DailyPrice(
             symbol_id=vxv.id, date=d, open=21.0, high=21.0, low=21.0,
             close=21.0, volume=0
+        ))
+        db_session.add(DailyPrice(
+            symbol_id=vix.id, date=d, open=18.0, high=18.0, low=18.0,
+            close=18.0, volume=0
         ))
     db_session.commit()
     return dates
