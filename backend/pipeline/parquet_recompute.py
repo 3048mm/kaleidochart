@@ -328,7 +328,7 @@ def rebuild_virtual_index_prices(
         # （`orchestrator` のコメントどおり。dropna より前に出すこと）
         df["dollar_volume"] = df["close"] * df["volume"].fillna(0)
         df["dollar_volume_ma21"] = df.groupby("symbol_id")["dollar_volume"].transform(
-            lambda x: x.rolling(window=VIRTUAL_INDEX_SURGE_WINDOW, min_periods=1).mean()
+            lambda x: x.rolling(window=VIRTUAL_INDEX_SURGE_WINDOW, min_periods=VIRTUAL_INDEX_SURGE_WINDOW).mean()
         )
         df["surge"] = np.where(
             df["dollar_volume_ma21"] == 0,

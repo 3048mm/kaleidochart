@@ -522,7 +522,7 @@ OHLC 系は「価格の NULL は判定不能ではなく本物の異常」なの
 - [x] **5-4** `backend/tests/indicators/test_volatility.py` を新規作成 → `volatility.py:44` を修正 — **2026-09-23 完了**（ファイルは既存だったため`TestAdrPct21MinPeriodsWindow`4件を追記。`min_periods=1`→`21`の1行修正。indicators/365件・全てpassedを確認済み）
 - [x] **5-5** `backend/tests/indicators/test_volume_and_trends.py` に追記（既存ファイルあり）→ `volume_and_trends.py` の5箇所を修正 — **2026-09-23 完了**（`avg_dollar_volume_21`/`vol_sma_21`+`spy_vol_sma_21`/`max_63d`+`max_252d`をmin_periods=window化。`vol_accum_days_5`は単純な変更では不十分だったため、`is_accum`をvol_sma_21.notna()でNaN伝播させ`rolling(5,min_periods=5)`+`market_signals.py`と同じ`np.where(isna,None,fillna(0).astype(int))`パターンに書き換え。backend/tests/全体1948件passed）
 - [x] **5-6** `relative_strength.py:275-284`（旧163-172）を修正（既存 `test_rs_dot_age.py` が回帰を見る）— **2026-09-23 完了**（implementer に委譲。`rs_252_high/low`・`close_252_high/low` の4箇所を `min_periods=1`→`min_periods=252` に変更。`test_relative_strength_dot_warmup.py`+`test_rs_dot_age.py` 13件、indicators/ 372件、backend/tests/ 全体1950件、いずれもpassed・回帰なしを確認済み）
-- [ ] **5-7** `orchestrator.py` 4箇所 + `parquet_recompute.py:331` を修正
+- [x] **5-7** `orchestrator.py` 4箇所 + `parquet_recompute.py:331` を修正 — **2026-09-23 完了**（`dollar_volume_ma21`のmin_periods=1→21統一。既存`test_synthetic_ohlcv_integrity`がフィクスチャ5日分のみを前提にmin_periods=1時代の偽値を期待値としてハードコードしていたため回帰。共有フィクスチャは変更せず、テスト内でAAPL/MSFTのみ21日分に拡張し、pandasで独立に期待値を再計算する形に書き換え。backend/tests/全体1950件passed）
 - [ ] **5-8** breadth 集計3箇所（`t5_signals.py:76` / `scenario_runner.py:319` / `etf_single_runner.py:240`）を NaN 保持に修正 + テスト。**3箇所同時**（§3.2）
 - [ ] **5-9** `chart_router.py:141-145,285-298` を修正（§4-2）
 - [ ] **5-4b** `volatility.py:31-37` の `atr_14` を修正（§3.1.1(a)）— `fillna=True` を外すだけでは 0 のままなので、**先頭 `window-1` 本を明示的に NaN にする**。テストで「先頭13本が NaN・14本目から値」を固定

@@ -438,33 +438,83 @@ def test_incremental_idempotency(db_session):
 
 def test_synthetic_ohlcv_integrity(db_session):
     """
-    仮想テーマの始値・高値・安値・出来高（平均売買代金）が期待通りに合成されるか検証。
+    仮想テーマの始値・高値・安値・出来高（21日平均売買代金ベースのsurge）が
+    期待通りに合成されるか検証する。
+
+    dollar_volume_ma21 は min_periods=21 で計算されるため、window(21日)が
+    埋まるまでは NaN となり、直後の np.where(...).fillna(1.0) により
+    surge は中立値 1.0 に丸められる（このマスキング処理自体は本テストの対象外・
+    変更対象外）。そのためウォームアップ期間中（21日未満）の volume は
+    1000000.0 (=1.0 * 1000000.0) ぴったりに固定され、window がちょうど
+    21日分埋まった日（Day 21）以降で初めて実際の21日平均売買代金に基づく
+    surge が反映される。
     """
+    # フィクスチャの5日分(2026-05-01〜05-05, i=0..4)に続けて、AAPL(1)・MSFT(2)
+    # のみに同じ生成式で16日分(i=5..20)を追加し、合計21日分(window=21がちょうど
+    # 埋まる)のデータにする。GOOG(3)・_PHNC_(102, theme_id=102)は本テストの
+    # アサーション対象外のため触らない。
+    base_date = date(2026, 5, 1)
+    for i in range(5, 21):
+        d = base_date + timedelta(days=i)
+        db_session.add(DailyPrice(symbol_id=1, date=d, open=100.0 * (1.01**i), high=101.0 * (1.01**i), low=99.0 * (1.01**i), close=100.0 * (1.01**i), volume=1000))
+        db_session.add(DailyPrice(symbol_id=2, date=d, open=200.0 * (1.02**i), high=202.0 * (1.02**i), low=198.0 * (1.02**i), close=200.0 * (1.02**i), volume=1500))
+    db_session.commit()
+
     virtual_items = [{"ticker": "_TECH_", "exchange": "VIRTUAL", "theme_type": "virtual"}]
     symbol_id_map = {("_TECH_", "VIRTUAL"): 101}
-    
+
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp_file:
         hash_file_path = tmp_file.name
-        
+
     try:
         # 計算実行
         build_all_virtual_indexes_prices(
-            db=db_session, 
-            virtual_items=virtual_items, 
-            symbol_id_map=symbol_id_map, 
+            db=db_session,
+            virtual_items=virtual_items,
+            symbol_id_map=symbol_id_map,
             hash_file_path=hash_file_path
         )
-        
+
         prices = db_session.query(DailyPrice).filter(DailyPrice.symbol_id == 101).order_by(DailyPrice.date).all()
-        
-        # 5日間のうち最初の変化日(Day 2, index=0)の検証
-        # Day 1: AAPL dollar_vol=100000, MSFT dollar_vol=300000. rolling_mean=100k, 300k. surge=1.0, 1.0
-        # Day 2: AAPL close=101, vol=1000 -> dollar_vol=101000. rolling_mean=100500. surge=101000/100500=1.004975
-        #        MSFT close=204, vol=1500 -> dollar_vol=306000. rolling_mean=303000. surge=306000/303000=1.009901
-        # Average Surge = (1.004975 + 1.009901) / 2 = 1.007438
-        # Virtual Volume = 1000000 * 1.007438 = 1007438.0
-        assert abs(prices[0].volume - 1007438.0) < 10.0
-        
+
+        # 構成銘柄(AAPL/MSFT)の21日分の終値・出来高を、プロダクションコードとは
+        # 独立に pandas で素朴に再現し、期待値を計算する（手計算による桁間違いを避ける）。
+        dates = [base_date + timedelta(days=i) for i in range(21)]
+        aapl_close = pd.Series([100.0 * (1.01**i) for i in range(21)], index=dates)
+        aapl_volume = pd.Series([1000.0] * 21, index=dates)
+        msft_close = pd.Series([200.0 * (1.02**i) for i in range(21)], index=dates)
+        msft_volume = pd.Series([1500.0] * 21, index=dates)
+
+        aapl_dollar_volume = aapl_close * aapl_volume
+        msft_dollar_volume = msft_close * msft_volume
+
+        aapl_ma21 = aapl_dollar_volume.rolling(window=21, min_periods=21).mean()
+        msft_ma21 = msft_dollar_volume.rolling(window=21, min_periods=21).mean()
+
+        aapl_surge = (aapl_dollar_volume / aapl_ma21).fillna(1.0)
+        msft_surge = (msft_dollar_volume / msft_ma21).fillna(1.0)
+
+        avg_surge = (aapl_surge + msft_surge) / 2.0
+        expected_volume = avg_surge * 1000000.0
+
+        # 合成テーマの価格系列は close_prev が存在しない Day1 を除いた
+        # Day2〜Day21 の20日分になる
+        assert len(prices) == 20
+
+        for idx, p in enumerate(prices):
+            src_date = dates[idx + 1]
+            expected_vol = expected_volume.loc[src_date]
+            assert abs(p.volume - expected_vol) < 10.0, f"date={p.date}"
+
+        # ウォームアップ期間(Day2〜Day20, window未満)は中立値1.0でマスクされ、
+        # volume は常に 1000000.0 ぴったりになることを明示的に検証する
+        for p in prices[:-1]:
+            assert abs(p.volume - 1000000.0) < 1e-6, f"warmup date={p.date} volume={p.volume}"
+
+        # window がちょうど21日分埋まった最終日(Day21)は、実際の21日平均売買代金に
+        # 基づく surge が反映され、中立値(1000000.0)から明確に乖離する
+        assert abs(prices[-1].volume - 1000000.0) > 10.0
+
         # 始値、高値、安値の論理的整合性の検証
         for p in prices:
             assert p.high >= p.open
@@ -472,7 +522,7 @@ def test_synthetic_ohlcv_integrity(db_session):
             assert p.low <= p.open
             assert p.low <= p.close
             assert p.volume > 0  # 出来高が0より大きいこと
-            
+
     finally:
         if os.path.exists(hash_file_path):
             os.remove(hash_file_path)

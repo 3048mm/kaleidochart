@@ -106,7 +106,7 @@ def build_virtual_index_prices(db, virtual_id: int):
     
     # 21日平均売買代金の算出
     df['dollar_volume_ma21'] = df.groupby('symbol_id')['dollar_volume'].transform(
-        lambda x: x.rolling(window=21, min_periods=1).mean()
+        lambda x: x.rolling(window=21, min_periods=21).mean()
     )
     
     # 出来高急増倍率 (Surge) の算出
@@ -323,7 +323,7 @@ def build_all_virtual_indexes_prices(db, virtual_items: list[dict], symbol_id_ma
             # 先に売買代金と21日平均およびSurgeの計算を df 全体（Day 1含む）で行う
             df['dollar_volume'] = df['close'] * df['volume'].fillna(0)
             df['dollar_volume_ma21'] = df.groupby('symbol_id')['dollar_volume'].transform(
-                lambda x: x.rolling(window=21, min_periods=1).mean()
+                lambda x: x.rolling(window=21, min_periods=21).mean()
             )
             import numpy as np
             df['surge'] = np.where(
@@ -399,7 +399,7 @@ def build_all_virtual_indexes_prices(db, virtual_items: list[dict], symbol_id_ma
                 # 先に売買代金と21日平均およびSurgeの計算を df 全体（Day 1含む）で行う
                 df['dollar_volume'] = df['close'] * df['volume'].fillna(0)
                 df['dollar_volume_ma21'] = df.groupby('symbol_id')['dollar_volume'].transform(
-                    lambda x: x.rolling(window=21, min_periods=1).mean()
+                    lambda x: x.rolling(window=21, min_periods=21).mean()
                 )
                 import numpy as np
                 df['surge'] = np.where(
@@ -458,7 +458,7 @@ def build_all_virtual_indexes_prices(db, virtual_items: list[dict], symbol_id_ma
             # 先に売買代金と21日平均およびSurgeの計算を df 全体（Day 1含む）で行う
             df['dollar_volume'] = df['close'] * df['volume'].fillna(0)
             df['dollar_volume_ma21'] = df.groupby('symbol_id')['dollar_volume'].transform(
-                lambda x: x.rolling(window=21, min_periods=1).mean()
+                lambda x: x.rolling(window=21, min_periods=21).mean()
             )
             import numpy as np
             df['surge'] = np.where(
