@@ -1902,6 +1902,17 @@
     追加にはスキーマ変更（種別C）と全期間再計算が伴う。
   - 関連: `doc/completed/min_periods_warmup_plan.md` §8
 
+- [ ] **`min_periods_warmup` の G3 レビューで切り出した項目（2026-09-24 起票・いずれも正しさへの実害なし）**
+  - **背景**: `doc/in_progress/min_periods_warmup_plan.md` §6.3 の仕分けで「実在するが本ブランチのスコープ外」としたもの。番号は同 §6.3 の R 番号。
+  - **R4（RrgChart）**: `frontend/src/components/RrgChart.tsx:97-99` が履歴30点のランク系列の NULL を `|| 0` で 0（最悪）にする。NULL の点を描かない／線を切る等の表示設計が要る
+  - **R8・R17（増分レジストリの warmup_bars）**: `vol_surge_21`/`vol_surge_rel_spy_21`（73）・`up_down_vol_ratio_50`（76）は構造的下限（20/20/49）ではなく標本の最大値（`down_vol == 0`・出来高0 由来の NaN は固定本数で表せない）。連鎖 warmup（398/611/810 等）は `max(warmup(inputs)) + lookback - 1` でレジストリ自身から導出できるのに手書き定数で、テストが実計算と照合しない。`is_structurally_null_column` の SPY 列例外は `df_spy is None` 早期 return の副作用を列挙したもので、`^VIX`/`^VIX3M` 等の出来高0の銘柄には効かない。**`--check-warmup-nulls` の誤検知・見逃しの温床**
+  - **R9（仮想指数の先頭20日）**: 構成銘柄の先頭20日は `surge.fillna(1.0)` で中立化される（`orchestrator.py` rebuild 経路と `parquet_recompute.py`）。§2.3 の「NULL は NULL のまま」と食い違う。合成指数固有の話（計画 §3.7「別系統」）
+  - **R10（scenario_market_score のフォールバック）**: `backtest/scenario_market_score.py:91-107` が SPY の `sma_50/200`・`distribution_days` を `min_periods=1`、`atr_14` を `ffill().fillna(1.0)` で計算する。T3 が無いときのみ通る経路だが、T5 の MTS と食い違いうる（計画 §4-1 で「揃えない」と確定した範囲の続き）
+  - **R11（性能）**: `parquet_recompute.py` の `percent_rank` が per-group の Python コールバック（`groupby.rank(method='min')` ＋ `transform('count')` でベクトル化できる。T4 Parquet 再構築が1〜2分遅くなる見積り）／`find_stale_input_gaps` が毎回 `df['date'].tolist()`（`isna().any()` で早期 return できる。銘柄ごとに呼ばれる）／`volume_and_trends.py` の `vol_sma_21` の二重 rolling／`compute_breadth_momentum` の集計 lambda
+  - **R12（重複・依存方向）**: 21日窓の5箇所複製・breadth の NaN 保持式の3箇所複製・`report_stale_input_gaps` を `market_signals`（T5）から `relative_strength`（T3）が import している依存・`chart_router` の指標再実装。統合先の案: `_dollar_volume_ma21` ヘルパ・`compute_breadth_momentum` を両シナリオランナーからも呼ぶ・`indicators/input_gaps.py` への切り出し
+  - **R13（`vol_accum_days_5` の object dtype）**: `np.where(cond, None, int)` で object 列になる（`is_trend_template` と同じ既存パターン）。全 None 列を Parquet へ書く経路での型推論（null 型）と、既存の int64 列との concat での型崩れを別途確認する
+  - 関連: `doc/in_progress/min_periods_warmup_plan.md` §6.3
+
 ## P3 — 低（将来フェーズ・プロセス系）
 
 - [ ] **moomoo API 知見の活用アイデア（2026-09-12 起票、未検証・要判断）**

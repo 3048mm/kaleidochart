@@ -595,6 +595,11 @@ OHLC 系は「価格の NULL は判定不能ではなく本物の異常」なの
   おいて改めて評価される。
 - [x] **5-15** `doc/backend_specification.md` に「遡り不足時は NaN」を明記 — **2026-09-24 完了**。3箇所追加: ①§3.3 T3指標定義表の直前に IMPORTANT ブロックを新設（`min_periods=window`統一の説明・対象列一覧・`is_trend_template`のNULL入力ガード・SPYのvol_surge系構造的NULL例外・NULL透過方針）②§3.5 T4冒頭に IMPORTANT ブロックを新設（NULL銘柄がランキング母集団・結果の両方から除外される仕様、旧`PERCENT_RANK()`のNULL最小値扱いとの対比）③§3.6 `market_trend_score`の説明を「2018-04-01ハードコード」から「`breadth_sma50`のNULL判定」に更新。
 - [x] **5-16** `doc/issue_list.md` の ① をクローズ（§8 の残作業のうち未起票のものを新規 issue として起票。② は起票済み）— **2026-09-24 完了**。issue①を`[x]`+取り消し線化し、解決NOTEブロック（対応内容・検証結果・残作業・「本番昇格は別途」の明記）を追加、旧本文（事象・実測・対応案）は issue②と同じ慣例でそのまま履歴として残した。§8の残作業のうち未起票だった3件をP2/P3に新規起票（仮想テーマ指数のSPY参照供給不足警告・`RS_DOT_WARMUP_BARS`撤去要否・`bars_available`診断列）。`rs_roc_ema_200`の40銘柄異常は2026-09-23付で既に別issueとして起票済みのため対象外。
+- [ ] **5-20**（G3-1周目・対応 R1）`orchestrator.py` の**増分ブランチ**（`>= seed_date` で絞ってから `rolling(21, min_periods=21)` を計算している箇所）を、**全履歴（`theme_prices_df`）で `dollar_volume_ma21` を計算してから `>= seed_date` に絞る**順序へ直す。現状は日次更新のたびに仮想テーマ/指数の `surge` が NaN→1.0（volume=1e6 固定）になる。テスト: 21本以上の履歴がある構成銘柄で、増分結果の `surge` が全期間再合成（rebuild）と一致し、1.0 固定にならないこと
+- [ ] **5-21**（同・対応 R2）**breadth の 0.5 捏造を撤去し、NULL を NULL のまま流す**。`market_signals.py` の `compute_breadth_momentum`（全銘柄 NaN の日に `breadth_sma50 = 0.5` を返す `else 0.5` と `metrics_df.fillna(0.5)` の breadth 側）、`scenario_runner.py` / `etf_single_runner.py` の複製（同じ `else 0.5`）、`scenario_market_score.py:175` の日付ゲート `date_str >= '2018-04-01'`（`breadth_val is not None` と NaN 判定に置換）を**4箇所同時に**揃える。`momentum_ratio` の 0.5 は据え置き（bool 由来で NaN にならない）。`t5_signals.py` が NaN を保存するとき NULL（None）になることも確認。テスト: 全銘柄の `sma_50` が NaN の日は `breadth_sma50` が NaN・`has_breadth` が False・MTS が3成分になること
+- [ ] **5-22**（同・対応 R3）`tools/db_health_check.py` の短履歴除外閾値（`rs_momentum_e21`: 75、`rs_ratio_e21`: 30）を、`incremental_state_registry` の `warmup_bars`（実測 94 / 40）から**導出する**形に直す（手書きの数値を増やさない。`t2_count <= warmup_bars` なら除外）。`sma_200`（200）・`ema_21`（21）も同じ仕組みに揃えてよい。テスト: 履歴 80本の銘柄で `rs_momentum_e21` が NULL でも NG にならず、95本で NULL なら NG になること
+- [ ] **5-23**（同・対応 R4）`frontend/src/components/SummaryTable.tsx` のランク列（L139-141 の `?? 0`、L49-50 のソートの `?? 0`）を、**NULL は `-` 表示・ソートは末尾**に直す（0＝最悪バケットとして表示・整列しない）。§4-8「ランク系のみ」の範囲。`npm test` とビルドを通す
+- [ ] **5-24**（同・対応 R5）`t5_signals.py` の `_find_insufficient_lookback_dates` の docstring と、周辺コメントに残っている**撤去済みの収束ロジック（5-7e）・`t5_completed_dates` の記述**を現状（行の有無で gap 判定・このリストはエラーログ用途のみ）に合わせる。コード変更なし
 - [ ] **5-17** merge → `tools/deploy_after_merge.ps1` で昇格 → API サーバ再起動。**種別 B のため `/code-review` をブランチ単位で1回通してから merge する**（CLAUDE.md 検収 第2段）。日次パイプライン Tue-Sat 07:00/13:00 と重ねない（§4-5）
 - [ ] **5-18** **再最適化をユーザーへ引き渡す**（§4-3。実行はユーザー、約12時間規模）— ①変更が main に merge・昇格済みであることを明言する ②1戦略だけ短時間ドライランで挙動を確認する ③対象8戦略（`E2`/`F`/`A`/`G2`/`D`/`H1`/`G1`/`C2`）を明示して引き渡す。**データが変わる変更なので、既存 trial の集計値ベースの再スコアリングは使えない**（集計値そのものが旧データ由来のため）
 - [ ] **5-19** 計画書を `doc/completed/` へ移動（再最適化の完了は待たない。結果は別途記録）
@@ -692,6 +697,39 @@ OHLC 系は「価格の NULL は判定不能ではなく本物の異常」なの
   - o. ② を直すまで `--rebuild-from` 系を実行しない
 - **転記先と件数**: **本計画書 9件**（a→§1.0 / b→§1.0 / c→§1.0 / d→§1.0 / e→§1.0・§2.2 / f→§1.0・§2.2 / g→§2.2・§4-1 / h→§4-6 / o→§4-6・作業中メモ）＋ **issue ② 8件**（f / i / j / k / l / m / n / o）。重複 2件（f・o）。**9 + 8 − 2 = 15 で元の件数と一致**
 - **差分の説明**: なし。② 固有の事項（i〜n）は計画書に重複させず issue ② を正とする（二重管理を避けるため。§7-4 には経緯の要約のみ残す）
+
+### 6.3 レビュー記録（G3 ブランチレビュー）
+
+- **対象**: 種別 B・`main..worktree-min-periods-warmup`（44ファイル・+2154/-416）。レベル `high`（`doc/workflow.md` §3）
+- **G2-2**: `backend/tests/` 全体 **1988 passed / 1 skipped / failed 0**（2026-09-24・ワークツリー）
+
+#### 1周目（2026-09-24・HEAD `1aec291`）
+
+finder 8本のうち報告が届いた6本（再利用 / 規約 / 効率 / 削除された挙動 / 高度 / 行スキャン）の指摘を集約し、
+**重大な指摘はコードを直接読んで実在を確認**してから仕分けた（複数の finder が独立に一致したものは★）。
+
+| # | 指摘 | 仕分け | 理由・対応 |
+| :-- | :-- | :-- | :-- |
+| R1 ★ | 仮想指数の**増分ブランチ**が `>= seed_date` で絞った数行に `rolling(21, min_periods=21)` をかけ、必ず NaN→`surge=1.0`（volume=1e6 固定） | **対応 → 5-20** | 実在確認済み（`all_prices_df` は730日分を持っており、絞る前に計算すれば済む）。旧 `min_periods=1` は粗い値だったが、新コードは縮退値。**このブランチの変更が直接の原因**で、テストは rebuild 経路しか見ていなかった |
+| R2 ★ | `compute_breadth_momentum` が全銘柄 NaN の日に `0.5` を返すため、`has_breadth = notna()` が素通り（2017Q1 で偽 breadth の4成分スコア）。`scenario_runner`/`etf_single_runner` に同じ `else 0.5`、`scenario_market_score.py:175` には日付ゲートが残り T5 と不一致 | **対応 → 5-21** | 実在確認済み。5-8b で「デッドコード」と判断した `fillna(0.5)` は、`has_breadth` を NULL 判定に変えた時点で**偽の判定可能を作る**箇所に変わっていた（§2.3 違反）。**副作用として MTS が 2017-03〜2018-03 で3成分→4成分に変わる**（breadth が正しく算出できる区間のため意図どおり。2017年はバックテスト窓外） |
+| R3 ★ | `db_health_check` の短履歴除外が `rs_momentum_e21`<75・`rs_ratio_e21`<30 のまま（レジストリ実測は 94 / 40）。新規上場銘柄が NG になる | **対応 → 5-22** | 実在確認済み。5-11 が `sma_200` だけを足して残りを「5-11b で対応」としたが、5-11b はレジストリ側だけで health check を更新していなかった。手書き数値の追加ではなくレジストリから導出する |
+| R4 | `SummaryTable.tsx` が `?? 0` で NULL ランクを0（最悪）として表示・整列（`RrgChart.tsx:97-99` も同型） | **対応 → 5-23**（SummaryTable のみ）／RrgChart は issue 化 | 実在確認済み。5-9b の「SummaryTable は元々 null 安全」は**クラッシュしないという意味でしか正しくなかった**。RrgChart は履歴30点の系列で NULL の扱い（欠損点を描かない等）に設計判断が要るため切り出す |
+| R5 | `t5_signals.py` の docstring が撤去済みの収束ロジックを説明している | **対応 → 5-24** | 実在。「復元」を誘発して無限再書き込みを再導入する恐れがある |
+| R6 | T5 が NULL スコアの既存行を自己修復しなくなった（`market_trend_score IS NOT NULL` → 行の有無） | **却下** | **§3.6 でユーザー合意済みの設計判断**（「失うもの」まで明記済み。復旧手段は `--rebuild-from T5`）。本番は昇格時に全期間再計算されるため既存の旧ロジック由来行は残らない |
+| R7 | `rs_roc_ema_200` の `warmup_bars` 511→611 で夜間フォールバックが収束しない | **却下（既知）** | 511 も 611 も K=400 以上で、どちらも `WARMUP_UNDETERMINED` に分類される（分類は変わらない）。既知の `rs_roc_ema_200` 問題（2026-09-23 起票済み）の範疇で、増分は 511〜611本の帯の銘柄のみ |
+| R8 | `warmup_bars` の一部（`vol_surge_21`/`vol_surge_rel_spy_21`=73、`up_down_vol_ratio_50`=76）が構造的下限ではなく標本の最大値。連鎖 warmup が手書き定数で導出されていない。`is_structurally_null_column` の SPY 例外リスト | **issue 化** | 実在するが T3増分化のレジストリ設計に属し、本ブランチのスコープ外。§2.2「5-11b は実測を信用する」方針の限界の話 |
+| R9 | 仮想指数の合成が構成銘柄の先頭20日を `surge.fillna(1.0)` で中立化（rebuild 経路 L109/326/402） | **issue 化** | §3.7「別系統（本計画のスコープ外）」に既出。§8 と同じ起票に合流 |
+| R10 | `scenario_market_score.py:91-107` の SPY フォールバック計算が `min_periods=1`・`atr fillna(1.0)` のまま | **issue 化** | §2.2 / 4-1 で「SPY 専用計算は揃えない」と確定済み。フォールバック経路（T3 が無いときのみ）で、揃えるかは別判断 |
+| R11 | `percent_rank` の per-group Python コールバック（T4 Parquet 再構築が1〜2分遅くなる見積り）／ `find_stale_input_gaps` の毎回 `tolist()`／`vol_sma_21` の二重 rolling／breadth の lambda | **issue 化** | 実在するが性能のみ（数分〜数秒規模）。正しさに影響しない |
+| R12 | 21日窓の5箇所複製（orchestrator ×4 + parquet_recompute）／breadth 式の3箇所複製／None 安全ソートキーの3回記述／`chart_router` の指標再実装／`report_stale_input_gaps` を `market_signals` から import（T3→T5 依存） | **issue 化** | 重複は計画 §3.2・§3.4 で**意図的に個別修正**とした構造（統合は別リファクタ）。修正漏れの検出は R2 の同時修正で担保する |
+| R13 | `vol_accum_days_5` が object dtype（None 混在） | **issue 化** | dtype は事実（実測）だが、`is_trend_template` / `market_signals` と同じ既存パターン。比較で `TypeError` になる主張は**実測で誤り**（`>= 3` は通る）。全 None 列の Parquet 型推論は保存経路で別途確認が要る |
+| R14 | `_atr_wilder_kernel` が 0.0 初期化のまま／`close == 0` の ATR% が 0／`except Exception` の握りつぶし | **却下** | 唯一の呼び出し元で先頭 `window-1` 本を NaN 化しており（5-4b）実害なし。`close > 0` は T2 読み込み時点で保証（`close IS NOT NULL AND close > 0`）。`except` は既存 |
+| R15 | `screener_router.py:735` / `scenario_runner.py:583` の NULL ランク→0.0 | **却下** | 本ブランチの変更箇所ではない。前者は上位200件のソートキーで「NULL は最下位」と意味が一致、後者はキー欠落時の既定値 |
+| R16 | `relative_strength.py` のテストが3ファイルに分割（1:1 規約） | **却下** | 既存 `test_relative_strength_precision.py` の前例と同じ粒度分割。ファイルごとに目的が異なる |
+| R17 | `^VIX` 系のボリューム0で `--check-warmup-nulls` が誤検知 | **issue 化** | R8 と同じレジストリ／診断ツールの構造的例外の話 |
+
+- **issue 化の起票先**: `doc/issue_list.md` P2「`min_periods_warmup` の G3 レビューで切り出した項目」（R4-RrgChart / R8 / R9 / R10 / R11 / R12 / R13 / R17）
+- **1周目の結論**: 「対応」5件（5-20〜5-24）。**修正 → G2 → 2周目の G3 が必要**。「merge 可能」はまだ報告しない
 
 ## 7. 途中発生した課題
 
