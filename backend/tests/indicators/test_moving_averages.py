@@ -113,4 +113,7 @@ class TestSmaExactNumericValues:
             'sma_200 は先頭199本が NaN であるべき（200本目で初めて窓が育つ）'
         )
         # position 199 (200本目) 以降は常に100.0
-        assert (result['sma_200'].iloc[199:] == pytest.approx(100.0)).all()
+        # 注意: `Series == pytest.approx(scalar)` は要素ごとの近似比較にならず
+        # pandas の Series.__eq__ が優先されて常に全要素 False になる（既知の罠）。
+        # np.isclose で明示的に配列比較する。
+        assert np.isclose(result['sma_200'].iloc[199:].to_numpy(), 100.0).all()

@@ -77,7 +77,7 @@ def calc_moving_averages(df: pd.DataFrame, state: bool = None) -> pd.DataFrame:
     incremental = bool(state)
     close = df['close']
     for period in [5, 21, 50, 63, 150, 200]:
-        df[f'sma_{period}'] = close.rolling(window=period, min_periods=1).mean()
+        df[f'sma_{period}'] = close.rolling(window=period, min_periods=period).mean()
         # シード取得〜マージは compute_recursive_series に集約（5-15d・
         # code-review指摘3）。増分モードでシードが取得できない場合はNaNになり、
         # 「df全体（K+1本の窓）から再シード」という危険な経路には入らない。
