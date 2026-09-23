@@ -1913,6 +1913,8 @@
   - **R13（`vol_accum_days_5` の object dtype）**: `np.where(cond, None, int)` で object 列になる（`is_trend_template` と同じ既存パターン）。全 None 列を Parquet へ書く経路での型推論（null 型）と、既存の int64 列との concat での型崩れを別途確認する
   - **R19（T3 自己修復が SQLite 基点）**: `backend/scripts/weekly_maintenance.py` の T3 欠損修復（L380-430 付近）が `daily_prices` の SQLite 約504本だけで `calculate_indicators` を回して欠損日の行を挿入する。`min_periods=window` 統一後は、窓が足りない列（`sma_200`・`dist_52w_high_pct`・`is_trend_template`・`rs_roc_ema_200`=611・`rs_momentum_e200`=810 等）が、Parquet に正しい値があっても NULL で入る。**issue ②（T5 が SQLite 基点）と同じ種類**で、直し方は「Parquet 基点で計算する」。修復対象が SQLite の窓の左端に近い日付のときに限って起きる（**優先度 P1 相当・要判断**）
   - **R20（ログ）**: `relative_strength.py` の `report_stale_input_gaps(df, 'spy_close', 'SPY')` は全銘柄・全 T3 実行で呼ばれる。暦の違う銘柄で MTS 入力向けの WARNING が増え、本物の警告が埋もれる。銘柄ごとではなくバッチで1回にするか、閾値を分ける
+  - **R20 の補足（メッセージの誤り）**: SPY の履歴が銘柄の先頭より後に始まる「先頭側のギャップ」も「前日値を持ち越し」と報告するが、ffill は先頭を埋められず `rs_value` は NaN のまま。文言が事実と違う
+  - **R23（`RS_DOT_WARMUP_BARS`）**: `RS_DOT_WARMUP_BARS = 252` と kernel の `i < warmup`（`relative_strength.py:77,110`）は、新しい `rolling(252, min_periods=252)` に対して1本ずれる（窓が満ちる最初の bar は index 251）。コメント（「`min_periods=1` だからガードが要る」）も古い。既存 issue「既存ガード2件の要否を再検証する」と一緒に、撤去するかずらすかを決める
   - 関連: `doc/in_progress/min_periods_warmup_plan.md` §6.3
 
 ## P3 — 低（将来フェーズ・プロセス系）

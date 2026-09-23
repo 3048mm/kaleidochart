@@ -601,6 +601,7 @@ OHLC 系は「価格の NULL は判定不能ではなく本物の異常」なの
 - [ ] **5-23**（同・対応 R4）`frontend/src/components/SummaryTable.tsx` のランク列（L139-141 の `?? 0`、L49-50 のソートの `?? 0`）を、**NULL は `-` 表示・ソートは末尾**に直す（0＝最悪バケットとして表示・整列しない）。§4-8「ランク系のみ」の範囲。`npm test` とビルドを通す
 - [ ] **5-24**（同・対応 R5）`t5_signals.py` の `_find_insufficient_lookback_dates` の docstring と、周辺コメントに残っている**撤去済みの収束ロジック（5-7e）・`t5_completed_dates` の記述**を現状（行の有無で gap 判定・このリストはエラーログ用途のみ）に合わせる。コード変更なし
 - [ ] **5-25**（同・対応 R18）`screener_router.py:778-779` の `_float_or(rs21_rank / rs63_rank)`（NULL→0.0）を **NULL のまま返す**形に直す（`_float_or_none` が既にある）。`schemas.py` の対応フィールド（`rs_ratio_21_rank` / `rs_ratio_63_rank` / `rs_ratio_rank_e21` / `rs_ratio_rank_e63`）を `Optional[float]` にし、`frontend/src/types.ts` の型を `number | null` に揃える。**5-9b で `ScreenerResultPage.tsx` を null 安全にしたが、API が 0.0 を返すため一度も効いていなかった**（§3.1「呼んでいるが効いていない」型）。dashboard API（NULL を返す）との不整合の解消。テスト: NULL ランクの銘柄が screener 応答で `null` になること。`screener_router.py:735` のソートキー `fillna(0.0)`（NULL は最下位）は意味が一致するため据え置き
+- [ ] **5-26**（同・対応 R22）`market_signals.py` の `calculate_market_signals` で `df_vix` が無いとき `df['vix_close'] = 20.0`（約L248）と固定値を入れ、`^VIX3M` があれば `vxv_vix_ratio = vxv / 20` という**捏造比率が MTS に入る**。§3.7 / 4-12（`vxv_vix_ratio` の推定式撤去・fail loud）と同じ種類の撤去漏れ。`vix_close` を NaN にして `vxv_vix_ratio` を NULL にし、`^VIX3M` 欠損時と同じ形式の WARNING を出す（`report_stale_input_gaps` のお手本に揃える）。テスト: `df_vix=None` かつ `df_vxv` 有りで `vxv_vix_ratio` が NaN・警告が出ること。**5-21（同じファイルを編集中）の完了後に着手する**
 - [ ] **5-17** merge → `tools/deploy_after_merge.ps1` で昇格 → API サーバ再起動。**種別 B のため `/code-review` をブランチ単位で1回通してから merge する**（CLAUDE.md 検収 第2段）。日次パイプライン Tue-Sat 07:00/13:00 と重ねない（§4-5）
 - [ ] **5-18** **再最適化をユーザーへ引き渡す**（§4-3。実行はユーザー、約12時間規模）— ①変更が main に merge・昇格済みであることを明言する ②1戦略だけ短時間ドライランで挙動を確認する ③対象8戦略（`E2`/`F`/`A`/`G2`/`D`/`H1`/`G1`/`C2`）を明示して引き渡す。**データが変わる変更なので、既存 trial の集計値ベースの再スコアリングは使えない**（集計値そのものが旧データ由来のため）
 - [ ] **5-19** 計画書を `doc/completed/` へ移動（再最適化の完了は待たない。結果は別途記録）
@@ -706,7 +707,7 @@ OHLC 系は「価格の NULL は判定不能ではなく本物の異常」なの
 
 #### 1周目（2026-09-24・HEAD `1aec291`）
 
-finder 8本のうち報告が届いた7本（再利用 / 規約 / 効率 / 削除された挙動 / 高度 / 行スキャン / ファイル横断トレース）の指摘を集約し、
+finder 8本の報告をすべて集約（再利用 / 規約 / 効率 / 削除された挙動 / 高度 / 行スキャン / ファイル横断トレース / 実測ベースの正しさ）の指摘を集約し、
 **重大な指摘はコードを直接読んで実在を確認**してから仕分けた（複数の finder が独立に一致したものは★）。
 
 | # | 指摘 | 仕分け | 理由・対応 |
@@ -732,9 +733,13 @@ finder 8本のうち報告が届いた7本（再利用 / 規約 / 効率 / 削�
 | R19 | `weekly_maintenance.py` の T3 自己修復が SQLite の約504本だけで再計算し、欠損日の行に（窓が足りない列の）NULL を書く。Parquet に正しい値があっても届かない | **issue 化（P1）** | 実在確認済み。SQLite 基点である点は元からで issue ② と同種。修正前は近似値、修正後は NULL（原則には近づく）だが、§2.3.2 の期待「Parquet の正しい値を使う」とは逆。Parquet 基点化は設計判断を含むため本ブランチでは扱わない |
 | R20 | `relative_strength.py` に足した `report_stale_input_gaps(spy_close)` が全銘柄・全 T3 実行で呼ばれ、暦の違う銘柄でログが増える | **issue 化** | ログのみ（値は不変）。R11 に合流 |
 | R21 | `db_health_check` の `sma_200` 除外が直近5行チェックと噛み合わない（200〜203本で NG） | **対応 → 5-22 に統合** | 実在。R3 の修正時に `+5` を含める |
+| R22 | `df_vix` 欠損時に `vix_close = 20.0` の固定値で `vxv/20` を計算する（VXV 側の推定式は撤去済みなのに VIX 側が残った） | **対応 → 5-26** | 実在確認済み（本ブランチの変更ではなく元からの記述だが、§3.7 / 4-12 の意図＝捏造値の撤去に含まれる撤去漏れ） |
+| R23 | `RS_DOT_WARMUP_BARS = 252` と kernel の `i < warmup` が新しい `rolling(252, min_periods=252)` に対して1本ずれる（点灯可能な最初の bar は index 251） | **issue 化** | 既存 issue「`RS_DOT_WARMUP_BARS` 撤去要否」に追記。境界の1本のみ。増分経路は履歴1011本以上の銘柄でしか使われず、フル/増分の食い違いは実害に出ない |
+| R24 | `min_periods=window` により入力に NaN が1本あると窓ぶんの出力が NaN になる（EMA/ATR は1日で回復するので不揃い） | **却下** | pandas 標準の挙動で、本計画が揃えにいった一般的なツールの挙動そのもの（§1.0）。T2 に NULL の終値/出来高は入らない（コードコメントとデータ実測）。入るようになったら別問題 |
+| R25 | `test_scan_price_anomalies.py` が `UnicodeEncodeError: 'cp932'` で失敗 | **却下** | 環境（ロケール）由来で本ブランチと無関係。オーケストレーターの全件実行は 1988 passed / failed 0 |
 
-- **issue 化の起票先**: `doc/issue_list.md` P2「`min_periods_warmup` の G3 レビューで切り出した項目」（R4-RrgChart / R8 / R9 / R10 / R11 / R12 / R13 / R17 / R19 / R20）
-- **1周目の結論**: 「対応」6件（5-20〜5-25）。finder 7本の報告を反映済み（8本目は未着。届けば2周目で反映）。**修正 → G2 → 2周目の G3 が必要**。「merge 可能」はまだ報告しない
+- **issue 化の起票先**: `doc/issue_list.md` P2「`min_periods_warmup` の G3 レビューで切り出した項目」（R4-RrgChart / R8 / R9 / R10 / R11 / R12 / R13 / R17 / R19 / R20 / R23）
+- **1周目の結論**: 「対応」7件（5-20〜5-26）。finder 8本の報告をすべて反映済み。実測ベースの finder は、レジストリの `warmup_bars` の一致・K=400 での増分/フル再計算の一致（10履歴長・60列超で不一致0）・`percent_rank` と SQLite の一致（300ケース）を**肯定的に確認**している。**修正 → G2 → 2周目の G3 が必要**。「merge 可能」はまだ報告しない
 
 ## 7. 途中発生した課題
 
