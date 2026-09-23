@@ -128,7 +128,7 @@ def calc_volatility(df: pd.DataFrame, state: bool = None) -> pd.DataFrame:
 
     # 4. ADR% (21日) — Average Daily Range as % of Low
     daily_range_pct = np.where(low == 0, np.nan, (high - low) / low * 100)
-    df['adr_pct_21'] = pd.Series(daily_range_pct).rolling(window=21, min_periods=1).mean().values
+    df['adr_pct_21'] = pd.Series(daily_range_pct).rolling(window=21, min_periods=21).mean().values
 
     # 5. Distance from SMA50 in ATR multiples
     if 'sma_50' in df.columns:
