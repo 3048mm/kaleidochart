@@ -498,3 +498,133 @@ def test_warmup_null_falls_back_to_t3_count_when_parquet_symbol_missing(
 
     assert "NOT_IN_PARQUET" in ng, "t3_count(3) > warmup_bars(2) なのでフォールバックでも検出されるべき"
     assert "ウォームアップ超過NULL検知" in out
+
+
+# ============================================================
+# --check-nulls の短履歴除外をレジストリの warmup_bars から導出する（min_periods_warmup 計画 5-22）
+# ============================================================
+#
+# 旧実装は t2_count < 75 / < 30 / < 21 / < 200 と手書きで、レジストリ実測（rs_momentum_e21=94・
+# rs_ratio_e21=40）とずれていた（新規上場銘柄が誤って NG になる）。さらにこの検査は
+# 「直近5行に NULL があるか」を見るため、除外は t2_count <= warmup_bars ではなく
+# t2_count <= warmup_bars + 5（直近5行が全てウォームアップ明けになるまで）でなければ
+# ならない。本番レジストリ（monkeypatch しない）に対して境界を固定する。
+
+@pytest.fixture
+def nulls_health_db(tmp_path, monkeypatch):
+    db = tmp_path / "health_nulls_test.db"
+    con = sqlite3.connect(db)
+    cols = ", ".join(f"{c} REAL" for c in hc.CRITICAL_COLUMNS)
+    con.executescript(f"""
+        CREATE TABLE symbols (id INTEGER PRIMARY KEY, ticker TEXT, active INTEGER);
+        CREATE TABLE daily_prices (id INTEGER PRIMARY KEY AUTOINCREMENT, symbol_id INTEGER, date TEXT);
+        CREATE TABLE indicators (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, symbol_id INTEGER, date TEXT, {cols}
+        );
+    """)
+    con.commit()
+    monkeypatch.setattr(hc, "DB_PATH", str(db))
+
+    # 全行が同じ連番日付（末尾が全銘柄共通）になるよう、n 本を 2020-01-01 起点の連番で作る
+    def _dates(n):
+        return [d.strftime("%Y-%m-%d")
+                for d in pd.date_range(end="2026-07-31", periods=n, freq="D")]
+
+    def add(sym_id, ticker, n, null_cols=()):
+        """n 本の T2/T3 を入れる。null_cols の指標だけ**最新行のみ** NULL（他は非NULL）。"""
+        con.execute("INSERT INTO symbols VALUES (?, ?, 1)", (sym_id, ticker))
+        dates = _dates(n)
+        con.executemany("INSERT INTO daily_prices (symbol_id, date) VALUES (?, ?)",
+                        [(sym_id, d) for d in dates])
+        for i, d in enumerate(dates):
+            vals = [None if (c in null_cols and i == n - 1) else 1.0 for c in hc.CRITICAL_COLUMNS]
+            con.execute(
+                f"INSERT INTO indicators (symbol_id, date, {', '.join(hc.CRITICAL_COLUMNS)}) "
+                f"VALUES (?, ?, {', '.join('?' * len(hc.CRITICAL_COLUMNS))})",
+                (sym_id, d, *vals),
+            )
+        con.commit()
+
+    yield add
+    con.close()
+
+
+def _run_check_nulls():
+    import io
+    from contextlib import redirect_stdout
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        ng = hc.check_symbol_health(all_active=True, check_nulls=True)
+    return ng, buf.getvalue()
+
+
+def _warmup(col):
+    return hc.columns_with_warmup_threshold()[col]
+
+
+def test_nulls_short_history_exclusion_derived_from_registry_rs_momentum(nulls_health_db):
+    """rs_momentum_e21（レジストリ warmup_bars=94）: 99本（=94+5）までは最新行が NULL でも NG にしない。"""
+    add = nulls_health_db
+    boundary = _warmup("rs_momentum_e21") + hc.RECENT_NULL_WINDOW
+    assert boundary == 99  # レジストリ実測値（A-full 後）。変わったら計画の前提を見直す
+    add(1, "SPY", boundary + 10)
+    add(2, "NEWLISTED", boundary, null_cols=("rs_momentum_e21",))
+
+    ng, out = _run_check_nulls()
+
+    assert "NEWLISTED" not in ng, f"ウォームアップ中の新規上場銘柄が NG になっている: {out}"
+
+
+def test_nulls_rs_momentum_ng_just_past_boundary(nulls_health_db):
+    """陽性対照: 100本（=94+5+1）で最新行が NULL なら NG（検出できることの確認）。"""
+    add = nulls_health_db
+    boundary = _warmup("rs_momentum_e21") + hc.RECENT_NULL_WINDOW
+    add(1, "SPY", boundary + 10)
+    add(2, "BROKEN", boundary + 1, null_cols=("rs_momentum_e21",))
+
+    ng, out = _run_check_nulls()
+
+    assert "BROKEN" in ng
+    assert "rs_momentum_e21" in out
+
+
+def test_nulls_rs_ratio_boundary_from_registry(nulls_health_db):
+    """rs_ratio_e21（warmup_bars=40）: 旧手書き(<30)では 30〜45本で誤 NG になっていた帯を除外する。"""
+    add = nulls_health_db
+    boundary = _warmup("rs_ratio_e21") + hc.RECENT_NULL_WINDOW
+    add(1, "SPY", boundary + 10)
+    add(2, "NEW_OK", boundary, null_cols=("rs_ratio_e21",))
+    add(3, "NEW_NG", boundary + 1, null_cols=("rs_ratio_e21",))
+
+    ng, _ = _run_check_nulls()
+
+    assert "NEW_OK" not in ng
+    assert "NEW_NG" in ng
+
+
+def test_nulls_sma_200_boundary_is_warmup_plus_recent_window(nulls_health_db):
+    """sma_200（warmup_bars=199）: 直近5行が全てウォームアップ明けになる 204本まで除外、205本で NG。
+
+    旧実装の t2_count < 200 では 200〜203本で古い側の行が NULL のまま NG になっていた。
+    """
+    add = nulls_health_db
+    boundary = _warmup("sma_200") + hc.RECENT_NULL_WINDOW
+    assert boundary == 204
+    add(1, "SPY", boundary + 10)
+    add(2, "SMA_OK", boundary, null_cols=("sma_200",))
+    add(3, "SMA_NG", boundary + 1, null_cols=("sma_200",))
+
+    ng, _ = _run_check_nulls()
+
+    assert "SMA_OK" not in ng
+    assert "SMA_NG" in ng
+
+
+def test_nulls_spy_rs_columns_still_excluded(nulls_health_db):
+    """SPY の rs 系列 NULL は履歴が十分でも従来どおり除外される（既存挙動の維持）。"""
+    add = nulls_health_db
+    add(1, "SPY", 300, null_cols=("rs_value", "rs_ratio_e21", "rs_momentum_e21"))
+
+    ng, _ = _run_check_nulls()
+
+    assert "SPY" not in ng

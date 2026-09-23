@@ -39,6 +39,10 @@ CRITICAL_COLUMNS = [
 # weekly_maintenance.classify_symbol_freshness の LOW_HISTORY_ROWS と同じ意図。
 LOW_HISTORY_ROWS = 20
 
+# --check-nulls が見る「直近N行」の N。SQL の LIMIT と短履歴除外の閾値計算
+# （t2_count <= warmup_bars + N）で同じ値を共有し、両者が食い違わないようにする。
+RECENT_NULL_WINDOW = 5
+
 def get_connection():
     return sqlite3.connect(DB_PATH)
 
@@ -171,20 +175,20 @@ def check_symbol_health(ticker: str = None, all_active: bool = False, check_null
                 # SPY自身に対する相対強度は計算対象外のためNULLが正常
                 exclude_cols.extend(['rs_value', 'rs_ratio_e21', 'rs_momentum_e21'])
             
-            # データ期間が短い新規株はウォームアップ期間中のためNULLを許容
-            if t2_count < 75:
-                exclude_cols.append('rs_momentum_e21')
-            if t2_count < 30:
-                exclude_cols.append('rs_ratio_e21')
-            if t2_count < 21:
-                exclude_cols.append('ema_21')
-            # 2026-09-23（min_periods_warmup計画①）: sma_200 が min_periods=1 から
-            # min_periods=window(=200) に変わったため、200本未満の銘柄では
-            # sma_200 が NULL になるのが正しい挙動になった（旧仕様ではこの除外が
-            # 無くても常に非NULLだったため、除外漏れが顕在化していなかった）。
-            if t2_count < 200:
-                exclude_cols.append('sma_200')
-                
+            # データ期間が短い新規株はウォームアップ期間中のためNULLを許容する。
+            # 閾値は手書きせず、レジストリの warmup_bars（銘柄の先頭から何本目(0始まり)で
+            # 非NULLになるか）から導出する（min_periods_warmup 計画 5-22。手書き値は
+            # 実測 warmup_bars とずれ、新規上場銘柄が誤って NG になっていた）。
+            # この検査は「直近 RECENT_NULL_WINDOW 行に NULL があるか」を見るため、
+            # 直近行がすべてウォームアップ明けになる t2_count > warmup_bars + RECENT_NULL_WINDOW
+            # まで除外する（`<= warmup_bars` だと、境界付近で直近窓の古い側の行が
+            # NULL のまま NG になる）。
+            warmup_bars_by_col = columns_with_warmup_threshold()
+            for col in CRITICAL_COLUMNS:
+                warmup_bars = warmup_bars_by_col.get(col)
+                if warmup_bars is not None and t2_count <= warmup_bars + RECENT_NULL_WINDOW:
+                    exclude_cols.append(col)
+
             for col in CRITICAL_COLUMNS:
                 if col in exclude_cols:
                     continue
@@ -194,7 +198,7 @@ def check_symbol_health(ticker: str = None, all_active: bool = False, check_null
                     SELECT count(*) FROM (
                         SELECT "{col}" FROM indicators 
                         WHERE symbol_id = {sym_id} 
-                        ORDER BY date DESC LIMIT 5
+                        ORDER BY date DESC LIMIT {RECENT_NULL_WINDOW}
                     ) WHERE "{col}" IS NULL
                 """).fetchone()[0]
                 if recent_nulls > 0:

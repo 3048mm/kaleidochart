@@ -46,8 +46,16 @@ export const SummaryTable: React.FC<SummaryTableProps> = ({
 
     const sortedItems = React.useMemo(() => {
         return [...items].sort((a, b) => {
-            const valA = a[sortConfig.key] ?? 0;
-            const valB = b[sortConfig.key] ?? 0;
+            const valA = a[sortConfig.key];
+            const valB = b[sortConfig.key];
+
+            // NULL（判定不能）は 0 として扱わず、昇順・降順どちらでも末尾に置く
+            const nullA = valA === null || valA === undefined;
+            const nullB = valB === null || valB === undefined;
+            if (nullA || nullB) {
+                if (nullA && nullB) return 0;
+                return nullA ? 1 : -1;
+            }
 
             if (typeof valA === 'string' && typeof valB === 'string') {
                 return sortConfig.direction === 'asc' 
@@ -70,6 +78,14 @@ export const SummaryTable: React.FC<SummaryTableProps> = ({
     const colorNeutral = (pct: number | undefined | null) => {
         if (!pct) return '#fff';
         return pct > 0 ? appConfig.colors.good : pct < 0 ? appConfig.colors.bad : '#fff';
+    };
+
+    // ランク（0〜1）の表示。NULL（判定不能）は '-'、色は中立（0＝最悪バケットとして扱わない）
+    const formatRank = (v: number | undefined | null) =>
+        v === undefined || v === null ? '-' : (v * 100).toFixed(0);
+    const rankColor = (v: number | undefined | null) => {
+        if (v === undefined || v === null) return '#aaa';
+        return v >= 0.7 ? appConfig.colors.good : v <= 0.3 ? appConfig.colors.bad : '#aaa';
     };
 
     const SortIcon = ({ column }: { column: SortKey }) => {
@@ -136,9 +152,10 @@ export const SummaryTable: React.FC<SummaryTableProps> = ({
                     );
                     const textColor = Math.abs(item.change_pct) > maxPct * 0.5 ? '#000' : '#fff';
 
-                    const val14 = item[r14Key] ?? 0;
-                    const val21 = item[r21Key] ?? 0;
-                    const val63 = item[r63Key] ?? 0;
+                    // NULL ランク（判定不能）は 0 に倒さず、そのまま渡して '-'・中立色で表示する
+                    const val14 = item[r14Key];
+                    const val21 = item[r21Key];
+                    const val63 = item[r63Key];
 
                     return (
                         <div key={item.id} className="dashboard-item" style={{
@@ -231,36 +248,33 @@ export const SummaryTable: React.FC<SummaryTableProps> = ({
                                 textAlign: 'right',
                                 fontSize: '11px',
                                 fontVariantNumeric: 'tabular-nums',
-                                color: val14 >= 0.7 ? appConfig.colors.good :
-                                    val14 <= 0.3 ? appConfig.colors.bad : '#aaa',
+                                color: rankColor(val14),
                                 fontWeight: '600',
                                 flexShrink: 0,
                             }}>
-                                {(val14 * 100).toFixed(0)}
+                                {formatRank(val14)}
                             </div>
                             <div style={{
                                 width: '56px',
                                 textAlign: 'right',
                                 fontSize: '11px',
                                 fontVariantNumeric: 'tabular-nums',
-                                color: val21 >= 0.7 ? appConfig.colors.good :
-                                    val21 <= 0.3 ? appConfig.colors.bad : '#aaa',
+                                color: rankColor(val21),
                                 fontWeight: '600',
                                 flexShrink: 0,
                             }}>
-                                {(val21 * 100).toFixed(0)}
+                                {formatRank(val21)}
                             </div>
                             <div style={{
                                 width: '56px',
                                 textAlign: 'right',
                                 fontSize: '11px',
                                 fontVariantNumeric: 'tabular-nums',
-                                color: val63 >= 0.7 ? appConfig.colors.good :
-                                    val63 <= 0.3 ? appConfig.colors.bad : '#aaa',
+                                color: rankColor(val63),
                                 fontWeight: '600',
                                 flexShrink: 0,
                             }}>
-                                {(val63 * 100).toFixed(0)}
+                                {formatRank(val63)}
                             </div>
                         </div>
                     );

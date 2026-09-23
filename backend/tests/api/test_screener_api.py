@@ -379,3 +379,40 @@ def test_screener_dashboard_applied_filters_include_liquidity_floor(client):
         assert "min_avg_dollar_volume_21" in cat["applied_filters"]
         assert "exclude_theme_category" in cat["applied_filters"]
 
+
+
+def test_screener_api_null_rank_is_returned_as_null(client):
+    """min_periods_warmup 計画 5-25: RS ランクが NULL（判定不能）の銘柄は、
+    ランク 0.0（最悪）ではなく null で返す。
+
+    旧実装は `_float_or`（NaN→0.0）で NULL を 0.0 に潰していたため、5-9b で
+    null 安全にしたフロントが一度も効かず、dashboard API（NULL を返す）とも不整合だった。
+    NULL ランクの銘柄は結果の末尾に並ぶ（ソートで落ちないこと）。
+    """
+    db = _TestSession()
+    from datetime import date
+    d = date(2026, 5, 20)
+    # AAPL だけランクを持つ。MSFT は relative_ranks 行なし＝ランク NULL。
+    db.add(RelativeRank(symbol_id=1, date=d, group_name="stock",
+                        rs_ratio_rank_e21=0.8, rs_ratio_rank_e63=0.7))
+    db.commit()
+    db.close()
+
+    resp = client.get("/api/screener?target_date=2026-05-20")
+    assert resp.status_code == 200
+    items = {x["ticker"]: x for x in resp.json()}
+
+    # 陽性対照: ランクを持つ銘柄は値がそのまま返る（0.0 でも null でもない）
+    assert items["AAPL"]["rs_ratio_rank_e21"] == 0.8
+    assert items["AAPL"]["rs_ratio_rank_e63"] == 0.7
+    assert items["AAPL"]["rs_ratio_21_rank"] == 0.8
+    assert items["AAPL"]["rs_ratio_63_rank"] == 0.7
+
+    # NULL ランクは null のまま（0.0 にしない）
+    assert "MSFT" in items
+    for key in ("rs_ratio_rank_e21", "rs_ratio_rank_e63", "rs_ratio_21_rank", "rs_ratio_63_rank"):
+        assert items["MSFT"][key] is None, f"{key} が NULL でなく {items['MSFT'][key]!r}"
+
+    # NULL ランクは末尾（ランクを持つ銘柄より後ろ）
+    tickers = [x["ticker"] for x in resp.json()]
+    assert tickers.index("AAPL") < tickers.index("MSFT")

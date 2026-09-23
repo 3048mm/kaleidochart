@@ -775,8 +775,10 @@ def get_screener(
 
         d_21ema = _float_or(getattr(row, 'dist_21ema_pct', float('nan')))
 
-        rank_21 = _float_or(getattr(row, 'rs21_rank', float('nan')))
-        rank_63 = _float_or(getattr(row, 'rs63_rank', float('nan')))
+        # ランクは NULL（判定不能）を 0.0（最悪）に潰さず None のまま返す
+        # （min_periods_warmup 計画 5-25。dashboard API と同じ扱い）
+        rank_21 = _float_or_none(getattr(row, 'rs21_rank', float('nan')))
+        rank_63 = _float_or_none(getattr(row, 'rs63_rank', float('nan')))
 
         sparkline_data = []
         if hist_prices:
@@ -822,5 +824,9 @@ def get_screener(
             vol_accum_days_5=_int_or_none(row.vol_accum_days_5)
         ))
 
-    out.sort(key=lambda x: x.rs_ratio_21_rank, reverse=True)
+    # ランク降順。NULL ランクは末尾（(有無, 値) のタプルで reverse=True にすると None が最後になる）
+    out.sort(
+        key=lambda x: (x.rs_ratio_21_rank is not None, x.rs_ratio_21_rank or 0.0),
+        reverse=True,
+    )
     return out
