@@ -494,20 +494,25 @@ class TestCalculateT3WorkerWarmupClassification:
     def test_ウィンドウ内で単調にnullから非nullへ遷移する場合はwarmup_in_progressになる(self, db_path, monkeypatch):
         """§3.5 ケース4: ウィンドウが列の真のウォームアップ完了点をまたいでいて
         （NULL→非NULLへの単調な遷移のみ・全NULLではない）場合は正当。
-        n_short=700・K=400 では窓が絶対位置[299,698]をカバーし、
-        rs_roc_ema_200（warmup_bars=511）の遷移点をまたぐため、この列自身が
+
+        5-9c（A-full。RS系のmin_periodsをmax(1,n//2)からnへ統一）により
+        rs_roc_ema_200 の実効ウォームアップが大幅に後ろへ伸びた（真の
+        warmup_bars の確定値は5-11bで全列再実測する予定。本テストは
+        このファイル固有の合成データ（`_build_short_scenario` のシード）
+        での実測遷移点=絶対位置611を使う）。n_short=900・K=400 では窓が
+        絶対位置[499,898]をカバーし、この遷移点をまたぐため、この列自身が
         「正当なウォームアップ中」を再現する（他のRECURSIVE型列はwarmup_barsが
-        全て299未満のため、この窓では既にウォームアップ済みで非NULL）。"""
-        n_short = 700
+        全て499未満のため、この窓では既にウォームアップ済みで非NULL）。"""
+        n_short = 900
         dates, df_full, spy_full, full_res, spy_price_only = _build_short_scenario(n_short)
         t3_max = dates[n_short - 2]
         _insert_prices(db_path, SID_TARGET, df_full)
         _insert_indicators(db_path, SID_TARGET, full_res, upto_idx=n_short - 2)
 
-        # 前提確認: ウィンドウ内（絶対位置299〜698）で rs_roc_ema_200 が
-        # NULL→非NULLへ単調に遷移していること。
-        assert pd.isna(full_res['rs_roc_ema_200'].iloc[400])
-        assert not pd.isna(full_res['rs_roc_ema_200'].iloc[600])
+        # 前提確認: ウィンドウ内（絶対位置499〜898）で rs_roc_ema_200 が
+        # NULL→非NULLへ単調に遷移していること（実測遷移点=611）。
+        assert pd.isna(full_res['rs_roc_ema_200'].iloc[550])
+        assert not pd.isna(full_res['rs_roc_ema_200'].iloc[700])
 
         calls = _patch_calculate_indicators(monkeypatch)
 

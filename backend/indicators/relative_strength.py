@@ -226,7 +226,7 @@ def calc_relative_strength(df: pd.DataFrame, df_spy: pd.DataFrame = None, state:
 
     # rs_trend_sN = rs_value_e5 / SMA(rs_value, N) — WINDOW（マージ済みrs_ema_5と生rsのみに依存）
     for n in [5, 14, 21, 63, 200]:
-        rs_sma = rs.rolling(window=n, min_periods=max(1, n//2)).mean()
+        rs_sma = rs.rolling(window=n, min_periods=n).mean()
         df[f'rs_trend_s{n}'] = np.where(
             rs_sma.isna() | (rs_sma == 0), np.nan, rs_ema_5 / rs_sma
         )
@@ -245,8 +245,8 @@ def calc_relative_strength(df: pd.DataFrame, df_spy: pd.DataFrame = None, state:
 
         # 2. rs_ratio_eN (Z-score of rs_value_eN over n days) — WINDOW
         #    rs_ema は上でマージ済み（全行が実値）のため、通常どおり計算すればよい。
-        rs_mean = rs_ema.rolling(window=n, min_periods=max(1, n//2)).mean()
-        rs_std  = rolling_std_independent(rs_ema, n, max(1, n//2))
+        rs_mean = rs_ema.rolling(window=n, min_periods=n).mean()
+        rs_std  = rolling_std_independent(rs_ema, n, n)
         df[f'rs_ratio_e{n}'] = np.where(
             rs_std.isna() | (rs_std == 0), np.nan, (rs_ema - rs_mean) / rs_std
         )
@@ -265,8 +265,8 @@ def calc_relative_strength(df: pd.DataFrame, df_spy: pd.DataFrame = None, state:
         df[f'rs_roc_ema_{n}'] = roc_ema
 
         # Standardize the smoothed ROC — WINDOW（マージ済みroc_emaに依存）
-        roc_mean = roc_ema.rolling(window=n, min_periods=max(1, n//2)).mean()
-        roc_std  = rolling_std_independent(roc_ema, n, max(1, n//2))
+        roc_mean = roc_ema.rolling(window=n, min_periods=n).mean()
+        roc_std  = rolling_std_independent(roc_ema, n, n)
         df[f'rs_momentum_e{n}'] = np.where(
             roc_std.isna() | (roc_std == 0), np.nan, (roc_ema - roc_mean) / roc_std
         )

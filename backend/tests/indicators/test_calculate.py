@@ -179,7 +179,11 @@ def test_calculate_indicators_protection():
         # rs_momentum_e21: 旧pandas .rolling().std() では非常に小さい正当な分散を
         # 誤って0.0/NULLにしていた（数値精度問題。doc/completed/rs_rolling_std_precision_plan.md）。
         # 修正後は独立計算により正しい非NULL値になる。
-        'rs_momentum_e21': -1.5909704215098808,
+        # 2026-09-23（5-9c・A-full）: rs_ratio_e21のmin_periodsがmax(1,10)→21に
+        # 延びたことで、そこから導出されるroc（rs_ratio_e21.shift(14)経由）と
+        # roc_ema（RECURSIVE EMA）のシード開始位置が後ろにずれ、260本目時点の
+        # 値自体が変化した（実装バグではなくmin_periods変更の正当な波及効果）。
+        'rs_momentum_e21': -1.609955470133232,
         'vol_surge_21': 1.000976,
         'vol_accum_days_5': 0.000000,
         'vol_surge_rel_spy_21': 1.000777,
