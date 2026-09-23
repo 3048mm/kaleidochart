@@ -178,6 +178,12 @@ def check_symbol_health(ticker: str = None, all_active: bool = False, check_null
                 exclude_cols.append('rs_ratio_e21')
             if t2_count < 21:
                 exclude_cols.append('ema_21')
+            # 2026-09-23（min_periods_warmup計画①）: sma_200 が min_periods=1 から
+            # min_periods=window(=200) に変わったため、200本未満の銘柄では
+            # sma_200 が NULL になるのが正しい挙動になった（旧仕様ではこの除外が
+            # 無くても常に非NULLだったため、除外漏れが顕在化していなかった）。
+            if t2_count < 200:
+                exclude_cols.append('sma_200')
                 
             for col in CRITICAL_COLUMNS:
                 if col in exclude_cols:
