@@ -289,9 +289,9 @@ def _get_sparkline_data(db: Session, sym_id: int, target_date: str, period: int 
         return [0.5] * 5
     return vals
 
-def _build_panel_item(db: Session, sym: Symbol, dp: DailyPrice, rank_val_21: float, rank_val_63: float, target_date: str,
-                     rank_val_14: float = 0.0, rank_val_mom: float = 0.0, rank_val_mom63: float = 0.0,
-                     rank_val_trend_14: float = 0.0, rank_val_trend_21: float = 0.0, rank_val_trend_63: float = 0.0,
+def _build_panel_item(db: Session, sym: Symbol, dp: DailyPrice, rank_val_21: Optional[float], rank_val_63: Optional[float], target_date: str,
+                     rank_val_14: Optional[float] = None, rank_val_mom: Optional[float] = None, rank_val_mom63: Optional[float] = None,
+                     rank_val_trend_14: Optional[float] = None, rank_val_trend_21: Optional[float] = None, rank_val_trend_63: Optional[float] = None,
                      preload: Optional[PanelPreload] = None):
     # preload あり: build_panel_preload 済みの辞書から取得（クエリ発行なし）
     # preload なし: 従来通り per-symbol クエリ（呼び出し側の互換維持）
@@ -351,25 +351,25 @@ def _build_panel_item(db: Session, sym: Symbol, dp: DailyPrice, rank_val_21: flo
         change_1m_pct=change_1m_pct,
         dist_21ema_pct=dist_21ema_pct,
         sparkline=sparkline if sparkline else [],
-        intensity_score=float(rank_val_21 or 0.0),
-        rs_ratio_rank_e21=float(rank_val_21 or 0.0),
-        rs_ratio_rank_e63=float(rank_val_63 or 0.0),
-        rs_ratio_rank_e14=float(rank_val_14 or 0.0),
-        rs_momentum_rank_e21=float(rank_val_mom or 0.0),
-        rs_momentum_rank_e63=float(rank_val_mom63 or 0.0),
-        rs_trend_rank_s14=float(rank_val_trend_14 or 0.0),
-        rs_trend_rank_s21=float(rank_val_trend_21 or 0.0),
-        rs_trend_rank_s63=float(rank_val_trend_63 or 0.0),
+        intensity_score=rank_val_21,
+        rs_ratio_rank_e21=rank_val_21,
+        rs_ratio_rank_e63=rank_val_63,
+        rs_ratio_rank_e14=rank_val_14,
+        rs_momentum_rank_e21=rank_val_mom,
+        rs_momentum_rank_e63=rank_val_mom63,
+        rs_trend_rank_s14=rank_val_trend_14,
+        rs_trend_rank_s21=rank_val_trend_21,
+        rs_trend_rank_s63=rank_val_trend_63,
         rs_ratio_e21=ind.rs_ratio_e21 if ind else None,
         rs_ratio_e63=ind.rs_ratio_e63 if ind else None,
         rs_momentum_e21=ind.rs_momentum_e21 if ind else None,
-        
+
         # Legacy fields for frontend compatibility
-        rs_ratio_21_rank=float(rank_val_21 or 0.0),
-        rs_ratio_63_rank=float(rank_val_63 or 0.0),
-        rs_ratio_14_rank=float(rank_val_14 or 0.0),
-        rs_momentum_21_rank=float(rank_val_mom or 0.0),
-        rs_momentum_63_rank=float(rank_val_mom63 or 0.0),
+        rs_ratio_21_rank=rank_val_21,
+        rs_ratio_63_rank=rank_val_63,
+        rs_ratio_14_rank=rank_val_14,
+        rs_momentum_21_rank=rank_val_mom,
+        rs_momentum_63_rank=rank_val_mom63,
         rs_ratio_21=ind.rs_ratio_e21 if ind else None,
         rs_ratio_63=ind.rs_ratio_e63 if ind else None,
         rs_momentum_21=ind.rs_momentum_e21 if ind else None

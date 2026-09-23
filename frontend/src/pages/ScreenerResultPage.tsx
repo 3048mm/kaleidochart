@@ -371,8 +371,8 @@ export const ScreenerResultPage: React.FC = () => {
                             <div style={{ width: '60px', flexShrink: 0 }}>
                                 <Sparkline data={item.sparkline} width={60} height={22} color={item.change_1m_pct >= 0 ? appConfig.colors.good : appConfig.colors.bad} fixedRange={true} />
                             </div>
-                            <div style={{ width: '32px', textAlign: 'right', fontSize: '11px', fontVariantNumeric: 'tabular-nums', color: item.rs_ratio_rank_e21 >= 0.7 ? appConfig.colors.good : item.rs_ratio_rank_e21 <= 0.3 ? appConfig.colors.bad : '#aaa', fontWeight: '600', flexShrink: 0 }}>{(item.rs_ratio_rank_e21 * 100).toFixed(0)}</div>
-                            <div style={{ width: '32px', textAlign: 'right', fontSize: '11px', fontVariantNumeric: 'tabular-nums', color: item.rs_ratio_rank_e63 >= 0.7 ? appConfig.colors.good : item.rs_ratio_rank_e63 <= 0.3 ? appConfig.colors.bad : '#aaa', fontWeight: '600', flexShrink: 0 }}>{(item.rs_ratio_rank_e63 * 100).toFixed(0)}</div>
+                            <div style={{ width: '32px', textAlign: 'right', fontSize: '11px', fontVariantNumeric: 'tabular-nums', color: item.rs_ratio_rank_e21 != null && item.rs_ratio_rank_e21 >= 0.7 ? appConfig.colors.good : item.rs_ratio_rank_e21 != null && item.rs_ratio_rank_e21 <= 0.3 ? appConfig.colors.bad : '#aaa', fontWeight: '600', flexShrink: 0 }}>{formatNum(item.rs_ratio_rank_e21 != null ? item.rs_ratio_rank_e21 * 100 : null, 0)}</div>
+                            <div style={{ width: '32px', textAlign: 'right', fontSize: '11px', fontVariantNumeric: 'tabular-nums', color: item.rs_ratio_rank_e63 != null && item.rs_ratio_rank_e63 >= 0.7 ? appConfig.colors.good : item.rs_ratio_rank_e63 != null && item.rs_ratio_rank_e63 <= 0.3 ? appConfig.colors.bad : '#aaa', fontWeight: '600', flexShrink: 0 }}>{formatNum(item.rs_ratio_rank_e63 != null ? item.rs_ratio_rank_e63 * 100 : null, 0)}</div>
                         </div>
                     );
                 })}

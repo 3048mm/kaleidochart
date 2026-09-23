@@ -131,18 +131,18 @@ export interface DashboardPanelItem {
     change_1m_pct: number;
     dist_21ema_pct: number;
     sparkline: number[];
-    intensity_score: number;
-    rs_ratio_rank_e21: number;
-    rs_ratio_rank_e63: number;
-    rs_ratio_rank_e14?: number;
-    rs_momentum_rank_e21?: number;
-    rs_momentum_rank_e63?: number;
+    intensity_score: number | null;
+    rs_ratio_rank_e21: number | null;
+    rs_ratio_rank_e63: number | null;
+    rs_ratio_rank_e14?: number | null;
+    rs_momentum_rank_e21?: number | null;
+    rs_momentum_rank_e63?: number | null;
     rs_ratio_e21?: number;
     rs_ratio_e63?: number;
     rs_momentum_e21?: number;
-    rs_trend_rank_s14?: number;
-    rs_trend_rank_s21?: number;
-    rs_trend_rank_s63?: number;
+    rs_trend_rank_s14?: number | null;
+    rs_trend_rank_s21?: number | null;
+    rs_trend_rank_s63?: number | null;
 }
 
 export interface ScreenerResultItem extends DashboardPanelItem {

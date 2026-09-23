@@ -154,25 +154,25 @@ class DashboardPanelItem(BaseModel):
     change_1m_pct: float = 0.0
     dist_21ema_pct: float = 0.0
     sparkline: List[float] = [] # Array of normalized logic values for the SVG chart
-    intensity_score: float = 0.0 # 0 to 1 scaling factor 
-    rs_ratio_rank_e21: float = 0.0
-    rs_ratio_rank_e63: float = 0.0
-    rs_ratio_rank_e14: float = 0.0
-    rs_momentum_rank_e21: float = 0.0
-    rs_momentum_rank_e63: float = 0.0
-    rs_trend_rank_s14: float = 0.0
-    rs_trend_rank_s21: float = 0.0
-    rs_trend_rank_s63: float = 0.0
+    intensity_score: Optional[float] = None # 0 to 1 scaling factor
+    rs_ratio_rank_e21: Optional[float] = None
+    rs_ratio_rank_e63: Optional[float] = None
+    rs_ratio_rank_e14: Optional[float] = None
+    rs_momentum_rank_e21: Optional[float] = None
+    rs_momentum_rank_e63: Optional[float] = None
+    rs_trend_rank_s14: Optional[float] = None
+    rs_trend_rank_s21: Optional[float] = None
+    rs_trend_rank_s63: Optional[float] = None
     rs_ratio_e21: Optional[float] = None
     rs_ratio_e63: Optional[float] = None
     rs_momentum_e21: Optional[float] = None
-    
+
     # Legacy fields for frontend compatibility
-    rs_ratio_21_rank: float = 0.0
-    rs_ratio_63_rank: float = 0.0
-    rs_ratio_14_rank: float = 0.0
-    rs_momentum_21_rank: float = 0.0
-    rs_momentum_63_rank: float = 0.0
+    rs_ratio_21_rank: Optional[float] = None
+    rs_ratio_63_rank: Optional[float] = None
+    rs_ratio_14_rank: Optional[float] = None
+    rs_momentum_21_rank: Optional[float] = None
+    rs_momentum_63_rank: Optional[float] = None
     rs_ratio_21: Optional[float] = None
     rs_ratio_63: Optional[float] = None
     rs_momentum_21: Optional[float] = None

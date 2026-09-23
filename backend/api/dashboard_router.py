@@ -155,12 +155,12 @@ def get_dashboard(
             resp.leading.append(_build_leading_item(db, s, dp, target_date, preload=preload))
             continue
 
-        r14_rank = rank_14_dict.get(sym_id, 0.0) or 0.0
-        r21_rank = rank_21_dict.get(sym_id, 0.0) or 0.0
-        r63_rank = rank_63_dict.get(sym_id, 0.0) or 0.0
-        rt14_rank = trend_rank_14_dict.get(sym_id, 0.0) or 0.0
-        rt21_rank = trend_rank_21_dict.get(sym_id, 0.0) or 0.0
-        rt63_rank = trend_rank_63_dict.get(sym_id, 0.0) or 0.0
+        r14_rank = rank_14_dict.get(sym_id)
+        r21_rank = rank_21_dict.get(sym_id)
+        r63_rank = rank_63_dict.get(sym_id)
+        rt14_rank = trend_rank_14_dict.get(sym_id)
+        rt21_rank = trend_rank_21_dict.get(sym_id)
+        rt63_rank = trend_rank_63_dict.get(sym_id)
 
         item = _build_panel_item(
             db, s, dp, r21_rank, r63_rank, target_date,
@@ -180,9 +180,9 @@ def get_dashboard(
             
     # Sort and slice based on rank_type
     if rank_type == "rs_trend":
-        sort_key = lambda x: x.rs_trend_rank_s21
+        sort_key = lambda x: x.rs_trend_rank_s21 if x.rs_trend_rank_s21 is not None else float('-inf')
     else:
-        sort_key = lambda x: x.rs_ratio_rank_e21
+        sort_key = lambda x: x.rs_ratio_rank_e21 if x.rs_ratio_rank_e21 is not None else float('-inf')
 
     resp.sectors.sort(key=sort_key, reverse=True)
     themes_sorted = sorted(resp.themes_top, key=sort_key, reverse=True)
@@ -418,11 +418,11 @@ def get_theme_detail(
         # Match preloaded RelativeRank for constituent
         r_row = c_details_preload["latest_rank"].get(c_id)
         
-        rank_14 = (r_row.rs_ratio_rank_e14 or 0.0) if r_row else 0.0
-        rank_21 = (r_row.rs_ratio_rank_e21 or 0.0) if r_row else 0.0
-        rank_63 = (r_row.rs_ratio_rank_e63 or 0.0) if r_row else 0.0
-        rank_mom21 = (r_row.rs_momentum_rank_e21 or 0.0) if r_row else 0.0
-        rank_mom63 = (r_row.rs_momentum_rank_e63 or 0.0) if r_row else 0.0
+        rank_14 = r_row.rs_ratio_rank_e14 if r_row else None
+        rank_21 = r_row.rs_ratio_rank_e21 if r_row else None
+        rank_63 = r_row.rs_ratio_rank_e63 if r_row else None
+        rank_mom21 = r_row.rs_momentum_rank_e21 if r_row else None
+        rank_mom63 = r_row.rs_momentum_rank_e63 if r_row else None
 
         constituents.append(schemas.ThemeConstituentItem(
             id=c_id, ticker=c_sym.ticker, name=c_sym.name,
@@ -622,17 +622,17 @@ def get_group_data(
             if cs.id in c_price_dict:
                 constituents.append(_build_panel_item(
                     db, cs, c_price_dict[cs.id],
-                    c_rank_21_dict.get(cs.id, 0.0),
-                    c_rank_63_dict.get(cs.id, 0.0),
+                    c_rank_21_dict.get(cs.id),
+                    c_rank_63_dict.get(cs.id),
                     target_date,
-                    rank_val_14=c_rank_14_dict.get(cs.id, 0.0),
-                    rank_val_mom=c_rank_mom_dict.get(cs.id, 0.0),
-                    rank_val_mom63=c_rank_mom63_dict.get(cs.id, 0.0),
+                    rank_val_14=c_rank_14_dict.get(cs.id),
+                    rank_val_mom=c_rank_mom_dict.get(cs.id),
+                    rank_val_mom63=c_rank_mom63_dict.get(cs.id),
                     preload=c_preload
                 ))
 
     # Sort constituents by intensity score (default)
-    constituents.sort(key=lambda x: x.intensity_score, reverse=True)
+    constituents.sort(key=lambda x: x.intensity_score if x.intensity_score is not None else float('-inf'), reverse=True)
 
     return schemas.GroupDataResponse(
         ticker=sym.ticker,
