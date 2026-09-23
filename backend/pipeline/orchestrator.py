@@ -452,10 +452,10 @@ def build_all_virtual_indexes_prices(db, virtual_items: list[dict], symbol_id_ma
             seed_date = prev_row.date
             seed_price = prev_row.close
             
-            df = theme_prices_df[theme_prices_df['date'] >= seed_date].copy()
-            df['close_prev'] = df.groupby('symbol_id')['close'].shift(1)
-            
-            # 先に売買代金と21日平均およびSurgeの計算を df 全体（Day 1含む）で行う
+            # 売買代金の21日平均と Surge は、seed_date で絞る「前」の全履歴で計算する。
+            # 絞った後の数行に rolling(21, min_periods=21) をかけると常に NaN になり、
+            # surge が 1.0（volume=1,000,000 固定）に縮退する（5-20 / R1）。
+            df = theme_prices_df.copy()
             df['dollar_volume'] = df['close'] * df['volume'].fillna(0)
             df['dollar_volume_ma21'] = df.groupby('symbol_id')['dollar_volume'].transform(
                 lambda x: x.rolling(window=21, min_periods=21).mean()
@@ -467,7 +467,12 @@ def build_all_virtual_indexes_prices(db, virtual_items: list[dict], symbol_id_ma
                 df['dollar_volume'] / df['dollar_volume_ma21']
             )
             df['surge'] = df['surge'].fillna(1.0)
-            
+
+            # その後で seed_date 以降に絞り、close_prev は絞った後に計算する
+            # （seed_date 行の close_prev は NaN となり dropna で除外される既存の挙動を維持）
+            df = df[df['date'] >= seed_date].copy()
+            df['close_prev'] = df.groupby('symbol_id')['close'].shift(1)
+
             df_clean = df.dropna(subset=['close_prev']).copy()
             
             db.query(DailyPrice).filter(DailyPrice.symbol_id == v_id, DailyPrice.date >= last_date).delete()

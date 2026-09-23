@@ -527,3 +527,90 @@ def test_synthetic_ohlcv_integrity(db_session):
         if os.path.exists(hash_file_path):
             os.remove(hash_file_path)
 
+
+
+def test_incremental_surge_uses_full_history_for_ma21(db_session):
+    """
+    増分更新で追加・再計算された仮想指数バーの volume（= surge * 1_000_000）が、
+    構成銘柄の全履歴で計算した21日平均売買代金ベースの surge と一致すること（5-20 / R1）。
+
+    回帰: 増分ブランチが `>= seed_date` で数行に絞ってから rolling(21, min_periods=21) を
+    計算していたため、常に NaN → surge=1.0（volume=1,000,000 固定）になっていた。
+    """
+    base_date = date(2026, 5, 1)
+    n_hist = 25  # 21本を超える履歴（i=0..24）
+    new_idx = n_hist  # 増分で追加する日（i=25）
+
+    def _close(base, growth, i):
+        return base * (growth ** i)
+
+    def _vol(base, i):
+        # 日ごとに変化する出来高（surge が1.0にならないようにする）。最終日はスパイク
+        return base + 37.0 * (i % 7) + (5000.0 if i == new_idx else 0.0)
+
+    # フィクスチャの5日分(i=0..4)に続けて i=5..24 を追加（volume は日ごとに変化させる）
+    for i in range(n_hist):
+        d = base_date + timedelta(days=i)
+        if i < 5:
+            # フィクスチャ既存行の volume を上書きして変化を持たせる
+            db_session.query(DailyPrice).filter(
+                DailyPrice.symbol_id == 1, DailyPrice.date == d).update({"volume": _vol(1000.0, i)})
+            db_session.query(DailyPrice).filter(
+                DailyPrice.symbol_id == 2, DailyPrice.date == d).update({"volume": _vol(1500.0, i)})
+        else:
+            c1 = _close(100.0, 1.01, i)
+            c2 = _close(200.0, 1.02, i)
+            db_session.add(DailyPrice(symbol_id=1, date=d, open=c1, high=c1, low=c1, close=c1, volume=_vol(1000.0, i)))
+            db_session.add(DailyPrice(symbol_id=2, date=d, open=c2, high=c2, low=c2, close=c2, volume=_vol(1500.0, i)))
+    db_session.commit()
+
+    virtual_items = [{"ticker": "_TECH_", "exchange": "VIRTUAL", "theme_type": "virtual"}]
+    symbol_id_map = {("_TECH_", "VIRTUAL"): 101}
+
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp_file:
+        hash_file_path = tmp_file.name
+
+    try:
+        # 1. 全期間再合成（ハッシュ記録）
+        build_all_virtual_indexes_prices(
+            db=db_session, virtual_items=virtual_items,
+            symbol_id_map=symbol_id_map, hash_file_path=hash_file_path)
+
+        # 2. 構成銘柄に1日分（i=25）を追加 → 次回は増分ブランチに入る
+        d_new = base_date + timedelta(days=new_idx)
+        c1 = _close(100.0, 1.01, new_idx)
+        c2 = _close(200.0, 1.02, new_idx)
+        db_session.add(DailyPrice(symbol_id=1, date=d_new, open=c1, high=c1, low=c1, close=c1, volume=_vol(1000.0, new_idx)))
+        db_session.add(DailyPrice(symbol_id=2, date=d_new, open=c2, high=c2, low=c2, close=c2, volume=_vol(1500.0, new_idx)))
+        db_session.commit()
+
+        build_all_virtual_indexes_prices(
+            db=db_session, virtual_items=virtual_items,
+            symbol_id_map=symbol_id_map, hash_file_path=hash_file_path)
+
+        prices = {p.date: p for p in db_session.query(DailyPrice)
+                  .filter(DailyPrice.symbol_id == 101).order_by(DailyPrice.date).all()}
+
+        # 3. pandas で独立に期待値（全履歴での21日平均売買代金ベースの surge 平均）を計算
+        dates = [base_date + timedelta(days=i) for i in range(new_idx + 1)]
+
+        def _surge(base_close, growth, base_vol):
+            close = pd.Series([_close(base_close, growth, i) for i in range(new_idx + 1)], index=dates)
+            vol = pd.Series([_vol(base_vol, i) for i in range(new_idx + 1)], index=dates)
+            dv = close * vol
+            ma21 = dv.rolling(window=21, min_periods=21).mean()
+            return (dv / ma21).fillna(1.0)
+
+        expected_volume = ((_surge(100.0, 1.01, 1000.0) + _surge(200.0, 1.02, 1500.0)) / 2.0) * 1_000_000.0
+
+        # 増分で再計算・追加される日（last_date=i=24 と 新規 i=25）
+        for i in (new_idx - 1, new_idx):
+            d = dates[i]
+            assert d in prices, f"date={d} の仮想指数バーがありません"
+            exp = expected_volume.loc[d]
+            assert abs(prices[d].volume - exp) < 1.0, f"date={d} volume={prices[d].volume} expected={exp}"
+            # 縮退値（1.0固定）ではないこと
+            assert abs(prices[d].volume - 1_000_000.0) > 1.0, f"date={d} が surge=1.0 固定になっています"
+    finally:
+        if os.path.exists(hash_file_path):
+            os.remove(hash_file_path)
