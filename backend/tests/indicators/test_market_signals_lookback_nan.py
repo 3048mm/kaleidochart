@@ -361,3 +361,102 @@ class TestAtr14DoesNotFakeInsufficientLookback:
         tail_score = res["market_trend_score"].iloc[SPY_LOOKBACK_MIN_BARS:]
         assert tail_score.isna().all()
         assert not (tail_score == 0).any()
+
+
+class TestHasBreadthUsesNanNotDateHardcode:
+    """`has_breadth`（4成分/3成分スコアの切替）が `date >= '2018-04-01'` という
+    日付ハードコードではなく、`breadth_sma50` が実際に算出できたか（merge後に
+    NaN でないか）で判定されること（5-8b③④・§3.7）。
+
+    現行実装は `has_breadth = (df['date'] >= '2018-04-01')` かつ
+    `df['breadth_sma50'].fillna(0.5)` のため、2018-04-01以降の日付であれば
+    breadth データが実際には欠けていても、中立値0.5が4成分スコアに紛れ込む。
+    このクラスのテストは red のまま修正実装（§3.7 案）を待つ
+    （プロダクションコードは本テストでは変更しない）。
+    """
+
+    def test_missing_breadth_day_falls_back_to_3component_score_not_hardcoded_date(self):
+        """breadth データが供給されていない日（merge後 breadth_sma50 が NaN）は、
+        breadth を使わない3成分スコア（df_metrics=None のときと同じ計算経路）と
+        一致するべき。旧実装（日付ハードコード＋fillna(0.5)）だと、
+        2018-04-01以降という条件だけで has_breadth=True になり、中立値0.5由来の
+        breadth_score が混入した4成分スコアになってしまい一致しない。
+        """
+        n = SPY_LOOKBACK_MIN_BARS + 30
+        # 全日付が2018-04-01以降になるよう、start を2020年にする
+        # （date>=2018-04-01ハードコードが常にTrueになる状況を作る）。
+        spy_df = _spy_df(n=n, start=date(2020, 1, 1))
+        df_vix = pd.DataFrame({"date": spy_df["date"], "close": 15.0})
+        df_vxv = pd.DataFrame({"date": spy_df["date"], "close": 16.5})
+
+        # df_metrics は最終日のみ供給する。merge後、最終日以外は
+        # breadth_sma50/momentum_ratio が NaN になるはず。
+        df_metrics_partial = pd.DataFrame({
+            "date": [spy_df["date"].iloc[-1]],
+            "breadth_sma50": [0.6],
+            "momentum_ratio": [0.7],
+        })
+
+        res_partial = calculate_market_signals(
+            spy_df, df_vix=df_vix, df_vxv=df_vxv, df_metrics=df_metrics_partial
+        )
+        res_none = calculate_market_signals(
+            spy_df, df_vix=df_vix, df_vxv=df_vxv, df_metrics=None
+        )
+
+        # 最終日を除く区間（breadth データが無い日）を比較する。
+        # df_metrics=None のときは常に3成分スコア（has_breadth=False固定）になる
+        # 実装のため、これを「breadthを使わない場合の正解値」として使う。
+        score_partial = res_partial["market_trend_score"].iloc[SPY_LOOKBACK_MIN_BARS:-1]
+        score_none = res_none["market_trend_score"].iloc[SPY_LOOKBACK_MIN_BARS:-1]
+        pd.testing.assert_series_equal(
+            score_partial.reset_index(drop=True),
+            score_none.reset_index(drop=True),
+            check_names=False,
+        )
+
+    def test_missing_breadth_day_yields_finite_score_not_nan_or_exception(self):
+        """breadth_sma50 が NaN の日でも、market_trend_score は例外にならず
+        有限値になること（3成分スコアへの自動フォールバックの確認）。"""
+        n = SPY_LOOKBACK_MIN_BARS + 30
+        spy_df = _spy_df(n=n, start=date(2020, 1, 1))
+        df_vix = pd.DataFrame({"date": spy_df["date"], "close": 15.0})
+        df_vxv = pd.DataFrame({"date": spy_df["date"], "close": 16.5})
+        df_metrics_partial = pd.DataFrame({
+            "date": [spy_df["date"].iloc[-1]],
+            "breadth_sma50": [0.6],
+            "momentum_ratio": [0.7],
+        })
+
+        res = calculate_market_signals(
+            spy_df, df_vix=df_vix, df_vxv=df_vxv, df_metrics=df_metrics_partial
+        )
+        tail = res["market_trend_score"].iloc[SPY_LOOKBACK_MIN_BARS:-1]
+        assert np.isfinite(tail.astype(float)).all()
+
+    def test_full_breadth_data_still_uses_4component_score(self):
+        """十分な breadth データが全日にある場合は、従来通り4成分スコアが
+        使われること（回帰確認）。breadth=0.6（中立値0.5と異なる）を使うため、
+        4成分スコアは3成分スコア（breadth不使用）と一致しないはず。"""
+        n = SPY_LOOKBACK_MIN_BARS + 30
+        spy_df = _spy_df(n=n, start=date(2020, 1, 1))
+        df_vix = pd.DataFrame({"date": spy_df["date"], "close": 15.0})
+        df_vxv = pd.DataFrame({"date": spy_df["date"], "close": 16.5})
+        df_metrics_full = pd.DataFrame({
+            "date": spy_df["date"],
+            "breadth_sma50": 0.6,
+            "momentum_ratio": 0.7,
+        })
+
+        res_full = calculate_market_signals(
+            spy_df, df_vix=df_vix, df_vxv=df_vxv, df_metrics=df_metrics_full
+        )
+        res_none = calculate_market_signals(
+            spy_df, df_vix=df_vix, df_vxv=df_vxv, df_metrics=None
+        )
+
+        score_full = res_full["market_trend_score"].iloc[SPY_LOOKBACK_MIN_BARS:]
+        score_none = res_none["market_trend_score"].iloc[SPY_LOOKBACK_MIN_BARS:]
+        assert not np.allclose(
+            score_full.to_numpy(dtype=float), score_none.to_numpy(dtype=float)
+        )
