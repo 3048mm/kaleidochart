@@ -5,6 +5,7 @@ from numba import njit
 # We can import calculate_ema_tv from the newly created moving_averages
 from .moving_averages import calculate_ema_tv
 from .incremental_merge import compute_recursive_series, finalize_incremental_column, prev_self_seed
+from .market_signals import report_stale_input_gaps
 
 # ============================================================
 # 数値的に頑健な rolling std（rs_ratio_eN / rs_momentum_eN 用）
@@ -201,6 +202,7 @@ def calc_relative_strength(df: pd.DataFrame, df_spy: pd.DataFrame = None, state:
         columns={'close': 'spy_close', 'volume': 'spy_volume'}
     )
     df = pd.merge(df, spy_ref, on='date', how='left')
+    report_stale_input_gaps(df, 'spy_close', 'SPY')
     df['spy_close']  = df['spy_close'].ffill()
     df['spy_volume'] = df['spy_volume'].ffill().astype(float)
 
