@@ -607,7 +607,33 @@
     どちらが意図かは要判断（`doc/completed/objective_quality_first_plan.md` §3.2）。
 
 
-- [ ] 🔴 **`min_periods=1` のローリング指標が、遡り不足でも NaN を返さず「それらしい値」を出す（2026-09-07 実測）**
+- [x] ~~🔴 **`min_periods=1` のローリング指標が、遡り不足でも NaN を返さず「それらしい値」を出す（2026-09-07 実測）**~~
+
+  > [!NOTE]
+  > **2026-09-24 解決・実装完了（本番昇格はこれから — 昇格・再最適化はユーザー判断）。**
+  > 計画書: `doc/completed/min_periods_warmup_plan.md`（実装完了後に移動予定）。
+  >
+  > 対応案 A（指標側を `min_periods=window` に統一）を採用。A-core（`sma_*`/`adr_pct_21`/
+  > `avg_dollar_volume_21`/`vol_sma_21`/`max_63d`/`max_252d`/`atr_14`/`dist_52w_high_pct`/
+  > `dist_63d_high_pct`/`vol_accum_days_5`/`is_trend_template`のNULL入力ガード）に加え、
+  > 当初「別issue」としていた A-full（rs系4列 `rs_ratio_eN`/`rs_trend_sN`/`rs_momentum_eN`/
+  > `rs_roc_ema_N`）も2026-09-20〜21のユーザー判断（§4-7）でスコープに統合。
+  > T4（相対ランク）のNULL除外（`PERCENT_RANK()`のNULL最小値扱いを廃止）、T5のbreadth
+  > NaN保持化、暗黙フォールバック撤去（ATRの`ffill().fillna(1.0)`・VXV推定式・breadthの
+  > `fillna(0.5)`・`has_breadth`日付ハードコード）、API/フロントのランクNULL透過も実施。
+  >
+  > **検証**: SPY不変検証（2011-03-30以降3,893行・全列完全一致）、NULL件数のbefore/after
+  > 棚卸し（予測と近い桁で整合）、T4ランク影響測定、§6.1の反証（sandboxバックテストで
+  > 生シグナル数の実測が予測レンジ0.45〜1.76%の内側=-1.39%に収まることを確認）を実施。
+  > いずれも実装を疑う根拠は出なかった。
+  >
+  > **残作業（§8。個別issueとして起票済み）**: 仮想テーマ指数のSPY参照供給不足警告、
+  > `RS_DOT_WARMUP_BARS`ガードの撤去要否、`bars_available`診断列の追加。
+  > いずれも本issueの解決の妨げにはならない低優先度の残作業。
+  >
+  > **本番昇格はこの解決に含まれない**。`doc/completed/min_periods_warmup_plan.md` 5-17
+  > 以降（`/code-review` → merge → `deploy_after_merge.ps1` → 対象8戦略の再最適化）は
+  > 別途ユーザー判断・実行が必要。
   - **事象**: `sma_200` / `dist_52w_high_pct` / `is_trend_template` などは
     `min_periods=1` で計算しているため、**遡りが 200本・252本に満たなくても NaN にならず
     値が出る**。バックテストもスクリーナーも、それを本物の200日移動平均として扱う。
