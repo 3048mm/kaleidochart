@@ -287,7 +287,7 @@ class TestConvergesOnSecondRun:
         second_run_errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
         assert not second_run_errors, "2回目は gap_dates が空になるので警告が出ないはず"
         info_messages = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
-        assert any("No gaps or missing scores detected" in m for m in info_messages)
+        assert any("No gaps detected" in m for m in info_messages)
 
         signal_after_second = db_session.query(MarketSignal).filter(MarketSignal.date == repair_date).first()
         assert signal_after_second is not None

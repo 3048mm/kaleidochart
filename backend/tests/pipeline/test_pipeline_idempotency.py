@@ -25,10 +25,17 @@ def db_session():
     
     return session
 
-def test_sync_phase_t5_backfills_null_score(db_session):
+def test_sync_phase_t5_does_not_recompute_existing_null_score_row(db_session):
     """
-    既存の MarketSignal レコードがあっても、market_trend_score が NULL ならば
-    更新対象として認識され、計算されることを検証する (RED test)
+    既存の MarketSignal レコードがあれば、market_trend_score が NULL でも
+    再計算対象にならないことを検証する。
+
+    2026-09-23（5-8d・§3.6）: gap 判定を「行の有無」に統一したため、
+    market_trend_score が NULL の行も「その日は既に処理済み」として扱われ、
+    日次の自動実行では二度と上書きされなくなった（旧仕様は逆で、NULL の
+    行を毎回再計算対象に戻し続けていた——本テストは元々それを固定する
+    テストだったが、5-8d でその挙動自体が撤回されたため契約を反転させた）。
+    正しい値を入れるには `--rebuild-from T5`（Parquet 基点）が必要。
     """
     spy = db_session.query(Symbol).filter(Symbol.ticker == "SPY").first()
     vix = db_session.query(Symbol).filter(Symbol.ticker == "^VIX").first()
@@ -68,22 +75,26 @@ def test_sync_phase_t5_backfills_null_score(db_session):
     db_session.add(Indicator(symbol_id=stock.id, date=test_date, sma_50=140.0))
     
     # 2. 既存の不完全な MarketSignal レコードを投入
-    # market_trend_score が NULL の状態
+    # market_trend_score が NULL の状態（何らかの理由で判定不能だった過去の行）
     db_session.add(MarketSignal(
         date=test_date,
         spy_above_sma200=1,
         distribution_days=0,
         follow_through_day=0,
         market_phase="RALLY_ATTEMPT",
-        market_trend_score=None  # これを埋めてほしい
+        market_trend_score=None
     ))
     db_session.commit()
-    
+    existing_id = db_session.query(MarketSignal).filter(MarketSignal.date == test_date).first().id
+
     # 3. パイプライン実行
     sync_phase_t5_signals(db_session, logging.getLogger("test"))
-    
-    # 4. 検証
+
+    # 4. 検証: 行が既に存在するため gap から外れ、再計算・上書きされていない
+    # （market_trend_score は None のまま、id も不変＝delete/insert されていない証拠）
     signal = db_session.query(MarketSignal).filter(MarketSignal.date == test_date).first()
-    
-    # 現状のコード（date > t5_max）では、ここが None のままになりテストが失敗するはず
-    assert signal.market_trend_score is not None, f"Score should be backfilled for {test_date}"
+    assert signal is not None
+    assert signal.market_trend_score is None, (
+        f"既存行があるため {test_date} は再計算されないはず"
+    )
+    assert signal.id == existing_id, "既存行が delete/insert されず維持されているはず"
