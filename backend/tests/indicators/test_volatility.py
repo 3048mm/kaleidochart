@@ -166,3 +166,59 @@ class TestAdrPct21MinPeriodsWindow:
         expected_last = sum(range(self.ADR_WINDOW)) / self.ADR_WINDOW
         assert expected_last == pytest.approx(10.0)
         assert result['adr_pct_21'].iloc[-1] == pytest.approx(expected_last, rel=1e-9)
+
+
+def _build_plain_df(n):
+    """`atr_14`/`atr_pct_14` 検証用のNaNを含まない合成OHLC。"""
+    idx = np.arange(n, dtype=float)
+    close = 100.0 + idx
+    high = close + 1.0 + (idx % 5) * 0.3
+    low = close - 1.0 - (idx % 3) * 0.2
+    df = pd.DataFrame({'high': high, 'low': low, 'close': close})
+    df['sma_50'] = 100.0
+    return df
+
+
+class TestAtrLeadingWarmupIsNaN:
+    """min_periods_warmup計画 5-4b: `_atr_wilder_kernel` の非増分（全期間計算）
+    ブランチは `np.zeros(n)` で初期化されるため、シード開始位置（`window-1`=13）
+    より前（position 0..12）はリテラル0.0のまま埋まる。これは「ボラティリティ
+    完全ゼロ」という偽の極値であり、正しくはまだ窓が埋まっていないことを示す
+    NaN であるべき、という仕様を固定する red テスト（現行実装に対しては失敗する
+    のが意図）。
+    """
+
+    def test_atr14の先頭13本がNaNになる(self):
+        n = WINDOW + 30
+        df = _build_plain_df(n)
+        result = calc_volatility(df.copy(), state=None)
+
+        assert result['atr_14'].iloc[:WINDOW - 1].isna().all(), (
+            'atr_14 の先頭13本（position 0..12）が窓未充足でNaNになっていない'
+            '（Wilder平滑化カーネルのnp.zeros初期化に由来するリテラル0.0の回帰）'
+        )
+        assert result['atr_14'].iloc[WINDOW - 1:].notna().all(), (
+            '窓が埋まった14本目（position 13）以降は非NULLであるべき'
+        )
+
+    def test_atr_pct_14の先頭13本もNaNになる(self):
+        n = WINDOW + 30
+        df = _build_plain_df(n)
+        result = calc_volatility(df.copy(), state=None)
+
+        assert result['atr_pct_14'].iloc[:WINDOW - 1].isna().all(), (
+            'atr_pct_14 の先頭13本（position 0..12）が窓未充足でNaNになっていない'
+        )
+        assert result['atr_pct_14'].iloc[WINDOW - 1:].notna().all()
+
+    def test_sma50_atr_multもatr_pct_14がNaNの区間ではNaNになる(self):
+        n = WINDOW + 30
+        df = _build_plain_df(n)
+        result = calc_volatility(df.copy(), state=None)
+
+        # atr_pct_14==0 の明示的な0除算ガードとは別に、isna()ガードでも
+        # 正しくNaN扱いされることを確認する（窓未充足区間はatr_pct_14自体が
+        # NaNになるため、`atr_pct_14 == 0` の比較だけでは検出できない）。
+        assert result['sma50_atr_mult'].iloc[:WINDOW - 1].isna().all(), (
+            'atr_pct_14 が窓未充足でNaNの区間で sma50_atr_mult が非NULLになっている'
+        )

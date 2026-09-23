@@ -318,8 +318,9 @@ class TestSuppliedHistoryDtypeRegression:
 
     def test_supplied_history_becomes_object_dtype_by_default(self):
         """前提確認（回帰の記録）: calculate_indicators(state=None) の戻り値は
-        大半の列が object dtype になり、atr_pct_14 の先頭13本はリテラル0になる。
-        これは5-4dが新たに作った挙動ではなく、既存の挙動であることを固定する。
+        大半の列が object dtype になり、atr_pct_14 の先頭13本はNaNになる
+        （min_periods_warmup計画 5-4b: Wilder平滑化シード方式でも
+        window-1本に満たない先頭区間はリテラル0ではなくNaNで埋める）。
         """
         base = TestIncrementalMatchesFullRecompute()
         n_total = base.N_TOTAL
@@ -335,8 +336,8 @@ class TestSuppliedHistoryDtypeRegression:
             '前提: atr_pct_14 が object dtype になること'
             '（同じ df 内の他列の NaN に引きずられる既存の pandas 挙動）'
         )
-        assert (full_res['atr_pct_14'].iloc[:13] == 0.0).all(), (
-            '前提: atr_14 の Wilder 平滑化シード方式により先頭13本がリテラル0になること'
+        assert full_res['atr_pct_14'].iloc[:13].isna().all(), (
+            '前提: atr_14 の Wilder 平滑化シード方式により先頭13本がNaNになること'
         )
 
     def test_incremental_does_not_raise_zero_division_when_history_includes_symbol_start(self):
@@ -352,11 +353,12 @@ class TestSuppliedHistoryDtypeRegression:
             base._build_full_and_incremental(state_idx=0)
         )
 
-        # 供給履歴（行0..K-1）が実際に object dtype ＋ atr_pct_14=0.0 を含んでいることを
-        # 確認する（このテストが「合成データで再現できていない」状態に静かに劣化するのを防ぐ）。
+        # 供給履歴（行0..K-1）が実際に object dtype ＋ atr_pct_14=NaN（先頭13本）を
+        # 含んでいることを確認する（このテストが「合成データで再現できていない」状態に
+        # 静かに劣化するのを防ぐ）。
         history_atr_pct_14 = full_res['atr_pct_14'].iloc[0: k_total - 1]
         assert history_atr_pct_14.dtype == object
-        assert (history_atr_pct_14.iloc[:13] == 0.0).all()
+        assert history_atr_pct_14.iloc[:13].isna().all()
 
         # ZeroDivisionError が送出されないこと自体がこのテストの主目的。
         # 加えて、増分1歩の結果が全期間再計算の最終行と一致すること
