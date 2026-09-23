@@ -255,9 +255,12 @@ def calculate_market_signals(
         df['vxv_close'] = df['vxv_close'].ffill()
         df['vxv_vix_ratio'] = df['vxv_close'] / df['vix_close']
     else:
-        # Fallback ratio estimation based on VIX if VXV is missing
-        df['vxv_vix_ratio'] = 1.15 - (df['vix_close'] - 12.0) * (0.25 / 23.0)
-        df['vxv_vix_ratio'] = df['vxv_vix_ratio'].clip(0.85, 1.30)
+        logger.warning(
+            "^VIX3M(VXV) データが供給されていません。vxv_vix_ratio を NULL にします"
+            "（推定式によるフォールバックは撤去済み — 実データ値域[0.744,1.408]に対し"
+            "推定式は[0.85,1.30]にクリップしており、パニック局面を隠す危険があったため）"
+        )
+        df['vxv_vix_ratio'] = np.nan
 
     # 6. Integrate Breadth and Momentum
     if df_metrics is not None and not df_metrics.empty:

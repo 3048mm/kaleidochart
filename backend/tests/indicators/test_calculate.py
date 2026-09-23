@@ -96,6 +96,13 @@ def test_market_trend_score_neutral():
         'close': [23.5]
     })
 
+    # VXV: VIX=23.5に対しratio≈1.05（中立）。フォールバック撤去(5-8b②)後は
+    # VXVを渡さないとvxv_vix_ratioがNaNになりmarket_trend_score全体もNaNになるため必須。
+    df_vxv = pd.DataFrame({
+        'date': [dates[-1]],
+        'close': [24.7]
+    })
+
     # Metrics: Breadth 0.5, Momentum 0.5 (12.5 + 12.5 = 25 pts)
     df_metrics = pd.DataFrame({
         'date': [dates[-1]],
@@ -115,7 +122,7 @@ def test_market_trend_score_neutral():
         'volume': [1000] * 220
     })
 
-    res = calculate_market_signals(df_spy, df_vix=df_vix, df_metrics=df_metrics)
+    res = calculate_market_signals(df_spy, df_vix=df_vix, df_vxv=df_vxv, df_metrics=df_metrics)
     score = res.iloc[-1]['market_trend_score']
 
     assert 10.0 <= score <= 90.0

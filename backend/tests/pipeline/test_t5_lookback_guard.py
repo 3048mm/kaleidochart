@@ -48,16 +48,22 @@ def db_session():
 
     spy = Symbol(ticker="SPY", exchange="NYSE", category="ETF", active=1)
     vix = Symbol(ticker="^VIX", exchange="INDEX", category="INDEX", active=1)
+    vxv = Symbol(ticker="^VIX3M", exchange="INDEX", category="INDEX", active=1)
     stock = Symbol(ticker="AAPL", exchange="NASDAQ", category="個別", active=1)
-    session.add_all([spy, vix, stock])
+    session.add_all([spy, vix, vxv, stock])
     session.commit()
 
     return session
 
 
 def _seed_spy_history(db_session, n_bars: int, start_date: date) -> list[date]:
-    """SPY の DailyPrice/Indicator を `start_date` から連続 `n_bars` 日分投入する。"""
+    """SPY の DailyPrice/Indicator を `start_date` から連続 `n_bars` 日分投入する。
+    ^VIX3M(VXV)のDailyPriceも同じ日付範囲で投入する（5-8b②でvxv_vix_ratioの
+    推定式フォールバックが撤去されたため、VXVが無いとmarket_trend_scoreが
+    NaNになる。本番同様にVXVは常に供給されている前提でテストする）。
+    """
     spy = db_session.query(Symbol).filter(Symbol.ticker == "SPY").first()
+    vxv = db_session.query(Symbol).filter(Symbol.ticker == "^VIX3M").first()
     dates = [start_date + timedelta(days=i) for i in range(n_bars)]
     for d in dates:
         db_session.add(DailyPrice(
@@ -65,6 +71,10 @@ def _seed_spy_history(db_session, n_bars: int, start_date: date) -> list[date]:
             close=100.0, volume=1000
         ))
         db_session.add(Indicator(symbol_id=spy.id, date=d, sma_200=90.0, sma_50=95.0, ema_21=98.0))
+        db_session.add(DailyPrice(
+            symbol_id=vxv.id, date=d, open=21.0, high=21.0, low=21.0,
+            close=21.0, volume=0
+        ))
     db_session.commit()
     return dates
 

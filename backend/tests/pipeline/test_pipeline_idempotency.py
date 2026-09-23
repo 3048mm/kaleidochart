@@ -18,8 +18,9 @@ def db_session():
     # Setup mock symbols
     spy = Symbol(ticker="SPY", exchange="NYSE", category="ETF", active=1)
     vix = Symbol(ticker="^VIX", exchange="INDEX", category="INDEX", active=1)
+    vxv = Symbol(ticker="^VIX3M", exchange="INDEX", category="INDEX", active=1)
     stock = Symbol(ticker="AAPL", exchange="NASDAQ", category="個別", active=1)
-    session.add_all([spy, vix, stock])
+    session.add_all([spy, vix, vxv, stock])
     session.commit()
     
     return session
@@ -31,6 +32,7 @@ def test_sync_phase_t5_backfills_null_score(db_session):
     """
     spy = db_session.query(Symbol).filter(Symbol.ticker == "SPY").first()
     vix = db_session.query(Symbol).filter(Symbol.ticker == "^VIX").first()
+    vxv = db_session.query(Symbol).filter(Symbol.ticker == "^VIX3M").first()
     stock = db_session.query(Symbol).filter(Symbol.ticker == "AAPL").first()
     
     test_date = date(2026, 4, 1)
@@ -48,6 +50,7 @@ def test_sync_phase_t5_backfills_null_score(db_session):
         d = test_date - timedelta(days=250-i)
         db_session.add(DailyPrice(symbol_id=spy.id, date=d, open=100.0, high=101.0, low=99.0, close=100.0, volume=1000))
         db_session.add(DailyPrice(symbol_id=vix.id, date=d, open=20.0, high=21.0, low=19.0, close=20.0, volume=0))
+        db_session.add(DailyPrice(symbol_id=vxv.id, date=d, open=21.0, high=21.0, low=21.0, close=21.0, volume=0))
         db_session.add(DailyPrice(symbol_id=stock.id, date=d, open=150.0, high=151.0, low=149.0, close=150.0, volume=500))
         db_session.add(Indicator(symbol_id=spy.id, date=d, sma_200=90.0, sma_50=95.0, ema_21=98.0))
         db_session.add(Indicator(symbol_id=stock.id, date=d, sma_50=140.0))
@@ -59,6 +62,7 @@ def test_sync_phase_t5_backfills_null_score(db_session):
     # ターゲット日のデータ
     db_session.add(DailyPrice(symbol_id=spy.id, date=test_date, open=100.0, high=101.0, low=99.0, close=100.0, volume=1000))
     db_session.add(DailyPrice(symbol_id=vix.id, date=test_date, open=20.0, high=21.0, low=19.0, close=20.0, volume=0))
+    db_session.add(DailyPrice(symbol_id=vxv.id, date=test_date, open=21.0, high=21.0, low=21.0, close=21.0, volume=0))
     db_session.add(DailyPrice(symbol_id=stock.id, date=test_date, open=150.0, high=151.0, low=149.0, close=150.0, volume=500))
     db_session.add(Indicator(symbol_id=spy.id, date=test_date, sma_200=90.0, sma_50=95.0, ema_21=98.0))
     db_session.add(Indicator(symbol_id=stock.id, date=test_date, sma_50=140.0))
