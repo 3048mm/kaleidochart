@@ -272,16 +272,16 @@ def calc_relative_strength(df: pd.DataFrame, df_spy: pd.DataFrame = None, state:
     # RS Leading Signals (Blue Dot / Red Dot)
     # 点灯判定そのものは従来どおり。出力は経過日数カウンタに変換する（§3.1）
     # 1. Blue Dot (Bullish Leading): RS が 252日新高値・株価はまだ新高値でない
-    rs_252_high = rs.rolling(window=252, min_periods=1).max()
-    close_252_high = close.rolling(window=252, min_periods=1).max()
+    rs_252_high = rs.rolling(window=252, min_periods=252).max()
+    close_252_high = close.rolling(window=252, min_periods=252).max()
     blue_lit = (
         ~(rs.isna() | rs_252_high.isna())
         & (rs >= rs_252_high) & (close < close_252_high)
     ).to_numpy()
 
     # 2. Red Dot (Bearish Leading): RS が 252日新安値・株価はまだ新安値でない
-    rs_252_low = rs.rolling(window=252, min_periods=1).min()
-    close_252_low = close.rolling(window=252, min_periods=1).min()
+    rs_252_low = rs.rolling(window=252, min_periods=252).min()
+    close_252_low = close.rolling(window=252, min_periods=252).min()
     red_lit = (
         ~(rs.isna() | rs_252_low.isna())
         & (rs <= rs_252_low) & (close > close_252_low)
