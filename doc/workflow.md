@@ -95,7 +95,20 @@ G1 計画合意 ──▶ 実装 ⇄ G2 項目検収（チェック項目ごと�
 | ドメイン手順（sandbox・SQLite・Parquet 等） | `.claude/skills/` |
 | 毎セッション必要な索引・絶対禁止事項・プロジェクト知識 | `CLAUDE.md` |
 
+### 4.1 「指示」と「学びの記録」は書き方が逆になる
+
+上の置き場所は、読まれ方で2種類に分かれる。書き方と監査の扱いが逆なので、混ぜない。
+
+| 種類 | 対象 | 読まれ方 | 書き方 | プロンプト監査（`/claude-api prompt-audit`） |
+| :--- | :--- | :--- | :--- | :--- |
+| **指示** | CLAUDE.md・`.claude/skills/`・`.claude/agents/`・`.claude/commands/`・本書 | 起動時・呼び出し時に毎回読まれる | 今のルールを平叙文で書く。理由は1行まで。事故の経緯・日付は書かない（学びの記録へのリンクにする） | 対象 |
+| **学びの記録** | `doc/agent_execution_rules.md`・`doc/project_knowhow.md`・各文書の更新履歴 | 失敗したときに grep で引く（`doc/agent_execution_rules.md` §4.1） | エラー原文（検索キー）・日付・「何の事故を防ぐためか」を残す。経緯そのものが中身 | 対象外 |
+
+監査は指示側に絞って実行する:
+`/claude-api prompt-audit CLAUDE.md .claude/skills .claude/agents .claude/commands doc/workflow.md`
+
 ---
 
 ## 更新履歴
 - 2026-09-23: 初版 — CLAUDE.md・rules §7/§9/§10.2・commands に分散していたゲート・閾値・介入地点を集約。G3（ブランチレビュー）を自動化し、往復上限と「上位3件＝報告の上限」を定義。計画書: `doc/completed/workflow_gates_plan.md`
+- 2026-09-23: §4.1 を追加 — 「指示」（毎回読まれる。今のルールだけを書く）と「学びの記録」（grep で引く。エラー原文・経緯を残す）の区別。防ぐ事故: プロンプト監査が学びの記録の経緯（検索キー・削除判断の材料）を「古い経緯」として削る提案をすること
