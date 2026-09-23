@@ -597,9 +597,10 @@ OHLC 系は「価格の NULL は判定不能ではなく本物の異常」なの
 - [x] **5-16** `doc/issue_list.md` の ① をクローズ（§8 の残作業のうち未起票のものを新規 issue として起票。② は起票済み）— **2026-09-24 完了**。issue①を`[x]`+取り消し線化し、解決NOTEブロック（対応内容・検証結果・残作業・「本番昇格は別途」の明記）を追加、旧本文（事象・実測・対応案）は issue②と同じ慣例でそのまま履歴として残した。§8の残作業のうち未起票だった3件をP2/P3に新規起票（仮想テーマ指数のSPY参照供給不足警告・`RS_DOT_WARMUP_BARS`撤去要否・`bars_available`診断列）。`rs_roc_ema_200`の40銘柄異常は2026-09-23付で既に別issueとして起票済みのため対象外。
 - [ ] **5-20**（G3-1周目・対応 R1）`orchestrator.py` の**増分ブランチ**（`>= seed_date` で絞ってから `rolling(21, min_periods=21)` を計算している箇所）を、**全履歴（`theme_prices_df`）で `dollar_volume_ma21` を計算してから `>= seed_date` に絞る**順序へ直す。現状は日次更新のたびに仮想テーマ/指数の `surge` が NaN→1.0（volume=1e6 固定）になる。テスト: 21本以上の履歴がある構成銘柄で、増分結果の `surge` が全期間再合成（rebuild）と一致し、1.0 固定にならないこと
 - [ ] **5-21**（同・対応 R2）**breadth の 0.5 捏造を撤去し、NULL を NULL のまま流す**。`market_signals.py` の `compute_breadth_momentum`（全銘柄 NaN の日に `breadth_sma50 = 0.5` を返す `else 0.5` と `metrics_df.fillna(0.5)` の breadth 側）、`scenario_runner.py` / `etf_single_runner.py` の複製（同じ `else 0.5`）、`scenario_market_score.py:175` の日付ゲート `date_str >= '2018-04-01'`（`breadth_val is not None` と NaN 判定に置換）を**4箇所同時に**揃える。`momentum_ratio` の 0.5 は据え置き（bool 由来で NaN にならない）。`t5_signals.py` が NaN を保存するとき NULL（None）になることも確認。テスト: 全銘柄の `sma_50` が NaN の日は `breadth_sma50` が NaN・`has_breadth` が False・MTS が3成分になること
-- [ ] **5-22**（同・対応 R3）`tools/db_health_check.py` の短履歴除外閾値（`rs_momentum_e21`: 75、`rs_ratio_e21`: 30）を、`incremental_state_registry` の `warmup_bars`（実測 94 / 40）から**導出する**形に直す（手書きの数値を増やさない。`t2_count <= warmup_bars` なら除外）。`sma_200`（200）・`ema_21`（21）も同じ仕組みに揃えてよい。テスト: 履歴 80本の銘柄で `rs_momentum_e21` が NULL でも NG にならず、95本で NULL なら NG になること
+- [ ] **5-22**（同・対応 R3）`tools/db_health_check.py` の短履歴除外閾値（`rs_momentum_e21`: 75、`rs_ratio_e21`: 30）を、`incremental_state_registry` の `warmup_bars`（実測 94 / 40）から**導出する**形に直す（手書きの数値を増やさない。`t2_count <= warmup_bars` なら除外）。`sma_200`（200）・`ema_21`（21）も同じ仕組みに揃える。**この検査は「直近5行に NULL があるか」を見る**ため、除外条件は `t2_count <= warmup_bars` ではなく **`t2_count <= warmup_bars + 5`**（直近5行がすべてウォームアップ明けになるまで）でなければ、`sma_200` が 200〜203本の銘柄で古い側の行が NULL のまま NG になる（現行の `t2_count < 200` もこの点で1段足りない）。テスト: `rs_momentum_e21`（warmup 94）は履歴 99本まで NULL でも NG にならず 100本で NULL なら NG、`sma_200`（199）は 204本境界で同様
 - [ ] **5-23**（同・対応 R4）`frontend/src/components/SummaryTable.tsx` のランク列（L139-141 の `?? 0`、L49-50 のソートの `?? 0`）を、**NULL は `-` 表示・ソートは末尾**に直す（0＝最悪バケットとして表示・整列しない）。§4-8「ランク系のみ」の範囲。`npm test` とビルドを通す
 - [ ] **5-24**（同・対応 R5）`t5_signals.py` の `_find_insufficient_lookback_dates` の docstring と、周辺コメントに残っている**撤去済みの収束ロジック（5-7e）・`t5_completed_dates` の記述**を現状（行の有無で gap 判定・このリストはエラーログ用途のみ）に合わせる。コード変更なし
+- [ ] **5-25**（同・対応 R18）`screener_router.py:778-779` の `_float_or(rs21_rank / rs63_rank)`（NULL→0.0）を **NULL のまま返す**形に直す（`_float_or_none` が既にある）。`schemas.py` の対応フィールド（`rs_ratio_21_rank` / `rs_ratio_63_rank` / `rs_ratio_rank_e21` / `rs_ratio_rank_e63`）を `Optional[float]` にし、`frontend/src/types.ts` の型を `number | null` に揃える。**5-9b で `ScreenerResultPage.tsx` を null 安全にしたが、API が 0.0 を返すため一度も効いていなかった**（§3.1「呼んでいるが効いていない」型）。dashboard API（NULL を返す）との不整合の解消。テスト: NULL ランクの銘柄が screener 応答で `null` になること。`screener_router.py:735` のソートキー `fillna(0.0)`（NULL は最下位）は意味が一致するため据え置き
 - [ ] **5-17** merge → `tools/deploy_after_merge.ps1` で昇格 → API サーバ再起動。**種別 B のため `/code-review` をブランチ単位で1回通してから merge する**（CLAUDE.md 検収 第2段）。日次パイプライン Tue-Sat 07:00/13:00 と重ねない（§4-5）
 - [ ] **5-18** **再最適化をユーザーへ引き渡す**（§4-3。実行はユーザー、約12時間規模）— ①変更が main に merge・昇格済みであることを明言する ②1戦略だけ短時間ドライランで挙動を確認する ③対象8戦略（`E2`/`F`/`A`/`G2`/`D`/`H1`/`G1`/`C2`）を明示して引き渡す。**データが変わる変更なので、既存 trial の集計値ベースの再スコアリングは使えない**（集計値そのものが旧データ由来のため）
 - [ ] **5-19** 計画書を `doc/completed/` へ移動（再最適化の完了は待たない。結果は別途記録）
@@ -705,7 +706,7 @@ OHLC 系は「価格の NULL は判定不能ではなく本物の異常」なの
 
 #### 1周目（2026-09-24・HEAD `1aec291`）
 
-finder 8本のうち報告が届いた6本（再利用 / 規約 / 効率 / 削除された挙動 / 高度 / 行スキャン）の指摘を集約し、
+finder 8本のうち報告が届いた7本（再利用 / 規約 / 効率 / 削除された挙動 / 高度 / 行スキャン / ファイル横断トレース）の指摘を集約し、
 **重大な指摘はコードを直接読んで実在を確認**してから仕分けた（複数の finder が独立に一致したものは★）。
 
 | # | 指摘 | 仕分け | 理由・対応 |
@@ -727,9 +728,13 @@ finder 8本のうち報告が届いた6本（再利用 / 規約 / 効率 / 削�
 | R15 | `screener_router.py:735` / `scenario_runner.py:583` の NULL ランク→0.0 | **却下** | 本ブランチの変更箇所ではない。前者は上位200件のソートキーで「NULL は最下位」と意味が一致、後者はキー欠落時の既定値 |
 | R16 | `relative_strength.py` のテストが3ファイルに分割（1:1 規約） | **却下** | 既存 `test_relative_strength_precision.py` の前例と同じ粒度分割。ファイルごとに目的が異なる |
 | R17 | `^VIX` 系のボリューム0で `--check-warmup-nulls` が誤検知 | **issue 化** | R8 と同じレジストリ／診断ツールの構造的例外の話 |
+| R18 ★ | screener API が NULL ランクを 0.0 にして返す（`screener_router.py:778-779`）。dashboard API は NULL を返すため不整合。5-9b のフロント null 安全化が効かない | **対応 → 5-25** | 実在確認済み。R15 で「却下」とした `:735`（ソートキー）とは別物で、こちらは**API の出力**（§2.3.4「API は NULL のまま返す」）。計画 §4-8「ランク系のみ」の範囲 |
+| R19 | `weekly_maintenance.py` の T3 自己修復が SQLite の約504本だけで再計算し、欠損日の行に（窓が足りない列の）NULL を書く。Parquet に正しい値があっても届かない | **issue 化（P1）** | 実在確認済み。SQLite 基点である点は元からで issue ② と同種。修正前は近似値、修正後は NULL（原則には近づく）だが、§2.3.2 の期待「Parquet の正しい値を使う」とは逆。Parquet 基点化は設計判断を含むため本ブランチでは扱わない |
+| R20 | `relative_strength.py` に足した `report_stale_input_gaps(spy_close)` が全銘柄・全 T3 実行で呼ばれ、暦の違う銘柄でログが増える | **issue 化** | ログのみ（値は不変）。R11 に合流 |
+| R21 | `db_health_check` の `sma_200` 除外が直近5行チェックと噛み合わない（200〜203本で NG） | **対応 → 5-22 に統合** | 実在。R3 の修正時に `+5` を含める |
 
-- **issue 化の起票先**: `doc/issue_list.md` P2「`min_periods_warmup` の G3 レビューで切り出した項目」（R4-RrgChart / R8 / R9 / R10 / R11 / R12 / R13 / R17）
-- **1周目の結論**: 「対応」5件（5-20〜5-24）。**修正 → G2 → 2周目の G3 が必要**。「merge 可能」はまだ報告しない
+- **issue 化の起票先**: `doc/issue_list.md` P2「`min_periods_warmup` の G3 レビューで切り出した項目」（R4-RrgChart / R8 / R9 / R10 / R11 / R12 / R13 / R17 / R19 / R20）
+- **1周目の結論**: 「対応」6件（5-20〜5-25）。finder 7本の報告を反映済み（8本目は未着。届けば2周目で反映）。**修正 → G2 → 2周目の G3 が必要**。「merge 可能」はまだ報告しない
 
 ## 7. 途中発生した課題
 

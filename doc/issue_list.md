@@ -1911,6 +1911,8 @@
   - **R11（性能）**: `parquet_recompute.py` の `percent_rank` が per-group の Python コールバック（`groupby.rank(method='min')` ＋ `transform('count')` でベクトル化できる。T4 Parquet 再構築が1〜2分遅くなる見積り）／`find_stale_input_gaps` が毎回 `df['date'].tolist()`（`isna().any()` で早期 return できる。銘柄ごとに呼ばれる）／`volume_and_trends.py` の `vol_sma_21` の二重 rolling／`compute_breadth_momentum` の集計 lambda
   - **R12（重複・依存方向）**: 21日窓の5箇所複製・breadth の NaN 保持式の3箇所複製・`report_stale_input_gaps` を `market_signals`（T5）から `relative_strength`（T3）が import している依存・`chart_router` の指標再実装。統合先の案: `_dollar_volume_ma21` ヘルパ・`compute_breadth_momentum` を両シナリオランナーからも呼ぶ・`indicators/input_gaps.py` への切り出し
   - **R13（`vol_accum_days_5` の object dtype）**: `np.where(cond, None, int)` で object 列になる（`is_trend_template` と同じ既存パターン）。全 None 列を Parquet へ書く経路での型推論（null 型）と、既存の int64 列との concat での型崩れを別途確認する
+  - **R19（T3 自己修復が SQLite 基点）**: `backend/scripts/weekly_maintenance.py` の T3 欠損修復（L380-430 付近）が `daily_prices` の SQLite 約504本だけで `calculate_indicators` を回して欠損日の行を挿入する。`min_periods=window` 統一後は、窓が足りない列（`sma_200`・`dist_52w_high_pct`・`is_trend_template`・`rs_roc_ema_200`=611・`rs_momentum_e200`=810 等）が、Parquet に正しい値があっても NULL で入る。**issue ②（T5 が SQLite 基点）と同じ種類**で、直し方は「Parquet 基点で計算する」。修復対象が SQLite の窓の左端に近い日付のときに限って起きる（**優先度 P1 相当・要判断**）
+  - **R20（ログ）**: `relative_strength.py` の `report_stale_input_gaps(df, 'spy_close', 'SPY')` は全銘柄・全 T3 実行で呼ばれる。暦の違う銘柄で MTS 入力向けの WARNING が増え、本物の警告が埋もれる。銘柄ごとではなくバッチで1回にするか、閾値を分ける
   - 関連: `doc/in_progress/min_periods_warmup_plan.md` §6.3
 
 ## P3 — 低（将来フェーズ・プロセス系）
