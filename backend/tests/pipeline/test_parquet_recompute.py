@@ -14,7 +14,14 @@ Parquet 上で直接再計算すれば全期間を約4分で作れる。
       = (rank - 1) / (n - 1)     rank は同値で最小順位を共有
 
 **pandas の `rank(pct=True)` では一致しない**（`rank / n` になる）。
-また **SQLite は NULL を最小値として扱う**ため、NaN を除外してはいけない。
+
+## NULL の扱い（2026-09-23 改訂）
+
+旧仕様は「SQLite は NULL を最小値として扱う」に合わせ、NaN を `-inf` 扱いにして
+母集団に含めていた。しかし NULL は「判定不能」であり「最下位」ではないため、
+新仕様では **NULL を母集団から除外し、NaN のまま返す**（SQLite 側も
+`CASE WHEN col IS NULL THEN NULL ELSE PERCENT_RANK() ... PARTITION BY (col IS NULL) END`
+に変更され、対になる）。
 """
 
 import os
@@ -62,30 +69,37 @@ def test_ties_share_the_minimum_rank():
     assert list(r) == [0.0, 0.25, 0.25, 0.75, 1.0]
 
 
-def test_null_is_treated_as_smallest():
-    """SQLite は NULL を最小値として扱う。除外してはいけない。
+def test_null_is_excluded_from_ranking():
+    """新仕様（2026-09-23）: NULL は判定不能として母集団から除外し、NaN のまま返す。
 
-    ここを `rank()` の既定（NaN を NaN のまま返す）にすると、
-    NULL を持つ銘柄の順位が欠落し、母集団サイズも変わって全体がずれる。
+    旧仕様は SQLite の `PERCENT_RANK` が NULL を最小値として扱う挙動に合わせ、
+    NaN を `-inf` としてランクに含めていた。しかし NULL は「最下位」ではなく
+    「判定不能」であるため、母集団自体から外すべきという判断に変更された。
 
-    実測で二重に確認済み（2026-08-05）:
-        SQLite の合成テスト  VALUES (NULL),(10),(20),(30) → NULL の percent_rank = 0.0
-        本番データ           AIPO の rs_ratio_e5=NULL → ランク 0.0
+    SQLite 側も
+        CASE WHEN col IS NULL THEN NULL
+             ELSE PERCENT_RANK() OVER(PARTITION BY category, (col IS NULL) ORDER BY col ASC)
+        END
+    に変更され、非 NULL 群だけで正規化するようになる（対になる変更）。
 
-    なお **Parquet の 2024-08 以前には NULL を 1.0 としている行が 1,348 行ある**。
-    これは旧コードによる誤りで、本実装での再計算により修正される
-    （詳細: doc/completed/parquet_recompute_plan.md §7）。
+    NULL を除いた残り4件（10,20,30,40）で正規化される
+    → rank 1,2,3,4 / n=4 → (rank-1)/(n-1) = [0.0, 1/3, 2/3, 1.0]。
     """
     s = pd.Series([np.nan, 10.0, 20.0, 30.0, 40.0])
     r = percent_rank(s)
-    assert r.iloc[0] == 0.0, "NULL が最小として扱われていない"
-    assert list(r) == [0.0, 0.25, 0.5, 0.75, 1.0]
+    assert pd.isna(r.iloc[0]), "NULL がランクから除外されず値を持ってしまっている"
+    assert list(r.iloc[1:]) == pytest.approx([0.0, 1 / 3, 2 / 3, 1.0])
 
 
-def test_all_null_gives_zero():
-    """全部 NULL なら全員が同順位＝0（SQL でも同じ）"""
+def test_all_null_gives_all_nan():
+    """新仕様（2026-09-23）: 全部 NULL なら母集団が0件になり、全員 NaN。
+
+    旧仕様（全員0.0で同順位）は「NULLを最小値として扱う」前提に基づいていたが、
+    新仕様ではNULLは母集団に含めないため、比較対象が無くNaNになる。
+    """
     s = pd.Series([np.nan] * 4)
-    assert list(percent_rank(s)) == [0.0, 0.0, 0.0, 0.0]
+    r = percent_rank(s)
+    assert r.isna().all(), "全NULL入力なのにランクが付いてしまっている"
 
 
 def test_single_element_is_zero():
@@ -157,6 +171,24 @@ def test_ranks_are_computed_within_category_and_date():
     assert d.loc[3, "rs_value_rank"] == 1.0
     # テーマは1件のみ → 0.0（カテゴリを跨いで比較されていない証拠）
     assert d.loc[4, "rs_value_rank"] == 0.0
+
+
+def test_null_indicator_excludes_symbol_from_rank_population():
+    """カテゴリ内の一部銘柄が NULL のとき、NULL 銘柄は母集団から除外される。
+
+    新仕様（2026-09-23）: NULL は判定不能として NaN のまま返し、
+    残りの銘柄は NULL 銘柄を除いた母集団（分母 n-1 が減る）で正規化される。
+    """
+    symbols, ind = _frames()
+    # 個別カテゴリ(A=1.0, B=2.0, C=3.0)のうち A を NULL にする
+    ind.loc[ind["symbol_id"] == 1, "rs_value"] = np.nan
+    out = recompute_ranks(ind, symbols, cols=[("rs_value", "rs_value_rank")])
+
+    d = out[out["date"] == "2020-01-02"].set_index("symbol_id")
+    assert pd.isna(d.loc[1, "rs_value_rank"]), "NULL 銘柄のランクが NaN になっていない"
+    # 個別カテゴリの母集団は B(2.0), C(3.0) の2件のみ(Aは除外) → 0.0, 1.0
+    assert d.loc[2, "rs_value_rank"] == 0.0
+    assert d.loc[3, "rs_value_rank"] == 1.0
 
 
 def test_group_name_is_the_category():
