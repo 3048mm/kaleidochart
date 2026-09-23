@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from numba import njit
 
-from .incremental_merge import finalize_incremental_column, prev_self_seed
+from .incremental_merge import compute_recursive_series
 
 @njit
 def _ema_kernel(values, alpha, initial_sma, start_idx):
@@ -78,7 +78,11 @@ def calc_moving_averages(df: pd.DataFrame, state: bool = None) -> pd.DataFrame:
     close = df['close']
     for period in [5, 21, 50, 63, 150, 200]:
         df[f'sma_{period}'] = close.rolling(window=period, min_periods=1).mean()
-        prev_ema = prev_self_seed(df, f'ema_{period}', incremental)
-        ema = calculate_ema_tv(close, period, prev_ema=prev_ema)
-        df[f'ema_{period}'] = finalize_incremental_column(df, f'ema_{period}', ema, incremental)
+        # シード取得〜マージは compute_recursive_series に集約（5-15d・
+        # code-review指摘3）。増分モードでシードが取得できない場合はNaNになり、
+        # 「df全体（K+1本の窓）から再シード」という危険な経路には入らない。
+        df[f'ema_{period}'] = compute_recursive_series(
+            df, f'ema_{period}', incremental,
+            lambda prev_ema, period=period: calculate_ema_tv(close, period, prev_ema=prev_ema),
+        )
     return df

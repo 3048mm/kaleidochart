@@ -24,6 +24,12 @@ from indicators.incremental_state_registry import (
 # その状態でヘルスチェックを回すと「異常なし」に見えてしまうため paths.py に一任する。
 DB_PATH = paths.get_db_path("stocktool")
 
+# --check-warmup-nulls が銘柄の「真の履歴本数」を読みに行く Parquet マスタのディレクトリ
+# （T3増分化計画 5-15d・2回目のcode-review指摘1）。DB_PATH と同様にモジュール変数として
+# 持ち、`--db-path` 指定時や単体テストから `check_symbol_health(parquet_dir=...)` /
+# モジュール属性の書き換えで差し替えられるようにする。
+PARQUET_DIR = paths.get_parquet_master_dir()
+
 CRITICAL_COLUMNS = [
     'sma_200', 'ema_21', 'rs_value', 'rs_ratio_e21', 'rs_momentum_e21'
 ]
@@ -36,14 +42,56 @@ LOW_HISTORY_ROWS = 20
 def get_connection():
     return sqlite3.connect(DB_PATH)
 
+
+def _load_parquet_history_counts(parquet_dir: str) -> dict:
+    """Parquetマスタ（コールドの全履歴）の `prices` から、銘柄ごとの真の価格履歴本数を読む
+    （T3増分化計画 5-15d・2回目のcode-review指摘1）。
+
+    `--check-warmup-nulls` は「演算上必要な日数（warmup_bars）がある銘柄なら、その列は
+    NULLにならない」という一般則を検査する。5-6c の初版実装は比較対象にホットキャッシュ
+    （SQLite の `indicators` テーブル行数。実測最大503）を使っていたが、これは
+    `rs_roc_ema_200`（warmup_bars=511）・`rs_momentum_e200`（同610）に対して構造的に
+    到達不能だった——**この2列こそが本計画の発端となった不具合（§1.1）の当事者**であり、
+    到達不能なせいで実際の欠陥が「異常なし」と誤って報告されていた（2回目のcode-review指摘1）。
+
+    銘柄の真の履歴本数はコールドマスタ（Parquet）にしかない。`symbol_id` 列だけを選択して
+    読むため、全履歴（本番実測で684万行）でも軽量（列指向フォーマットの利点。実測1.9秒）。
+
+    `latest_master.json` が見つからない・`prices` が読めない場合は空 dict を返す。
+    呼び出し側は空dictなら `t3_count`（ホットキャッシュ行数）へフォールバックする
+    （比較が保守的になる＝旧来どおり到達不能な列が出うるだけで、検査自体は落ちない）。
+    """
+    pointer_file = os.path.join(parquet_dir, "latest_master.json")
+    if not os.path.exists(pointer_file):
+        return {}
+    try:
+        import json
+        with open(pointer_file, 'r', encoding='utf-8') as f:
+            latest_files = json.load(f)
+        prices_path = latest_files.get('prices')
+        if not prices_path:
+            return {}
+        abs_path = os.path.join(parquet_dir, os.path.basename(prices_path))
+        if not os.path.exists(abs_path):
+            return {}
+        df = pd.read_parquet(abs_path, columns=['symbol_id'])
+        return df['symbol_id'].value_counts().to_dict()
+    except Exception as e:
+        print(f"⚠️  Parquet履歴本数の読み込みに失敗しました（--check-warmup-nulls は"
+              f"t3_countで代替します）: {e}")
+        return {}
+
+
 def check_symbol_health(ticker: str = None, all_active: bool = False, check_nulls: bool = False,
-                         check_recursive_state: bool = False, check_warmup_nulls: bool = False):
+                         check_recursive_state: bool = False, check_warmup_nulls: bool = False,
+                         parquet_dir: str = None):
     """
     1. SPYの最新日と比較してT2（日足）が揃っているか確認
     2. T2の行数とT3（インジケーター）の行数が一致しているか確認
     3. (Optional) 特定カラムのNULLチェック
     4. (Optional) RECURSIVE型状態列（T3増分化計画）のNULLチェック
-    5. (Optional) ウォームアップ本数超過NULLチェック（T3増分化計画5-6c）
+    5. (Optional) ウォームアップ本数超過NULLチェック（T3増分化計画5-6c・5-15d）。
+       比較対象は銘柄の真の履歴本数（Parquetマスタ。無ければ t3_count にフォールバック）。
     """
     conn = get_connection()
 
@@ -54,9 +102,16 @@ def check_symbol_health(ticker: str = None, all_active: bool = False, check_null
 
     # ウォームアップ本数（列ごとに異なる閾値）もレジストリから機械的に取得する。
     # --check-recursive-state（増分計算の「状態」が壊れていないか）とは目的が異なり、
-    # こちらは「指標そのものが出るべき値を出しているか」（T3の行数が演算上必要な
-    # 本数を超えているのに最新行がNULLになっていないか）を見る（5-6c・ユーザー提案）。
+    # こちらは「指標そのものが出るべき値を出しているか」（銘柄の真の履歴本数が演算上
+    # 必要な本数を超えているのに最新行がNULLになっていないか）を見る（5-6c・ユーザー提案）。
     warmup_thresholds = columns_with_warmup_threshold() if check_warmup_nulls else {}
+    # 比較対象は銘柄の真の履歴本数（Parquetマスタ由来）。ホットキャッシュの行数
+    # （t3_count。実測最大503）は rs_roc_ema_200（warmup_bars=511）等に対して
+    # 構造的に到達不能だったため、5-15d でParquetから読むよう変更した
+    # （2回目のcode-review指摘1。詳細は `_load_parquet_history_counts` docstring）。
+    parquet_history_counts = (
+        _load_parquet_history_counts(parquet_dir or PARQUET_DIR) if check_warmup_nulls else {}
+    )
 
     # SPYの最新日を取得
     spy_latest = conn.execute("SELECT max(date) FROM daily_prices WHERE symbol_id = (SELECT id FROM symbols WHERE ticker='SPY')").fetchone()[0]
@@ -166,13 +221,20 @@ def check_symbol_health(ticker: str = None, all_active: bool = False, check_null
         # ウォームアップ本数超過NULLチェック (オプション・T3増分化計画5-6c・ユーザー提案)
         #
         # 「演算上必要な日数がある銘柄なら、その列は NULL にならない」という一般則の検査。
-        # T3の保存行数（t3_count）が列ごとの warmup_bars（レジストリ実測値）を超えているのに
-        # 最新行がNULLの列を検出する。上の --check-recursive-state（増分計算の「状態」が
-        # 壊れていないか）とは目的が異なり、こちらは「指標そのものが出るべき値を出しているか」
-        # を見る。イベント駆動で閾値を置けない列（sp_pivot/sp_hl/sp_counter）は
+        # 銘柄の真の履歴本数（Parquetマスタ。無ければ t3_count にフォールバック）が
+        # 列ごとの warmup_bars（レジストリ実測値）を超えているのに最新行がNULLの列を
+        # 検出する。上の --check-recursive-state（増分計算の「状態」が壊れていないか）
+        # とは目的が異なり、こちらは「指標そのものが出るべき値を出しているか」を見る。
+        # イベント駆動で閾値を置けない列（sp_pivot/sp_hl/sp_counter）は
         # columns_with_warmup_threshold() が機械的に除外している。
+        #
+        # 比較対象を t3_count（ホットキャッシュ行数。実測最大503）のままにしていると、
+        # warmup_bars が503を超える列（rs_roc_ema_200=511・rs_momentum_e200=610）には
+        # 条件が永久に成立せず、この検査自体が本不具合の当事者に到達できなかった
+        # （5-15d・2回目のcode-review指摘1）。
         warmup_null_cols = []
         if check_warmup_nulls and t3_count > 0 and not is_empty_virtual_theme:
+            true_history_count = parquet_history_counts.get(sym_id, t3_count)
             cols_to_check = {
                 c: w for c, w in warmup_thresholds.items()
                 if not is_structurally_null_column(t, c)
@@ -186,7 +248,7 @@ def check_symbol_health(ticker: str = None, all_active: bool = False, check_null
                 """).fetchone()
                 if latest_row:
                     for idx, (col, warmup_bars) in enumerate(cols_to_check.items()):
-                        if t3_count > warmup_bars and latest_row[idx] is None:
+                        if true_history_count > warmup_bars and latest_row[idx] is None:
                             warmup_null_cols.append(col)
 
         # 判定
@@ -346,8 +408,9 @@ if __name__ == "__main__":
                               '（T3増分化計画5-6b）。該当銘柄は日次T3の増分経路が発動せず不正確な値が書かれ続ける。'
                               '--rebuild-from T3 でのリフレッシュ前は大量検出するのが正常な挙動')
     parser.add_argument('--check-warmup-nulls', action='store_true',
-                         help='T3の行数が列ごとの演算上必要な本数（warmup_bars。レジストリ実測値）を'
-                              '超えているのに最新行がNULLの列を検出する（T3増分化計画5-6c・ユーザー提案）。'
+                         help='銘柄の真の履歴本数（Parquetマスタ由来。無ければt3_countにフォールバック）が'
+                              '列ごとの演算上必要な本数（warmup_bars。レジストリ実測値）を'
+                              '超えているのに最新行がNULLの列を検出する（T3増分化計画5-6c・5-15d・ユーザー提案）。'
                               '--check-recursive-state（増分計算の状態チェック）とは目的が異なり、'
                               '指標そのものが出るべき値を出しているかを見る。'
                               'sp_pivot/sp_hl/sp_counterはイベント駆動のため対象外')
@@ -369,12 +432,14 @@ if __name__ == "__main__":
     if args.ticker or args.all:
         ng = check_symbol_health(ticker=args.ticker, all_active=args.all, check_nulls=args.check_nulls,
                                   check_recursive_state=args.check_recursive_state,
-                                  check_warmup_nulls=args.check_warmup_nulls)
+                                  check_warmup_nulls=args.check_warmup_nulls,
+                                  parquet_dir=parquet_dir_override)
     else:
         # Default behavior: if no symbol arguments, check SPY as standard check
         ng = check_symbol_health(ticker='SPY', all_active=False, check_nulls=args.check_nulls,
                                   check_recursive_state=args.check_recursive_state,
-                                  check_warmup_nulls=args.check_warmup_nulls)
+                                  check_warmup_nulls=args.check_warmup_nulls,
+                                  parquet_dir=parquet_dir_override)
 
     # NG 銘柄リストの書き出し（BOM なし UTF-8。NG ゼロでも空ファイルを書き「実行済み」を示す）
     if args.ng_out:

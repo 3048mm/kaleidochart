@@ -265,7 +265,8 @@ def _calculate_t3_worker_wrapper(args):
     return _calculate_t3_worker(*args)
 
 def _log_fallback_summary(logger: logging.Logger, fallback_reasons: List[str]) -> None:
-    """フォールバック理由のリストを集計してログ出力する（T3増分化計画 5-6b・5-15b・5-15cで改訂）。
+    """フォールバック理由のリストを集計してログ出力する
+    （T3増分化計画 5-6b・5-15b・5-15c・5-15dで改訂）。
 
     5-6 の実データ検証で「フォールバックが無言」（本番で4日間気づかれなかった）
     ことが問題だったため、フェーズ終了時に必ず可視化する。0件のときはログを
@@ -282,11 +283,23 @@ def _log_fallback_summary(logger: logging.Logger, fallback_reasons: List[str]) -
 
     5-15c（2回目の code-review 指摘1）: `FALLBACK_REASON_WARMUP_UNDETERMINED`
     （判別不能）を新設した。判別不能は欠陥と確定したわけではないため
-    `WARMUP_IN_PROGRESS` と同じ扱い（WARNING には昇格させない）とするが、
-    「全期間計算そのものの結果は正確です」と一括で言い切ってしまうと
-    判別不能ぶんの不確かさを隠すことになる（5-15b の回帰そのもの: 誤って
-    「正確」と報告し続けたことが問題だった）ため、判別不能が1件でもあれば
-    それを名指しし、正確性を主張する範囲から明示的に除外する。
+    `WARMUP_IN_PROGRESS` と同じ扱い（WARNING には昇格させない）とする。
+
+    5-15d（2回目の code-review 指摘2）: 5-15c 時点でも、欠陥・判別不能のいずれも
+    無いケース（`insufficient_saved_rows`/`multi_day_gap`/`warmup_in_progress` のみ）
+    では「全期間計算そのものの結果は正確です」と言い切っていたが、これは誤り。
+    `state=None`（全期間計算）は `daily_prices`（`t3_max` が None ではない限り、
+    その時点で SQLite が保持する**全行**＝実測504本程度）を対象にするだけで、
+    Parquet の真の全履歴を読むわけではない（§1.2）。`t3_max` が None ではない
+    （＝以前のT3行が存在する＝銘柄がある程度以上の履歴を持つ）ケースでは、
+    warmup_bars が SQLite の保持本数を超える列（rs_roc_ema_200等）はNULLにならず
+    「もっともらしいが違う値」になりうる（§1.4: 12列が該当）。
+    「全期間計算そのものの結果は正確です」と断定してよいのは
+    `no_saved_rows`（`t3_max` が None＝新規上場。daily_prices全行がその銘柄の
+    真の全履歴と一致する）のケースだけで、他のフォールバック理由は
+    「遡り不足の可能性がある」という留保つきの文言にする（5-15bで一度この
+    誤りを犯し、5-15cでは判別不能ぶんしか直しておらず、warmup_in_progress等の
+    断定は直っていなかった。§7-6参照）。
     """
     if not fallback_reasons:
         logger.info("Phase 3: 全銘柄が増分経路で計算されました（フォールバックなし）。")
@@ -295,12 +308,21 @@ def _log_fallback_summary(logger: logging.Logger, fallback_reasons: List[str]) -
     # detail（NULL列名などコロン以降の情報）を落として理由カテゴリだけで集計する。
     reason_counts = Counter(r.split(':', 1)[0] for r in fallback_reasons)
     breakdown = ', '.join(f'{reason}={count}' for reason, count in sorted(reason_counts.items()))
+    total = len(fallback_reasons)
     defect_count = reason_counts.get(FALLBACK_REASON_NULL_RECURSIVE_COLUMN, 0)
     undetermined_count = reason_counts.get(FALLBACK_REASON_WARMUP_UNDETERMINED, 0)
+    no_saved_rows_count = reason_counts.get(FALLBACK_REASON_NO_SAVED_ROWS, 0)
+    # no_saved_rows（新規上場。t3_maxが無く daily_prices の全行がそのまま銘柄の
+    # 全履歴）だけが「全期間計算＝全履歴計算」として正確と言い切れる。それ以外
+    # （insufficient_saved_rows/multi_day_gap/warmup_in_progress/warmup_undetermined）は
+    # いずれも state=None の全期間計算がSQLiteの保持本数（実測504本程度）だけを
+    # 対象にしたものであり、warmup_barsがそれを超える列では遡り不足により
+    # 不正確な可能性がある。
+    uncertain_count = total - defect_count - no_saved_rows_count
 
     if defect_count:
         logger.warning(
-            f"Phase 3: 増分計算できず全期間計算にフォールバックした銘柄が {len(fallback_reasons)} 件"
+            f"Phase 3: 増分計算できず全期間計算にフォールバックした銘柄が {total} 件"
             f"（理由内訳: {breakdown}）。うち {defect_count} 件は RECURSIVE型列が"
             "演算上必要な履歴本数（warmup_bars）を超えているのにNULLでした"
             "（増分計算の状態が壊れている可能性があり、当該銘柄について書き込まれた"
@@ -309,19 +331,33 @@ def _log_fallback_summary(logger: logging.Logger, fallback_reasons: List[str]) -
         )
     elif undetermined_count:
         logger.info(
-            f"Phase 3: 増分計算できず全期間計算にフォールバックした銘柄が {len(fallback_reasons)} 件"
+            f"Phase 3: 増分計算できず全期間計算にフォールバックした銘柄が {total} 件"
             f"（理由内訳: {breakdown}）。うち {undetermined_count} 件は演算上必要な"
             "履歴本数（warmup_bars）が増分ウィンドウ長を超える列（例: rs_roc_ema_200）が"
             "ウィンドウ全体でNULLでした。正当なウォームアップ中か欠陥かはこの検査だけでは"
-            "判別できません（`warmup_undetermined`）。残りは新規上場・履歴不足・連休明け・"
-            "正当なウォームアップ中など想定内の理由で、そちらは全期間計算そのものの結果は"
-            "正確です。"
+            "判別できません（`warmup_undetermined`）。それ以外の理由（no_saved_rowsを除く。"
+            f"{no_saved_rows_count} 件）も、SQLiteの保持本数だけを使った全期間計算のため、"
+            "遡り不足により書き込まれた値が不正確な可能性があります。"
+        )
+    elif uncertain_count:
+        logger.info(
+            f"Phase 3: 増分計算できず全期間計算にフォールバックした銘柄が {total} 件"
+            f"（理由内訳: {breakdown}）。欠陥（null_recursive_column）はありませんが、"
+            f"うち {uncertain_count} 件（insufficient_saved_rows/multi_day_gap/"
+            "warmup_in_progress）は SQLite が保持する daily_prices 全行"
+            "（実測504本程度）だけを使った全期間計算です。演算上必要な履歴本数が"
+            "その保持本数を超える列（rs_roc_ema_200等）では遡り不足により書き込まれた"
+            "値が不正確な可能性があります。"
+            + (f" 残り {no_saved_rows_count} 件は新規上場（no_saved_rows）で、"
+               "価格履歴自体がSQLiteの保持期間に収まるため正確です。"
+               if no_saved_rows_count else "")
         )
     else:
         logger.info(
-            f"Phase 3: 増分計算できず全期間計算にフォールバックした銘柄が {len(fallback_reasons)} 件"
-            f"（理由内訳: {breakdown}）。いずれも新規上場・履歴不足・連休明け・"
-            "正当なウォームアップ中など想定内の理由で、全期間計算そのものの結果は正確です。"
+            f"Phase 3: 増分計算できず全期間計算にフォールバックした銘柄が {total} 件"
+            f"（理由内訳: {breakdown}）。いずれも新規上場（no_saved_rows）で、"
+            "価格履歴自体がSQLiteの保持期間に収まるため全期間計算がそのまま"
+            "全履歴計算になり正確です。"
         )
 
 def sync_phase_t3_indicators(db, sheet_data: List[Dict], symbol_id_map: Dict, spy_latest_date: Optional[date], skip_fetch: bool, db_path: str, logger: logging.Logger):

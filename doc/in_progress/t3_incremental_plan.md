@@ -448,6 +448,7 @@ daily_prices: 2024-09-18 〜 2026-09-18 / 504 営業日 / 3,360銘柄
       SPY の構造的 NULL 除外を health check と共通化、ATR シードの NaN 挙動、
       `prev_self_seed` の契約。**ただし分類の判定方式に回帰を作り込んだ（5-15c で修正）**
 - [x] **5-15c** `/code-review` 2回目の指摘3件に対応（2026-09-23）— §7-6 参照
+- [x] **5-15d** `/code-review` 3回目の指摘3件に対応（2026-09-23）— §7-7 参照
 - [ ] **5-16** merge →（移行シードとして）T3 フル再計算 → 昇格。
       **フル再計算で状態を seed してからでないと増分経路は発動しない**（検収で実証済み。
       §7「5-6b」参照）。現行の本番 SQLite は `rs_roc_ema_200` 等12列が既に不正確な値
@@ -1046,6 +1047,136 @@ RECURSIVE 列のみに変更。読み出しは **14.7秒 → 10.3秒**（67列�
 
 **対策**: 「検出されるはずのものを注入して、実際に検出されること」を確認してから
 0件を報告する。5-15c では本番と同じ壊れ方を注入して発火を実証した。
+
+### 7-7. `/code-review` 3回目の指摘3件に対応（2026-09-23・5-15d）
+
+オーケストレーターが本番データのコピーで実走させたところ、指摘の前提だった
+「本番DBでは全銘柄が `warmup_undetermined` になり、アラート経路が一切ない」は
+**否定された**（個別60銘柄で `null_recursive_column` 60件・`warmup_undetermined` 0件。
+本番の `rs_roc_ema_200` は窓内で一部NULL・一部有値のため単調性の破れとして
+欠陥判定に落ちる）。この点は修正不要と判断し、残る3件のみ対応した。
+
+#### 指摘1（最重要）: `--check-warmup-nulls` が `rs_roc_ema_200`/`rs_momentum_e200` に対して到達不能
+
+`tools/db_health_check.py` の比較対象が `t3_count`（ホットキャッシュ行数。
+本番実測で最大503）だったため、`warmup_bars` が503を超える列
+（`rs_roc_ema_200`=511・`rs_momentum_e200`=610）には条件が永久に成立せず、
+**本不具合の当事者そのものの列に対して検査が到達不能**だった。
+
+**対処**: 比較対象を「銘柄の真の履歴本数」に変更した。取得元は Parquet マスタの
+`prices`（`symbol_id` 列だけを読む。列指向フォーマットのため全履歴でも軽量）。
+`_load_parquet_history_counts()` を新設し、`latest_master.json` が無い・対象銘柄が
+Parquetに無い場合は `t3_count` へフォールバックする（保守的になるだけで検査は
+落ちない）。`check_symbol_health()` に `parquet_dir` 引数を追加し、モジュール変数
+`PARQUET_DIR`（`paths.get_parquet_master_dir()` で初期化。`DB_PATH` と同じパターン）
+をデフォルトに使う。`--db-path` 指定時は既存の `parquet_dir_override`
+（DBと同じディレクトリの `parquet_master`）をそのまま流用する。
+
+**判別不能の扱い**: `db_health_check.py` の本検査は `columns_with_undeterminable_warmup()`
+（`t3_indicators.py` 側の分類器が使うもの）を使っていない。真の履歴本数が既知になった
+ことで「`true_history_count > warmup_bars` かどうか」が常に一意に決まるため、
+この検査には元々「判別不能」という状態は存在しない（履歴長が不明な
+ホットキャッシュ視点でしか発生しない概念）。
+
+**検証（2026-09-23・本番データを読み取り専用で使用）**: `--db-path` で本番の
+`stocktool.db`（Parquetは同ディレクトリの `parquet_master`。6,856,815行）を指定して
+`--all --check-warmup-nulls` を実行した。
+
+```
+rs_roc_ema_200 検出: 3,066銘柄 / rs_momentum_e200 検出: 3,032銘柄
+（要対応 3,071銘柄 / 全3,337銘柄中）
+検出銘柄群での T3(ホットキャッシュ)行数の最大値: 503
+```
+
+`t3_count` の最大値が503（`rs_roc_ema_200` の `warmup_bars`=511 未満）であることを
+確認済みなので、**旧実装（t3_count比較）ではこの3,066/3,032銘柄は検出できなかった
+はず**（到達不能の再現）。修正後は実際に検出されることを確認した。「検出ゼロでは
+ないので正常」ではなく、**旧ロジックでの到達不能を数値で確認した上で**の報告
+（§7-6 で繰り返した同型の見落としを避けるため）。
+
+テスト: `backend/tests/tools/test_db_health_check.py` に3件追加
+（`test_warmup_null_unreachable_with_hot_cache_count_alone` で旧来の
+t3_countフォールバック挙動を固定、`test_warmup_null_reachable_via_parquet_true_history`
+で「t3_countだけでは届かないがParquetの真の履歴を使えば届く」ことを固定、
+`test_warmup_null_falls_back_to_t3_count_when_parquet_symbol_missing` でParquetに
+対象銘柄が無い場合のフォールバックを固定）。既存の `warmup_health_db` フィクスチャは
+`hc.PARQUET_DIR` を存在しないパスに設定し、本番/sandboxの巨大Parquetを誤って
+読みに行かないようにした（既存6テストは無変更で全てフォールバック経路として通る）。
+
+#### 指摘2: 非欠陥ブランチのINFOが「全期間計算の結果は正確です」と断定している
+
+`_log_fallback_summary`（`t3_indicators.py`）の非欠陥・非判別不能ブランチが
+`no_saved_rows`/`insufficient_saved_rows`/`multi_day_gap`/`warmup_in_progress` を
+一括で「全期間計算そのものの結果は正確です」と言い切っていたが、`state=None` は
+**SQLiteが保持する `daily_prices` 全行（実測504本程度）** を対象にした計算であり、
+`no_saved_rows`（新規上場。`t3_max` が無く daily_prices の全行が銘柄の全履歴と
+一致する）以外は「銘柄の真の全履歴」を読んでいる保証が無い。
+
+**重大度の判断（実装前にオーケストレーターへ報告した案を採用）**:
+`warmup_in_progress` は seed 済み実測で32.7%発生する正常運用のパターンのため
+WARNING に昇格すると常時鳴ってノイズになる。`warmup_undetermined` も現状
+`rs_roc_ema_200` 1列のみが該当する同種の状態。**両者とも重大度はINFOのまま
+据え置き、文言だけを「遡り不足の可能性がある」と留保する形に変更した**
+（欠陥＝`null_recursive_column` のみ引き続きWARNING）。
+
+**対処**: `no_saved_rows_count` を独立に集計し、`uncertain_count = total -
+defect_count - no_saved_rows_count` を導入。分岐を4つに整理:
+1. `defect_count > 0` → WARNING（文言は変更なし）
+2. `undetermined_count > 0`（欠陥なし）→ INFO。判別不能ぶんの名指しに加え、
+   `no_saved_rows` を除く残りも遡り不足の可能性がある旨を明記
+3. `uncertain_count > 0`（欠陥・判別不能なし）→ INFO。
+   `insufficient_saved_rows`/`multi_day_gap`/`warmup_in_progress` は
+   SQLite保持本数だけの全期間計算であり不正確な可能性がある旨を明記。
+   `no_saved_rows` が混ざる場合はその分だけ正確である旨を併記
+4. 全件が `no_saved_rows` → 唯一「正確です」と言い切れるケース
+
+テスト: `test_欠陥理由が無ければWARNINGではなくINFOになる` を「`不正確` という
+文言が無いこと」から「`不正確` という文言があること（no_saved_rows以外を含む
+場合）」へ反転（5-15bの誤りの再発そのものだったため）。新規に
+`test_全件がno_saved_rowsなら正確と言い切ってよい` を追加し、「正確」と
+言い切ってよい唯一のケースを固定した。
+
+#### 指摘3: `prev_self_seed` が None を返しても安全なフォールバックにならない
+
+`prev_self_seed` は「非増分モード」と「増分モードだがシード取得失敗」の両方で
+None を返すが、呼び出し側の個別カーネル（`calculate_ema_tv`/`_atr_wilder_kernel`/
+`_td9_kernel`/`_rs_dot_age_kernel`）はこの区別をせず、増分モードでも
+`prev_x is None` のまま「df全体（＝増分呼び出しではK+1本の窓）」から SMA 等で
+再シードしていた。これは NULL にはならず、**K+1本（例: 401本）の窓の中で
+再シードした「それらしいが実質的に誤った値」**（例: `ema_200`）が
+`finalize_incremental_column` によって最終行に永続化される契約だった。
+現状は `_calculate_t3_worker` の `notna()` ゲートがこの状況の発生自体を防いで
+いるが、この増分設計をT5へ流用する予定（`doc/issue_list.md`）のため、
+呼び出し側のガード頼みではなく契約自体を閉じた。
+
+**対処**: `incremental_merge.py` に `compute_recursive_series(df, col,
+incremental, compute_fn)` を新設。「増分モードでシード取得に失敗したら
+`compute_fn` を一切呼ばずNaNにする」というガードを1箇所に集約し、
+`moving_averages.py`（`ema_*`）・`volatility.py`（`atr_14`/`td9`）・
+`relative_strength.py`（`rs_value_e5`/`rs_value_eN`/`rs_roc_ema_N`/
+`rs_macd_signal_21`）の全RECURSIVE型EMA系呼び出しをこの関数経由に置き換えた
+（`state=None` の場合は `prev_self_seed` が常にNoneを返す契約のため
+`compute_fn(None)` がそのまま呼ばれ、挙動は一切変えていない）。
+
+`compute_rs_dot_age`（`rs_blue_dot_age`/`rs_red_dot_age`）は単一のシードではなく
+ペア（blue/red）を取るため `compute_recursive_series` をそのまま適用できず、
+呼び出し側（`calc_relative_strength`）で個別にガードを追加した:
+増分モードで片方だけシードが取得できない場合（`compute_rs_dot_age` 内部の
+`use_state = prev_blue_age is not None and prev_red_age is not None` が
+False に落ちて同型の危険な経路に入るケース）、`compute_rs_dot_age` を呼ばず
+番兵（`RS_DOT_AGE_NONE`）にフォールバックする。
+
+テスト: 既存の等価性テスト（`test_calculate_incremental_equivalence.py`。
+67列すべて厳密一致・5-4d/5-4e回帰テスト含む）が無改修で通ることを確認
+（シード取得が成功する既存の全シナリオでは挙動が変わっていないことの証拠。
+`_calculate_t3_worker` の `notna()` ゲートにより、シード取得失敗が実際の
+増分呼び出しの中で発生する経路は現状存在しないため、この状況固有の
+新規テストは追加していない——追加するにはガード自体を経由しない
+呼び出し（T5的な直接呼び出し）を模擬する必要があり、本タスクのスコープ外）。
+
+**テスト結果**: `PYTHONIOENCODING=utf-8` で `pytest backend/tests/ -q` を実行し、
+**1912 passed, 1 skipped**（5-15c時点の1908 + 本対応で追加した新規4件
+＝db_health_check 3件・t3_indicators 1件）。回帰なし。
 
 ## 8. スコープ外・残作業（issue_list へ起票する）
 

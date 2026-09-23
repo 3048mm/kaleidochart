@@ -625,7 +625,12 @@ class TestLogFallbackSummary:
     def test_欠陥理由が無ければWARNINGではなくINFOになる(self, caplog):
         """5-15b（code-review指摘2・軽微2件目）: 新規上場・履歴不足・ウォームアップ中
         など想定内の理由だけなら、WARNINGではなくINFOに留める（一律WARNINGだと
-        ノイズになりWARNINGが読まれなくなる）。"""
+        ノイズになりWARNINGが読まれなくなる）。
+
+        5-15d（2回目のcode-review指摘2）: `warmup_in_progress`等（no_saved_rowsを
+        除く）は「SQLiteの保持本数だけを使った全期間計算」であり遡り不足の可能性が
+        あるため、5-15c時点まで残っていた「不正確という文言を禁止する」という
+        アサーションを反転した（5-15bの誤りの再発そのものだった。§7-6参照）。"""
         logger = logging.getLogger('test_t3_fallback_summary_benign_only')
         reasons = [
             FALLBACK_REASON_NO_SAVED_ROWS,
@@ -640,9 +645,36 @@ class TestLogFallbackSummary:
         assert not warnings, f'想定内の理由のみなのにWARNINGが出た: {[r.message for r in warnings]}'
         infos = [r for r in caplog.records if r.levelno == logging.INFO]
         assert len(infos) == 1
-        assert '4 件' in infos[0].message
-        assert f'{FALLBACK_REASON_WARMUP_IN_PROGRESS}=1' in infos[0].message
-        assert '不正確' not in infos[0].message, '正常系のログに「不正確」という文言は不適切'
+        msg = infos[0].message
+        assert '4 件' in msg
+        assert f'{FALLBACK_REASON_WARMUP_IN_PROGRESS}=1' in msg
+        # warmup_in_progress/multi_day_gap/insufficient_saved_rows はSQLiteの保持本数
+        # だけを使った全期間計算であり、正確とは言い切れない（5-15d）。
+        assert '不正確' in msg, (
+            'no_saved_rows以外を含むフォールバックで「不正確」の留保が無い'
+            f'（5-15bの誤りの再発の可能性）: {msg}'
+        )
+        # no_saved_rows（新規上場。1件）については正確と明示する区別は維持する。
+        assert 'no_saved_rows' in msg
+
+    def test_全件がno_saved_rowsなら正確と言い切ってよい(self, caplog):
+        """5-15d: `no_saved_rows`（新規上場。t3_maxが無く daily_prices の全行が
+        そのまま銘柄の全履歴）だけで構成されるフォールバックは、全期間計算が
+        そのまま全履歴計算になるため「正確です」と言い切ってよい唯一のケース。"""
+        logger = logging.getLogger('test_t3_fallback_summary_no_saved_rows_only')
+        reasons = [FALLBACK_REASON_NO_SAVED_ROWS, FALLBACK_REASON_NO_SAVED_ROWS]
+
+        with caplog.at_level(logging.INFO, logger=logger.name):
+            _log_fallback_summary(logger, reasons)
+
+        warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert not warnings
+        infos = [r for r in caplog.records if r.levelno == logging.INFO]
+        assert len(infos) == 1
+        msg = infos[0].message
+        assert '2 件' in msg
+        assert '不正確' not in msg, f'no_saved_rowsのみなのに不正確の留保が出た: {msg}'
+        assert '正確' in msg
 
     def test_判別不能理由があればWARNINGにはならないが正確性を主張しない(self, caplog):
         """5-15c（2回目のcode-review指摘1）: `warmup_undetermined` は欠陥と確定した

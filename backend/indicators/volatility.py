@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from numba import njit
 
-from .incremental_merge import finalize_incremental_column, prev_self_seed
+from .incremental_merge import compute_recursive_series
 
 @njit
 def _td9_kernel(close_values, compare_values, seed_value, start_idx):
@@ -88,13 +88,16 @@ def calc_volatility(df: pd.DataFrame, state: bool = None) -> pd.DataFrame:
     try:
         true_range = _true_range(high, low, close)
         tr_values = true_range.to_numpy(dtype=float)
-        prev_atr = prev_self_seed(df, 'atr_14', incremental)
-        if prev_atr is not None:
-            # 増分計算: 供給された前日行（末尾から2番目）をシードに、
-            # 最終行だけを1歩計算する。
-            seed_idx = len(tr_values) - 2
-            atr_values = _atr_wilder_kernel(tr_values, window, seed_idx, float(prev_atr))
-        else:
+
+        def _compute_atr(prev_atr):
+            if prev_atr is not None:
+                # 増分計算: 供給された前日行（末尾から2番目）をシードに、
+                # 最終行だけを1歩計算する。
+                seed_idx = len(tr_values) - 2
+                return pd.Series(
+                    _atr_wilder_kernel(tr_values, window, seed_idx, float(prev_atr)),
+                    index=df.index,
+                )
             # 全期間計算: window 本に満たない場合は ta の元実装（IndexError→例外捕捉で
             # NaN フォールバック）と同じ挙動にするため、ここで意図的に例外を送出する。
             if len(tr_values) < window:
@@ -108,9 +111,16 @@ def calc_volatility(df: pd.DataFrame, state: bool = None) -> pd.DataFrame:
             # 列全体 NaN になってしまう。現在の daily_prices に NULL OHLC は無いため
             # 顕在化していないが、契約として `ta` と同じ挙動に揃える。
             seed_value = float(pd.Series(tr_values[:window]).mean())
-            atr_values = _atr_wilder_kernel(tr_values, window, window - 1, seed_value)
-        atr_values = pd.Series(atr_values, index=df.index)
-        df['atr_14'] = finalize_incremental_column(df, 'atr_14', atr_values, incremental)
+            return pd.Series(
+                _atr_wilder_kernel(tr_values, window, window - 1, seed_value),
+                index=df.index,
+            )
+
+        # シード取得〜マージは compute_recursive_series に集約（5-15d・
+        # code-review指摘3）。増分モードでシードが取得できない場合は
+        # `_compute_atr` を呼ばずNaNになり、「df全体（K+1本の窓）から
+        # 再シード」という危険な経路には入らない。
+        df['atr_14'] = compute_recursive_series(df, 'atr_14', incremental, _compute_atr)
         df['atr_pct_14'] = np.where(close == 0, 0, (df['atr_14'] / close) * 100)
     except Exception:
         df['atr_14'] = np.nan
@@ -140,13 +150,16 @@ def calc_volatility(df: pd.DataFrame, state: bool = None) -> pd.DataFrame:
     # 6. TD Sequential (TD9)
     close_vals = close.values.astype(float)
     compare_vals = close.shift(4).values.astype(float)
-    prev_td9 = prev_self_seed(df, 'td9', incremental)
-    if prev_td9 is not None:
-        # 増分計算: 供給された前日行（末尾から2番目）をシードに、最終行だけを1歩計算する。
-        td9_vals = _td9_kernel(close_vals, compare_vals, float(prev_td9), len(close_vals) - 2)
-    else:
-        td9_vals = _td9_kernel(close_vals, compare_vals, 0.0, 0)
-    df['td9'] = finalize_incremental_column(df, 'td9', pd.Series(td9_vals, index=df.index), incremental)
+
+    def _compute_td9(prev_td9):
+        if prev_td9 is not None:
+            # 増分計算: 供給された前日行（末尾から2番目）をシードに、最終行だけを1歩計算する。
+            td9_vals = _td9_kernel(close_vals, compare_vals, float(prev_td9), len(close_vals) - 2)
+        else:
+            td9_vals = _td9_kernel(close_vals, compare_vals, 0.0, 0)
+        return pd.Series(td9_vals, index=df.index)
+
+    df['td9'] = compute_recursive_series(df, 'td9', incremental, _compute_td9)
 
     # 7. Volatility Contraction Ratio (VCR) = Simple ATR(10) / Simple ATR(50)
     tr_vals = pd.concat([

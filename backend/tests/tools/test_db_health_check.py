@@ -15,10 +15,12 @@
   STALE … 完全な履歴があり最新日だけ遅れている → 上流の供給状況
 """
 
+import json
 import os
 import sqlite3
 import sys
 
+import pandas as pd
 import pytest
 
 project_root = os.path.dirname(
@@ -276,6 +278,11 @@ def warmup_health_db(tmp_path, monkeypatch):
     # ema_200 は warmup_bars=2（3行以上あれば最新行は非NULLであるべき）、
     # rs_value_e200 は warmup_bars=0（1行でも非NULLであるべき。SPYのrs_系列は除外）。
     monkeypatch.setattr(hc, "columns_with_warmup_threshold", lambda: {"ema_200": 2, "rs_value_e200": 0})
+    # Parquet（5-15d。真の履歴本数の取得元）は既定では存在しないパスにして、
+    # t3_count へのフォールバック経路をテストする（本番/sandboxの巨大Parquetを
+    # 誤って読みに行かないための安全策も兼ねる）。実際に読ませたいテストだけ、
+    # 個別に `hc.PARQUET_DIR` を上書きする。
+    monkeypatch.setattr(hc, "PARQUET_DIR", str(tmp_path / "no_parquet_here"))
 
     def add(sym_id, ticker, rows):
         """rows: [(date, ema_200, rs_value_e200), ...]（daily_prices にも同数のT2行を入れる）"""
@@ -387,3 +394,107 @@ def test_warmup_null_absent_when_all_present(warmup_health_db):
     assert "CLEAN" not in ng
     assert "[CLEAN] Status:" not in out
     assert "ウォームアップ超過NULL検知" not in out
+
+
+# ============================================================
+# 真の履歴本数（Parquetマスタ）による到達可能性の修正（T3増分化計画 5-15d）
+# ============================================================
+#
+# 旧実装は比較対象に t3_count（ホットキャッシュ行数。実測最大503）を使っていたため、
+# warmup_bars が503を超える列（rs_roc_ema_200=511・rs_momentum_e200=610）には
+# 条件が永久に成立せず、検査そのものが本不具合の当事者に到達できなかった
+# （2回目のcode-review指摘1）。ここでは「t3_countだけでは届かないが、
+# Parquetの真の履歴本数を使えば届く」状況を作って修正を固定する。
+
+def _write_parquet_history(parquet_root, symbol_row_counts: dict) -> str:
+    """`{symbol_id: 行数}` から最小限の `prices` Parquet マスタを組み立てる（5-15d）。
+
+    `_load_parquet_history_counts` は `symbol_id` 列だけを読むため、
+    それ以外の列は用意しない。
+    """
+    parquet_dir = parquet_root / "parquet_master"
+    parquet_dir.mkdir()
+    rows = []
+    for sid, n in symbol_row_counts.items():
+        rows.extend({"symbol_id": sid} for _ in range(n))
+    df = pd.DataFrame(rows)
+    prices_file = parquet_dir / "prices_test.parquet"
+    df.to_parquet(prices_file)
+    (parquet_dir / "latest_master.json").write_text(
+        json.dumps({"prices": "prices_test.parquet"}), encoding="utf-8",
+    )
+    return str(parquet_dir)
+
+
+def test_warmup_null_unreachable_with_hot_cache_count_alone(warmup_health_db, monkeypatch):
+    """修正前の回帰確認: t3_count（3）が warmup_bars（15）に届かないと検出されない
+    （＝Parquetが無ければ旧来どおりの到達不能が残ることの固定。フォールバックの妥当性）。"""
+    add, _ = warmup_health_db
+    add(1, "SPY", _SPY_ROWS_WARMUP)
+    add(2, "SHORT_HOT_CACHE", [
+        ("2026-07-29", 50.0, 1.0),
+        ("2026-07-30", 51.0, 1.0),
+        ("2026-07-31", None, 1.0),  # ema_200 が最新行でNULL
+    ])
+    monkeypatch.setattr(hc, "columns_with_warmup_threshold", lambda: {"ema_200": 15, "rs_value_e200": 0})
+    # PARQUET_DIR は warmup_health_db フィクスチャで存在しないパスに設定済み
+    # （＝t3_countへフォールバック）。
+
+    ng, out = _status_warmup("SHORT_HOT_CACHE", check_warmup_nulls=True)
+
+    assert "SHORT_HOT_CACHE" not in ng, (
+        "t3_count(3) <= warmup_bars(15) のため、Parquetが無い場合は検出されないのが正しい"
+        "（ウォームアップ中の可能性を否定できない）"
+    )
+    assert "ウォームアップ超過NULL検知" not in out
+
+
+def test_warmup_null_reachable_via_parquet_true_history(warmup_health_db, tmp_path, monkeypatch):
+    """5-15d本体（2回目のcode-review指摘1）: t3_count（3）だけでは warmup_bars（15）に
+    届かない銘柄でも、Parquetの真の履歴本数（20）を使えば検出できる。
+
+    これが本番の rs_roc_ema_200（t3_count最大503 <= warmup_bars511）/
+    rs_momentum_e200（同610）が旧実装では検出不能だった構造そのもの。
+    """
+    add, _ = warmup_health_db
+    add(1, "SPY", _SPY_ROWS_WARMUP)
+    add(2, "LONG_TRUE_HISTORY", [
+        ("2026-07-29", 50.0, 1.0),
+        ("2026-07-30", 51.0, 1.0),
+        ("2026-07-31", None, 1.0),  # ema_200 が最新行でNULL（欠陥）
+    ])
+    monkeypatch.setattr(hc, "columns_with_warmup_threshold", lambda: {"ema_200": 15, "rs_value_e200": 0})
+    parquet_dir = _write_parquet_history(tmp_path, {2: 20})  # symbol_id=2 の真の履歴は20本
+    monkeypatch.setattr(hc, "PARQUET_DIR", parquet_dir)
+
+    ng, out = _status_warmup("LONG_TRUE_HISTORY", check_warmup_nulls=True)
+
+    assert "LONG_TRUE_HISTORY" in ng, (
+        "真の履歴本数(20) > warmup_bars(15) なのに最新行がNULLなので検出されるべき"
+    )
+    assert "[LONG_TRUE_HISTORY] Status: NG" in out
+    assert "ウォームアップ超過NULL検知" in out
+    assert "ema_200" in out
+
+
+def test_warmup_null_falls_back_to_t3_count_when_parquet_symbol_missing(
+    warmup_health_db, tmp_path, monkeypatch
+):
+    """Parquetは読めるが対象銘柄がそこに無い場合は t3_count にフォールバックする
+    （新規上場でまだ夜間ローテーションを経ていない銘柄を想定）。"""
+    add, _ = warmup_health_db
+    add(1, "SPY", _SPY_ROWS_WARMUP)
+    add(2, "NOT_IN_PARQUET", [
+        ("2026-07-29", 50.0, 1.0),
+        ("2026-07-30", 51.0, 1.0),
+        ("2026-07-31", None, 1.0),
+    ])
+    monkeypatch.setattr(hc, "columns_with_warmup_threshold", lambda: {"ema_200": 2, "rs_value_e200": 0})
+    # Parquet自体は存在するが、symbol_id=2 の行は無い（他銘柄のみ）。
+    parquet_dir = _write_parquet_history(tmp_path, {999: 20})
+    monkeypatch.setattr(hc, "PARQUET_DIR", parquet_dir)
+
+    ng, out = _status_warmup("NOT_IN_PARQUET", check_warmup_nulls=True)
+
+    assert "NOT_IN_PARQUET" in ng, "t3_count(3) > warmup_bars(2) なのでフォールバックでも検出されるべき"
+    assert "ウォームアップ超過NULL検知" in out

@@ -66,7 +66,44 @@ object dtype のまま `np.where` の分岐（例: `volatility.py` の `sma50_at
 
 `normalize_supplied_dtypes` は、増分呼び出しの入口で供給された T3 列（数値列）を
 float64 に強制変換し、この問題を解消する。
+
+## 5-15d で見つかった問題（`prev_self_seed` が None を返したときの安全性）
+
+`prev_self_seed` が None を返すのは「非増分モード（`incremental=False`）」と
+「増分モードだが前日シードが取得できない（列が無い／行数不足／NaN）」の2通りだが、
+呼び出し側の個別カーネル（`calculate_ema_tv`・`_atr_wilder_kernel`・`_td9_kernel`・
+`_rs_dot_age_kernel`）はこの区別をせず、増分モードでも `prev_x is None` のまま
+「**df 全体（＝増分呼び出しでは K+1 本の窓）**」から SMA 等で再シードしてしまう
+契約になっていた。これは §1.2/§1.4 の「遡り不足の計算」を増分呼び出し1回のなかで
+再現する——NULL にはならず、K+1 本（例: 401本）の窓の中で再シードした
+「それらしいが実質的に誤った値」（例: `ema_200`）が `finalize_incremental_column`
+によって最終行にそのまま永続化されてしまう。
+
+現状はこの状況自体が `_calculate_t3_worker`（`pipeline/phases/t3_indicators.py`）の
+`notna()` ゲート（供給履歴K行のいずれかにNaNがあれば増分呼び出し自体を行わず
+`state=None` に全体フォールバックする）によって未然に防がれているため、実害は
+出ていない。しかし `doc/issue_list.md` に起票済みのとおり、この増分設計をT5へ
+流用する予定があり、将来の呼び出し元がこのガードを持つとは限らない。
+「呼び出し側のガード頼み」ではなく**契約自体を安全側に閉じる**ため、
+`compute_recursive_series` を追加した。
+
+### `compute_recursive_series` の設計
+
+RECURSIVE型列の共通パターン（シード取得 → 計算 → マージ）を1箇所に集約し、
+「増分モードでシード取得に失敗したら、計算自体を行わずNaNにする」という
+ガードを常に適用する:
+
+- 非増分モード（`incremental=False`）: `prev_self_seed` は常に None を返す契約
+  なので、`compute_fn(None)` がそのまま呼ばれ、`state=None` の挙動は一切変わらない
+  （5-4 の絶対条件を維持）。
+- 増分モードでシード取得成功: `compute_fn(prev_seed)` が実際のシード値で呼ばれ、
+  最終行だけの1歩計算になる（5-4bの設計どおり、挙動は変わらない）。
+- **増分モードでシード取得失敗**: `compute_fn` を一切呼ばず、NaN を最終計算結果と
+  みなす。`finalize_incremental_column` によって最終行だけがNaNになり
+  （供給済みの過去行はそのまま維持される）、「それらしいが誤った値」より
+  安全な「NULL」を書く。
 """
+import numpy as np
 import pandas as pd
 
 from .incremental_state_registry import INDICATOR_COLUMN_REGISTRY
@@ -137,3 +174,47 @@ def prev_self_seed(df: pd.DataFrame, col: str, incremental: bool):
     if pd.isna(seed):
         return None
     return seed
+
+
+def compute_recursive_series(df: pd.DataFrame, col: str, incremental: bool, compute_fn) -> pd.Series:
+    """RECURSIVE型列の共通ガード付き計算パターン（シード取得 → 計算 → マージ）を
+    1箇所に閉じる（5-15d・2回目のcode-review指摘3）。
+
+    `prev_self_seed(df, col, incremental)` で前日シードを取得し、
+    `compute_fn(prev_seed)` に渡す。**増分モードでシードが取得できない場合は
+    `compute_fn` を一切呼ばず、NaN で埋めた Series を計算結果として扱う**——
+    そうしないと、呼び出し元のカーネル（`calculate_ema_tv` 等）が
+    「df 全体（＝増分呼び出しでは K+1 本の窓）」から SMA 等で再シードしてしまい、
+    §1.2/§1.4 の「遡り不足の計算」を増分呼び出し1回のなかで再現する
+    （NULLにはならず「それらしいが実質的に誤った値」が最終行に永続化される）。
+    詳細な経緯はモジュール docstring 参照。
+
+    - **非増分モード**（`incremental=False`）: `prev_self_seed` は常に None を
+      返す契約なので `compute_fn(None)` がそのまま呼ばれる（`state=None` の
+      挙動は一切変えない。5-4の絶対条件）。
+    - **増分モードでシード取得成功**: `compute_fn(prev_seed)` が実際のシード値で
+      呼ばれる（5-4bの挙動と同じ）。
+    - **増分モードでシード取得失敗**（列が無い／行数不足／NaN）:
+      `compute_fn` を呼ばず、NaN の Series を使う。
+      `finalize_incremental_column` により最終行だけがNaNになり、供給済みの
+      過去行はそのまま維持される。
+
+    現状は `_calculate_t3_worker` の `notna()` ゲートがこの状況の発生自体を
+    未然に防いでいるため、既存の日次パイプラインの出力（`state=None` の挙動・
+    シード取得成功時の増分1歩の値）は一切変わらない。将来 T5 等でこのガードを
+    経由しない呼び出しが増えたときの安全網として機能する。
+
+    Args:
+        df: 供給済み履歴を含む DataFrame（`prev_self_seed`/`finalize_incremental_column`
+            と同じもの）。
+        col: 対象列名。
+        incremental: 増分モードかどうか。
+        compute_fn: `prev_seed`（float または None）を受け取り、`df` と同じ
+            index を持つ計算結果 Series を返す callable。
+    """
+    prev_seed = prev_self_seed(df, col, incremental)
+    if incremental and prev_seed is None:
+        computed = pd.Series(np.nan, index=df.index)
+    else:
+        computed = compute_fn(prev_seed)
+    return finalize_incremental_column(df, col, computed, incremental)

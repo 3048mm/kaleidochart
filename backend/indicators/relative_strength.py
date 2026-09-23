@@ -4,7 +4,7 @@ from numba import njit
 
 # We can import calculate_ema_tv from the newly created moving_averages
 from .moving_averages import calculate_ema_tv
-from .incremental_merge import finalize_incremental_column, prev_self_seed
+from .incremental_merge import compute_recursive_series, finalize_incremental_column, prev_self_seed
 
 # ============================================================
 # 数値的に頑健な rolling std（rs_ratio_eN / rs_momentum_eN 用）
@@ -213,9 +213,13 @@ def calc_relative_strength(df: pd.DataFrame, df_spy: pd.DataFrame = None, state:
     rs = df['rs_value']
 
     # rs_value_e5 (Smoothing for rs_trend) — RECURSIVE
-    prev_rs_value_e5 = prev_self_seed(df, 'rs_value_e5', incremental)
-    rs_ema_5 = calculate_ema_tv(rs, 5, prev_ema=prev_rs_value_e5)
-    rs_ema_5 = finalize_incremental_column(df, 'rs_value_e5', rs_ema_5, incremental)
+    # シード取得〜マージは compute_recursive_series に集約（5-15d・
+    # code-review指摘3）。増分モードでシードが取得できない場合はNaNになり、
+    # 「df全体（K+1本の窓）から再シード」という危険な経路には入らない。
+    rs_ema_5 = compute_recursive_series(
+        df, 'rs_value_e5', incremental,
+        lambda prev: calculate_ema_tv(rs, 5, prev_ema=prev),
+    )
     df['rs_value_e5'] = rs_ema_5
 
     # rs_trend_sN = rs_value_e5 / SMA(rs_value, N) — WINDOW（マージ済みrs_ema_5と生rsのみに依存）
@@ -231,9 +235,10 @@ def calc_relative_strength(df: pd.DataFrame, df_spy: pd.DataFrame = None, state:
         if n == 5:
             rs_ema = rs_ema_5
         else:
-            prev_rs_value_en = prev_self_seed(df, f'rs_value_e{n}', incremental)
-            rs_ema = calculate_ema_tv(rs, n, prev_ema=prev_rs_value_en)
-            rs_ema = finalize_incremental_column(df, f'rs_value_e{n}', rs_ema, incremental)
+            rs_ema = compute_recursive_series(
+                df, f'rs_value_e{n}', incremental,
+                lambda prev, n=n: calculate_ema_tv(rs, n, prev_ema=prev),
+            )
             df[f'rs_value_e{n}'] = rs_ema
 
         # 2. rs_ratio_eN (Z-score of rs_value_eN over n days) — WINDOW
@@ -251,9 +256,10 @@ def calc_relative_strength(df: pd.DataFrame, df_spy: pd.DataFrame = None, state:
         roc = (ratio_offset / ratio_offset.shift(14)) * 100.0
 
         # Smooth the ROC recursively — RECURSIVE
-        prev_roc_ema = prev_self_seed(df, f'rs_roc_ema_{n}', incremental)
-        roc_ema = calculate_ema_tv(roc, n, prev_ema=prev_roc_ema)
-        roc_ema = finalize_incremental_column(df, f'rs_roc_ema_{n}', roc_ema, incremental)
+        roc_ema = compute_recursive_series(
+            df, f'rs_roc_ema_{n}', incremental,
+            lambda prev, n=n, roc=roc: calculate_ema_tv(roc, n, prev_ema=prev),
+        )
         df[f'rs_roc_ema_{n}'] = roc_ema
 
         # Standardize the smoothed ROC — WINDOW（マージ済みroc_emaに依存）
@@ -284,11 +290,22 @@ def calc_relative_strength(df: pd.DataFrame, df_spy: pd.DataFrame = None, state:
     # RECURSIVE
     prev_blue_age = prev_self_seed(df, 'rs_blue_dot_age', incremental)
     prev_red_age = prev_self_seed(df, 'rs_red_dot_age', incremental)
-    blue_age, red_age = compute_rs_dot_age(
-        blue_lit, red_lit,
-        prev_blue_age=prev_blue_age,
-        prev_red_age=prev_red_age,
-    )
+    # `compute_rs_dot_age` は2つのシードが「両方とも取得できたときだけ」増分経路
+    # （use_state=True）に入る（`prev_blue_age is not None and prev_red_age is not None`）。
+    # 増分モードで片方だけシードが取得できない場合、そのまま呼ぶと use_state=False の
+    # 経路（df全体をwarmupガード付きで歩き直す）に落ちてしまう。df は増分呼び出しでは
+    # K+1本の窓でしかないため、「それらしいが誤った経過日数」が計算されてしまう
+    # （§1.2/§1.4と同型の危険。5-15d・2回目のcode-review指摘3）。
+    # 安全側で番兵（RS_DOT_AGE_NONE=未点灯）にフォールバックする。
+    if incremental and (prev_blue_age is None or prev_red_age is None):
+        blue_age = np.full(len(df), RS_DOT_AGE_NONE, dtype=np.int32)
+        red_age = np.full(len(df), RS_DOT_AGE_NONE, dtype=np.int32)
+    else:
+        blue_age, red_age = compute_rs_dot_age(
+            blue_lit, red_lit,
+            prev_blue_age=prev_blue_age,
+            prev_red_age=prev_red_age,
+        )
     df['rs_blue_dot_age'] = finalize_incremental_column(
         df, 'rs_blue_dot_age', pd.Series(blue_age, index=df.index), incremental
     )
@@ -300,9 +317,11 @@ def calc_relative_strength(df: pd.DataFrame, df_spy: pd.DataFrame = None, state:
     # rs_macd_line_21 — WINDOW（マージ済みのrs_value_e5・rs_value_e21のみに依存）
     df['rs_macd_line_21'] = df['rs_value_e5'] - df['rs_value_e21']
     # rs_macd_signal_21 — RECURSIVE
-    prev_macd_signal = prev_self_seed(df, 'rs_macd_signal_21', incremental)
-    macd_signal = calculate_ema_tv(df['rs_macd_line_21'], 5, prev_ema=prev_macd_signal)
-    df['rs_macd_signal_21'] = finalize_incremental_column(df, 'rs_macd_signal_21', macd_signal, incremental)
+    macd_signal = compute_recursive_series(
+        df, 'rs_macd_signal_21', incremental,
+        lambda prev: calculate_ema_tv(df['rs_macd_line_21'], 5, prev_ema=prev),
+    )
+    df['rs_macd_signal_21'] = macd_signal
     # rs_macd_hist_21 — WINDOW
     df['rs_macd_hist_21'] = df['rs_macd_line_21'] - df['rs_macd_signal_21']
 
