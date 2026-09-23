@@ -237,19 +237,12 @@ def build_mts_v3_raw_timeline(
                 df_stk_indicators['date'] = pd.to_datetime(df_stk_indicators['date']).dt.date
                 
                 merged_m = pd.merge(df_stk_prices, df_stk_indicators, on=['date', 'symbol_id'], how='inner')
-                merged_m['is_above_sma50'] = np.where(
-                    merged_m['sma_50'].isna(), np.nan,
-                    merged_m['close'] > merged_m['sma_50']
-                )
                 
-                merged_m = merged_m.sort_values(['symbol_id', 'date'])
-                merged_m['prev_close'] = merged_m.groupby('symbol_id')['close'].shift(1)
-                merged_m['is_up'] = merged_m['close'] > merged_m['prev_close']
-                
-                daily_metrics_df = merged_m.groupby('date').agg(
-                    breadth_sma50=('is_above_sma50', lambda x: x.mean() if not x.isna().all() else 0.5),
-                    momentum_ratio=('is_up', lambda x: x.mean() if not x.isna().all() else 0.5)
-                ).reset_index()
+                # T5 と同じ集計関数を使う（5-21）。全銘柄の sma_50 が NaN の日の
+                # breadth_sma50 は 0.5 ではなく NaN になり、MarketTrendScorer 側で
+                # 3成分スコアに落ちる。
+                from backend.indicators.market_signals import compute_breadth_momentum
+                daily_metrics_df = compute_breadth_momentum(merged_m)
                 
                 daily_metrics = {row['date']: row.to_dict() for _, row in daily_metrics_df.iterrows()}
                 print(f"  Successfully loaded metrics for {len(daily_metrics)} dates.", flush=True)

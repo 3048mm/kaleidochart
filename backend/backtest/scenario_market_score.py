@@ -171,8 +171,10 @@ class MarketTrendScorer:
         metrics = self.daily_metrics.get(target_date, {})
         breadth_val = metrics.get('breadth_sma50')
         
-        date_str = str(target_date)
-        has_breadth = (breadth_val is not None) and (date_str >= '2018-04-01')
+        # breadth が算出できているか（NaN=判定不能でないか）だけで判定する。
+        # T5（indicators/market_signals.py の has_breadth）と同じ基準で、
+        # 日付ハードコード（2018-04-01）は撤去済み（5-21）。
+        has_breadth = (breadth_val is not None) and not pd.isna(breadth_val)
         if has_breadth:
             breadth_score = (breadth_val - 0.20) / (0.75 - 0.20)
             breadth_score = max(0.0, min(1.0, breadth_score))

@@ -75,3 +75,40 @@ def test_write_path_does_not_raise_when_signals_contain_none(db_session, monkeyp
     assert signal.spy_above_sma200 is None
     assert signal.distribution_days is None
     assert signal.market_phase is None
+
+
+def test_all_nan_breadth_day_is_written_as_null_not_neutral_value(db_session, monkeypatch):
+    """全銘柄の sma_50 が NaN の日は breadth_sma50 が NULL（None）で保存され、
+    0.5 のような偽の中立値や NaN のまま入らないこと（5-21・§2.3）。"""
+    monkeypatch.setattr(t5_signals, "SPY_LOOKBACK_MIN_BARS", 5)
+    # インメモリ DB では読み取り専用エンジンが別 DB になるため、セッションの bind を使う
+    import db.database as database
+    monkeypatch.setattr(database, "get_read_engine_for", lambda db: db.get_bind())
+
+    spy = db_session.query(Symbol).filter(Symbol.ticker == "SPY").first()
+    stock = Symbol(ticker="AAA", exchange="NASDAQ", category="個別", active=1)
+    db_session.add(stock)
+    db_session.commit()
+
+    dates = [date(2026, 1, 1) + timedelta(days=i) for i in range(10)]
+    for d in dates:
+        for sym in (spy, stock):
+            db_session.add(DailyPrice(
+                symbol_id=sym.id, date=d, open=100.0, high=101.0, low=99.0,
+                close=100.0, volume=1000,
+            ))
+        db_session.add(Indicator(symbol_id=spy.id, date=d, sma_200=90.0, sma_50=95.0, ema_21=98.0))
+        # 個別銘柄は sma_50 が算出できていない（遡り不足）＝全銘柄判定不能
+        db_session.add(Indicator(symbol_id=stock.id, date=d, sma_50=None))
+    for d in dates[:-1]:
+        db_session.add(MarketSignal(
+            date=d, spy_above_sma200=1, distribution_days=0, follow_through_day=0,
+            market_phase="BULL", market_trend_score=50.0,
+        ))
+    db_session.commit()
+
+    t5_signals.sync_phase_t5_signals(db_session, logging.getLogger("test"))
+
+    signal = db_session.query(MarketSignal).filter(MarketSignal.date == dates[-1]).first()
+    assert signal is not None
+    assert signal.breadth_sma50 is None

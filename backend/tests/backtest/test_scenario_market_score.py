@@ -155,5 +155,39 @@ class TestScenarioMarketTrendScorer(unittest.TestCase):
         # Fallback ratio = 1.15 - (15 - 12) * (0.25 / 23) = 1.15 - 0.0326 = 1.11739
         self.assertAlmostEqual(ratio, 1.11739, places=4)
 
+    # ------------------------------------------------------------------
+    # 5-21: has_breadth を日付ゲートではなく breadth の有無（NaN 判定）で決める
+    # ------------------------------------------------------------------
+    def _three_comp_expected(self):
+        """breadth を使わない3成分スコア（setUp のデータ）。
+        A=0.666667, C1=0.333333, C2=0.20 → (A+C1+C2)/3*100 = 40.0"""
+        return (0.666667 + 0.333333 + 0.20) / 3.0 * 100.0
+
+    def test_nan_breadth_uses_three_components(self):
+        """breadth_sma50 が NaN（判定不能）の日は3成分スコア（breadth を混ぜない）。"""
+        target_date = pd.Timestamp('2026-05-17').date()
+        scorer = MarketTrendScorer(
+            self.prices_df, self.symbols_df,
+            daily_metrics={target_date: {'breadth_sma50': float('nan')}},
+            use_vxv_vix=True, scaling_ratio=None
+        )
+        score, _ = scorer.evaluate_market_phase(target_date)
+        self.assertAlmostEqual(score, self._three_comp_expected(), places=3)
+
+    def test_valid_breadth_before_2018_04_is_used_no_date_gate(self):
+        """T5 と揃えて日付ゲート（2018-04-01）を撤去した。breadth が算出できていれば
+        2018-04 より前の日付でも4成分スコアを使う。"""
+        target_date = pd.Timestamp('2017-06-01').date()
+        prices = self.prices_df.copy()
+        prices['date'] = target_date
+        scorer = MarketTrendScorer(
+            prices, self.symbols_df,
+            daily_metrics={target_date: {'breadth_sma50': 0.60}},
+            use_vxv_vix=True, scaling_ratio=None
+        )
+        score, _ = scorer.evaluate_market_phase(target_date)
+        self.assertAlmostEqual(score, 48.1818, places=3)
+
+
 if __name__ == '__main__':
     unittest.main()

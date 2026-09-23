@@ -10,14 +10,18 @@ from indicators.market_signals import compute_breadth_momentum, SPY_LOOKBACK_MIN
 
 def _find_insufficient_lookback_dates(gap_dates: list, spy_df: pd.DataFrame) -> list:
     """`gap_dates` のうち、その日までの SPY 遡りが `SPY_LOOKBACK_MIN_BARS` に
-    満たないものを検出する（§7-8(1)・5-7d）。
+    満たないものを検出する。**エラーログ用途のみ**（§7-8(1)・5-7d・5-8d）。
 
-    書き込み対象からは**外さない**——遡り不足の日付も他の gap 日付と同様に
-    行として書き込む（5-9 により該当列は None/NaN になるので偽の値は入らない）。
-    ここで検出した日付は `logger.error` の警告と、収束判定（§7-9・5-7e。
-    呼び出し側 `sync_phase_t5_signals()` が既存行の有無で gap から外すかどうかを
-    判断する）に使う。この関数自体は「遡り不足かどうか」の検出だけを行い、
-    収束のための除外判断は持たない。
+    この関数の返す日付リストは書き込みの可否を決めない。遡り不足の日付も
+    他の gap 日付と同様に行として書き込まれる（5-9 により該当列は None/NaN に
+    なるので偽の値は入らない）。呼び出し側 `sync_phase_t5_signals()` は
+    このリストを `logger.error` の警告にだけ使う。
+
+    gap の判定自体は「行の有無」（`t5_written_dates` — MarketSignal に行がある日は
+    処理済み）で行う。market_trend_score が NULL でも行があれば処理済みなので、
+    遡り不足の日付を書いた後は次回以降 gap にならず、再書き込みは発生しない
+    （この関数側で収束のための除外判断は行わない）。
+
     `spy_df` は日付昇順（呼び出し側で `order_by(DailyPrice.date)` 済み）なので、
     日付ごとにフルスキャンせず `np.searchsorted` で本数を数える。
 
@@ -41,11 +45,11 @@ def sync_phase_t5_signals(db, logger: logging.Logger):
     vxv_sym_id = db.query(Symbol.id).filter(Symbol.ticker == "^VIX3M").scalar()
 
     t3_dates = {r[0] for r in db.query(Indicator.date).distinct().filter(Indicator.symbol_id == spy_sym_id).all()}
-    # gap判定を「行の有無」に統一する（§3.6・5-8d）。T3（max(date) per symbol）・
+    # gap判定は「行の有無」で行う（§3.6・5-8d）。T3（max(date) per symbol）・
     # T4（max(date)）と同じ慣習。market_trend_scoreがNULLでも行が存在すれば
     # 「処理済み」とみなす（NULLは判定不能という正当な結果であり、未処理の印ではない）。
-    # これにより旧版の「遡り不足かつ既に行がある日付を除外する」アドホックな
-    # 収束処理（5-7e）が不要になった——行の有無ベースの判定自体が収束を担保する。
+    # 行の有無ベースの判定自体が収束を担保するため、遡り不足の日付を gap から
+    # 除外するような特別扱いは行わない。
     t5_written_dates = {r[0] for r in db.query(MarketSignal.date).all()}
     gap_dates = sorted(list(t3_dates - t5_written_dates))
 
@@ -59,7 +63,7 @@ def sync_phase_t5_signals(db, logger: logging.Logger):
         return
     spy_df['date'] = pd.to_datetime(spy_df['date'])
 
-    # 遡り不足ガード（§7-8(1)・5-7d）: gap_dates は除外しない。
+    # 遡り不足の検出（§7-8(1)・5-7d）: エラーログ用途のみ。gap_dates は除外しない。
     # 遡りが足りない日付も他の gap 日付と同様に「行として」書き込み、
     # 遡り本数に応じて一部の列（spy_above_sma200 / distribution_days /
     # spy_sma200_rising / market_phase / market_trend_score のいずれか）が
@@ -141,7 +145,10 @@ def sync_phase_t5_signals(db, logger: logging.Logger):
         for _, r in metrics_df.iterrows():
             d = r['date']
             d_key = d.date() if hasattr(d, 'date') else d
-            breadth_by_date[d_key] = float(r['breadth_sma50'])
+            # 全銘柄判定不能の日は NaN（compute_breadth_momentum が 0.5 に捏造しない）。
+            # NaN を float のまま保存すると NULL 化がドライバ任せになるため、
+            # 明示的に None（NULL）へ変換する。
+            breadth_by_date[d_key] = float(r['breadth_sma50']) if pd.notna(r['breadth_sma50']) else None
 
     t5_recs = []
     for _, row in ms_df.iterrows():

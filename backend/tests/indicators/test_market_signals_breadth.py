@@ -46,11 +46,15 @@ def _reference_metrics(raw_df: pd.DataFrame) -> pd.DataFrame:
         raw_df['sma_50'].isna(), np.nan,
         raw_df['close'] > raw_df['sma_50']
     )
+    # 5-21: 全銘柄が判定不能の日の breadth_sma50 は 0.5 ではなく NaN のまま残す
+    # （§2.3: 判定できなければ NaN。旧版はここを 0.5 に捏造し、参照実装も同じ挙動を
+    # 固定していたため新仕様（NaN）に書き換えた）。fillna(0.5) は momentum_ratio のみ。
     metrics_df = raw_df.groupby('date').agg(
-        breadth_sma50=('is_above_sma50', lambda x: x.mean(skipna=True) if not x.isna().all() else 0.5),
+        breadth_sma50=('is_above_sma50', lambda x: x.mean(skipna=True) if not x.isna().all() else np.nan),
         momentum_ratio=('is_up', lambda x: x.mean(skipna=True) if not x.isna().all() else 0.5)
     ).reset_index()
-    return metrics_df.fillna(0.5)
+    metrics_df['momentum_ratio'] = metrics_df['momentum_ratio'].fillna(0.5)
+    return metrics_df
 
 
 def _sorted_raw_df():
@@ -170,3 +174,89 @@ class TestNaNSma50ExcludedFromBreadthDenominator:
         pd.testing.assert_frame_equal(
             got.reset_index(drop=True), want.reset_index(drop=True)
         )
+
+
+class TestAllNanSma50DayYieldsNanBreadth:
+    """全銘柄の sma_50 が NaN の日は breadth_sma50 が NaN のまま流れること（5-21・R2）。
+
+    旧実装はこの日の breadth を 0.5（偽の中立値）にして返したため、
+    `has_breadth = breadth_sma50.notna()` が True になり、2017年Q1 のような
+    「全銘柄の sma_50 が算出できない期間」で偽 breadth を含む4成分 MTS が作られた。
+    """
+
+    @staticmethod
+    def _two_day_raw_df():
+        """DATES[0] は全銘柄 sma_50=NaN、DATES[1] は全銘柄 sma_50 が算出済み。"""
+        return pd.DataFrame({
+            'symbol_id': [1, 1, 2, 2],
+            'date': [DATES[0], DATES[1], DATES[0], DATES[1]],
+            'close': [10.0, 11.0, 5.0, 4.0],
+            'sma_50': [np.nan, 10.0, np.nan, 6.0],
+        })
+
+    def test_breadth_is_nan_when_all_sma50_nan(self):
+        got = compute_breadth_momentum(self._two_day_raw_df())
+        day0 = got.loc[got['date'] == DATES[0]].iloc[0]
+        day1 = got.loc[got['date'] == DATES[1]].iloc[0]
+        assert pd.isna(day0['breadth_sma50'])
+        # 判定できる日は従来どおり（銘柄1のみ上回り 1/2）
+        assert abs(day1['breadth_sma50'] - 0.5) < 1e-9
+
+    def test_object_dtype_all_null_sma50_does_not_raise(self):
+        """SQLite の pd.read_sql は全行 NULL の列を object 型（None）で返す。
+        その入力でも例外にならず、breadth が NaN になること。"""
+        raw_df = pd.DataFrame({
+            'symbol_id': [1, 1],
+            'date': [DATES[0], DATES[1]],
+            'close': [10.0, 11.0],
+            'sma_50': pd.Series([None, None], dtype=object),
+        })
+        got = compute_breadth_momentum(raw_df)
+        assert got['breadth_sma50'].isna().all()
+
+    def test_momentum_ratio_is_not_nan(self):
+        """momentum_ratio は bool 由来で NaN にならない。fillna(0.5) は momentum 側にのみ効く。"""
+        got = compute_breadth_momentum(self._two_day_raw_df())
+        assert got['momentum_ratio'].notna().all()
+
+    def test_mts_uses_three_components_on_all_nan_day(self):
+        """`calculate_market_signals` で has_breadth=False（NaN）→ 3成分スコアになる。"""
+        from indicators.market_signals import calculate_market_signals, SPY_LOOKBACK_MIN_BARS
+
+        n = SPY_LOOKBACK_MIN_BARS + 30
+        start = pd.Timestamp('2020-01-01')
+        spy_dates = [start + pd.Timedelta(days=i) for i in range(n)]
+        closes = [100.0 + i * 0.1 for i in range(n)]
+        spy_df = pd.DataFrame({
+            'date': spy_dates,
+            'close': closes,
+            'high': [c + 0.5 for c in closes],
+            'low': [c - 0.5 for c in closes],
+            'volume': [1_000_000 + (i % 3) * 1000 for i in range(n)],
+        })
+        df_vix = pd.DataFrame({'date': spy_dates, 'close': 15.0})
+        df_vxv = pd.DataFrame({'date': spy_dates, 'close': 16.5})
+
+        d_nan, d_ok = spy_dates[-2], spy_dates[-1]
+        raw_df = pd.DataFrame({
+            'symbol_id': [1, 1, 2, 2],
+            'date': [d_nan, d_ok, d_nan, d_ok],
+            'close': [10.0, 11.0, 5.0, 6.5],
+            'sma_50': [np.nan, 10.0, np.nan, 6.0],
+        })
+        metrics_df = compute_breadth_momentum(raw_df)
+
+        res = calculate_market_signals(spy_df, df_vix, df_vxv, metrics_df)
+        res_none = calculate_market_signals(spy_df, df_vix, df_vxv, None)
+
+        row_nan = res[res['date'] == d_nan].iloc[0]
+        row_ok = res[res['date'] == d_ok].iloc[0]
+        none_nan = res_none[res_none['date'] == d_nan].iloc[0]
+
+        # calculate_market_signals は breadth_sma50 列を返さないため、入力側で NaN を確認する
+        assert pd.isna(metrics_df.loc[metrics_df['date'] == d_nan, 'breadth_sma50'].iloc[0])
+        # breadth が判定不能の日は 3成分スコア（breadth 無しの計算と一致）
+        assert abs(row_nan['market_trend_score'] - none_nan['market_trend_score']) < 1e-9
+        # breadth が算出できる日は 4成分（3成分と一致しない）
+        none_ok = res_none[res_none['date'] == d_ok].iloc[0]
+        assert not np.isclose(row_ok['market_trend_score'], none_ok['market_trend_score'])

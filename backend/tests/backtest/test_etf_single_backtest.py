@@ -481,3 +481,67 @@ class TestEtfSingleReporter:
         assert "yearly_returns" in vxv_strat
         assert "regime_changes" in vxv_strat
         assert "time_in_market_pct" in vxv_strat
+
+
+# ============================================================
+# 5-21: 全銘柄の sma_50 が NaN の日の breadth は 0.5 に捏造しない
+# ============================================================
+
+class TestBuildMtsTimelineBreadthNan:
+    """`build_mts_v3_raw_timeline` の Parquet 集計が、全銘柄 sma_50=NaN の日の
+    breadth_sma50 を NaN のまま MarketTrendScorer に渡すこと（旧: 0.5 を捏造）。"""
+
+    def test_all_nan_sma50_day_passes_nan_breadth_to_scorer(self, monkeypatch):
+        import pandas as pd
+        import numpy as np
+        import backend.backtest.scenario_market_score as sms
+        import backend.pipeline.parquet_cache_manager as pcm
+        import backend.db.database as dbmod
+        from backend.backtest.etf_single_runner import build_mts_v3_raw_timeline
+
+        d0, d1 = datetime.date(2017, 1, 3), datetime.date(2017, 1, 4)
+
+        monkeypatch.setattr(dbmod, "get_active_db_path", lambda: "dummy.db")
+        monkeypatch.setattr(pcm, "get_parquet_master_dir", lambda p: "dummy_dir")
+        monkeypatch.setattr(pcm, "get_pointer_file_path", lambda d: "dummy_ptr")
+        monkeypatch.setattr(
+            pcm, "get_latest_master_files",
+            lambda ptr: {"prices": "prices.parquet", "indicators": "ind.parquet"},
+        )
+
+        prices = pd.DataFrame({
+            "date": [d0, d1, d0, d1],
+            "symbol_id": [1, 1, 2, 2],
+            "close": [10.0, 11.0, 5.0, 4.0],
+        })
+        # d0 は全銘柄 sma_50=NaN（判定不能）、d1 は算出済み
+        inds = pd.DataFrame({
+            "date": [d0, d1, d0, d1],
+            "symbol_id": [1, 1, 2, 2],
+            "sma_50": [np.nan, 10.0, np.nan, 6.0],
+        })
+        monkeypatch.setattr(
+            pd, "read_parquet",
+            lambda path, **kw: (prices if path == "prices.parquet" else inds).copy(),
+        )
+
+        captured = {}
+
+        class _StubScorer:
+            def __init__(self, *args, daily_metrics=None, **kwargs):
+                captured["daily_metrics"] = daily_metrics
+
+            def evaluate_market_phase(self, d):
+                return 50.0, None
+
+        monkeypatch.setattr(sms, "MarketTrendScorer", _StubScorer)
+
+        symbols_df = pd.DataFrame([
+            {"id": 1, "ticker": "AAA", "category": "個別", "active": 1},
+            {"id": 2, "ticker": "BBB", "category": "個別", "active": 1},
+        ])
+        build_mts_v3_raw_timeline([d0, d1], pd.DataFrame(), symbols_df)
+
+        metrics = captured["daily_metrics"]
+        assert pd.isna(metrics[d0]["breadth_sma50"])          # 0.5 ではなく NaN
+        assert metrics[d1]["breadth_sma50"] == 0.5             # 算出できる日は 1/2

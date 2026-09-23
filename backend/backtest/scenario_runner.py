@@ -152,6 +152,17 @@ def report_strategy_scan_coverage(strategies, target_prefix: str = SCENARIO_TARG
     return scanned
 
 
+def _breadth_metrics_by_date(merged_metrics: pd.DataFrame) -> Dict[Any, Dict[str, Any]]:
+    """`date`/`symbol_id`/`close`/`sma_50` から日付別の breadth/momentum を辞書で返す。
+
+    集計は T5 と同じ `compute_breadth_momentum` を使う（式の複製をやめた）。
+    全銘柄の sma_50 が NaN の日の `breadth_sma50` は NaN のまま（0.5 にしない）。
+    """
+    from backend.indicators.market_signals import compute_breadth_momentum
+    metrics_df = compute_breadth_momentum(merged_metrics)
+    return {row['date']: row.to_dict() for _, row in metrics_df.iterrows()}
+
+
 def load_scenario_config(config_path: str = "data/screener_presets.toml") -> Dict[str, Any]:
     import tomli
     
@@ -316,19 +327,10 @@ def run_scenario_test(
         i_sub = df_indicators[df_indicators['symbol_id'].isin(active_stocks_set)][['date', 'symbol_id', 'sma_50']].copy()
         
         merged_metrics = pd.merge(p_sub, i_sub, on=['date', 'symbol_id'], how='inner')
-        merged_metrics['is_above_sma50'] = np.where(
-            merged_metrics['sma_50'].isna(), np.nan,
-            merged_metrics['close'] > merged_metrics['sma_50']
-        )
-        merged_metrics = merged_metrics.sort_values(['symbol_id', 'date'])
-        merged_metrics['prev_close'] = merged_metrics.groupby('symbol_id')['close'].shift(1)
-        merged_metrics['is_up'] = merged_metrics['close'] > merged_metrics['prev_close']
-        
-        fallback_df = merged_metrics.groupby('date').agg(
-            breadth_sma50=('is_above_sma50', lambda x: x.mean() if not x.isna().all() else 0.5),
-            momentum_ratio=('is_up', lambda x: x.mean() if not x.isna().all() else 0.5)
-        ).reset_index()
-        fallback_metrics = {row['date']: row.to_dict() for _, row in fallback_df.iterrows()}
+        # T5 と同じ集計関数を使う（5-21）。全銘柄の sma_50 が NaN の日の
+        # breadth_sma50 は 0.5 ではなく NaN になり、MarketTrendScorer 側で
+        # 3成分スコアに落ちる。
+        fallback_metrics = _breadth_metrics_by_date(merged_metrics)
     
     # Merge: market_signals takes priority, fallback fills gaps
     daily_metrics = {}

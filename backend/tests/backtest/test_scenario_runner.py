@@ -217,3 +217,27 @@ def test_scenario_runner_excludes_illiquid_symbols(mock_preload, mock_session, t
         held_tickers.update(t for t in row.get('held_tickers', '').split(',') if t)
     assert 'AAPL' in held_tickers
     assert 'MICRO' not in held_tickers
+
+
+# =============================================================
+# 5-21: 全銘柄の sma_50 が NaN の日の breadth は 0.5 に捏造しない
+# =============================================================
+
+def test_breadth_metrics_by_date_all_nan_sma50_day_is_nan_not_neutral():
+    import datetime
+    import numpy as np
+    from backend.backtest.scenario_runner import _breadth_metrics_by_date
+
+    d0, d1 = datetime.date(2017, 1, 3), datetime.date(2017, 1, 4)
+    merged = pd.DataFrame({
+        'date': [d0, d1, d0, d1],
+        'symbol_id': [1, 1, 2, 2],
+        'close': [10.0, 11.0, 5.0, 4.0],
+        # d0 は全銘柄 sma_50=NaN（判定不能）、d1 は算出済み
+        'sma_50': [np.nan, 10.0, np.nan, 6.0],
+    })
+    metrics = _breadth_metrics_by_date(merged)
+
+    assert pd.isna(metrics[d0]['breadth_sma50'])   # 旧: 0.5 を捏造していた
+    assert metrics[d1]['breadth_sma50'] == 0.5
+    assert not pd.isna(metrics[d0]['momentum_ratio'])

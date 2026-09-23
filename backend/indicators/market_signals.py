@@ -110,10 +110,16 @@ def compute_breadth_momentum(raw_df: pd.DataFrame) -> pd.DataFrame:
     Parquet 経路（`recompute_parquet_signals.py`）の両方から同じ関数を呼ぶこと
     （二重実装にしない）。
 
-    元は `t5_signals.py` にインラインで書かれていたロジックをそのまま移したもの
-    （2026-09-11 切り出し）。**NaN の扱いは「改善」していない**——
-    `x.mean(skipna=True) if not x.isna().all() else 0.5` の分岐、
-    最終的な `fillna(0.5)` は、切り出し前と1ビットも変えない。
+    元は `t5_signals.py` にインラインで書かれていたロジックを移したもの
+    （2026-09-11 切り出し）。
+
+    NaN の扱い（5-21・§2.3: 判定できなければ NaN。代用値を発明しない）:
+    - `breadth_sma50`: その日の全銘柄で `sma_50` が NaN（＝判定できる銘柄が0）なら
+      **NaN のまま返す**（0.5 に捏造しない）。捏造すると呼び出し側の
+      `has_breadth = breadth_sma50.notna()` が True になり、全銘柄の sma_50 が
+      算出できない期間（2017年Q1 など）に偽の中立 breadth を含む4成分 MTS が作られる。
+    - `momentum_ratio`: `is_up` は bool 由来で NaN にならない（全 NaN の分岐は
+      防御的な 0.5）。最終的な `fillna(0.5)` はこの列にだけ効かせる。
 
     Args:
         raw_df: `symbol_id` / `date` / `close` / `sma_50` 列を持つ DataFrame。
@@ -131,16 +137,21 @@ def compute_breadth_momentum(raw_df: pd.DataFrame) -> pd.DataFrame:
     raw_df['prev_close'] = raw_df.groupby('symbol_id')['close'].shift(1)
     raw_df['is_up'] = raw_df['close'] > raw_df['prev_close']
 
+    # SQLite 経路（pd.read_sql）では sma_50 が全行 NULL のとき列が object 型（None）
+    # になり、下の `close > sma_50` が TypeError になる。数値化して NaN に揃える
+    # （全銘柄 NaN の日＝判定不能の日を正しく NaN として流すための前提）。
+    raw_df['sma_50'] = pd.to_numeric(raw_df['sma_50'], errors='coerce')
     raw_df['is_above_sma50'] = np.where(
         raw_df['sma_50'].isna(), np.nan,
         raw_df['close'] > raw_df['sma_50']
     )
 
     metrics_df = raw_df.groupby('date').agg(
-        breadth_sma50=('is_above_sma50', lambda x: x.mean(skipna=True) if not x.isna().all() else 0.5),
+        breadth_sma50=('is_above_sma50', lambda x: x.mean(skipna=True) if not x.isna().all() else np.nan),
         momentum_ratio=('is_up', lambda x: x.mean(skipna=True) if not x.isna().all() else 0.5)
     ).reset_index()
-    metrics_df = metrics_df.fillna(0.5)
+    # fillna(0.5) は momentum_ratio のみ（breadth_sma50 の NaN は判定不能として残す）
+    metrics_df['momentum_ratio'] = metrics_df['momentum_ratio'].fillna(0.5)
     return metrics_df
 
 
@@ -271,8 +282,10 @@ def calculate_market_signals(
 
     # has_breadth: breadth_sma50 が実際に算出できているか（NaN=判定不能でないか）で
     # 判定する。従来は date >= '2018-04-01' という日付ハードコードだったが、
-    # breadth_sma50 が正しくNaNのまま表現できるようになった（fillna(0.5)撤去）ため、
-    # NULL判定に置換する（§3.7 ④）。
+    # NULL判定に置換した（§3.7 ④・5-8b）。この判定が成立するには、上流の
+    # compute_breadth_momentum が全銘柄判定不能の日に 0.5 ではなく NaN を返す必要が
+    # ある（5-21で `else 0.5` / breadth への fillna(0.5) を撤去済み）。
+    # df_metrics 側に日付が無い日も merge 後 NaN になり、同様に3成分スコアになる。
     has_breadth = df['breadth_sma50'].notna()
 
     # 7. Calculate individual component scores (0.0 to 1.0)
