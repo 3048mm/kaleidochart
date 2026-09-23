@@ -206,3 +206,91 @@ class TestSufficientLookbackMatchesPreviousBehaviour:
         res = calculate_market_signals(spy_df)
         tail_score = res["market_trend_score"].iloc[SPY_LOOKBACK_MIN_BARS:]
         assert np.isfinite(tail_score.astype(float)).all()
+
+
+class TestAtr14DoesNotFakeInsufficientLookback:
+    """`atr_14`/`atr_pct_14` が「それらしい値」（1.0 や 0）に潰れず、
+    遡り不足（窓14本未満）・high/low欠損・実際のATR=0では NaN になること
+    （5-8b ①・§3.7）。
+
+    現状の実装は `.ffill().fillna(1.0)`（L293）と `np.where(atr_14 > 0, atr_14, 1.0)`
+    （L299）で判定不能や実際のゼロ値を「ATR=1ドル」という捏造値に潰し、さらに
+    `dist_50sma`/`dist_200sma` 側も `atr_pct_14 == 0` を `0`（距離ゼロ）に潰している。
+    このクラスのテストは red のまま修正実装を待つ（プロダクションコードは
+    本テストでは変更しない）。
+
+    注記: `atr_14`/`atr_pct_14` は `calculate_market_signals()` の戻り値の列に
+    含まれない内部変数のため、窓未充足のケース（14本未満）は
+    `calculate_market_signals()` を呼び出す形では検証できない
+    （sma_50 の窓＝50本が ATR の窓＝14本より広く、ATR単体の遡り不足だけを
+    公開APIの出力から分離して観測できないため）。そのケースのみ、
+    現行実装の計算式をそのまま複製したホワイトボックステストにしている。
+    """
+
+    def test_atr_14_is_nan_when_window_insufficient(self):
+        """14本未満の窓では atr_14 が NaN になるべき（1.0 という部分窓由来の
+        値に潰れない）。
+
+        `calculate_market_signals()` の戻り値に atr_14 は含まれないため、
+        `market_signals.py` の現行実装（L283-293）の計算式をそのまま複製して
+        検証する。現行実装は `rolling(14, min_periods=1)` のため 14 本未満でも
+        部分窓の平均を「それらしい値」として返してしまう（NaN にならない）。
+        """
+        spy_df = _spy_df(n=13)
+        close = spy_df['close']
+        high = spy_df['high']
+        low = spy_df['low']
+        close_prev = close.shift(1)
+        tr = pd.concat([
+            high - low,
+            (high - close_prev).abs(),
+            (low - close_prev).abs()
+        ], axis=1).max(axis=1)
+        # market_signals.py L293 の現行実装をそのまま複製（min_periods=1）。
+        atr_14_current_impl = tr.rolling(14, min_periods=1).mean().ffill().fillna(1.0)
+
+        # 修正後に期待する挙動: 14本未満の窓は NaN であるべき。
+        assert atr_14_current_impl.isna().all()
+
+    def test_market_trend_score_is_nan_for_real_zero_true_range(self):
+        """OHLC が完全に横ばい（high == low == close で変動なし）で
+        真の ATR が 0 になるケースでも、`market_trend_score` が 0 除算回避の
+        ために捏造された 1.0 由来の有限値に潰れず、NaN になること
+        （§3.7 の②「ゼロ除算回避」ガード撤去の効果を公開APIから確認する）。
+        """
+        n = SPY_LOOKBACK_MIN_BARS + 30
+        start = date(2010, 4, 1)
+        dates = [start + timedelta(days=i) for i in range(n)]
+        closes = [100.0] * n  # 完全に横ばい（真の true range は常に0）
+        spy_df = pd.DataFrame({
+            "date": pd.to_datetime(dates),
+            "close": closes,
+            "high": closes,
+            "low": closes,
+            "volume": [1_000_000] * n,
+        })
+        res = calculate_market_signals(spy_df)
+
+        # sma_50/sma_200 は横ばいデータでも close と一致するため充足する。
+        # 旧実装は atr_14=0 を 1.0 に強制置換するため、score が有限値になってしまう。
+        # 新実装では atr_pct_14 == 0 が NaN 扱いとなり、score も NaN になるべき。
+        tail_score = res["market_trend_score"].iloc[SPY_LOOKBACK_MIN_BARS:]
+        assert tail_score.isna().all()
+
+    def test_market_trend_score_is_nan_when_high_low_columns_missing(self):
+        """high/low 列が無い場合、`atr_14` は NaN になり `market_trend_score` も
+        NaN になるべき（1.0 という捏造値で有限のスコアが出ない）。"""
+        n = SPY_LOOKBACK_MIN_BARS + 30
+        spy_df = _spy_df(n=n).drop(columns=["high", "low"])
+        assert "high" not in spy_df.columns
+        assert "low" not in spy_df.columns
+
+        res = calculate_market_signals(spy_df)
+        assert len(res) == n
+
+        # sma_50/sma_200 は充足しているため、旧実装なら atr_14=1.0 の捏造値で
+        # score が有限値（かつ 0 でもない）になってしまう。
+        # 新実装では atr_pct_14 が NaN になり、market_trend_score も NaN になるべき。
+        tail_score = res["market_trend_score"].iloc[SPY_LOOKBACK_MIN_BARS:]
+        assert tail_score.isna().all()
+        assert not (tail_score == 0).any()
