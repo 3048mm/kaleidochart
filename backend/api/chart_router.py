@@ -146,11 +146,11 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db), full_range
             
             # 動的インジケーター計算
             for p in [5, 21, 50, 63, 150, 200]:
-                df[f"sma_{p}"] = df["close"].rolling(window=p, min_periods=1).mean()
-                df[f"ema_{p}"] = df["close"].ewm(span=p, adjust=False, min_periods=1).mean()
-                
+                df[f"sma_{p}"] = df["close"].rolling(window=p, min_periods=p).mean()
+                df[f"ema_{p}"] = df["close"].ewm(span=p, adjust=False, min_periods=p).mean()
+
             # ボリンジャーバンド
-            std_21 = df["close"].rolling(window=21, min_periods=1).std()
+            std_21 = df["close"].rolling(window=21, min_periods=21).std()
             df["bb_upper"] = df["sma_21"] + 2 * std_21
             df["bb_lower"] = df["sma_21"] - 2 * std_21
             
@@ -279,8 +279,8 @@ def get_chart_data(symbol_id: int, db: Session = Depends(get_api_db), full_range
                     low = df_p['low']
 
                     for p_val in [5, 21, 50, 63, 150, 200]:
-                        df_p[f"calc_sma_{p_val}"] = close.rolling(window=p_val, min_periods=1).mean()
-                        df_p[f"calc_ema_{p_val}"] = close.ewm(span=p_val, adjust=False, min_periods=1).mean()
+                        df_p[f"calc_sma_{p_val}"] = close.rolling(window=p_val, min_periods=p_val).mean()
+                        df_p[f"calc_ema_{p_val}"] = close.ewm(span=p_val, adjust=False, min_periods=p_val).mean()
 
                     df_p["calc_change_1d_pct"] = close.pct_change(1) * 100.0
                     df_p["calc_change_1w_pct"] = close.pct_change(5) * 100.0

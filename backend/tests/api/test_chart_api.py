@@ -3,7 +3,7 @@ import pytest
 from datetime import date, timedelta
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from db.models import Base, Symbol, DailyPrice, Indicator
+from db.models import Base, Symbol, DailyPrice, Indicator, MarketSignal
 from api.routers import get_chart_data
 from fastapi import HTTPException
 
@@ -361,3 +361,50 @@ def test_zone_break_response_shape(db_session):
     for box in resp["fvg_boxes"]:
         assert {"kind", "left_date", "right_date", "top", "bottom",
                 "invalidated", "is_current"} <= set(box)
+
+
+# ============================================================
+# GET /chart/99998 (Market Trend Score) — min_periods=window 化（5-9）
+# ============================================================
+
+_MTS_DAY_COUNT = 25
+
+
+def _seed_market_signals(session, n=_MTS_DAY_COUNT):
+    """MarketSignal を n 日分投入する（market_trend_score は単調増加）。"""
+    base_date = date(2026, 4, 1)
+    for i in range(n):
+        session.add(MarketSignal(
+            date=base_date + timedelta(days=i),
+            market_trend_score=50.0 + i,
+        ))
+    session.commit()
+    return session
+
+
+@pytest.fixture
+def seed_market_signal_data(db_session):
+    return _seed_market_signals(db_session)
+
+
+def test_chart_mts_sma21_is_null_before_warmup(seed_market_signal_data):
+    """sma_21 は遡り21本に満たない先頭20件（0-indexed 0..19）で None であること。
+
+    `min_periods=1` の旧実装は「ある分だけの平均」を返し、窓に満たない期間にも
+    それらしい値を出してしまっていた（min_periods_warmup_plan.md §3.4）。
+    """
+    resp = get_chart_data(symbol_id=99998, db=seed_market_signal_data)
+    data = json.loads(resp.body)["data"]
+
+    assert len(data) == _MTS_DAY_COUNT
+    for i in range(20):
+        assert data[i]["sma_21"] is None, f"position {i} の sma_21 が窓未満なのに値を持っている"
+
+
+def test_chart_mts_sma21_is_filled_from_warmup_boundary(seed_market_signal_data):
+    """21本目（0-indexed position 20）から sma_21 が非NULLになること。"""
+    resp = get_chart_data(symbol_id=99998, db=seed_market_signal_data)
+    data = json.loads(resp.body)["data"]
+
+    assert data[20]["sma_21"] is not None
+    assert data[-1]["sma_21"] is not None
