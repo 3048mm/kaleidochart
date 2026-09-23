@@ -187,6 +187,95 @@ def test_dashboard_market_phase_none_does_not_500(tmp_path):
     assert r.json()["market_phase"] == "UNKNOWN"
 
 
+def _seed_with_missing_rank_sector(session, market_phase: str | None = "BULL"):
+    """セクタの1銘柄だけ RelativeRank 行を持たない（T4 判定不能）シナリオを投入する。"""
+    symbols = [
+        Symbol(id=1, ticker="SPY", exchange="NYSEARCA", name="SPDR S&P500", category="指標", active=1),
+        Symbol(id=2, ticker="^VIX", exchange="INDEX", name="VIX", category="指標", active=1),
+        Symbol(id=3, ticker="^VIX3M", exchange="INDEX", name="VIX3M", category="指標", active=1),
+        Symbol(id=4, ticker="^GSPC", exchange="INDEX", name="S&P500", category="市場", active=1),
+        Symbol(id=10, ticker="SEC0", exchange="NYSEARCA", name="Sector 0", category="セクタ", active=1),
+        Symbol(id=11, ticker="SECNORANK", exchange="NYSEARCA", name="Sector NoRank", category="セクタ", active=1),
+    ]
+    session.add_all(symbols)
+    session.flush()
+
+    no_rank_id = 11
+    for s in symbols:
+        for j, d in enumerate(DATES):
+            px = 100.0 + s.id * 0.1 + j
+            session.add(DailyPrice(symbol_id=s.id, date=d,
+                                   open=px, high=px + 1, low=px - 1, close=px, volume=1000))
+            if s.id == no_rank_id:
+                continue  # このセクタだけ RelativeRank 行を持たない（判定不能＝NULL相当）
+            session.add(RelativeRank(symbol_id=s.id, date=d, group_name=s.category,
+                                     rs_ratio_rank_e14=0.4, rs_ratio_rank_e21=0.5,
+                                     rs_ratio_rank_e63=0.6,
+                                     rs_trend_rank_s14=0.4, rs_trend_rank_s21=0.5,
+                                     rs_trend_rank_s63=0.6))
+        session.add(Indicator(symbol_id=s.id, date=TARGET_DATE, ema_21=100.0))
+
+    session.add(MarketSignal(date=TARGET_DATE, market_phase=market_phase,
+                             distribution_days=1, market_trend_score=75.0,
+                             vxv_vix_ratio=1.2, is_distribution_day=0, follow_through_day=0))
+    session.commit()
+
+
+def test_dashboard_sector_without_rank_returns_null_not_zero(tmp_path):
+    """RelativeRank 行が存在しない（判定不能）銘柄は 0.0 ではなく null で返ること（5-8c/5-9b）。
+
+    T4 が判定不能を NULL として返すようになった（5-8c）のに、panel_builders /
+    dashboard_router の `... or 0.0` がそれを「最下位」という偽の値に潰している
+    回帰テスト。あわせて、None を含むリストでもソートが例外を出さず、
+    判定不能アイテムが末尾（reverse=True の降順で最下位）に来ることも検証する。
+    """
+    db_file = tmp_path / "dash_missing_rank.db"
+    engine = create_engine(f"sqlite:///{db_file}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine)
+    TestSession = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+    session = TestSession()
+    try:
+        _seed_with_missing_rank_sector(session)
+    finally:
+        session.close()
+
+    from api.dashboard_router import router
+    from api.deps import get_api_db
+
+    app = FastAPI()
+    app.include_router(router, prefix="/api")
+
+    def override_db():
+        db = TestSession()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_api_db] = override_db
+    client = TestClient(app)
+
+    r = client.get("/api/dashboard")
+    assert r.status_code == 200, "None を含むリストのソートで例外を出してはならない"
+    data = r.json()
+
+    sectors_by_ticker = {s["ticker"]: s for s in data["sectors"]}
+    assert "SECNORANK" in sectors_by_ticker, "判定不能セクタもレスポンスから欠落してはならない"
+    no_rank = sectors_by_ticker["SECNORANK"]
+    assert no_rank["rs_ratio_rank_e21"] is None, (
+        "RelativeRank 行が無い銘柄は null（判定不能）であるべきだが、"
+        f"実際は {no_rank['rs_ratio_rank_e21']!r}（0.0 への or フォールバックが残っている）"
+    )
+    assert no_rank["rs_trend_rank_s21"] is None
+
+    # None-safe ソート: 判定可能な SEC0（0.5）より判定不能（None）は
+    # reverse=True の降順ソートで末尾に来るべき
+    tickers_order = [s["ticker"] for s in data["sectors"]]
+    assert tickers_order[-1] == "SECNORANK", (
+        f"判定不能セクタが末尾に来るべきだが順序が {tickers_order}"
+    )
+
+
 def test_theme_detail_query_count_does_not_scale_with_constituents(tmp_path):
     """構成銘柄数が 3 件の場合と 30 件の場合で、/theme/{id} のクエリ数が比例して増加してはならない（N+1問題の排除）。"""
     # Theme 0 has ID = 12

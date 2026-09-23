@@ -249,6 +249,43 @@ def test_preload_constituent_details_respects_target_date(db):
     assert pre_t["latest_rank"][5].rs_ratio_rank_e21 == pytest.approx(0.5)
 
 
+def test_build_panel_item_with_none_ranks_returns_none_not_zero(db):
+    """判定不能（None）のランクは 0.0 ではなく None のまま DashboardPanelItem に反映されること（5-9b）。
+
+    T4 の相対ランクが正しく NULL（判定不能）を返すようになった（5-8c）のに、
+    _build_panel_item の `float(rank_val_xx or 0.0)` がそれを「最下位」という
+    偽の値に潰している回帰テスト。
+    """
+    from api.panel_builders import _build_panel_item
+
+    target = str(TARGET_DATE)
+    sym = db.query(Symbol).get(1)
+    dp = db.query(DailyPrice).filter(
+        DailyPrice.symbol_id == 1, DailyPrice.date == target).first()
+
+    item = _build_panel_item(
+        db, sym, dp, None, None, target,
+        rank_val_14=None, rank_val_mom=None, rank_val_mom63=None,
+        rank_val_trend_14=None, rank_val_trend_21=None, rank_val_trend_63=None,
+    )
+
+    assert item.intensity_score is None
+    assert item.rs_ratio_rank_e21 is None
+    assert item.rs_ratio_rank_e63 is None
+    assert item.rs_ratio_rank_e14 is None
+    assert item.rs_momentum_rank_e21 is None
+    assert item.rs_momentum_rank_e63 is None
+    assert item.rs_trend_rank_s14 is None
+    assert item.rs_trend_rank_s21 is None
+    assert item.rs_trend_rank_s63 is None
+    # レガシーフィールド（フロントエンド互換用）も同様に None を維持すべき
+    assert item.rs_ratio_21_rank is None
+    assert item.rs_ratio_63_rank is None
+    assert item.rs_ratio_14_rank is None
+    assert item.rs_momentum_21_rank is None
+    assert item.rs_momentum_63_rank is None
+
+
 def test_preload_constituent_details_target_date_accepts_str(db):
     """target_date は文字列（API のクエリパラメータ）でも date と同じ結果になること。"""
     from api.panel_builders import preload_constituent_details
