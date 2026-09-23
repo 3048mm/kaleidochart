@@ -111,10 +111,12 @@ def calc_volatility(df: pd.DataFrame, state: bool = None) -> pd.DataFrame:
             # 列全体 NaN になってしまう。現在の daily_prices に NULL OHLC は無いため
             # 顕在化していないが、契約として `ta` と同じ挙動に揃える。
             seed_value = float(pd.Series(tr_values[:window]).mean())
-            return pd.Series(
-                _atr_wilder_kernel(tr_values, window, window - 1, seed_value),
-                index=df.index,
-            )
+            atr_vals = _atr_wilder_kernel(tr_values, window, window - 1, seed_value)
+            # _atr_wilder_kernel は np.zeros 初期化のため、先頭 window-1 本（0..12）は
+            # 「それらしい0.0」のまま埋まらない。ta ライブラリの fillna=True と同じ
+            # 罠なので、明示的に NaN へ潰す（§3.1.1(a)）。
+            atr_vals[:window - 1] = np.nan
+            return pd.Series(atr_vals, index=df.index)
 
         # シード取得〜マージは compute_recursive_series に集約（5-15d・
         # code-review指摘3）。増分モードでシードが取得できない場合は
