@@ -59,8 +59,17 @@ def calc_volume_and_trends(df: pd.DataFrame) -> pd.DataFrame:
         cond4 = df['sma_200'] >= sma200_20d_ago
         cond5 = close >= (max_252d * 0.70)  # within 30% of 52w high
 
+        # cond1〜cond5 のいずれかの入力がNaN（判定不能）なら None にする。
+        # 従来は sma200_20d_ago（cond4の入力の一部）だけを見ており、
+        # max_252d（cond5の分母）がNaNのときcond5が比較演算子の性質上
+        # Falseに落ちて「判定不能」が「条件を満たさない」と誤って
+        # 断定されていた（§3.1.1(b)）。
+        any_input_isna = (
+            close.isna() | df['sma_50'].isna() | df['sma_150'].isna() | df['sma_200'].isna()
+            | sma200_20d_ago.isna() | max_252d.isna()
+        )
         df['is_trend_template'] = np.where(
-            sma200_20d_ago.isna(), 
+            any_input_isna,
             None,
             np.where(cond1 & cond2 & cond3 & cond4 & cond5, 1, 0)
         )
