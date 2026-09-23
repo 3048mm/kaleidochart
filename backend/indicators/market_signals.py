@@ -265,13 +265,15 @@ def calculate_market_signals(
     # 6. Integrate Breadth and Momentum
     if df_metrics is not None and not df_metrics.empty:
         df = pd.merge(df, df_metrics, on='date', how='left')
-        has_breadth = (df['date'] >= '2018-04-01')
-        df['breadth_sma50'] = df['breadth_sma50'].fillna(0.5)
-        df['momentum_ratio'] = df['momentum_ratio'].fillna(0.5)
     else:
-        df['breadth_sma50'] = 0.5
-        df['momentum_ratio'] = 0.5
-        has_breadth = pd.Series(False, index=df.index)
+        df['breadth_sma50'] = np.nan
+        df['momentum_ratio'] = np.nan
+
+    # has_breadth: breadth_sma50 が実際に算出できているか（NaN=判定不能でないか）で
+    # 判定する。従来は date >= '2018-04-01' という日付ハードコードだったが、
+    # breadth_sma50 が正しくNaNのまま表現できるようになった（fillna(0.5)撤去）ため、
+    # NULL判定に置換する（§3.7 ④）。
+    has_breadth = df['breadth_sma50'].notna()
 
     # 7. Calculate individual component scores (0.0 to 1.0)
     

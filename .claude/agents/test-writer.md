@@ -21,7 +21,7 @@ tools: Read, Write, Edit, Glob, Grep, Bash, PowerShell, Skill
 - **プロダクションコード（テスト以外の backend/ / frontend/src/）は変更しない**。テストを通すために実装変更が必要だと分かったら、必要な変更内容を報告して終了する（implementer の仕事）。
 - SQLite を使うテストでは既存テストの DB フィクスチャを再利用する。自前で接続を作る場合は **sqlite-wal-handling** スキルの規約に従う。
 - コメント・テスト名の docstring は日本語。ファイルは BOM なし UTF-8 / LF。
-- `git commit` / `git push` は行わない（`git add` まで可）。
+- `git commit` / `git push` は行わない（`git add` まで可）。コミットは検収（G2）に合格した後にオーケストレーターが行う。
 - 同一エラーで3回失敗したら打ち切り、エラー内容を報告して終了する。打ち切る前に既知の回避手段を検索すること: `grep -n "<エラー原文の一部>" doc/agent_execution_rules.md doc/project_knowhow.md`（`doc/agent_execution_rules.md` §4.1）。ヒットしたらその対策を試す。**ドキュメントへの追記はワーカーでは行わない** — 完了報告に回し、オーケストレーターの判断に委ねる。
 
 ## 完了報告（必須・省略不可）
