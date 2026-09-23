@@ -501,42 +501,38 @@ def recursive_column_names() -> Tuple[str, ...]:
 
 
 def supplied_column_names() -> Tuple[str, ...]:
-    """T3 ワーカーが `indicators` テーブルから実際に読むべき列名一覧（ソート済み）（5-6d）。
+    """T3 ワーカーが `indicators` テーブルから実際に読むべき列名一覧（ソート済み）（5-6d・5-15c）。
 
-    計画書: doc/in_progress/t3_incremental_plan.md §2.3・5-6d（読み出しコストの削減）
+    計画書: doc/in_progress/t3_incremental_plan.md §2.3・5-6d・5-15c（読み出しコストの削減）
 
     5-6 時点の実装は増分呼び出しの都度、レジストリの全67列
     （`sorted(INDICATOR_COLUMN_REGISTRY.keys())`）を `indicators` から読んでいたが、
     実測（3,360銘柄・sandbox SQLite）で読み出しコストを支配しているのは**行数ではなく
-    列数**と判明した（252行×67列=18.8秒 に対し 252行×6列=3.2秒）。そして実際に
-    増分計算の入力として参照される T3 列は本関数が返す33列のみで、残り34列は
-    計算結果として書かれるだけの出力専用列（増分計算の入力にはならない）。
+    列数**と判明した（252行×67列=18.8秒 に対し 252行×6列=3.2秒）。
 
-    ## 導出ロジック
+    5-6d では「RECURSIVE型列自身 ＋ 他列の `inputs` として参照される T3 列」の
+    33列（RECURSIVE21列＋WINDOW型で参照される12列）を保守的に供給していたが、
+    2回目の `/code-review` 指摘（5-15c）で、このうち WINDOW型の12列
+    （`sma_50`/`sma_150`/`sma_200`/`atr_pct_14`/`rs_value`/`rs_ratio_e5〜200`/
+    `rs_macd_line_21`/`vol_surge_21`）は**読まれる前に必ず上書きされる**ことが
+    判明した。`calc_moving_averages`/`calc_relative_strength`/`calc_volatility` 等、
+    WINDOW型列を計算する箇所はいずれも `state` を受け取らず、常に生価格
+    （または同一呼び出し内で先に計算し直された他のRECURSIVE/WINDOW型列）から
+    **無条件に上書き計算**する（`calculate_indicators` 内で毎回全行再計算）ため、
+    df に供給した WINDOW型列の値そのものは一切読まれない。
 
-    1. **RECURSIVE型列自身**（`recursive_column_names()`）— 自列の前日値
-       （`prev_self_seed` が `df[col].iloc[-2]` を直接参照する。`ema_*` /
-       `rs_value_eN` / `rs_roc_ema_N` / `td9` / `atr_14` / `rs_macd_signal_21` /
-       `rs_blue_dot_age` / `rs_red_dot_age`）
-    2. **他列の `inputs` として参照される T3 列**（生価格・SPY列を除く）—
-       RECURSIVE型列は `finalize_incremental_column`/`prev_self_seed` で
-       供給済み履歴をそのまま使うが、WINDOW型列は毎回全行を生価格または
-       既にマージ済みの列から再計算するため厳密には自列の履歴は不要である。
-       ただし本関数は「レジストリが `inputs` として宣言している T3 列は
-       安全側ですべて供給する」という保守的な基準を採用する
-       （実測: `sma_50`/`sma_150`/`sma_200`/`atr_pct_14`/`rs_value`/
-       `rs_ratio_e5〜200`/`rs_macd_line_21`/`vol_surge_21` の12列が該当）。
+    そのため実際に増分計算の入力として参照される T3 列は
+    **RECURSIVE型列（`recursive_column_names()`）21列のみ**（自列の前日値を
+    `prev_self_seed` が `df[col].iloc[-2]` として直接参照する。`ema_*` /
+    `rs_value_eN` / `rs_roc_ema_N` / `td9` / `atr_14` / `rs_macd_signal_21` /
+    `rs_blue_dot_age` / `rs_red_dot_age`）。実データ（sandbox SQLite・25銘柄）で
+    33列供給時と21列供給時の等価性を突き合わせ、不一致ゼロを確認済み
+    （`tmp/verify_worker_incremental_5_15c.py`）。
 
-    RECURSIVE型21列 ＋ WINDOW型で参照される12列 ＝ **33列**（2026-09-23実測）。
-    lookback/inputs の変更で件数が増減したら気づけるよう、テストで33件を固定している
+    lookback/inputs の変更で件数が増減したら気づけるよう、テストで21件を固定している
     （`test_incremental_state_registry.py`）。
     """
-    needed = set(recursive_column_names())
-    for spec in INDICATOR_COLUMN_REGISTRY.values():
-        for input_name in spec.inputs:
-            if input_name not in RAW_PRICE_COLUMNS and input_name in INDICATOR_COLUMN_REGISTRY:
-                needed.add(input_name)
-    return tuple(sorted(needed))
+    return recursive_column_names()
 
 
 def max_lookback() -> int:
@@ -586,3 +582,36 @@ def columns_with_warmup_threshold() -> Mapping[str, int]:
         for name, spec in INDICATOR_COLUMN_REGISTRY.items()
         if spec.warmup_bars is not None
     }
+
+
+def columns_with_undeterminable_warmup() -> Tuple[str, ...]:
+    """`_calculate_t3_worker` が増分ウィンドウ（K=`max_lookback()`行）内だけでは
+    「欠陥」か「正当なウォームアップ中」かを判別できない列名一覧（5-15c・ソート済み）。
+
+    2回目の `/code-review` 指摘1（5-15b の回帰）: RECURSIVE型列の供給履歴が
+    増分ウィンドウ全体でNULLだった場合、その列が「まだウォームアップが済んで
+    いないだけ」なのか「本来値が出るはずなのに欠陥で消えた」のかは、
+    `warmup_bars`（演算上必要な本数）と増分ウィンドウ長 K の大小関係で決まる:
+
+    - `warmup_bars < K` なら、ウィンドウがどこから始まっていても（＝銘柄の
+      真の先頭が不明でも）ウィンドウ最終行の絶対位置は必ず `warmup_bars` を
+      超えるため、それでも全行NULLなら確実に欠陥と判定できる。
+    - `warmup_bars >= K` なら、ウィンドウが銘柄の先頭から始まっている
+      （＝真の履歴がウィンドウちょうどの長さしかない）場合は正当な
+      ウォームアップ中でも全行NULLになりうるため、判別不能
+      （`_calculate_t3_worker` は `FALLBACK_REASON_WARMUP_UNDETERMINED` に分類する）。
+
+    本関数はこの「判別不能になりうる列」を機械的に列挙する。**対象は RECURSIVE
+    型列のみ**（`_calculate_t3_worker` がこの分類を行うのは、増分計算の供給
+    履歴として実際にNULLチェックする対象＝RECURSIVE型列に限られるため。
+    WINDOW型列は毎回生価格から無条件に再計算されるためこの分岐を通らず、
+    `warmup_bars` がどれだけ大きくても本関数の対象にする意味が無い）。
+    2026-09-23時点では `rs_roc_ema_200`（warmup_bars=511 > K=`max_lookback()`=400）
+    の1列のみだが、将来レジストリに列が追加/変更されて増えても気づけるよう、
+    この事実自体を `test_incremental_state_registry.py` で固定する。
+    """
+    k = max_lookback()
+    return tuple(sorted(
+        name for name, spec in INDICATOR_COLUMN_REGISTRY.items()
+        if spec.prev_self and spec.warmup_bars is not None and spec.warmup_bars >= k
+    ))

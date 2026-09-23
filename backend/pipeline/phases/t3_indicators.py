@@ -10,7 +10,7 @@ import pandas as pd
 from pipeline.utils import sanitize_numeric
 from db.database import init_db, get_db
 
-# フォールバック理由の識別子（T3増分化計画 5-6b・§3.5。5-15b で分類を追加）。
+# フォールバック理由の識別子（T3増分化計画 5-6b・§3.5。5-15b/5-15c で分類を改訂）。
 #
 # `_calculate_t3_worker` が state=None（全期間計算）にフォールバックしたとき、
 # どの条件で落ちたかを呼び出し側（`sync_phase_t3_indicators`）へ返すための識別子。
@@ -19,18 +19,38 @@ from db.database import init_db, get_db
 # 「フォールバックが無言」（誰も気づかないまま4日間不正確な値が書かれ続けた）
 # ことが問題だったため、理由を可視化することが本設計の要点）。
 #
-# 5-15b（code-review指摘1）: `NULL_RECURSIVE_COLUMN` は当初「供給履歴にNaNが
+# 5-15b（code-review指摘1・初版）: `NULL_RECURSIVE_COLUMN` は当初「供給履歴にNaNが
 # 1つでもあれば理由を問わずこの識別子」としていたが、これだと「まだウォームアップ
 # 中で正当にNULL」な列（履歴の浅い銘柄では大多数）まで「壊れている」扱いになり、
 # ログのS/N比が悪化する（本番実測で83.6%は増分経路に乗れ、乗れない銘柄の大半は
-# 履歴不足による正当なNULLだった）。そこで「その行の位置が、演算上必要な
-# ウォームアップ本数（`ColumnSpec.warmup_bars`）を超えているのにNULLか」で
-# 欠陥（`NULL_RECURSIVE_COLUMN`）と正当なウォームアップ中（本定数）を分ける。
+# 履歴不足による正当なNULLだった）。そこで欠陥（`NULL_RECURSIVE_COLUMN`）と
+# 正当なウォームアップ中（`WARMUP_IN_PROGRESS`）を分ける方針自体は正しかった。
+#
+# 5-15c（2回目の code-review 指摘1・5-15b の回帰）: 5-15b の実装は「その行の
+# 絶対位置（SQLiteの保持期間内での位置）が warmup_bars を超えているか」で
+# 判定していたが、SQLiteの保持行数（実測504）自体が一部の列の warmup_bars
+# （`rs_roc_ema_200`=511）より小さいため、この判定が**原理的に到達不能**
+# だった（`position > warmup_bars` が511まで届かない）。その結果、本番の
+# 実際の欠陥（`rs_roc_ema_200` が全銘柄NULL）が `WARMUP_IN_PROGRESS`（正当）に
+# 誤分類され、5-6b が塞いだはずの「誰も気づかない」穴が再び開いていた。
+#
+# 修正: 銘柄の真の履歴長はSQLite（ホットキャッシュ）からは分からないため、
+# 「行の絶対位置」ではなく「増分ウィンドウ内で観測できる性質」だけで判定する。
+#   1. **単調性の破れ**（ある行には値があるのに、より新しい行でNULLに戻る）は
+#      正常系では起こり得ないため、無条件に欠陥（`NULL_RECURSIVE_COLUMN`）。
+#      本番の実際の不具合（2026-09-14以前は値あり、09-15以降NULL）はこの形。
+#   2. ウィンドウ全体がNULLで `warmup_bars < K`（増分ウィンドウ長）なら、
+#      ウィンドウがどこから始まっていてもウィンドウ最終行の絶対位置は
+#      必ず warmup_bars を超えるため、欠陥と断定できる。
+#   3. ウィンドウ全体がNULLで `warmup_bars >= K` なら、正当なウォームアップ中
+#      なのか欠陥なのかこの検査だけでは判別できない
+#      （`WARMUP_UNDETERMINED`。`rs_roc_ema_200` がこれに該当する）。
 FALLBACK_REASON_NO_SAVED_ROWS = 'no_saved_rows'                    # 保存済みT3行が無い（新規上場・オンボード直後）
 FALLBACK_REASON_INSUFFICIENT_ROWS = 'insufficient_saved_rows'      # 保存済み行数がK（max_lookback()）に満たない
 FALLBACK_REASON_MULTI_DAY_GAP = 'multi_day_gap'                    # 新規に書く日付が2日ぶん以上ある（または0日）
-FALLBACK_REASON_NULL_RECURSIVE_COLUMN = 'null_recursive_column'    # RECURSIVE型列がwarmup_barsを超えた位置でNULL（欠陥）
-FALLBACK_REASON_WARMUP_IN_PROGRESS = 'warmup_in_progress'          # RECURSIVE型列がwarmup_bars以内でNULL（正当・ウォームアップ中）
+FALLBACK_REASON_NULL_RECURSIVE_COLUMN = 'null_recursive_column'    # RECURSIVE型列が確実に欠陥（単調性の破れ、またはK>warmup_barsで全NULL）
+FALLBACK_REASON_WARMUP_IN_PROGRESS = 'warmup_in_progress'          # RECURSIVE型列が単調にNULL→非NULLへ移行中（正当・ウォームアップ中）
+FALLBACK_REASON_WARMUP_UNDETERMINED = 'warmup_undetermined'        # ウィンドウ全体がNULLかつK<=warmup_barsで判別不能（5-15c）
 
 def _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_virtual=False, spy_latest_date: Optional[date] = None):
     """Worker function to calculate T3 for a single ticker in a separate process using direct sqlite3 connection (fast, no ORM).
@@ -47,14 +67,34 @@ def _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_vi
       - RECURSIVE型列（前日値を継ぐ列。SPYの `rs_*` は構造的にNULLが正常のため
         除外。5-15b）の供給履歴に NaN がある
 
-    RECURSIVE型列にNaNがある場合、さらに「欠陥」（`FALLBACK_REASON_NULL_RECURSIVE_COLUMN`）
-    と「正当なウォームアップ中」（`FALLBACK_REASON_WARMUP_IN_PROGRESS`）を区別する
-    （5-15b・code-review指摘1）。NaNの行の `daily_prices` 内での位置（date昇順・
-    0始まり）は、その銘柄の真の先頭（IPO日）からの位置の安全な下限になる
-    （SQLiteの保持期間より前の行が消えることはあっても増えることはないため）。
-    この位置がレジストリの `warmup_bars`（演算上必要な最小本数）を超えているのに
-    NULLなら欠陥、超えていなければ真に不足しているのかSQLiteの保持期間より前が
-    切り詰められているだけなのか判別できないため正当なNULLとして扱う。
+    RECURSIVE型列にNaNがある場合、さらに「欠陥」（`FALLBACK_REASON_NULL_RECURSIVE_COLUMN`）・
+    「正当なウォームアップ中」（`FALLBACK_REASON_WARMUP_IN_PROGRESS`）・
+    「判別不能」（`FALLBACK_REASON_WARMUP_UNDETERMINED`）の3つを区別する
+    （5-15b・5-15c。2回目の code-review 指摘1）。
+
+    5-15b の初版は「NaNの行の `daily_prices` 内での位置が `warmup_bars` を
+    超えているか」で判定していたが、SQLiteの保持行数（実測504）自体が
+    `rs_roc_ema_200` の `warmup_bars`（511）より小さいため、この判定が
+    **原理的に到達不能**だった（本番の実際の欠陥が誤って「正当」に分類され
+    続けていた）。5-15c で以下の、増分ウィンドウ（K本）内だけで判定できる
+    性質に基づく方式へ改めた（銘柄の真の履歴長はSQLiteからは分からないため）:
+
+    1. **単調性の破れ** — ウィンドウ内のある行には値があるのに、より新しい
+       行でNULLに戻っている場合、正常系では起こり得ないため無条件に欠陥
+       （`NULL_RECURSIVE_COLUMN`）。本番の実際の不具合
+       （2026-09-14以前は値あり、09-15以降NULL）はこの形で検出できる。
+    2. **ウィンドウ全体がNULL・`warmup_bars < K`** — ウィンドウがどこから
+       始まっていても最終行の絶対位置は必ず `warmup_bars` を超えるため、
+       それでもNULLなら欠陥（`NULL_RECURSIVE_COLUMN`）。
+    3. **ウィンドウ全体がNULL・`warmup_bars >= K`** — ウィンドウが銘柄の
+       真の先頭から始まっている場合は正当なウォームアップ中でもNULLに
+       なりうるため、判別不能（`WARMUP_UNDETERMINED`。`rs_roc_ema_200` が該当）。
+    4. それ以外（ウィンドウ内でNULL→非NULLへ単調に移行、かつ全NULLではない）は
+       正当なウォームアップ中（`WARMUP_IN_PROGRESS`）。
+
+    複数列で分類が割れた場合、1つの `fallback_reason` は
+    欠陥 > 判別不能 > ウォームアップ中 の優先順位で選ぶ
+    （最も注意を要する分類を呼び出し側へ伝えるため）。
     いずれの場合も増分計算自体（rolling窓へのNaN混入）は行えないため、
     state=None へのフォールバックという挙動そのものは変わらない
     （変わるのは理由の分類のみ）。
@@ -95,16 +135,26 @@ def _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_vi
             if t3_max is None:
                 fallback_reason = FALLBACK_REASON_NO_SAVED_ROWS
             else:
-                new_dates = df_price.loc[df_price['date'] > t3_max, 'date']
+                # ギャップ判定の窓は、実際に書く窓（delta_df。spy_latest_dateで
+                # 上限を切る）と揃える（5-15c・2回目のcode-review指摘2）。
+                # 揃えないと、T2がSPYより1日進んだ銘柄（フライングデータ）で
+                # 「書く行は1行なのにlen(new_dates)==2」となりMULTI_DAY_GAPへ
+                # 誤フォールバックし、以後フォールバックが継続してしまう。
+                write_window_mask = df_price['date'] > t3_max
+                if spy_latest_date is not None:
+                    write_window_mask &= df_price['date'] <= spy_latest_date
+                new_dates = df_price.loc[write_window_mask, 'date']
                 if len(new_dates) != 1:
                     fallback_reason = FALLBACK_REASON_MULTI_DAY_GAP
                 else:
                     K = max_lookback()
                     # 供給する T3 列はレジストリから機械的に導出する（手書きリスト禁止）。
-                    # 5-6d: 全67列ではなく、増分計算の入力として実際に参照される列
-                    # （33列）だけを読む。読み出しコストは行数より列数が支配的
-                    # （実測。§2.3）。供給しない34列（出力専用のWINDOW型列）は
-                    # calculate_indicators 側で毎回生価格から再計算されるため無害。
+                    # 5-6d: 全67列ではなく、増分計算の入力として実際に参照される列だけを読む。
+                    # 読み出しコストは行数より列数が支配的（実測。§2.3）。
+                    # 5-15c（2回目のcode-review指摘3）: WINDOW型列は読まれる前に必ず
+                    # calculate_indicators 側で生価格から無条件に上書きされるため、
+                    # RECURSIVE型21列のみに絞った（供給しない46列は出力専用または
+                    # 読み捨てだったWINDOW型列で、上書き前提のため無害）。
                     ind_cols = list(supplied_column_names())
                     cols_sql = ", ".join(["date"] + ind_cols)
                     hist_query = (
@@ -134,25 +184,44 @@ def _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_vi
                         )
                         if not notna_per_col.all():
                             null_cols = sorted(c for c in rec_cols if not notna_per_col[c])
-                            # 「壊れているから NULL」と「まだ出ないから NULL」を区別する
-                            # （5-15b・code-review指摘1。詳細は関数docstring）。
-                            date_to_position = {d: i for i, d in enumerate(df_price['date'])}
+                            # 「壊れているから NULL」「まだ出ないから NULL（正当）」
+                            # 「判別不能」を区別する（5-15b→5-15c。詳細は関数docstring）。
+                            # 銘柄の真の履歴長はSQLite（ホットキャッシュ、実測504行）
+                            # からは分からないため、絶対位置ではなく増分ウィンドウ
+                            # （K本＝df_hist）内だけで観測できる性質だけで判定する。
                             warmup_thresholds = columns_with_warmup_threshold()
                             defect_cols = []
+                            undetermined_cols = []
+                            warmup_cols = []
                             for col in null_cols:
-                                warmup_bars = warmup_thresholds.get(col)
-                                if warmup_bars is None:
-                                    # 閾値未確定の列は判別材料が無いため欠陥とみなさない
-                                    # （現状は全RECURSIVE型列でwarmup_barsが確定済みのため
-                                    # 実質到達しない防御的分岐）。
-                                    continue
-                                null_dates = df_hist.loc[df_hist[col].isna(), 'date']
-                                if any(date_to_position.get(d, -1) > warmup_bars for d in null_dates):
-                                    defect_cols.append(col)
+                                notna_series = df_hist[col].notna()
+                                if notna_series.any():
+                                    first_valid_pos = notna_series.idxmax()
+                                    # 単調性の破れ: 一度非NULLになった値が、より新しい
+                                    # 行でNULLに戻っている（正常系では起こらない）。
+                                    if not notna_series.iloc[first_valid_pos:].all():
+                                        defect_cols.append(col)
+                                    else:
+                                        warmup_cols.append(col)
+                                else:
+                                    # ウィンドウ全体がNULL。
+                                    warmup_bars = warmup_thresholds.get(col)
+                                    if warmup_bars is not None and warmup_bars < K:
+                                        # ウィンドウがどこから始まっていても最終行の
+                                        # 絶対位置は必ず warmup_bars を超えるため、
+                                        # それでも全NULLなら欠陥と断定できる。
+                                        defect_cols.append(col)
+                                    else:
+                                        # warmup_bars が未確定、またはウィンドウ長K以上
+                                        # 必要（例: rs_roc_ema_200 は511 > K=400）
+                                        # -> 正当なウォームアップ中か欠陥か判別できない。
+                                        undetermined_cols.append(col)
                             if defect_cols:
                                 fallback_reason = f"{FALLBACK_REASON_NULL_RECURSIVE_COLUMN}:{','.join(defect_cols)}"
+                            elif undetermined_cols:
+                                fallback_reason = f"{FALLBACK_REASON_WARMUP_UNDETERMINED}:{','.join(undetermined_cols)}"
                             else:
-                                fallback_reason = f"{FALLBACK_REASON_WARMUP_IN_PROGRESS}:{','.join(null_cols)}"
+                                fallback_reason = f"{FALLBACK_REASON_WARMUP_IN_PROGRESS}:{','.join(warmup_cols)}"
                         else:
                             new_date = new_dates.iloc[0]
                             price_hist = df_price[df_price['date'] <= t3_max].tail(K)
@@ -196,7 +265,7 @@ def _calculate_t3_worker_wrapper(args):
     return _calculate_t3_worker(*args)
 
 def _log_fallback_summary(logger: logging.Logger, fallback_reasons: List[str]) -> None:
-    """フォールバック理由のリストを集計してログ出力する（T3増分化計画 5-6b・5-15bで改訂）。
+    """フォールバック理由のリストを集計してログ出力する（T3増分化計画 5-6b・5-15b・5-15cで改訂）。
 
     5-6 の実データ検証で「フォールバックが無言」（本番で4日間気づかれなかった）
     ことが問題だったため、フェーズ終了時に必ず可視化する。0件のときはログを
@@ -210,6 +279,14 @@ def _log_fallback_summary(logger: logging.Logger, fallback_reasons: List[str]) -
     `FALLBACK_REASON_NULL_RECURSIVE_COLUMN`（欠陥の可能性）が1件でもあれば
     WARNING で内訳とリフレッシュ推奨を出し、それ以外（新規上場・履歴不足・
     連休明け・正当なウォームアップ中）だけなら想定内として INFO に留める。
+
+    5-15c（2回目の code-review 指摘1）: `FALLBACK_REASON_WARMUP_UNDETERMINED`
+    （判別不能）を新設した。判別不能は欠陥と確定したわけではないため
+    `WARMUP_IN_PROGRESS` と同じ扱い（WARNING には昇格させない）とするが、
+    「全期間計算そのものの結果は正確です」と一括で言い切ってしまうと
+    判別不能ぶんの不確かさを隠すことになる（5-15b の回帰そのもの: 誤って
+    「正確」と報告し続けたことが問題だった）ため、判別不能が1件でもあれば
+    それを名指しし、正確性を主張する範囲から明示的に除外する。
     """
     if not fallback_reasons:
         logger.info("Phase 3: 全銘柄が増分経路で計算されました（フォールバックなし）。")
@@ -219,6 +296,7 @@ def _log_fallback_summary(logger: logging.Logger, fallback_reasons: List[str]) -
     reason_counts = Counter(r.split(':', 1)[0] for r in fallback_reasons)
     breakdown = ', '.join(f'{reason}={count}' for reason, count in sorted(reason_counts.items()))
     defect_count = reason_counts.get(FALLBACK_REASON_NULL_RECURSIVE_COLUMN, 0)
+    undetermined_count = reason_counts.get(FALLBACK_REASON_WARMUP_UNDETERMINED, 0)
 
     if defect_count:
         logger.warning(
@@ -228,6 +306,16 @@ def _log_fallback_summary(logger: logging.Logger, fallback_reasons: List[str]) -
             "（増分計算の状態が壊れている可能性があり、当該銘柄について書き込まれた"
             "値は不正確な可能性があります）。`--rebuild-from T3` によるリフレッシュを"
             "推奨します。"
+        )
+    elif undetermined_count:
+        logger.info(
+            f"Phase 3: 増分計算できず全期間計算にフォールバックした銘柄が {len(fallback_reasons)} 件"
+            f"（理由内訳: {breakdown}）。うち {undetermined_count} 件は演算上必要な"
+            "履歴本数（warmup_bars）が増分ウィンドウ長を超える列（例: rs_roc_ema_200）が"
+            "ウィンドウ全体でNULLでした。正当なウォームアップ中か欠陥かはこの検査だけでは"
+            "判別できません（`warmup_undetermined`）。残りは新規上場・履歴不足・連休明け・"
+            "正当なウォームアップ中など想定内の理由で、そちらは全期間計算そのものの結果は"
+            "正確です。"
         )
     else:
         logger.info(

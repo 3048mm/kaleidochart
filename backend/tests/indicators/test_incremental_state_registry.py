@@ -25,6 +25,7 @@ from indicators.incremental_state_registry import (
     ColumnKind,
     ColumnSpec,
     INDICATOR_COLUMN_REGISTRY,
+    columns_with_undeterminable_warmup,
     columns_with_warmup_threshold,
     is_structurally_null_column,
     max_lookback,
@@ -300,19 +301,28 @@ class TestWarmupBars:
 
 
 class TestSuppliedColumnNames:
-    """`supplied_column_names()`（5-6d・読み出しコスト削減）の不変条件。
+    """`supplied_column_names()`（5-6d・読み出しコスト削減。5-15cでRECURSIVE型のみに変更）の不変条件。
 
-    T3 ワーカーが `indicators` テーブルから読むべき列を67列から絞り込むための
-    関数。件数（33）を固定し、将来 lookback/inputs の変更で増減したら
-    気づけるようにする（doc/in_progress/t3_incremental_plan.md §2.3・5-6d）。
+    T3 ワーカーが `indicators` テーブルから読むべき列を絞り込むための関数。
+    5-6d で67列→33列（RECURSIVE21列＋WINDOW型で参照される12列）に絞ったが、
+    2回目の `/code-review` 指摘3（5-15c）で、WINDOW型の12列は
+    `calculate_indicators` 内で生価格から無条件に上書きされ読まれる前に
+    捨てられることが判明したため、RECURSIVE型21列のみに絞った。
+    件数（21）を固定し、将来 lookback/inputs の変更で増減したら気づけるように
+    する（doc/in_progress/t3_incremental_plan.md §2.3・5-6d・5-15c）。
     """
 
-    def test_列数が33である(self):
-        assert len(supplied_column_names()) == 33, (
+    def test_列数が21である(self):
+        assert len(supplied_column_names()) == 21, (
             f'supplied_column_names() の件数が変わりました: {len(supplied_column_names())}\n'
-            'レジストリの inputs/kind を変更した場合の意図した増減であれば、'
+            'レジストリの kind（RECURSIVE/WINDOW）を変更した場合の意図した増減であれば、'
             'この期待値を更新してください（読み出しコストの見積もりにも影響します）。'
         )
+
+    def test_recursive型と完全一致する(self):
+        """5-15c: WINDOW型の12列は読まれる前に必ず上書きされるため、供給対象から外した。
+        supplied_column_names() は recursive_column_names() と完全一致するはず。"""
+        assert supplied_column_names() == recursive_column_names()
 
     def test_recursive型は全て含まれる(self):
         supplied = set(supplied_column_names())
@@ -328,6 +338,32 @@ class TestSuppliedColumnNames:
         registered = set(INDICATOR_COLUMN_REGISTRY.keys())
         for name in supplied_column_names():
             assert name in registered, f'{name}: INDICATOR_COLUMN_REGISTRY に無い列名です'
+
+
+class TestColumnsWithUndeterminableWarmup:
+    """`columns_with_undeterminable_warmup()`（5-15c・2回目のcode-review指摘1）の可視化テスト。
+
+    `warmup_bars >= max_lookback()` の列は、`_calculate_t3_worker` の増分
+    ウィンドウ（K本）だけでは「欠陥」か「正当なウォームアップ中」かを
+    判別できない（判別不能。`FALLBACK_REASON_WARMUP_UNDETERMINED`）。
+    この事実自体（現状は rs_roc_ema_200 の1列）をテストで固定し、
+    将来この集合が増えたら気づけるようにする。
+    """
+
+    def test_現状はrs_roc_ema_200の1列のみ(self):
+        assert columns_with_undeterminable_warmup() == ('rs_roc_ema_200',), (
+            f'判別不能になりうる列の集合が変わりました: {columns_with_undeterminable_warmup()}\n'
+            'レジストリの warmup_bars/lookback を変更した場合の意図した増減であれば、'
+            'この期待値を更新してください（_calculate_t3_worker の分類挙動にも影響します）。'
+        )
+
+    def test_該当列はwarmup_barsがmax_lookback以上(self):
+        k = max_lookback()
+        for name in columns_with_undeterminable_warmup():
+            spec = INDICATOR_COLUMN_REGISTRY[name]
+            assert spec.warmup_bars is not None and spec.warmup_bars >= k, (
+                f'{name}: warmup_bars({spec.warmup_bars}) が max_lookback()({k}) 未満です'
+            )
 
 
 class TestIsStructurallyNullColumn:

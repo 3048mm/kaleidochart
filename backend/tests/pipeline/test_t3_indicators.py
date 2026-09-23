@@ -64,6 +64,7 @@ from pipeline.phases.t3_indicators import (  # noqa: E402
     FALLBACK_REASON_MULTI_DAY_GAP,
     FALLBACK_REASON_NULL_RECURSIVE_COLUMN,
     FALLBACK_REASON_WARMUP_IN_PROGRESS,
+    FALLBACK_REASON_WARMUP_UNDETERMINED,
 )
 
 SID_TARGET = 2
@@ -407,16 +408,130 @@ class TestCalculateT3WorkerFallback:
 
 
 class TestCalculateT3WorkerWarmupClassification:
-    """5-15b（code-review指摘1）: 「壊れているから NULL」と「まだ出ないから NULL」の区別。
+    """5-15b→5-15c（2回目のcode-review指摘1）: 「壊れているから NULL」
+    「まだ出ないから NULL（正当）」「判別できないから NULL（判別不能）」の3区分。
 
-    `test_null_state_column_falls_back`（既存）は履歴の深い位置（=欠陥）を検証している。
-    ここでは対照的に、短い履歴の銘柄で増分ウィンドウがその銘柄の先頭付近を含む場合、
-    オラクル自身が正当にNULLを返す（＝ウォームアップ未完了）区間を
-    `FALLBACK_REASON_NULL_RECURSIVE_COLUMN`（欠陥）ではなく
-    `FALLBACK_REASON_WARMUP_IN_PROGRESS`（正当）に分類することを確認する。
+    5-15b の初版は `daily_prices` 内での絶対位置と `warmup_bars` を比較する
+    方式だったが、SQLiteの保持行数（実測504）が `rs_roc_ema_200` の
+    `warmup_bars`（511）より小さいため判定が原理的に到達不能で、本番の実際の
+    欠陥が「正当」に誤分類され続けていた（5-15b の回帰）。5-15c で
+    増分ウィンドウ（K本）内だけで観測できる性質（単調性・ウィンドウ長との
+    大小関係）に基づく方式に改めた。本クラスはこの3区分それぞれを固定する。
     """
 
-    def test_短い履歴の正当なウォームアップNULLはwarmup_in_progressになる(self, db_path, monkeypatch):
+    def test_ウィンドウ全体がnullかつwarmup_barsがk未満なら欠陥になる(self, db_path, monkeypatch):
+        """§3.5 ケース2: ウィンドウ全体がNULLで `warmup_bars < K` なら、
+        ウィンドウがどこから始まっていても最終行の絶対位置は必ず warmup_bars を
+        超えるため、欠陥と断定できる（正当なウォームアップ中ではあり得ない）。"""
+        dates, df_full, spy_full, full_res, spy_price_only = _build_scenario()
+        t3_max = dates[N_TOTAL - 2]
+        _insert_prices(db_path, SID_TARGET, df_full)
+        _insert_indicators(db_path, SID_TARGET, full_res, upto_idx=N_TOTAL - 2)
+
+        # ema_200 の warmup_bars(199) は K(400) 未満。オラクルは十分な履歴
+        # （N_TOTAL=1400）を持つため本来は全て非NULLのはずだが、意図的に
+        # 保存済み値を全て壊す（実運用では起こらない破損シナリオ）。
+        con = sqlite3.connect(db_path)
+        try:
+            con.execute('UPDATE indicators SET ema_200 = NULL WHERE symbol_id = ?', (SID_TARGET,))
+            con.commit()
+        finally:
+            con.close()
+
+        calls = _patch_calculate_indicators(monkeypatch)
+
+        ticker, sid, records, fallback_reason = _calculate_t3_worker(
+            SID_TARGET, 'TEST', t3_max, db_path, spy_price_only,
+            skip_fetch=False, is_virtual=False, spy_latest_date=dates[-1],
+        )
+
+        assert not isinstance(records, Exception), f'ワーカーが例外を返した: {records}'
+        assert calls == [None], f'全期間計算（state=None）にフォールバックするはずが: {calls}'
+        assert fallback_reason is not None
+        assert fallback_reason.startswith(FALLBACK_REASON_NULL_RECURSIVE_COLUMN + ':'), (
+            f'ウィンドウ全体NULL・warmup_bars<Kは欠陥のはずが: {fallback_reason}'
+        )
+        assert 'ema_200' in fallback_reason
+
+    def test_ウィンドウ内で一度非nullになった値がより新しい行でnullに戻る場合は欠陥になる(self, db_path, monkeypatch):
+        """§3.5 ケース1（単調性の破れ）: 本番の実際の不具合
+        （2026-09-14以前は値があり、09-15以降がNULL）そのものを再現する。
+        ウィンドウ内の一部が非NULLで、より新しい複数行がNULLに戻っている場合、
+        正常系では起こり得ないため欠陥と判定する。"""
+        dates, df_full, spy_full, full_res, spy_price_only = _build_scenario()
+        t3_max = dates[N_TOTAL - 2]
+        _insert_prices(db_path, SID_TARGET, df_full)
+        _insert_indicators(db_path, SID_TARGET, full_res, upto_idx=N_TOTAL - 2)
+
+        # ウィンドウ末尾（最新側）の直近5営業日ぶんだけを意図的にNULLにする
+        # （本番の実際の不具合を模した、複数行にまたがる「回帰」パターン）。
+        con = sqlite3.connect(db_path)
+        try:
+            recent_dates = [str(d) for d in dates[N_TOTAL - 7:N_TOTAL - 1]]
+            con.executemany(
+                'UPDATE indicators SET ema_200 = NULL WHERE symbol_id = ? AND date = ?',
+                [(SID_TARGET, d) for d in recent_dates],
+            )
+            con.commit()
+        finally:
+            con.close()
+
+        calls = _patch_calculate_indicators(monkeypatch)
+
+        ticker, sid, records, fallback_reason = _calculate_t3_worker(
+            SID_TARGET, 'TEST', t3_max, db_path, spy_price_only,
+            skip_fetch=False, is_virtual=False, spy_latest_date=dates[-1],
+        )
+
+        assert not isinstance(records, Exception), f'ワーカーが例外を返した: {records}'
+        assert calls == [None], f'全期間計算（state=None）にフォールバックするはずが: {calls}'
+        assert fallback_reason is not None
+        assert fallback_reason.startswith(FALLBACK_REASON_NULL_RECURSIVE_COLUMN + ':'), (
+            f'単調性の破れ（値→NULLへの回帰）は欠陥のはずが: {fallback_reason}'
+        )
+        assert 'ema_200' in fallback_reason
+
+    def test_ウィンドウ内で単調にnullから非nullへ遷移する場合はwarmup_in_progressになる(self, db_path, monkeypatch):
+        """§3.5 ケース4: ウィンドウが列の真のウォームアップ完了点をまたいでいて
+        （NULL→非NULLへの単調な遷移のみ・全NULLではない）場合は正当。
+        n_short=700・K=400 では窓が絶対位置[299,698]をカバーし、
+        rs_roc_ema_200（warmup_bars=511）の遷移点をまたぐため、この列自身が
+        「正当なウォームアップ中」を再現する（他のRECURSIVE型列はwarmup_barsが
+        全て299未満のため、この窓では既にウォームアップ済みで非NULL）。"""
+        n_short = 700
+        dates, df_full, spy_full, full_res, spy_price_only = _build_short_scenario(n_short)
+        t3_max = dates[n_short - 2]
+        _insert_prices(db_path, SID_TARGET, df_full)
+        _insert_indicators(db_path, SID_TARGET, full_res, upto_idx=n_short - 2)
+
+        # 前提確認: ウィンドウ内（絶対位置299〜698）で rs_roc_ema_200 が
+        # NULL→非NULLへ単調に遷移していること。
+        assert pd.isna(full_res['rs_roc_ema_200'].iloc[400])
+        assert not pd.isna(full_res['rs_roc_ema_200'].iloc[600])
+
+        calls = _patch_calculate_indicators(monkeypatch)
+
+        ticker, sid, records, fallback_reason = _calculate_t3_worker(
+            SID_TARGET, 'TEST', t3_max, db_path, spy_price_only,
+            skip_fetch=False, is_virtual=False, spy_latest_date=dates[-1],
+        )
+
+        assert not isinstance(records, Exception), f'ワーカーが例外を返した: {records}'
+        assert calls == [None], f'NaNを含む供給履歴のため全期間計算にフォールバックするはずが: {calls}'
+        assert fallback_reason is not None
+        assert fallback_reason.startswith(FALLBACK_REASON_WARMUP_IN_PROGRESS + ':'), (
+            f'ウィンドウ内で単調にnull→非nullへ遷移する場合はWARMUP_IN_PROGRESSのはずが: {fallback_reason}'
+        )
+        assert 'rs_roc_ema_200' in fallback_reason
+        assert FALLBACK_REASON_NULL_RECURSIVE_COLUMN not in fallback_reason
+        assert FALLBACK_REASON_WARMUP_UNDETERMINED not in fallback_reason
+
+    def test_ウィンドウ全体がnullかつwarmup_barsがk以上なら判別不能になる(self, db_path, monkeypatch):
+        """§3.5 ケース3: `rs_roc_ema_200`（warmup_bars=511）は増分ウィンドウ長
+        K（=max_lookback()=400）より大きいため、ウィンドウ全体がNULLでも
+        「正当なウォームアップ中」か「欠陥」かをこの検査だけでは判別できない。
+        これは5-15bの回帰そのものが起きていたシナリオ（本番の実際の不具合と
+        同じ列）であり、誤って「正当」と分類してはならない。"""
         n_short = K + 2
         dates, df_full, spy_full, full_res, spy_price_only = _build_short_scenario(n_short)
         t3_max = dates[n_short - 2]
@@ -424,7 +539,7 @@ class TestCalculateT3WorkerWarmupClassification:
         _insert_indicators(db_path, SID_TARGET, full_res, upto_idx=n_short - 2)
 
         # 前提確認: この短い履歴では、オラクル自身がまだ ema_200/rs_roc_ema_200 の
-        # ウォームアップを終えていない（=欠陥ではなく正当なNULL）。
+        # ウォームアップを終えていない。
         assert pd.isna(full_res['ema_200'].iloc[50])
         assert pd.isna(full_res['rs_roc_ema_200'].iloc[-1])
 
@@ -438,9 +553,10 @@ class TestCalculateT3WorkerWarmupClassification:
         assert not isinstance(records, Exception), f'ワーカーが例外を返した: {records}'
         assert calls == [None], f'NaNを含む供給履歴のため全期間計算にフォールバックするはずが: {calls}'
         assert fallback_reason is not None
-        assert fallback_reason.startswith(FALLBACK_REASON_WARMUP_IN_PROGRESS + ':'), (
-            f'正当なウォームアップ中のNULLは欠陥ではなくWARMUP_IN_PROGRESSに分類されるはずが: {fallback_reason}'
+        assert fallback_reason.startswith(FALLBACK_REASON_WARMUP_UNDETERMINED + ':'), (
+            f'ウィンドウ全体NULL・warmup_bars>=Kは判別不能のはずが: {fallback_reason}'
         )
+        assert 'rs_roc_ema_200' in fallback_reason
         assert FALLBACK_REASON_NULL_RECURSIVE_COLUMN not in fallback_reason
 
 
@@ -527,3 +643,32 @@ class TestLogFallbackSummary:
         assert '4 件' in infos[0].message
         assert f'{FALLBACK_REASON_WARMUP_IN_PROGRESS}=1' in infos[0].message
         assert '不正確' not in infos[0].message, '正常系のログに「不正確」という文言は不適切'
+
+    def test_判別不能理由があればWARNINGにはならないが正確性を主張しない(self, caplog):
+        """5-15c（2回目のcode-review指摘1）: `warmup_undetermined` は欠陥と確定した
+        わけではないため WARNING には昇格させない（`warmup_in_progress` と同じ
+        重大度）が、「全期間計算そのものの結果は正確です」と一括で言い切っては
+        いけない（5-15bの回帰そのもの: 誤って「正確」と報告し続けたことが問題
+        だった）。判別不能ぶんを名指しし、正確性の主張から除外する。"""
+        logger = logging.getLogger('test_t3_fallback_summary_undetermined')
+        reasons = [
+            FALLBACK_REASON_NO_SAVED_ROWS,
+            f'{FALLBACK_REASON_WARMUP_UNDETERMINED}:rs_roc_ema_200',
+            f'{FALLBACK_REASON_WARMUP_UNDETERMINED}:rs_roc_ema_200',
+        ]
+        with caplog.at_level(logging.INFO, logger=logger.name):
+            _log_fallback_summary(logger, reasons)
+
+        warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert not warnings, f'判別不能はWARNINGに昇格しないはずが: {[r.message for r in warnings]}'
+        infos = [r for r in caplog.records if r.levelno == logging.INFO]
+        assert len(infos) == 1
+        msg = infos[0].message
+        assert '3 件' in msg
+        assert f'{FALLBACK_REASON_WARMUP_UNDETERMINED}=2' in msg
+        assert '判別できません' in msg or '判別不能' in msg, (
+            f'判別不能ぶんの不確かさが明示されていない: {msg}'
+        )
+        # 「いずれも...全期間計算そのものの結果は正確です」という一括の断定は禁止
+        # （判別不能な列については正確性を保証できないため）。
+        assert 'いずれも' not in msg, f'判別不能を含むのに一括で正確と主張している: {msg}'
