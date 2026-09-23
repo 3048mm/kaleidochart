@@ -908,6 +908,33 @@
   - **関連**: `backend/scripts/scan_price_anomalies.py`,
     `backend/indicators/price_anomaly.py`, `backend/scripts/scan_split_consistency.py`
 
+- [ ] 🔴 **T5 の日次も SQLite 基点のまま — T3 と同じ遡り不足が残っている**（2026-09-20 発見）
+  - **事象**: `backend/pipeline/phases/t5_signals.py:109-117` が `db.query(DailyPrice)` で
+    SQLite（730日＝実測504営業日）から読んで計算している。T3 の日次で見つかったのと
+    **同じ病気**（`doc/in_progress/t3_incremental_plan.md` §1.3）。
+  - **`SPY_LOOKBACK_MIN_BARS` のガードは警報であって治療ではない**。遡り不足を検知して
+    警告するだけで、正しい値を計算するわけではない。
+  - **同じ病気を3回別々に発見している**: 2026-09-04（T3 の再構築）、2026-09-11（T5 の
+    リフレッシュ＝②）、2026-09-20（T3 の日次）。毎回「その経路だけ」を直しており、
+    アーキテクチャの目標として宣言されていないため次の経路が残る。
+  - **対応案**: T3 の日次で採った増分化（保存済み状態から継ぐ）と同型の対処。
+    `doc/in_progress/t3_incremental_plan.md` の設計をそのまま適用できるはず。
+  - 関連: `doc/in_progress/t3_incremental_plan.md`、`doc/completed/t5_parquet_rebuild_plan.md`
+
+- [ ] 🟠 **遡及的な価格修正のあとに T3 が再計算されない — ウィークリー修復自体にも欠陥がある**（2026-09-20 発見）
+  - **事象**: `adjust_symbol_split.py` で過去の close を補正しても、T3 の過去行は古いまま残る。
+    T3 の日次は `date > t3_max` の行しか書かないため、**過去の行は二度と見直されない**。
+  - **さらに、現在のウィークリー修復自体が同じ欠陥を持つ**:
+    - `backend/scripts/weekly_maintenance.py:365` は `Indicator.id.is_(None)`、すなわち
+      **行が存在しないケースしか拾わず、値が誤っている行は対象外**
+    - 同 `:403` は `db.query(DailyPrice)`（SQLite の504本）から再計算するため、
+      「修復」として**遡り不足の行を書き込む**
+  - **実例**: `rs_momentum_e200` の全損（2026-09-15〜18、全銘柄 NULL）は行が存在して
+    値が NULL のため、**ウィークリーでは直らなかった**。
+  - **対応案**: ①補正した銘柄の T3 を Parquet 基点で再計算する仕組みを週次に入れる
+    ②ウィークリー修復の入力を Parquet 基点にする ③「値が誤っている行」を検出する手段を持つ
+  - 関連: `doc/in_progress/t3_incremental_plan.md` §8
+
 ## P2 — 中（体感改善・保守性・運用安全性）
 
 - [x] 🟡 **`rs_ratio_eN`/`rs_momentum_eN` が極端な価格レンジを持つ銘柄でNULLになる（pandas `.rolling().std()` の数値精度問題、2026-09-12 発見・2026-09-17 解決）**
@@ -1762,6 +1789,48 @@
   - **発見の経緯**: `doc/completed/market_breadth_indicators_plan.md`(S5FI/S5TH取り込み)の本番昇格時。`-DryRun`実行後に気づき、新規銘柄反映は手動オンボードで代替した（同計画書§7に手順の詳細）
   - **対応案**（未着手）: `deploy_after_merge.py`に「新規銘柄も同期する」オプション（`--skip-sync`を外す、または新規銘柄だけT1を通す）を追加する。設計判断が要るため`doc/in_progress/deploy_after_merge_plan.md`側で検討
 
+- [ ] 🟠 **`zone_break` の必要履歴が有界でない — ホットウィンドウ計算では約1%の銘柄が不正確**（2026-09-22 実測）
+  - **事象**: `zb_ssl` / `zb_bsl` / `is_zone_break_bull` / `is_zone_break_weak` は、
+    確定した反転（BOS）ごとに状態がリセットされるが、**トレンドレッグの長さに上限が無い**
+    （移植元 Pine Script の性質）。直前のリセットからの本数が数千本に及ぶ銘柄がある。
+  - **実測（300銘柄・2026-09-22）**: 「末尾1本を全履歴計算と一致させるのに必要な生価格本数」
+
+    | 列 | 中央値 | p90 | p99 | 最大 | 250本超 |
+    |---|---|---|---|---|---|
+    | `is_zone_break_bull` | 120 | 120 | 250 | 250 | 0/300 |
+    | `zb_ssl` | 120 | 120 | 250 | **2,400** | 2/300 |
+    | `zb_bsl` | 120 | 120 | 251 | **2,400** | 3/300 |
+    | `is_zone_break_weak` | 120 | 120 | 250 | 400 | 1/300 |
+
+    対照的に `structure_pivot`（`sp_*`）は最大120本で**有界**だった。
+  - **現状の扱い**: lookback を 400 とし（`ZONE_BREAK_LOOKBACK`）、
+    **厳密解ではないことを `doc/backend_specification.md` §3.4 に明記済み**（2026-09-22 ユーザー判断）。
+    **これは増分化で生じた問題ではなく、現行実装でも同じ**（SQLite の504行で計算しているため）。
+  - **実害**: `zb_*` は表示専用ではなく、`backtest_config.toml` の4戦略が使っている
+    （`is_zone_break_bull_flip` / `is_zone_break_bull_breakout` / `is_zone_break_weak`）。
+  - **対応案**: ①状態を列として保存する（スカラー6列＋可変長のフラクタル/FVGリストの
+    シリアライズが要る。スキーマ変更＝種別 C）②`zone_break` の設計自体を見直す
+    （`counter_trend` が同型の問題で本番昇格後に事故を起こした前例あり:
+    `doc/completed/structure_pivot_screener_plan.md` §5.6）③現状を受容する
+  - 関連: `doc/in_progress/t3_incremental_plan.md` §8、`doc/completed/zone_break_plan.md`
+
+- [ ] 🟡 **ウォームアップ検査（`--check-warmup-nulls`）の閾値が未確定 — 検出された40銘柄の調査も要る**（2026-09-23 起票）
+  - **背景**: 「演算上必要な日数がある銘柄なら、その列は NULL にならない」という検査を
+    `tools/db_health_check.py` に opt-in フラグとして追加した（ユーザー提案）。
+    今回の `rs_momentum_e200` 全損は、これがあれば**初日に3,056銘柄で検出できた**。
+  - **未確定の理由**: 本番の全3,362銘柄に当てたところ偽陽性ゼロにならなかった。内訳:
+    1. **構造的に NULL（除外が必要）** — SPY の `rs_*` 全列、`^VIX`/`^VIX3M`/SPY の
+       出来高由来列（`vol_surge_21` / `vol_surge_rel_spy_21` / `up_down_vol_ratio_50`）
+    2. **閾値の誤り** — `atr_14`/`atr_pct_14` を 0 としたが、価格が12〜18行しかない
+       新規上場7銘柄で NULL。Wilder 実装は14本未満で例外を投げて NaN になる。
+       標本を「2,400本以上の履歴を持つ120銘柄」に限ったことによる見落とし
+    3. **本物の異常（別途調査）** — `rs_roc_ema_200` が NULL の**40銘柄**
+       （個別25・テーマ12・指標2・市場1）。511本以上の履歴があるのに値が無い。
+       **偽陽性ではなく、この検査が掘り当てた実在の異常**
+  - **残作業**: ①1 と 2 の対処（除外規則と閾値の修正）②3 の40銘柄を調査
+    ③週次メンテナンスに組み込むか判断
+  - 関連: `doc/in_progress/t3_incremental_plan.md` §7-5、`backend/indicators/incremental_state_registry.py`
+
 ## P3 — 低（将来フェーズ・プロセス系）
 
 - [ ] **moomoo API 知見の活用アイデア（2026-09-12 起票、未検証・要判断）**
@@ -1925,6 +1994,17 @@
   - [ ] **検証プロセスの厳格化 (True TDD)**: バッチ処理やDBスキーマを変更する際は、「処理が通るか」だけでなく「DB内のデータ（カラム、NULL有無）が完全に期待通りか」をSQL等で自動・手動検証する仕組みを定着させる。
 
 ---
+
+- [ ] **`rs_momentum_e200` の積み方が過剰かもしれない — 退役または再設計の検討**（2026-09-21 起票）
+  - **事象**: 200期間の処理を4段積んでおり（EMA200 シード → 200日窓 z-score →
+    14日 ROC → ROC の EMA200 シード → 200日窓 z-score）、必要遡りが **610本（約2年5ヶ月）**。
+    `min_periods` を窓幅に揃える① を適用すると **810本（約3年3ヶ月）**になる。
+  - **利用状況**: 表示専用（`chart_router.py` の RRG / `dashboard_router.py` /
+    `panel_builders.py`）。`backtest_config.toml` に `e200` の参照は無く、
+    バックテスト・最適化には使われていない。
+  - **論点**: 3年3ヶ月の履歴を要求する指標が必要か。RRG の200日窓を残すにしても、
+    14日 ROC を200日 EMA で平滑化してさらに z 化する積み方は過剰かもしれない。
+  - 関連: `doc/in_progress/min_periods_warmup_plan.md` §4-7、`doc/in_progress/t3_incremental_plan.md` §8
 
 ## 完了済みタスク (Completed)
 

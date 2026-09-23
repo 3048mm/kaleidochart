@@ -3,7 +3,9 @@ yfinance==1.2.0
 pandas==2.2.0
 SQLAlchemy==2.0.25
 tomli==2.0.1      # For TOML parsing in Python < 3.11, built-in tomllib for 3.11+
-ta==0.11.0        # Technical Analysis Library
+# ta==0.11.0 は 2026-09-22 に削除。atr_14 が唯一の利用箇所だったが、
+# 増分計算のために Wilder 平滑化を自前実装へ置き換えた（indicators/volatility.py）。
+# 置き換え時に本番30銘柄で ta 版と最大絶対差 0.000e+00 を確認済み。
 optuna==4.8.0
 optuna-dashboard==0.20.0
 gspread==6.2.1    # For Phase 1 Google Sheets synchronization

@@ -15,10 +15,12 @@
   STALE … 完全な履歴があり最新日だけ遅れている → 上流の供給状況
 """
 
+import json
 import os
 import sqlite3
 import sys
 
+import pandas as pd
 import pytest
 
 project_root = os.path.dirname(
@@ -132,3 +134,367 @@ def test_summary_separates_ng_and_stale(health_db):
     assert ng == ["BROKEN"]
     assert "要対応 1銘柄" in out
     assert "上流待ち 1銘柄" in out
+
+
+# ============================================================
+# RECURSIVE型状態列のNULLチェック（T3増分化計画5-6b）
+# ============================================================
+#
+# 本番レジストリ（`incremental_state_registry.recursive_column_names`）の全列に
+# 依存しないよう、`hc.recursive_column_names`/`hc.max_lookback` を小さい固定値へ
+# 差し替える。ema_200（非RS系）と rs_value_e200（RS系。SPYでは構造的にNULL）の
+# 2列・K=3行で挙動を確認する。
+
+@pytest.fixture
+def recursive_health_db(tmp_path, monkeypatch):
+    db = tmp_path / "health_recursive_test.db"
+    con = sqlite3.connect(db)
+    con.executescript("""
+        CREATE TABLE symbols (id INTEGER PRIMARY KEY, ticker TEXT, active INTEGER);
+        CREATE TABLE daily_prices (id INTEGER PRIMARY KEY AUTOINCREMENT, symbol_id INTEGER, date TEXT);
+        CREATE TABLE indicators (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, symbol_id INTEGER, date TEXT,
+            ema_200 REAL, rs_value_e200 REAL
+        );
+    """)
+    con.commit()
+    monkeypatch.setattr(hc, "DB_PATH", str(db))
+    monkeypatch.setattr(hc, "recursive_column_names", lambda: ("ema_200", "rs_value_e200"))
+    monkeypatch.setattr(hc, "max_lookback", lambda: 3)
+
+    def add(sym_id, ticker, rows):
+        """rows: [(date, ema_200, rs_value_e200), ...]（daily_prices にも同数のT2行を入れる）"""
+        con.execute("INSERT INTO symbols VALUES (?, ?, 1)", (sym_id, ticker))
+        con.executemany("INSERT INTO daily_prices (symbol_id, date) VALUES (?, ?)",
+                        [(sym_id, d) for d, _, _ in rows])
+        con.executemany(
+            "INSERT INTO indicators (symbol_id, date, ema_200, rs_value_e200) VALUES (?, ?, ?, ?)",
+            [(sym_id,) + r for r in rows],
+        )
+        con.commit()
+
+    yield add, con
+    con.close()
+
+
+def _status_recursive(ticker, check_recursive_state):
+    import io
+    from contextlib import redirect_stdout
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        ng = hc.check_symbol_health(all_active=True, check_recursive_state=check_recursive_state)
+    return ng, buf.getvalue()
+
+
+_SPY_ROWS = [(f"2026-07-{d:02d}", 100.0 + d, None) for d in range(28, 32)]  # SPY: rs_value_e200は構造的にNULL
+
+
+def test_recursive_null_detected_when_flag_enabled(recursive_health_db):
+    """RECURSIVE型列に NULL がある銘柄は、フラグ有効時に NG として検出される。"""
+    add, _ = recursive_health_db
+    add(1, "SPY", _SPY_ROWS)
+    # 直近K=3行のうち1行の ema_200 が NULL（同期済み・件数一致・CRITICAL_COLUMNSのnullは未チェック）。
+    add(2, "BROKEN_T3", [
+        ("2026-07-29", 50.0, 1.0),
+        ("2026-07-30", None, 1.0),
+        ("2026-07-31", 52.0, 1.0),
+    ])
+
+    ng, out = _status_recursive("BROKEN_T3", check_recursive_state=True)
+
+    assert "BROKEN_T3" in ng
+    assert "[BROKEN_T3] Status: NG" in out
+    assert "RECURSIVE状態列NULL検知" in out
+    assert "ema_200" in out
+
+
+def test_recursive_null_not_checked_by_default(recursive_health_db):
+    """フラグ未指定（デフォルト）では RECURSIVE 列は見ない（既存挙動を壊さない）。"""
+    add, _ = recursive_health_db
+    add(1, "SPY", _SPY_ROWS)
+    add(2, "BROKEN_T3", [
+        ("2026-07-29", 50.0, 1.0),
+        ("2026-07-30", None, 1.0),
+        ("2026-07-31", 52.0, 1.0),
+    ])
+
+    ng, out = _status_recursive("BROKEN_T3", check_recursive_state=False)
+
+    assert "BROKEN_T3" not in ng
+    assert "RECURSIVE状態列NULL検知" not in out
+
+
+def test_recursive_null_excludes_spy_rs_columns(recursive_health_db):
+    """SPY自身の rs_ 系列（構造的にNULL）は誤検出しない。"""
+    add, _ = recursive_health_db
+    add(1, "SPY", _SPY_ROWS)  # rs_value_e200 は全行NULLだが構造的に正常
+
+    ng, out = _status_recursive("SPY", check_recursive_state=True)
+
+    assert "SPY" not in ng
+    assert "RECURSIVE状態列NULL検知" not in out
+
+
+def test_recursive_null_absent_when_all_present(recursive_health_db):
+    """NULLが無ければ検出されない（OK銘柄はノイズを出さない）。"""
+    add, _ = recursive_health_db
+    add(1, "SPY", _SPY_ROWS)
+    add(2, "CLEAN", [
+        ("2026-07-29", 50.0, 1.0),
+        ("2026-07-30", 51.0, 1.0),
+        ("2026-07-31", 52.0, 1.0),
+    ])
+
+    ng, out = _status_recursive("CLEAN", check_recursive_state=True)
+
+    assert "CLEAN" not in ng
+    assert "[CLEAN] Status:" not in out
+    assert "RECURSIVE状態列NULL検知" not in out
+
+
+# ============================================================
+# ウォームアップ本数超過NULLチェック（T3増分化計画5-6c・ユーザー提案）
+# ============================================================
+#
+# --check-recursive-state（増分計算の「状態」チェック）とは別のもの。こちらは
+# 「指標そのものが出るべき値を出しているか」（T3行数が演算上必要な本数=warmup_bars を
+# 超えているのに最新行がNULLでないか）を見る。本番レジストリの全列に依存しないよう、
+# `hc.columns_with_warmup_threshold` を小さい固定値へ差し替える。
+
+@pytest.fixture
+def warmup_health_db(tmp_path, monkeypatch):
+    db = tmp_path / "health_warmup_test.db"
+    con = sqlite3.connect(db)
+    con.executescript("""
+        CREATE TABLE symbols (id INTEGER PRIMARY KEY, ticker TEXT, active INTEGER);
+        CREATE TABLE daily_prices (id INTEGER PRIMARY KEY AUTOINCREMENT, symbol_id INTEGER, date TEXT);
+        CREATE TABLE indicators (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, symbol_id INTEGER, date TEXT,
+            ema_200 REAL, rs_value_e200 REAL
+        );
+    """)
+    con.commit()
+    monkeypatch.setattr(hc, "DB_PATH", str(db))
+    # ema_200 は warmup_bars=2（3行以上あれば最新行は非NULLであるべき）、
+    # rs_value_e200 は warmup_bars=0（1行でも非NULLであるべき。SPYのrs_系列は除外）。
+    monkeypatch.setattr(hc, "columns_with_warmup_threshold", lambda: {"ema_200": 2, "rs_value_e200": 0})
+    # Parquet（5-15d。真の履歴本数の取得元）は既定では存在しないパスにして、
+    # t3_count へのフォールバック経路をテストする（本番/sandboxの巨大Parquetを
+    # 誤って読みに行かないための安全策も兼ねる）。実際に読ませたいテストだけ、
+    # 個別に `hc.PARQUET_DIR` を上書きする。
+    monkeypatch.setattr(hc, "PARQUET_DIR", str(tmp_path / "no_parquet_here"))
+
+    def add(sym_id, ticker, rows):
+        """rows: [(date, ema_200, rs_value_e200), ...]（daily_prices にも同数のT2行を入れる）"""
+        con.execute("INSERT INTO symbols VALUES (?, ?, 1)", (sym_id, ticker))
+        con.executemany("INSERT INTO daily_prices (symbol_id, date) VALUES (?, ?)",
+                        [(sym_id, d) for d, _, _ in rows])
+        con.executemany(
+            "INSERT INTO indicators (symbol_id, date, ema_200, rs_value_e200) VALUES (?, ?, ?, ?)",
+            [(sym_id,) + r for r in rows],
+        )
+        con.commit()
+
+    yield add, con
+    con.close()
+
+
+def _status_warmup(ticker, check_warmup_nulls):
+    import io
+    from contextlib import redirect_stdout
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        ng = hc.check_symbol_health(all_active=True, check_warmup_nulls=check_warmup_nulls)
+    return ng, buf.getvalue()
+
+
+# SPY 自身は他テストの基準日算出に必要（--all は SPY 欠損だと即エラーになる）。
+# rs_value_e200 は構造的にNULLだが、ema_200 は warmup_bars=2 を超える3行で非NULLにしておく。
+_SPY_ROWS_WARMUP = [
+    ("2026-07-29", 100.0, None),
+    ("2026-07-30", 101.0, None),
+    ("2026-07-31", 102.0, None),
+]
+
+
+def test_warmup_null_detected_when_flag_enabled(warmup_health_db):
+    """T3行数が warmup_bars を超えているのに最新行がNULLなら、フラグ有効時にNGとして検出される。"""
+    add, _ = warmup_health_db
+    add(1, "SPY", _SPY_ROWS_WARMUP)
+    # 3行（t3_count=3 > warmup_bars=2）で最新行の ema_200 が NULL。
+    add(2, "BROKEN_WARMUP", [
+        ("2026-07-29", 50.0, 1.0),
+        ("2026-07-30", 51.0, 1.0),
+        ("2026-07-31", None, 1.0),
+    ])
+
+    ng, out = _status_warmup("BROKEN_WARMUP", check_warmup_nulls=True)
+
+    assert "BROKEN_WARMUP" in ng
+    assert "[BROKEN_WARMUP] Status: NG" in out
+    assert "ウォームアップ超過NULL検知" in out
+    assert "ema_200" in out
+
+
+def test_warmup_null_not_checked_by_default(warmup_health_db):
+    """フラグ未指定（デフォルト）では検出しない（既存挙動を壊さない）。"""
+    add, _ = warmup_health_db
+    add(1, "SPY", _SPY_ROWS_WARMUP)
+    add(2, "BROKEN_WARMUP", [
+        ("2026-07-29", 50.0, 1.0),
+        ("2026-07-30", 51.0, 1.0),
+        ("2026-07-31", None, 1.0),
+    ])
+
+    ng, out = _status_warmup("BROKEN_WARMUP", check_warmup_nulls=False)
+
+    assert "BROKEN_WARMUP" not in ng
+    assert "ウォームアップ超過NULL検知" not in out
+
+
+def test_warmup_null_not_flagged_when_below_threshold(warmup_health_db):
+    """T3行数が warmup_bars 以下（演算上まだ非NULLになるべきでない）なら、NULLでも検出しない。"""
+    add, _ = warmup_health_db
+    add(1, "SPY", _SPY_ROWS_WARMUP)
+    # 2行（t3_count=2 <= warmup_bars=2）で ema_200 が NULL（ウォームアップ中の正常なNULL）。
+    add(2, "STILL_WARMING_UP", [
+        ("2026-07-30", None, 1.0),
+        ("2026-07-31", None, 1.0),
+    ])
+
+    ng, out = _status_warmup("STILL_WARMING_UP", check_warmup_nulls=True)
+
+    assert "STILL_WARMING_UP" not in ng
+    assert "ウォームアップ超過NULL検知" not in out
+
+
+def test_warmup_null_excludes_spy_rs_columns(warmup_health_db):
+    """SPY自身の rs_ 系列（構造的にNULL）は誤検出しない。"""
+    add, _ = warmup_health_db
+    add(1, "SPY", _SPY_ROWS_WARMUP)
+
+    ng, out = _status_warmup("SPY", check_warmup_nulls=True)
+
+    assert "SPY" not in ng
+    assert "ウォームアップ超過NULL検知" not in out
+
+
+def test_warmup_null_absent_when_all_present(warmup_health_db):
+    """NULLが無ければ検出されない（OK銘柄はノイズを出さない）。"""
+    add, _ = warmup_health_db
+    add(1, "SPY", _SPY_ROWS_WARMUP)
+    add(2, "CLEAN", [
+        ("2026-07-29", 50.0, 1.0),
+        ("2026-07-30", 51.0, 1.0),
+        ("2026-07-31", 52.0, 1.0),
+    ])
+
+    ng, out = _status_warmup("CLEAN", check_warmup_nulls=True)
+
+    assert "CLEAN" not in ng
+    assert "[CLEAN] Status:" not in out
+    assert "ウォームアップ超過NULL検知" not in out
+
+
+# ============================================================
+# 真の履歴本数（Parquetマスタ）による到達可能性の修正（T3増分化計画 5-15d）
+# ============================================================
+#
+# 旧実装は比較対象に t3_count（ホットキャッシュ行数。実測最大503）を使っていたため、
+# warmup_bars が503を超える列（rs_roc_ema_200=511・rs_momentum_e200=610）には
+# 条件が永久に成立せず、検査そのものが本不具合の当事者に到達できなかった
+# （2回目のcode-review指摘1）。ここでは「t3_countだけでは届かないが、
+# Parquetの真の履歴本数を使えば届く」状況を作って修正を固定する。
+
+def _write_parquet_history(parquet_root, symbol_row_counts: dict) -> str:
+    """`{symbol_id: 行数}` から最小限の `prices` Parquet マスタを組み立てる（5-15d）。
+
+    `_load_parquet_history_counts` は `symbol_id` 列だけを読むため、
+    それ以外の列は用意しない。
+    """
+    parquet_dir = parquet_root / "parquet_master"
+    parquet_dir.mkdir()
+    rows = []
+    for sid, n in symbol_row_counts.items():
+        rows.extend({"symbol_id": sid} for _ in range(n))
+    df = pd.DataFrame(rows)
+    prices_file = parquet_dir / "prices_test.parquet"
+    df.to_parquet(prices_file)
+    (parquet_dir / "latest_master.json").write_text(
+        json.dumps({"prices": "prices_test.parquet"}), encoding="utf-8",
+    )
+    return str(parquet_dir)
+
+
+def test_warmup_null_unreachable_with_hot_cache_count_alone(warmup_health_db, monkeypatch):
+    """修正前の回帰確認: t3_count（3）が warmup_bars（15）に届かないと検出されない
+    （＝Parquetが無ければ旧来どおりの到達不能が残ることの固定。フォールバックの妥当性）。"""
+    add, _ = warmup_health_db
+    add(1, "SPY", _SPY_ROWS_WARMUP)
+    add(2, "SHORT_HOT_CACHE", [
+        ("2026-07-29", 50.0, 1.0),
+        ("2026-07-30", 51.0, 1.0),
+        ("2026-07-31", None, 1.0),  # ema_200 が最新行でNULL
+    ])
+    monkeypatch.setattr(hc, "columns_with_warmup_threshold", lambda: {"ema_200": 15, "rs_value_e200": 0})
+    # PARQUET_DIR は warmup_health_db フィクスチャで存在しないパスに設定済み
+    # （＝t3_countへフォールバック）。
+
+    ng, out = _status_warmup("SHORT_HOT_CACHE", check_warmup_nulls=True)
+
+    assert "SHORT_HOT_CACHE" not in ng, (
+        "t3_count(3) <= warmup_bars(15) のため、Parquetが無い場合は検出されないのが正しい"
+        "（ウォームアップ中の可能性を否定できない）"
+    )
+    assert "ウォームアップ超過NULL検知" not in out
+
+
+def test_warmup_null_reachable_via_parquet_true_history(warmup_health_db, tmp_path, monkeypatch):
+    """5-15d本体（2回目のcode-review指摘1）: t3_count（3）だけでは warmup_bars（15）に
+    届かない銘柄でも、Parquetの真の履歴本数（20）を使えば検出できる。
+
+    これが本番の rs_roc_ema_200（t3_count最大503 <= warmup_bars511）/
+    rs_momentum_e200（同610）が旧実装では検出不能だった構造そのもの。
+    """
+    add, _ = warmup_health_db
+    add(1, "SPY", _SPY_ROWS_WARMUP)
+    add(2, "LONG_TRUE_HISTORY", [
+        ("2026-07-29", 50.0, 1.0),
+        ("2026-07-30", 51.0, 1.0),
+        ("2026-07-31", None, 1.0),  # ema_200 が最新行でNULL（欠陥）
+    ])
+    monkeypatch.setattr(hc, "columns_with_warmup_threshold", lambda: {"ema_200": 15, "rs_value_e200": 0})
+    parquet_dir = _write_parquet_history(tmp_path, {2: 20})  # symbol_id=2 の真の履歴は20本
+    monkeypatch.setattr(hc, "PARQUET_DIR", parquet_dir)
+
+    ng, out = _status_warmup("LONG_TRUE_HISTORY", check_warmup_nulls=True)
+
+    assert "LONG_TRUE_HISTORY" in ng, (
+        "真の履歴本数(20) > warmup_bars(15) なのに最新行がNULLなので検出されるべき"
+    )
+    assert "[LONG_TRUE_HISTORY] Status: NG" in out
+    assert "ウォームアップ超過NULL検知" in out
+    assert "ema_200" in out
+
+
+def test_warmup_null_falls_back_to_t3_count_when_parquet_symbol_missing(
+    warmup_health_db, tmp_path, monkeypatch
+):
+    """Parquetは読めるが対象銘柄がそこに無い場合は t3_count にフォールバックする
+    （新規上場でまだ夜間ローテーションを経ていない銘柄を想定）。"""
+    add, _ = warmup_health_db
+    add(1, "SPY", _SPY_ROWS_WARMUP)
+    add(2, "NOT_IN_PARQUET", [
+        ("2026-07-29", 50.0, 1.0),
+        ("2026-07-30", 51.0, 1.0),
+        ("2026-07-31", None, 1.0),
+    ])
+    monkeypatch.setattr(hc, "columns_with_warmup_threshold", lambda: {"ema_200": 2, "rs_value_e200": 0})
+    # Parquet自体は存在するが、symbol_id=2 の行は無い（他銘柄のみ）。
+    parquet_dir = _write_parquet_history(tmp_path, {999: 20})
+    monkeypatch.setattr(hc, "PARQUET_DIR", parquet_dir)
+
+    ng, out = _status_warmup("NOT_IN_PARQUET", check_warmup_nulls=True)
+
+    assert "NOT_IN_PARQUET" in ng, "t3_count(3) > warmup_bars(2) なのでフォールバックでも検出されるべき"
+    assert "ウォームアップ超過NULL検知" in out
