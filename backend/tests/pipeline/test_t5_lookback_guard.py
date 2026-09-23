@@ -1,11 +1,12 @@
-"""T5（market_signals）の遡り不足ガードのテスト（計画書 §3.4・§4-1・§7-7・§4-8・§7-8(1)・5-7d・§7-9・5-7e）。
+"""T5（market_signals）の遡り不足ガードのテスト（計画書 §3.4・§4-1・§7-7・§4-8・
+§7-8(1)・5-7d・§7-9・5-7e・§3.6・5-8d）。
 
 SQLite はホット期間（直近730日程度）しか SPY の価格を保持しないため、
 `--rebuild-from T2 --category` / `--re-calculate` のように `market_signals` を
 全削除する経路で全日付を再計算すると、窓の先頭（sma_200 の遡り）が足りず
 MTS の SPY 由来列が誤った値になる（詳細は計画書 §1.1・§1.2）。
 
-**方針（§7-8(1)・5-7d で確定。5-7c までの「除外＋警告」から変更）**:
+**書き込み方針（§7-8(1)・5-7d で確定。5-7c までの「除外＋警告」から変更）**:
 gap_dates のうち、その日までの SPY 遡りが `SPY_LOOKBACK_MIN_BARS`（220本）に
 満たない日付も**例外にせず、書き込み対象から外さない**。他の gap 日付と同様に
 行として書き込むが、`spy_above_sma200` / `distribution_days` / `market_phase` /
@@ -17,14 +18,26 @@ None（NaN）＝ NULL として保存される（判定不能）。遡り不足�
 NaN 行を必ず書くのと食い違い、`/available_dates`（MarketSignal テーブルから
 日付一覧を作る）から該当日付が恒久的に消えてしまう欠陥があった（§7-8(1)）。
 
-**5-7e（§7-9）**: 5-7d は「行として書く」ようにしたが、完了判定
-（`t5_completed_dates` = `market_trend_score` が非 NULL）は変えなかったため、
-NULL 行で書いた日付が毎回 gap_dates に戻り、T5 が収束しない不具合があった。
-本ファイルの `TestConvergesOnSecondRun` がこの収束を担保する: 遡り不足
-かつ既に MarketSignal 行が存在する日付は gap から外れ、2回目以降は
-警告も delete/insert も発生しない。遡りが十分なのにスコアが NULL の日付
-（NULL バックフィル対象）はこの除外の対象外で、従来どおり毎回再計算対象に
-残る（`TestSufficientLookbackNullScoreNotFilteredAcrossRuns`）。
+**gap 判定方針（§3.6・5-8d で確定。5-7e までの「market_trend_score が非 NULL」
+判定から変更）**: NULL は §2.3.1 の原則上「判定不能という正当な結果」であり、
+「行の有無＝処理したか」「列の NULL＝判定できたか」という2軸のうち後者を
+gap 判定に使うのは原則違反だった。5-7e はこの違反を踏んだ結果、「遡り不足かつ
+既に行がある日付を gap から外す」というアドホックな収束処理
+（旧 `t5_signals.py:64-81`）を生んでいた。5-8d では T3（`max(date) per symbol`）・
+T4（`max(date)`）と同じ「行の有無」判定に統一し、このアドホック収束処理は
+丸ごと削除される。
+
+引き換えに失うもの: 「T5 が走ったのにスコアが入らなかった」という本物の
+不具合（＝遡りは十分なのに market_trend_score が NULL のまま残った行）の
+自動検知。行が一度書き込まれると理由を問わず gap から外れ、二度と自動では
+再計算されなくなる。復旧手段は `--rebuild-from T5` として既にあるため、
+原則を通して例外コードを消す方を採用した（計画書 §3.6 が意図的に受け入れた
+トレードオフ）。`TestSufficientLookbackNullScoreNotFilteredAcrossRuns` は
+この新しい契約（既存行があれば理由を問わず再計算されない）を固定する。
+
+`TestConvergesOnSecondRun` は、遡り不足で NULL 行を書いた日付が2回目以降
+gap から外れて収束することを検証する（5-8d では「行の有無」判定そのものが
+この収束を担保するため、5-7e 固有のロジックは不要）。
 """
 
 import logging
@@ -284,13 +297,14 @@ class TestConvergesOnSecondRun:
 
 
 class TestSufficientLookbackNullScoreNotFilteredAcrossRuns:
-    """遡りが十分なのに market_trend_score が NULL の日付（NULL バックフィル対象）
-    は、5-7e の収束処理（遡り不足×既存行の除外）の対象外である。既に
-    MarketSignal 行が存在していても、遡り不足ではないので毎回再計算対象に残る
-    （5-7e の回帰防止: 「既存行があれば外す」を遡り不足以外にまで広げていないこと）。
+    """§3.6・5-8d の新しい契約: gap 判定は「行の有無」に統一されたため、
+    遡りが十分なのに market_trend_score が NULL の日付（NULL バックフィル対象）
+    であっても、既に MarketSignal 行が存在していれば gap から外れ、
+    自動では再計算されない（5-7e までの「遡り不足以外は毎回再計算対象に残す」
+    という挙動からの意図的な変更。復旧は `--rebuild-from T5` を使う）。
     """
 
-    def test_stays_in_gap_and_gets_recomputed_despite_existing_null_row(self, db_session, caplog):
+    def test_existing_null_row_is_not_recomputed_even_with_sufficient_lookback(self, db_session, caplog):
         start_date = date(2024, 1, 1)
         n_bars = SPY_LOOKBACK_MIN_BARS + 50
         dates = _seed_spy_history(db_session, n_bars=n_bars, start_date=start_date)
@@ -299,20 +313,23 @@ class TestSufficientLookbackNullScoreNotFilteredAcrossRuns:
         _mark_completed(db_session, other_dates)
 
         # 遡りは十分だが、過去に何らかの理由で NULL のまま保存された行を再現する
-        # （5-7e 以前に書かれた NULL バックフィル対象、という想定）。
+        # （NULL バックフィル対象、という想定）。
         db_session.add(MarketSignal(date=backfill_date, market_trend_score=None))
         db_session.commit()
+        existing_id = db_session.query(MarketSignal.id).filter(MarketSignal.date == backfill_date).scalar()
 
         with caplog.at_level(logging.INFO):
             sync_phase_t5_signals(db_session, logging.getLogger("test"))
 
-        # 遡りが十分なので「遡り不足」の警告には含まれない。
+        # 行の有無だけで gap 判定するため、他の日付もすべて完了済みなら
+        # gap_dates は空になり、早期 return する（警告もない）。
         error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
-        combined = " ".join(r.getMessage() for r in error_records)
-        assert str(backfill_date) not in combined
+        assert not error_records
+        info_messages = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
+        assert any("No gaps" in m for m in info_messages)
 
         signal = db_session.query(MarketSignal).filter(MarketSignal.date == backfill_date).first()
         assert signal is not None
-        # 既存行があっても gap_dates から外れず再計算され、遡りが十分なので
-        # 実際に値が入る（= 5-7e の除外条件が遡り不足以外に及んでいないことの証拠）。
-        assert signal.market_trend_score is not None
+        # 既存行があるので gap から外れ、再計算されない（NULL のまま・id も不変）。
+        assert signal.market_trend_score is None
+        assert signal.id == existing_id
