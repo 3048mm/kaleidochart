@@ -286,15 +286,19 @@ class TestWarmupBars:
         assert set(thresholds.keys()) == expected
 
     @pytest.mark.parametrize('name,expected_warmup', [
-        ('sma_200', 0),
+        # 2026-09-24（5-11b）再実測値。min_periods_warmup_plan.md の①（min_periods=window
+        # 統一）・A-full（RS系4流儀目の統一）適用後、sandboxで全期間再計算した実データに
+        # 層化サンプル（履歴本数の異なる355銘柄）で測定した値。
+        ('sma_200', 199),
         ('ema_200', 199),
         ('rs_value_e200', 199),
-        ('rs_ratio_e200', 298),
-        ('rs_roc_ema_200', 511),
-        ('rs_momentum_e200', 610),
-        # 安全側（実測の最大値）を採用した2列。中央値は0だが最大が13だった。
-        ('vol_surge_21', 13),
-        ('vol_surge_rel_spy_21', 13),
+        ('rs_ratio_e200', 398),
+        ('rs_roc_ema_200', 611),
+        ('rs_momentum_e200', 810),
+        # 安全側（実測の最大値）を採用した3列。中央値は20/49だが最大が73/76だった。
+        ('vol_surge_21', 73),
+        ('vol_surge_rel_spy_21', 73),
+        ('up_down_vol_ratio_50', 76),
     ])
     def test_代表列のwarmup_bars(self, name, expected_warmup):
         assert INDICATOR_COLUMN_REGISTRY[name].warmup_bars == expected_warmup
@@ -389,3 +393,22 @@ class TestIsStructurallyNullColumn:
     def test_SPY以外の銘柄はrs始まりでもFalse(self):
         assert is_structurally_null_column('AAPL', 'rs_value') is False
         assert is_structurally_null_column('AAPL', 'rs_roc_ema_200') is False
+
+    def test_SPYのvol_surge系はTrue(self):
+        """2026-09-24（5-11b）追加: calc_volume_and_trendsが
+        'spy_volume' in df.columns をゲートにしており、SPY自身のdfには
+        df_spy=None早期returnのためspy_volumeがマージされない。
+        rs_*とは別経路だが同じ根本原因（早期return）による構造的NULL。
+        """
+        assert is_structurally_null_column('SPY', 'vol_surge_21') is True
+        assert is_structurally_null_column('SPY', 'vol_surge_rel_spy_21') is True
+
+    def test_SPYでもup_down_vol_ratio_50とvcrはFalse(self):
+        """これらはSPY自身の価格・出来高のみで計算され、df_spy=None早期return
+        の影響を受けない（実データで非NULLを確認済み）ため対象外。"""
+        assert is_structurally_null_column('SPY', 'up_down_vol_ratio_50') is False
+        assert is_structurally_null_column('SPY', 'vcr') is False
+
+    def test_SPY以外の銘柄はvol_surge系でもFalse(self):
+        assert is_structurally_null_column('AAPL', 'vol_surge_21') is False
+        assert is_structurally_null_column('AAPL', 'vol_surge_rel_spy_21') is False
