@@ -602,7 +602,7 @@ OHLC 系は「価格の NULL は判定不能ではなく本物の異常」なの
 - [x] **5-24**（同・対応 R5）`t5_signals.py` の `_find_insufficient_lookback_dates` の docstring と、周辺コメントに残っている**撤去済みの収束ロジック（5-7e）・`t5_completed_dates` の記述**を現状（行の有無で gap 判定・このリストはエラーログ用途のみ）に合わせる。コード変更なし — **2026-09-24 完了**。`_find_insufficient_lookback_dates` の docstring と周辺コメントを、行の有無での gap 判定・エラーログ用途のみに書き直した（ロジック不変）。
 - [x] **5-25**（同・対応 R18）`screener_router.py:778-779` の `_float_or(rs21_rank / rs63_rank)`（NULL→0.0）を **NULL のまま返す**形に直す（`_float_or_none` が既にある）。`schemas.py` の対応フィールド（`rs_ratio_21_rank` / `rs_ratio_63_rank` / `rs_ratio_rank_e21` / `rs_ratio_rank_e63`）を `Optional[float]` にし、`frontend/src/types.ts` の型を `number | null` に揃える。**5-9b で `ScreenerResultPage.tsx` を null 安全にしたが、API が 0.0 を返すため一度も効いていなかった**（§3.1「呼んでいるが効いていない」型）。dashboard API（NULL を返す）との不整合の解消。テスト: NULL ランクの銘柄が screener 応答で `null` になること。`screener_router.py:735` のソートキー `fillna(0.0)`（NULL は最下位）は意味が一致するため据え置き — **2026-09-24 完了**。screener API の `rank_21/63` を `_float_or_none` に変更。`schemas.py`/`types.ts` は元から Optional で変更不要だった。応答の最終ソートが None で `TypeError` になるため `(有無, 値)` のタプルキーで NULL を末尾にした（計画に明記のない必須の副次修正）。
 - [x] **5-26**（同・対応 R22）`market_signals.py` の `calculate_market_signals` で `df_vix` が無いとき `df['vix_close'] = 20.0`（約L248）と固定値を入れ、`^VIX3M` があれば `vxv_vix_ratio = vxv / 20` という**捏造比率が MTS に入る**。§3.7 / 4-12（`vxv_vix_ratio` の推定式撤去・fail loud）と同じ種類の撤去漏れ。`vix_close` を NaN にして `vxv_vix_ratio` を NULL にし、`^VIX3M` 欠損時と同じ形式の WARNING を出す（`report_stale_input_gaps` のお手本に揃える）。テスト: `df_vix=None` かつ `df_vxv` 有りで `vxv_vix_ratio` が NaN・警告が出ること。**5-21（同じファイルを編集中）の完了後に着手する** — **2026-09-24 完了**。`df_vix` 欠損時の `vix_close = 20.0` を NaN に変更し、`vxv_vix_ratio` を NULL にして WARNING を出す（`^VIX3M` 欠損時と同形式）。下流に `has_vxv` 相当の判定は無く、VIX 欠損時は `^VIX3M` 欠損時と同じく `market_trend_score` が全行 NaN になる（fail loud。3成分に落ちるのは breadth 欠損時のみ）。既存テスト `test_t5_lookback_guard.py` の fixture が `^VIX3M` しか投入せず 20.0 固定値に暗黙に頼っていたため、`^VIX`（close=18.0）を投入するテストデータ側の是正を行った。全件 2008 passed / 1 skipped / 0 failed（オーケストレーター単独実行）。
-- [ ] **5-17** merge → `tools/deploy_after_merge.ps1` で昇格 → API サーバ再起動。**種別 B のため `/code-review` をブランチ単位で1回通してから merge する**（CLAUDE.md 検収 第2段）。日次パイプライン Tue-Sat 07:00/13:00 と重ねない（§4-5）
+- [ ] **5-17** merge → `tools/deploy_after_merge.ps1` で昇格 → API サーバ再起動。**昇格後の検証（G3 2周目 R26 より）: 本番 `market_signals` の 2017Q1 の `breadth_sma50` が 0.5 ではなく NULL になっていること**（旧ロジック由来の行が T5 全期間再計算で置き換わったことの確認）。**種別 B のため `/code-review` をブランチ単位で1回通してから merge する**（CLAUDE.md 検収 第2段）。日次パイプライン Tue-Sat 07:00/13:00 と重ねない（§4-5）
 - [ ] **5-18** **再最適化をユーザーへ引き渡す**（§4-3。実行はユーザー、約12時間規模）— ①変更が main に merge・昇格済みであることを明言する ②1戦略だけ短時間ドライランで挙動を確認する ③対象8戦略（`E2`/`F`/`A`/`G2`/`D`/`H1`/`G1`/`C2`）を明示して引き渡す。**データが変わる変更なので、既存 trial の集計値ベースの再スコアリングは使えない**（集計値そのものが旧データ由来のため）
 - [ ] **5-19** 計画書を `doc/completed/` へ移動（再最適化の完了は待たない。結果は別途記録）
 
@@ -740,6 +740,19 @@ finder 8本の報告をすべて集約（再利用 / 規約 / 効率 / 削除さ
 
 - **issue 化の起票先**: `doc/issue_list.md` P2「`min_periods_warmup` の G3 レビューで切り出した項目」（R4-RrgChart / R8 / R9 / R10 / R11 / R12 / R13 / R17 / R19 / R20 / R23）
 - **1周目の結論**: 「対応」7件（5-20〜5-26）。finder 8本の報告をすべて反映済み。実測ベースの finder は、レジストリの `warmup_bars` の一致・K=400 での増分/フル再計算の一致（10履歴長・60列超で不一致0）・`percent_rank` と SQLite の一致（300ケース）を**肯定的に確認**している。**修正 → G2 → 2周目の G3 が必要**。「merge 可能」はまだ報告しない
+
+#### 2周目（2026-09-24・修正分 `1aec291...47074bb` を対象。`/code-review high`）
+
+1周目の「対応」7件（5-20〜5-26）がすべて G2 を通った後の再レビュー。修正分だけを対象にした（全体を再度かけると1周目で仕分け済みの指摘が重複するため）。
+
+| # | 指摘 | 仕分け | 理由・対応 |
+| :-- | :-- | :-- | :-- |
+| R26 | `scenario_market_score` を経由して、**保存済み** `market_signals` の旧ロジック由来 `breadth_sma50 = 0.5`（2017Q1 等）が「算出できた breadth」として読まれ、日付ゲート撤去後は4成分 MTS になる | **却下（昇格の前提条件として記録）** | 昇格（`deploy_after_merge`・既定 `--rebuild-from T3`）が **T5 を Parquet 基点で全期間再計算**する（`_rebuild_from_parquet` → `recompute_parquet_signals.run`）ため、旧 0.5 の行は昇格時に NULL へ置き換わる。**5-17 の昇格後検証に「2017Q1 の `breadth_sma50` が NULL であること」を追加**した |
+| R27 | 仮想指数の増分ブランチが730日全履歴の rolling を毎日回す（seed 以降しか使わない） | **issue 化** | 性能のみ（仮想テーマ約170本×構成銘柄。rebuild 経路と同じ計算量）。seed_date の約21営業日前までに絞れば同じ値になる。R11 に合流 |
+| R28 | `db_health_check` が銘柄ごとに `columns_with_warmup_threshold()` を呼ぶ／除外条件が厳密値より1本広い | **却下** | 前者はレジストリの定数辞書引きで実害なし。後者は保守側（誤検知を避ける向き）の1本で、5-22 の完了ノートに記載済みの許容事項 |
+
+- **2周目の結論**: 「対応」0件。未対応の重大指摘なし。**G3 通過**（往復2周・`doc/workflow.md` §3 の上限内）
+- レビュアーが正しさを確認した箇所: `compute_breadth_momentum`／`t5_signals`／screener と `SummaryTable` の NULL ランク処理／`vix_close` の変更
 
 ## 7. 途中発生した課題
 
