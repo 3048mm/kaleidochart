@@ -63,6 +63,7 @@ from pipeline.phases.t3_indicators import (  # noqa: E402
     FALLBACK_REASON_INSUFFICIENT_ROWS,
     FALLBACK_REASON_MULTI_DAY_GAP,
     FALLBACK_REASON_NULL_RECURSIVE_COLUMN,
+    FALLBACK_REASON_WARMUP_IN_PROGRESS,
 )
 
 SID_TARGET = 2
@@ -108,6 +109,49 @@ def _build_scenario():
     full_res = calculate_indicators(df_full.copy(), spy_full.copy(), state=None)
     spy_price_only = spy_full[['date', 'close', 'volume']].reset_index(drop=True)
     return dates, df_full, spy_full, full_res, spy_price_only
+
+
+def _build_short_scenario(n_short):
+    """短い履歴（正当なウォームアップ中NULLを再現するための）シナリオ。
+
+    5-15b（code-review指摘1）: `_build_scenario()`（N_TOTAL=1400）は履歴が
+    十分に長く、増分ウィンドウ（K=`max_lookback()`本）内のどの位置も
+    warmup_bars を大きく超えるため、「壊れているから NULL」の欠陥ケースしか
+    作れない。本ヘルパーは `n_short` を K に近い値にすることで、増分ウィンドウが
+    その銘柄の履歴の先頭付近を含むようにし、オラクル自身が正当に NULL を返す
+    区間（＝ウォームアップ中）を再現する。
+    """
+    dates = pd.bdate_range('2019-01-02', periods=n_short).date
+    px = _make_series(n_short, seed=3, base=150.0)
+    df_full = pd.DataFrame({'date': dates}).join(px)
+
+    spy_px = _make_series(n_short, seed=4, base=310.0, vol=2.0)
+    spy_full = pd.DataFrame({'date': dates}).join(spy_px)
+
+    full_res = calculate_indicators(df_full.copy(), spy_full.copy(), state=None)
+    spy_price_only = spy_full[['date', 'close', 'volume']].reset_index(drop=True)
+    return dates, df_full, spy_full, full_res, spy_price_only
+
+
+def _build_spy_scenario():
+    """SPY自身をワーカーへ渡すためのシナリオ（5-15b・code-review指摘2）。
+
+    `_calculate_t3_worker` はticker=='SPY'のとき`spy_df_arg=None`で
+    `calculate_indicators`を呼ぶ（自分自身に対する相対強度は定義されない）。
+    そのためSPYのオラクルは、SPY自身の価格系列に対して df_spy=None で計算する。
+    """
+    dates = pd.bdate_range('2019-01-02', periods=N_TOTAL).date
+    spy_px = _make_series(N_TOTAL, seed=2, base=300.0, vol=2.0)
+    spy_full = pd.DataFrame({'date': dates}).join(spy_px)
+    full_res_spy = calculate_indicators(spy_full.copy(), None, state=None)
+    # df_spy=None のときrs_*系列はcalc_relative_strengthの早期returnで
+    # 列自体が作られない（rs_blue_dot_age/rs_red_dot_ageを除く）。本番では
+    # `row.get(col)`でNoneとして書き込まれる（sync_phase_t3_indicators）ため、
+    # ここでも欠けている列をNaN列として補い、実際のDB格納を模す。
+    for col in IND_COLS:
+        if col not in full_res_spy.columns:
+            full_res_spy[col] = np.nan
+    return dates, spy_full, full_res_spy
 
 
 def _to_sqlite_value(v):
@@ -362,6 +406,70 @@ class TestCalculateT3WorkerFallback:
         assert 'ema_200' in fallback_reason, f'NULLにした列名(ema_200)が理由に含まれるはずが: {fallback_reason}'
 
 
+class TestCalculateT3WorkerWarmupClassification:
+    """5-15b（code-review指摘1）: 「壊れているから NULL」と「まだ出ないから NULL」の区別。
+
+    `test_null_state_column_falls_back`（既存）は履歴の深い位置（=欠陥）を検証している。
+    ここでは対照的に、短い履歴の銘柄で増分ウィンドウがその銘柄の先頭付近を含む場合、
+    オラクル自身が正当にNULLを返す（＝ウォームアップ未完了）区間を
+    `FALLBACK_REASON_NULL_RECURSIVE_COLUMN`（欠陥）ではなく
+    `FALLBACK_REASON_WARMUP_IN_PROGRESS`（正当）に分類することを確認する。
+    """
+
+    def test_短い履歴の正当なウォームアップNULLはwarmup_in_progressになる(self, db_path, monkeypatch):
+        n_short = K + 2
+        dates, df_full, spy_full, full_res, spy_price_only = _build_short_scenario(n_short)
+        t3_max = dates[n_short - 2]
+        _insert_prices(db_path, SID_TARGET, df_full)
+        _insert_indicators(db_path, SID_TARGET, full_res, upto_idx=n_short - 2)
+
+        # 前提確認: この短い履歴では、オラクル自身がまだ ema_200/rs_roc_ema_200 の
+        # ウォームアップを終えていない（=欠陥ではなく正当なNULL）。
+        assert pd.isna(full_res['ema_200'].iloc[50])
+        assert pd.isna(full_res['rs_roc_ema_200'].iloc[-1])
+
+        calls = _patch_calculate_indicators(monkeypatch)
+
+        ticker, sid, records, fallback_reason = _calculate_t3_worker(
+            SID_TARGET, 'TEST', t3_max, db_path, spy_price_only,
+            skip_fetch=False, is_virtual=False, spy_latest_date=dates[-1],
+        )
+
+        assert not isinstance(records, Exception), f'ワーカーが例外を返した: {records}'
+        assert calls == [None], f'NaNを含む供給履歴のため全期間計算にフォールバックするはずが: {calls}'
+        assert fallback_reason is not None
+        assert fallback_reason.startswith(FALLBACK_REASON_WARMUP_IN_PROGRESS + ':'), (
+            f'正当なウォームアップ中のNULLは欠陥ではなくWARMUP_IN_PROGRESSに分類されるはずが: {fallback_reason}'
+        )
+        assert FALLBACK_REASON_NULL_RECURSIVE_COLUMN not in fallback_reason
+
+
+class TestCalculateT3WorkerSpyExclusion:
+    """5-15b（code-review指摘2）: SPYのrs_*列は構造的にNULLが正常なため、
+    フォールバック判定から除外され、他のRECURSIVE型列（ema_*/td9/atr_14）が
+    揃っていれば増分経路を使えること。"""
+
+    def test_spyはrs列のnullを無視して増分経路を使う(self, db_path, monkeypatch):
+        dates, spy_full, full_res_spy = _build_spy_scenario()
+        t3_max = dates[N_TOTAL - 2]
+        _insert_prices(db_path, SID_SPY, spy_full)
+        _insert_indicators(db_path, SID_SPY, full_res_spy, upto_idx=N_TOTAL - 2)
+
+        calls = _patch_calculate_indicators(monkeypatch)
+
+        ticker, sid, records, fallback_reason = _calculate_t3_worker(
+            SID_SPY, 'SPY', t3_max, db_path, spy_full[['date', 'close', 'volume']],
+            skip_fetch=False, is_virtual=False, spy_latest_date=dates[-1],
+        )
+
+        assert not isinstance(records, Exception), f'ワーカーが例外を返した: {records}'
+        assert calls == [True], (
+            f'SPYはrs_*列のNULLを除外して増分経路を使うはずが、全期間計算に'
+            f'フォールバックした: calls={calls}, fallback_reason={fallback_reason}'
+        )
+        assert fallback_reason is None
+
+
 class TestLogFallbackSummary:
     """フォールバック理由の集計ログ（5-6b）の固定。"""
 
@@ -397,3 +505,25 @@ class TestLogFallbackSummary:
         # detail（列名）は集計時に落として、カテゴリだけで数える
         assert f'{FALLBACK_REASON_NULL_RECURSIVE_COLUMN}=1' in msg
         assert '--rebuild-from T3' in msg
+
+    def test_欠陥理由が無ければWARNINGではなくINFOになる(self, caplog):
+        """5-15b（code-review指摘2・軽微2件目）: 新規上場・履歴不足・ウォームアップ中
+        など想定内の理由だけなら、WARNINGではなくINFOに留める（一律WARNINGだと
+        ノイズになりWARNINGが読まれなくなる）。"""
+        logger = logging.getLogger('test_t3_fallback_summary_benign_only')
+        reasons = [
+            FALLBACK_REASON_NO_SAVED_ROWS,
+            FALLBACK_REASON_INSUFFICIENT_ROWS,
+            FALLBACK_REASON_MULTI_DAY_GAP,
+            f'{FALLBACK_REASON_WARMUP_IN_PROGRESS}:rs_roc_ema_200',
+        ]
+        with caplog.at_level(logging.INFO, logger=logger.name):
+            _log_fallback_summary(logger, reasons)
+
+        warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert not warnings, f'想定内の理由のみなのにWARNINGが出た: {[r.message for r in warnings]}'
+        infos = [r for r in caplog.records if r.levelno == logging.INFO]
+        assert len(infos) == 1
+        assert '4 件' in infos[0].message
+        assert f'{FALLBACK_REASON_WARMUP_IN_PROGRESS}=1' in infos[0].message
+        assert '不正確' not in infos[0].message, '正常系のログに「不正確」という文言は不適切'

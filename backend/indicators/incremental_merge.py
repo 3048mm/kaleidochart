@@ -117,10 +117,23 @@ def prev_self_seed(df: pd.DataFrame, col: str, incremental: bool):
     （最終行の1つ前の行＝行K-1）から直接取り出す。
 
     外部から別途スカラー辞書（旧 state dict）を受け取る必要をなくすための
-    導出関数（5-4b）。df に該当列が無い、または行数が足りない場合は
-    None を返し、呼び出し元は state=None と同じ全期間計算にフォールバック
-    する（§3.5 のフォールバック方針と整合）。
+    導出関数（5-4b）。df に該当列が無い、行数が足りない、または取り出した値が
+    NaN の場合は None を返し、呼び出し元は state=None と同じ全期間計算に
+    フォールバックする（§3.5 のフォールバック方針と整合）。
+
+    NaN チェックを本関数自体で行う理由（5-15b・code-review指摘4）: 修正前は
+    `df[col].iloc[-2]` が NaN のままそのまま返っていた。`NaN is not None` が
+    True になるため、呼び出し元の `if prev_x is not None:` によるフォールバック
+    判定をすり抜け、NaN シードで `_ema_kernel` 等を1歩進めてしまう
+    （結果は NaN のまま連鎖するだけで実害は小さいが、docstring が謳う
+    「None を返してフォールバックする」契約とは食い違う）。現状は
+    `_calculate_t3_worker` の `notna()` ゲートが呼び出し前に防いでいるが、
+    このガードを T5 に流用する予定（`doc/issue_list.md`）のため、
+    契約自体を本関数側で閉じる。
     """
     if not incremental or col not in df.columns or len(df) < 2:
         return None
-    return df[col].iloc[-2]
+    seed = df[col].iloc[-2]
+    if pd.isna(seed):
+        return None
+    return seed

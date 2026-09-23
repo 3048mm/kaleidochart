@@ -26,6 +26,7 @@ from indicators.incremental_state_registry import (
     ColumnSpec,
     INDICATOR_COLUMN_REGISTRY,
     columns_with_warmup_threshold,
+    is_structurally_null_column,
     max_lookback,
     recursive_column_names,
     supplied_column_names,
@@ -327,3 +328,28 @@ class TestSuppliedColumnNames:
         registered = set(INDICATOR_COLUMN_REGISTRY.keys())
         for name in supplied_column_names():
             assert name in registered, f'{name}: INDICATOR_COLUMN_REGISTRY に無い列名です'
+
+
+class TestIsStructurallyNullColumn:
+    """`is_structurally_null_column`（5-15b・code-review指摘2）の不変条件。
+
+    SPY自身の `rs_*` 列（相対強度）は `calc_relative_strength` が
+    `df_spy is None` の早期returnで計算をスキップするため常にNULLになる
+    （増分計算の状態が壊れているわけではない）。この判定を
+    `tools/db_health_check.py` と `pipeline/phases/t3_indicators.py`
+    （`_calculate_t3_worker`）の両方で共有するための関数。
+    """
+
+    def test_SPYのrs始まりの列はTrue(self):
+        assert is_structurally_null_column('SPY', 'rs_value') is True
+        assert is_structurally_null_column('SPY', 'rs_roc_ema_200') is True
+        assert is_structurally_null_column('SPY', 'rs_blue_dot_age') is True
+
+    def test_SPYでもrs始まりでない列はFalse(self):
+        assert is_structurally_null_column('SPY', 'ema_200') is False
+        assert is_structurally_null_column('SPY', 'atr_14') is False
+        assert is_structurally_null_column('SPY', 'td9') is False
+
+    def test_SPY以外の銘柄はrs始まりでもFalse(self):
+        assert is_structurally_null_column('AAPL', 'rs_value') is False
+        assert is_structurally_null_column('AAPL', 'rs_roc_ema_200') is False

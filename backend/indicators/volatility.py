@@ -43,7 +43,8 @@ def _atr_wilder_kernel(true_range, window, seed_idx, seed_value):
         1歩ずつ進める。
         - state=None（全期間計算）: seed_idx=window-1, seed_value=true_range[0:window]の平均
           （ta 実装と同じ。それより前の行は 0 のまま＝ta の np.zeros 初期化と同じ）
-        - state あり（増分計算）: seed_idx=0, seed_value=前日の atr_14
+        - state あり（増分計算）: seed_idx=len(true_range)-2（供給された前日行）,
+          seed_value=前日の atr_14
     """
     n = true_range.shape[0]
     atr = np.zeros(n)
@@ -99,8 +100,14 @@ def calc_volatility(df: pd.DataFrame, state: bool = None) -> pd.DataFrame:
             if len(tr_values) < window:
                 raise ValueError('true_range の長さが window 未満です')
             # true_range[0:window] の平均（true_range[0] は high-low のみで求まるため
-            # NaN ではない。ta の _run() と同一のシード方法）
-            seed_value = float(np.mean(tr_values[:window]))
+            # NaN ではない。ta の _run() と同一のシード方法）。
+            # `ta` は内部で pandas の `Series.rolling().mean()` 相当（NaNをスキップする
+            # 平均）を使うため、`np.mean` ではなく NaN をスキップする平均を使う必要がある
+            # （5-15b・code-review指摘3）。`np.mean` は窓内に NaN が1つでもあると
+            # seed 自体が NaN になり、`atr_14`/`atr_pct_14`/`sma50_atr_mult` が
+            # 列全体 NaN になってしまう。現在の daily_prices に NULL OHLC は無いため
+            # 顕在化していないが、契約として `ta` と同じ挙動に揃える。
+            seed_value = float(pd.Series(tr_values[:window]).mean())
             atr_values = _atr_wilder_kernel(tr_values, window, window - 1, seed_value)
         atr_values = pd.Series(atr_values, index=df.index)
         df['atr_14'] = finalize_incremental_column(df, 'atr_14', atr_values, incremental)

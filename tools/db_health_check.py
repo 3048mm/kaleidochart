@@ -14,6 +14,7 @@ for _p in (project_root, os.path.join(project_root, "backend")):
 import paths
 from indicators.incremental_state_registry import (
     columns_with_warmup_threshold,
+    is_structurally_null_column,
     max_lookback,
     recursive_column_names,
 )
@@ -145,10 +146,12 @@ def check_symbol_health(ticker: str = None, all_active: bool = False, check_null
         # ここにNULLがある銘柄は増分経路が発動せず、日次T3が全期間再計算に
         # フォールバックし続ける（=不正確な値が書かれ続ける。t3_indicators.py参照）。
         # 「うるさいから閾値でごまかす」ことをしないため、SPYのRS系列（構造的にNULLが
-        # 正常）以外の除外は行わない。
+        # 正常）以外の除外は行わない。除外ロジックは `_calculate_t3_worker`
+        # （t3_indicators.py）とも共有するため `is_structurally_null_column` に
+        # 集約している（5-15b）。
         recursive_null_cols = []
         if check_recursive_state and t3_count > 0 and not is_empty_virtual_theme:
-            cols_to_check = [c for c in recursive_cols if not (t == 'SPY' and c.startswith('rs_'))]
+            cols_to_check = [c for c in recursive_cols if not is_structurally_null_column(t, c)]
             if cols_to_check:
                 col_sql = ', '.join(f'"{c}"' for c in cols_to_check)
                 rows = conn.execute(f"""
@@ -172,7 +175,7 @@ def check_symbol_health(ticker: str = None, all_active: bool = False, check_null
         if check_warmup_nulls and t3_count > 0 and not is_empty_virtual_theme:
             cols_to_check = {
                 c: w for c, w in warmup_thresholds.items()
-                if not (t == 'SPY' and c.startswith('rs_'))
+                if not is_structurally_null_column(t, c)
             }
             if cols_to_check:
                 col_sql = ', '.join(f'"{c}"' for c in cols_to_check)

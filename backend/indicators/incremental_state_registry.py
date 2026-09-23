@@ -554,6 +554,25 @@ def max_lookback() -> int:
     return max(values) if values else 0
 
 
+def is_structurally_null_column(ticker: str, column: str) -> bool:
+    """(ticker, column) の組み合わせが「構造的にNULLが正常」かどうかを判定する（5-15b）。
+
+    `calc_relative_strength`（relative_strength.py）は `df_spy is None`（SPY自身を
+    計算する場合）で早期returnし、`rs_*` で始まる列（`rs_value` / `rs_value_eN` /
+    `rs_ratio_eN` / `rs_roc_ema_N` / `rs_momentum_eN` / `rs_trend_sN` /
+    `rs_macd_*` / `rs_blue_dot_age` / `rs_red_dot_age`）は一切計算されず常にNULLに
+    なる（自分自身に対する相対強度は定義されないため）。これは増分計算の状態が
+    壊れているわけではなく、`--check-recursive-state`（5-6b）・
+    `--check-warmup-nulls`（5-6c。`tools/db_health_check.py`）・
+    `_calculate_t3_worker`（`pipeline/phases/t3_indicators.py`。5-15b で追加）の
+    3箇所すべてで同じ除外が必要なため、重複実装を避けて本関数に集約する
+    （code-review指摘2: 除外がワーカー側に無いと、SPYが毎日必ず全期間計算に
+    フォールバックし続け、かつ健全な状態でも `NULL_RECURSIVE_COLUMN` の
+    WARNING が消えない）。
+    """
+    return ticker == 'SPY' and column.startswith('rs_')
+
+
 def columns_with_warmup_threshold() -> Mapping[str, int]:
     """`warmup_bars` が確定している列名 → 閾値の対応（5-6c）。
 
