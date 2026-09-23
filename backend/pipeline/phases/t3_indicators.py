@@ -48,7 +48,7 @@ def _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_vi
         from datetime import date
         from indicators.calculate import calculate_indicators
         from indicators.incremental_state_registry import (
-            INDICATOR_COLUMN_REGISTRY, max_lookback, recursive_column_names,
+            max_lookback, recursive_column_names, supplied_column_names,
         )
 
         conn = sqlite3.connect(db_path, timeout=60.0)
@@ -78,7 +78,11 @@ def _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_vi
                 else:
                     K = max_lookback()
                     # 供給する T3 列はレジストリから機械的に導出する（手書きリスト禁止）。
-                    ind_cols = sorted(INDICATOR_COLUMN_REGISTRY.keys())
+                    # 5-6d: 全67列ではなく、増分計算の入力として実際に参照される列
+                    # （33列）だけを読む。読み出しコストは行数より列数が支配的
+                    # （実測。§2.3）。供給しない34列（出力専用のWINDOW型列）は
+                    # calculate_indicators 側で毎回生価格から再計算されるため無害。
+                    ind_cols = list(supplied_column_names())
                     cols_sql = ", ".join(["date"] + ind_cols)
                     hist_query = (
                         f"SELECT {cols_sql} FROM indicators "

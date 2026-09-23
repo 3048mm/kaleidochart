@@ -500,6 +500,45 @@ def recursive_column_names() -> Tuple[str, ...]:
     ))
 
 
+def supplied_column_names() -> Tuple[str, ...]:
+    """T3 ワーカーが `indicators` テーブルから実際に読むべき列名一覧（ソート済み）（5-6d）。
+
+    計画書: doc/in_progress/t3_incremental_plan.md §2.3・5-6d（読み出しコストの削減）
+
+    5-6 時点の実装は増分呼び出しの都度、レジストリの全67列
+    （`sorted(INDICATOR_COLUMN_REGISTRY.keys())`）を `indicators` から読んでいたが、
+    実測（3,360銘柄・sandbox SQLite）で読み出しコストを支配しているのは**行数ではなく
+    列数**と判明した（252行×67列=18.8秒 に対し 252行×6列=3.2秒）。そして実際に
+    増分計算の入力として参照される T3 列は本関数が返す33列のみで、残り34列は
+    計算結果として書かれるだけの出力専用列（増分計算の入力にはならない）。
+
+    ## 導出ロジック
+
+    1. **RECURSIVE型列自身**（`recursive_column_names()`）— 自列の前日値
+       （`prev_self_seed` が `df[col].iloc[-2]` を直接参照する。`ema_*` /
+       `rs_value_eN` / `rs_roc_ema_N` / `td9` / `atr_14` / `rs_macd_signal_21` /
+       `rs_blue_dot_age` / `rs_red_dot_age`）
+    2. **他列の `inputs` として参照される T3 列**（生価格・SPY列を除く）—
+       RECURSIVE型列は `finalize_incremental_column`/`prev_self_seed` で
+       供給済み履歴をそのまま使うが、WINDOW型列は毎回全行を生価格または
+       既にマージ済みの列から再計算するため厳密には自列の履歴は不要である。
+       ただし本関数は「レジストリが `inputs` として宣言している T3 列は
+       安全側ですべて供給する」という保守的な基準を採用する
+       （実測: `sma_50`/`sma_150`/`sma_200`/`atr_pct_14`/`rs_value`/
+       `rs_ratio_e5〜200`/`rs_macd_line_21`/`vol_surge_21` の12列が該当）。
+
+    RECURSIVE型21列 ＋ WINDOW型で参照される12列 ＝ **33列**（2026-09-23実測）。
+    lookback/inputs の変更で件数が増減したら気づけるよう、テストで33件を固定している
+    （`test_incremental_state_registry.py`）。
+    """
+    needed = set(recursive_column_names())
+    for spec in INDICATOR_COLUMN_REGISTRY.values():
+        for input_name in spec.inputs:
+            if input_name not in RAW_PRICE_COLUMNS and input_name in INDICATOR_COLUMN_REGISTRY:
+                needed.add(input_name)
+    return tuple(sorted(needed))
+
+
 def max_lookback() -> int:
     """全列（RECURSIVE の inputs 由来の遡りも含む）の lookback 最大値。
 

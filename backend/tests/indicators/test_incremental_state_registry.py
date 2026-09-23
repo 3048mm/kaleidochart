@@ -27,6 +27,8 @@ from indicators.incremental_state_registry import (
     INDICATOR_COLUMN_REGISTRY,
     columns_with_warmup_threshold,
     max_lookback,
+    recursive_column_names,
+    supplied_column_names,
 )
 
 # id/symbol_id/date は主キー・外部キー・日付であり、増分計算の特性分類の対象外
@@ -294,3 +296,34 @@ class TestWarmupBars:
     ])
     def test_代表列のwarmup_bars(self, name, expected_warmup):
         assert INDICATOR_COLUMN_REGISTRY[name].warmup_bars == expected_warmup
+
+
+class TestSuppliedColumnNames:
+    """`supplied_column_names()`（5-6d・読み出しコスト削減）の不変条件。
+
+    T3 ワーカーが `indicators` テーブルから読むべき列を67列から絞り込むための
+    関数。件数（33）を固定し、将来 lookback/inputs の変更で増減したら
+    気づけるようにする（doc/in_progress/t3_incremental_plan.md §2.3・5-6d）。
+    """
+
+    def test_列数が33である(self):
+        assert len(supplied_column_names()) == 33, (
+            f'supplied_column_names() の件数が変わりました: {len(supplied_column_names())}\n'
+            'レジストリの inputs/kind を変更した場合の意図した増減であれば、'
+            'この期待値を更新してください（読み出しコストの見積もりにも影響します）。'
+        )
+
+    def test_recursive型は全て含まれる(self):
+        supplied = set(supplied_column_names())
+        for name in recursive_column_names():
+            assert name in supplied, f'{name}: RECURSIVE型なのにsupplied_column_namesに含まれていません'
+
+    def test_戻り値はソート済みタプルで重複が無い(self):
+        names = supplied_column_names()
+        assert names == tuple(sorted(names))
+        assert len(names) == len(set(names))
+
+    def test_戻り値は全てレジストリに登録済みの列である(self):
+        registered = set(INDICATOR_COLUMN_REGISTRY.keys())
+        for name in supplied_column_names():
+            assert name in registered, f'{name}: INDICATOR_COLUMN_REGISTRY に無い列名です'
