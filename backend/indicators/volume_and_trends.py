@@ -11,12 +11,12 @@ def calc_volume_and_trends(df: pd.DataFrame) -> pd.DataFrame:
     # 全戦略共通の流動性ハード制約(min_avg_dollar_volume_21)用。従来は最適化バックテスト
     # エンジン内でのみオンザフライ計算されていたが、生スクリーナーAPI・個別銘柄シナリオ
     # テストでも同じ基準を使えるよう正式なインジケーターとして追加する（2026-07-27）。
-    df['avg_dollar_volume_21'] = (close * volume).rolling(window=21, min_periods=1).mean()
+    df['avg_dollar_volume_21'] = (close * volume).rolling(window=21, min_periods=21).mean()
 
     # --- Relative Volume vs SPY ---
     if 'spy_volume' in df.columns:
-        vol_sma_21     = volume.rolling(window=21, min_periods=1).mean()
-        spy_vol_sma_21 = df['spy_volume'].rolling(window=21, min_periods=1).mean()
+        vol_sma_21     = volume.rolling(window=21, min_periods=21).mean()
+        spy_vol_sma_21 = df['spy_volume'].rolling(window=21, min_periods=21).mean()
 
         df['vol_surge_21'] = np.where(
             vol_sma_21 == 0, np.nan, volume / vol_sma_21
@@ -34,8 +34,8 @@ def calc_volume_and_trends(df: pd.DataFrame) -> pd.DataFrame:
         df['vol_surge_rel_spy_21'] = np.nan
 
     # 8. % from N-day Highs
-    max_63d  = high.rolling(window=63,  min_periods=1).max()
-    max_252d = high.rolling(window=252, min_periods=1).max()
+    max_63d  = high.rolling(window=63,  min_periods=63).max()
+    max_252d = high.rolling(window=252, min_periods=252).max()
 
     df['dist_63d_high_pct']  = np.where(max_63d  == 0, np.nan, (close - max_63d)  / max_63d  * 100)
     df['dist_52w_high_pct']  = np.where(max_252d == 0, np.nan, (close - max_252d) / max_252d * 100)
@@ -71,8 +71,17 @@ def calc_volume_and_trends(df: pd.DataFrame) -> pd.DataFrame:
     # Count of days in the last 5 days where:
     # 1) Close-to-Close change is positive (close.diff() > 0)
     # 2) Volume is > 1.1x of its 21-day average volume
-    vol_sma_21 = volume.rolling(window=21, min_periods=1).mean()
-    is_accum = (close.diff() > 0) & (volume > vol_sma_21 * 1.1)
-    df['vol_accum_days_5'] = is_accum.astype(float).rolling(window=5, min_periods=1).sum().fillna(0).astype(int)
+    vol_sma_21 = volume.rolling(window=21, min_periods=21).mean()
+    # vol_sma_21 がNaNの日は「増加日か判定できない」のでNaNにする（Falseに握り潰さない）。
+    # rolling(5, min_periods=5).sum() は窓内に非NaNが5件無いとNaNを返すため、
+    # is_accumのNaNが5日窓の集計に自動的に伝播する（21本+4本=実質25本のウォームアップ）。
+    is_accum = ((close.diff() > 0) & (volume > vol_sma_21 * 1.1)).astype(float).where(vol_sma_21.notna())
+    accum_days_raw = is_accum.rolling(window=5, min_periods=5).sum()
+    # astype(int) を通すためだけに一時的に0で埋め、外側のnp.whereがNaN行をNoneに戻す
+    # （market_signals.py:198-200のdistribution_daysと同じ確立済みパターン）。
+    df['vol_accum_days_5'] = np.where(
+        accum_days_raw.isna(), None,
+        accum_days_raw.fillna(0).astype(int)
+    )
 
     return df
