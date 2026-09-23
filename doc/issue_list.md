@@ -1915,6 +1915,8 @@
   - **R20（ログ）**: `relative_strength.py` の `report_stale_input_gaps(df, 'spy_close', 'SPY')` は全銘柄・全 T3 実行で呼ばれる。暦の違う銘柄で MTS 入力向けの WARNING が増え、本物の警告が埋もれる。銘柄ごとではなくバッチで1回にするか、閾値を分ける
   - **R20 の補足（メッセージの誤り）**: SPY の履歴が銘柄の先頭より後に始まる「先頭側のギャップ」も「前日値を持ち越し」と報告するが、ffill は先頭を埋められず `rs_value` は NaN のまま。文言が事実と違う
   - **R23（`RS_DOT_WARMUP_BARS`）**: `RS_DOT_WARMUP_BARS = 252` と kernel の `i < warmup`（`relative_strength.py:77,110`）は、新しい `rolling(252, min_periods=252)` に対して1本ずれる（窓が満ちる最初の bar は index 251）。コメント（「`min_periods=1` だからガードが要る」）も古い。既存 issue「既存ガード2件の要否を再検証する」と一緒に、撤去するかずらすかを決める
+  - **R4 の補足（ScreenerResultPage のソート）**: `frontend/src/pages/ScreenerResultPage.tsx` L265-266 のソートは NULL を `?? -999999` で扱うため、降順では末尾だが昇順では先頭に来る（SummaryTable は昇降どちらでも末尾に直した）。揃える
+  - **R10 の補足**: `scenario_market_score.py` には他にも代用値が残っている（`rolling(..., min_periods=1)`・`fillna(1.0)`・`ratio=1.15` のフォールバック）
   - 関連: `doc/in_progress/min_periods_warmup_plan.md` §6.3
 
 ## P3 — 低（将来フェーズ・プロセス系）
