@@ -197,6 +197,31 @@ T2の価格データを元に算出される各種テクニカル・モメンタ
 > 詳細: `doc/in_progress/t3_incremental_plan.md`（完了後は `doc/completed/` へ移動）
 > §3.5・§7「5-6」「5-6b」。
 
+> [!IMPORTANT]
+> **rolling系（窓計算）の列は、窓を満たす本数の遡り履歴が無い行では NaN になる**
+> （`min_periods=window` 統一・`doc/completed/min_periods_warmup_plan.md`）。
+> 例えば `sma_200` は上場（またはデータ取得開始）から199営業日目までは NaN で、
+> 200本目の行から値が入る。**上場直後の銘柄で「窓の途中までの部分平均」を返すことはしない**
+> ——pandas/TA-Lib/Pine の rolling 標準挙動（`min_periods=window` が既定）に合わせている。
+> 対象は主に以下（窓の本数はカラム名の数字、または計算式中の `rolling(n)`/`n本` に対応）:
+> `sma_n` / `adr_pct_21` / `atr_14`（および `atr_pct_14`・分母に使う `sma50_atr_mult` 等の派生列）/
+> `avg_dollar_volume_21` / `vol_sma_21`（内部列）/ `max_63d` / `max_252d` /
+> `dist_52w_high_pct` / `dist_63d_high_pct` / `vol_accum_days_5` / `rs_252_high` / `rs_252_low` /
+> `close_252_high` / `close_252_low`（→ `rs_blue_dot_age` / `rs_red_dot_age` の点灯判定に波及）。
+> `rs_ratio_eN` / `rs_trend_sN` / `rs_momentum_eN` も同じ流儀（`min_periods=n`）に統一済み。
+> `is_trend_template` は5条件のいずれかの入力（`sma_50`/`sma_150`/`sma_200`/`sma200_20d_ago`）が
+> NaN なら NULL（未判定）を返す（`False` 固定にしない）。
+>
+> **例外（構造的にNaNのまま埋まらない列）**: `vol_surge_21` / `vol_surge_rel_spy_21` は
+> SPY自身の行では `spy_volume`（自己参照列）が未結合のため恒久的にNULL
+> （`incremental_state_registry.py::is_structurally_null_column()` が SPY のこの2列を
+> 「遡り不足による欠損」ではなく「計算対象外」として区別する）。
+>
+> **DB/Parquet上でNULLは「判定不能」を意味し、`0`/`False`/推定値で埋めない**
+> （§2.3 のNULL意味論。詳細な理由・計測結果は `doc/completed/min_periods_warmup_plan.md` §1〜§3）。
+> フロント・API側もこのNULLをそのまま透過し、`0`にフォールバックしない
+> （`GET /api/dashboard` のランク系フィールド等）。
+
 | カラム名 | 型 | 説明・用途 | 計算式 / 論理 |
 | :--- | :--- | :--- | :--- |
 | `sma_n` | FLOAT | 5, 21, 50, 63, 150, 200日単純移動平均。トレンド判定に使用。 | `close.rolling(n).mean()` |
@@ -313,6 +338,15 @@ T2の価格データを元に算出される各種テクニカル・モメンタ
 同一カテゴリ内で特定指標（RSスコア等）を横並び比較し、パーセンタイル(0〜1)で順位付けしたデータです。
 *※本番 SQLite データベース内には、**直近2年分（730日）のみ**がホットキャッシュとして保持され、それ以前の歴史データは Parquet マスターに永続退避された後、パージされます。*
 
+> [!IMPORTANT]
+> **元となる T3 列が NULL（遡り不足）の銘柄は、ランキングの母集団から除外される**
+> （`(date, category)` ごとに非NULL値だけで 0.0〜1.0 に再正規化。NULLの銘柄自身の
+> ランクも NULL になる）。旧実装は SQLite の `PERCENT_RANK() OVER(ORDER BY col ASC)` が
+> **NULLを最小値として扱う**ため、判定不能な銘柄がランク0付近に紛れ込んだまま母集団にも
+> 残っていた。`min_periods=warmup_bars` 化（`doc/completed/min_periods_warmup_plan.md` §3.5）
+> で `CASE WHEN col IS NULL THEN NULL ELSE PERCENT_RANK() OVER(PARTITION BY category,
+> (col IS NULL) ORDER BY col ASC) END` に変更し、NULLを母集団・結果の両方から切り離した。
+
 | カラム名 | 型 | 説明・用途 |
 | :--- | :--- | :--- |
 | `id` | INTEGER | 主キー。 |
@@ -338,7 +372,7 @@ S&P500（SPY）の動向や市場全体の統計から算出される、市場�
 | `distribution_days` | INTEGER | 過去25日間のディストリビューション・デーの数。 | 下落(-0.2%以下)かつ出来高増の日数 |
 | `follow_through_day` | SMALLINT | フォロースルーデーの発生フラグ（1:発生）。 | 下落局面からの反発（+1.7%以上かつ出来高増） |
 | `market_phase` | STRING | 市場のフェーズ（BULL, CORRECTION, BEAR 等）。 | SPYのトレンドと売りの圧力により判定 |
-| `market_trend_score` | FLOAT | 市場全体の健康度を 0〜100 で数値化したもの。 | **4成分の等価25%合計**: ①VXV/VIXレシオ ②市場の幅（breadth_sma50） ③50SMA/ATR乖離 ④200SMA/ATR乖離。**Distribution Days はスコアに含まない**（`market_phase` の判定にのみ使う）。breadth が無い期間（2018-04-01 より前）は ①③④ を等価 1/3 で合計する |
+| `market_trend_score` | FLOAT | 市場全体の健康度を 0〜100 で数値化したもの。 | **4成分の等価25%合計**: ①VXV/VIXレシオ ②市場の幅（breadth_sma50） ③50SMA/ATR乖離 ④200SMA/ATR乖離。**Distribution Days はスコアに含まない**（`market_phase` の判定にのみ使う）。breadth を算出できない日（`breadth_sma50` が NULL の日。実質的に2018-04-01より前）は ①③④ を等価 1/3 で合計する。旧実装は日付ハードコードで判定していたが、`breadth_sma50` 自体が NaN 保持化されたため NULL 判定に置換済み（`doc/completed/min_periods_warmup_plan.md` §3.7） |
 
 **全期間の再構築は Parquet 基点で行う**（`backend/scripts/recompute_parquet_signals.py`。`update_pipeline.py --rebuild-from T3/T4/T5` はここへ委譲される）。SPY の遡りが `SPY_LOOKBACK_MIN_BARS`（220本。`sma_200` の200本＋`spy_sma200_rising` の20日前比較から導出）に満たない行（2010-04〜2011-02）では、`spy_above_sma200` / `distribution_days` / `market_phase` は**判定不能として NULL** になる。Parquet の `market_signals` では `spy_above_sma200` / `distribution_days` の dtype を NULL 表現のため **float64** で保持する（SQLite 側は `int(...) or None` を維持しており整数のまま）。
 
