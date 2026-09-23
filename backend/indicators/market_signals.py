@@ -131,7 +131,10 @@ def compute_breadth_momentum(raw_df: pd.DataFrame) -> pd.DataFrame:
     raw_df['prev_close'] = raw_df.groupby('symbol_id')['close'].shift(1)
     raw_df['is_up'] = raw_df['close'] > raw_df['prev_close']
 
-    raw_df['is_above_sma50'] = raw_df['close'] > raw_df['sma_50']
+    raw_df['is_above_sma50'] = np.where(
+        raw_df['sma_50'].isna(), np.nan,
+        raw_df['close'] > raw_df['sma_50']
+    )
 
     metrics_df = raw_df.groupby('date').agg(
         breadth_sma50=('is_above_sma50', lambda x: x.mean(skipna=True) if not x.isna().all() else 0.5),

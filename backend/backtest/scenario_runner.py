@@ -316,7 +316,10 @@ def run_scenario_test(
         i_sub = df_indicators[df_indicators['symbol_id'].isin(active_stocks_set)][['date', 'symbol_id', 'sma_50']].copy()
         
         merged_metrics = pd.merge(p_sub, i_sub, on=['date', 'symbol_id'], how='inner')
-        merged_metrics['is_above_sma50'] = merged_metrics['close'] > merged_metrics['sma_50']
+        merged_metrics['is_above_sma50'] = np.where(
+            merged_metrics['sma_50'].isna(), np.nan,
+            merged_metrics['close'] > merged_metrics['sma_50']
+        )
         merged_metrics = merged_metrics.sort_values(['symbol_id', 'date'])
         merged_metrics['prev_close'] = merged_metrics.groupby('symbol_id')['close'].shift(1)
         merged_metrics['is_up'] = merged_metrics['close'] > merged_metrics['prev_close']

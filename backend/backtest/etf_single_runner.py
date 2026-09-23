@@ -237,7 +237,10 @@ def build_mts_v3_raw_timeline(
                 df_stk_indicators['date'] = pd.to_datetime(df_stk_indicators['date']).dt.date
                 
                 merged_m = pd.merge(df_stk_prices, df_stk_indicators, on=['date', 'symbol_id'], how='inner')
-                merged_m['is_above_sma50'] = merged_m['close'] > merged_m['sma_50']
+                merged_m['is_above_sma50'] = np.where(
+                    merged_m['sma_50'].isna(), np.nan,
+                    merged_m['close'] > merged_m['sma_50']
+                )
                 
                 merged_m = merged_m.sort_values(['symbol_id', 'date'])
                 merged_m['prev_close'] = merged_m.groupby('symbol_id')['close'].shift(1)
