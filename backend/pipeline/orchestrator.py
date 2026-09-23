@@ -755,6 +755,24 @@ def verify_pipeline_integrity(db, categories: Optional[List[str]] = None):
                 f"Missing indicators for tickers: {missing_tickers[:20]}"
             )
 
+def _format_elapsed(seconds: float) -> str:
+    """経過秒数を「1h 23m 45s」形式にする。
+
+    パイプラインの所要時間をログに出すためのもの。`start_time_utc` は UTC だが
+    ログのタイムスタンプはローカル時刻なので、**ログから所要時間を読もうとすると
+    9時間ずれる**（2026-09-23 に実際に取り違えた）。経過時間そのものを出せば
+    タイムゾーンの問題が起きない。
+    """
+    total = int(round(seconds))
+    h, rem = divmod(total, 3600)
+    m, sec = divmod(rem, 60)
+    if h:
+        return f"{h}h {m}m {sec}s"
+    if m:
+        return f"{m}m {sec}s"
+    return f"{sec}s"
+
+
 def run_pipeline(config, db_path, logger: logging.Logger, rebuild_from: Optional[str] = None, categories: Optional[List[str]] = None, skip_fetch: bool = False, skip_sync: bool = False, skip_t3: bool = False, recalculate_all: bool = False):
     """
     Main Orchestrator for Step 3 Pipeline.
@@ -951,7 +969,11 @@ def run_pipeline(config, db_path, logger: logging.Logger, rebuild_from: Optional
             logger.info("Running final pipeline data integrity verification...")
             verify_pipeline_integrity(db, categories=categories)
 
-            logger.info("--- Step 3 Pipeline COMPLETED SUCCESSFULLY ---")
+            _elapsed = (datetime.utcnow() - start_time_utc).total_seconds()
+            logger.info("--- Step 3 Pipeline COMPLETED SUCCESSFULLY (所要時間 %s) ---",
+                        _format_elapsed(_elapsed))
     except Exception as e:
-        logger.error(f"--- Step 3 Pipeline FAILURE --- Type: {type(e).__name__}, Message: {str(e)}")
+        _elapsed = (datetime.utcnow() - start_time_utc).total_seconds()
+        logger.error("--- Step 3 Pipeline FAILURE (所要時間 %s) --- Type: %s, Message: %s",
+                     _format_elapsed(_elapsed), type(e).__name__, str(e))
         raise e
