@@ -19,6 +19,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `No module named 'backend'` が出たら PYTHONPATH と import 形式の不一致を疑う（import 規約は「Coding conventions」参照）。
 - その他の共通ルール（`python -c` の制限、文字コード、パス、Git 合意形成）は `doc/agent_execution_rules.md` §1〜§8 を参照する。
 
+## 開発ワークフロー（ゲートと介入地点）
+
+ゲート（G1 計画合意 → G2 項目検収 → G3 ブランチレビュー → G4 merge → G5 昇格 → G6 撤収）・判断者・ループ上限・閾値の定義は **`doc/workflow.md`** だけにある（ほかの文書に数値を書き写さない）。
+**ユーザーが判断するのは G1 / G4 / G5 とエスカレーション条件（同 §2.1）だけ**。それ以外はエージェントで完結させ、途中で確認を求めない。
+手順コマンド: `/start-item`（G1）・`/accept`（G2 / G3）・`/cleanup`（G6）。
+
 ## サブエージェント委譲（オーケストレーター運用）
 
 役割分担: 方針立て・アーキテクチャ判断・実装計画書の作成とユーザーレビュー・成果物の検収は**メインセッション（オーケストレーター）**が行い、確定した計画の機械的な作業は低コストモデルのワーカーに委譲する。
@@ -30,12 +36,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - ワーカーは会話コンテキストを引き継がない。**計画書パス（`doc/in_progress/<name>_plan.md`）と対象チェックリスト項目を明示した自己完結プロンプト**を渡す。
 - 委譲単位は計画書のチェックリスト1項目程度（1機能の実装＋テスト）。関数1個のような細かすぎる委譲はコンテキスト再構築コストで逆に割高。
 - 実装を複雑にしない、複雑にさせない設計を心がける。
-- ワーカー完了後、オーケストレーターが **検収を必ず行う**。検収なしで次の項目に進まない。検収は2段構成（`/accept` がこの手順をなぞる）:
-  - **第1段（全変更で必須・動くか）**: diff の確認 → テスト全体実行 → 変更種別 A〜D の判定（§10.2）
-  - **第2段（意図を満たすか）**: 差分を**計画書の受け入れ条件と照合**する（全変更で必須・追加コストなし）。加えて **変更種別 B / C と、差分の大きい種別 A** は merge 前に `/code-review` を**ブランチ単位で1回**通す。人間の merge レビューの前段に置くもので、置き換えではない。
-  - 種別 A の閾値は **200行 または 5ファイル**。**この数値に根拠はなく、運用しながら調整する前提の暫定値**（2026-09-10 設定。動かす場合は `.claude/commands/accept.md` 側も併せて直す）。
-  - レビュー出力は **上位3件・重大度つき・テストで検出できない種類に限る**。絞らないと数週間で読まれなくなり、`doc/issue_list.md` P3 に書いたとおり**無いより悪い**。
-  - 狙うのは「**実装もテストも通るが意図を満たしていない**」型（例: WAL チェックポイントが呼ばれているのに一度も効いていなかった件）。テストでは落ちない。
+- ワーカー完了後、オーケストレーターが **`/accept` で検収を必ず行う**。検収なしで次の項目に進まない。
+  項目ごとの検収（G2）に加え、ブランチ完了時は `/code-review` によるブランチレビュー（G3）を**ユーザーの指示を待たずに**実行し、通るまで「merge 可能」と報告しない。
 - 複数ワーカーを並列に走らせる場合は `isolation: "worktree"` で作業コピーの衝突を防ぐ。
 - 設計判断が必要になった・計画に穴があった、という報告がワーカーから来たら、オーケストレーターが判断して計画書を更新してから再委譲する（ワーカーに判断させない）。
 
@@ -64,7 +66,7 @@ A personal stock analysis/screening web tool (Japanese-language docs and UI). It
 
 Read `doc/architecture.md`, `doc/backend_specification.md`, and `doc/frontend_specification.md` before working on backend data model, pipeline, or API changes — they are detailed and authoritative (DB schema, column semantics, indicator formulas, API contracts). `doc/issue_list.md` tracks open backlog items.
 
-**Development-item workflow**: when starting a development item, copy `doc/in_progress/_TEMPLATE.md` to `doc/in_progress/<name>_plan.md`, fill it in, and get the plan reviewed by the user before implementing. Keep the checklist / notes / issues sections updated while working (the plan doubles as a handoff document for other sessions/agents), and move the file to `doc/completed/` when done. See `doc/agent_execution_rules.md` §9.
+**Development-item workflow**: when starting a development item, copy `doc/in_progress/_TEMPLATE.md` to `doc/in_progress/<name>_plan.md`, fill it in, and get the plan reviewed by the user before implementing. Keep the checklist / notes / issues sections updated while working (the plan doubles as a handoff document for other sessions/agents), and move the file to `doc/completed/` when done. Use `/start-item <name>` to start. See `doc/workflow.md` (gates) and `doc/agent_execution_rules.md` §9.
 
 ## Commands
 
@@ -171,10 +173,9 @@ Check `/api/system/info` (`is_production` flag) to confirm which environment you
 ## Coding conventions specific to this repo
 
 - **File encoding/line endings**: UTF-8 without BOM, LF line endings for `.py/.md/.toml/.json/.tsx` etc. (`.bat` files are CRLF, `.sh` are LF — see `.gitattributes`)。
-  **PowerShell でテキストを読み書きするときはエンコーディングを必ず明示する**（何度も踏んでいる。詳細と実例: `doc/agent_execution_rules.md` §5.1 / §5.2）:
-  - **書き込み**: `Set-Content -Encoding utf8` / `Out-File` / `>` は **BOM を付ける**。設定ファイル・JSON を生成するスクリプトは **PowerShell で書かず Python で `open(p, "w", encoding="utf-8", newline="\n")`** を使う。BOM 付き JSON は `json.load()` が `Unexpected UTF-8 BOM` で落ちるが、呼び出し側が例外を握り潰していると**無関係な `TypeError` として現れて原因に辿り着けない**。
-  - **読み込み**: `Get-Content` は **BOM なし UTF-8 を CP932 として読む**。日本語コメントを含むファイルでは誤デコードが**改行を飲み込み**、次の行が前の行に連結される。その結果 `-match '(?m)^\s*\[data\]'` のような**行頭アンカーの判定が例外なしで false になる**。必ず `-Encoding UTF8` を付ける。
-  - 確認方法: `head -c 3 <file> | od -An -tx1` → `ef bb bf` なら BOM 付き。
+  **PowerShell でテキストを読み書きするときはエンコーディングを必ず明示する**（何度も踏んでいる。どちらもエラーを出さずに失敗する。症状・実例・確認方法: `doc/agent_execution_rules.md` §5.1 / §5.2）:
+  - **書き込み**: `Set-Content -Encoding utf8` / `Out-File` / `>` は BOM を付ける。設定ファイル・JSON は **Python で `open(p, "w", encoding="utf-8", newline="\n")`** で書く。
+  - **読み込み**: `Get-Content` は BOM なし UTF-8 を CP932 として読み、行頭アンカーの判定が黙って false になる。必ず `-Encoding UTF8` を付ける。
 - **SQLite (WAL mode)**: every connection must set `PRAGMA journal_mode=WAL`, `PRAGMA busy_timeout>=5000`, `PRAGMA synchronous=NORMAL`; writes should use `BEGIN IMMEDIATE` to avoid upgrade deadlocks. Don't change `journal_mode` at runtime while other connections are open (causes `database is locked`). Inside a write session NEVER: `pd.read_sql(q, db.bind)` (self-deadlock — use `get_read_engine_for(db)` after `db.commit()`), `PRAGMA synchronous`, or `VACUUM` (both fail in-transaction). Full details: `.claude/skills/sqlite-wal-handling/SKILL.md`.
 - **SQL/ORM**: no `SELECT *`, avoid N+1 (use `joinedload`/`selectinload`), always parameterize queries, never run unscoped `DELETE`/`UPDATE`. Details: `.claude/skills/sql-best-practices/SKILL.md`.
 - **import 規約**: `PYTHONPATH=backend` 前提の `api.x` / `pipeline.x` / `indicators.x` 形式が基本。`backend.x` プレフィックス形式は `scenario_*` 系など一部のみ（プロジェクトルートから直接実行する前提）。両形式が混在しているため、**編集対象ファイルの既存 import 形式に必ず合わせる**。

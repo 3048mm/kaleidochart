@@ -22,7 +22,7 @@ tools: Read, Write, Edit, Glob, Grep, Bash, PowerShell, Skill
 - 実装後、対応するテストを実行して結果を確認する: `.\venv\Scripts\python.exe -m pytest backend/tests/<対応パス> -q`
 - 使い捨ての検証スクリプトは `tmp/` に置く。`backend/scripts/` には置かない。
 - DB スキーマ・indicator・パイプラインロジックに触れる場合は、着手前に **sandbox-workflow** スキルを読む。SQLite に触れる場合は **sqlite-wal-handling** スキルを読む。
-- `git commit` / `git push` は行わない（`git add` まで可）。
+- `git commit` / `git push` は行わない（`git add` まで可）。コミットは検収（G2）に合格した後にオーケストレーターが行う。
 - 同一エラーで3回失敗したら打ち切り、エラー内容を報告して終了する。打ち切る前に既知の回避手段を検索すること: `grep -n "<エラー原文の一部>" doc/agent_execution_rules.md doc/project_knowhow.md`（`doc/agent_execution_rules.md` §4.1）。ヒットしたらその対策を試す。**ドキュメントへの追記はワーカーでは行わない** — 完了報告に回し、オーケストレーターの判断に委ねる。
 
 ## 完了報告（必須・省略不可）
@@ -30,5 +30,6 @@ tools: Read, Write, Edit, Glob, Grep, Bash, PowerShell, Skill
 1. 変更ファイル一覧（パス + 変更概要）
 2. 実行したテストコマンドと結果（passed / failed 数、failed があればその内容）
 3. 計画書チェックリストの更新有無（更新した項目）
-4. 未解決の課題・実装中に気づいた計画の穴
-5. 3回失敗して打ち切ったエラーがあれば、**エラーメッセージ原文**・試した3アプローチ・（判明していれば）回避手段（該当なしなら「なし」と明記）
+4. 変更種別の見立て（A〜D、`doc/agent_execution_rules.md` §10.2）と差分規模（`git diff --shortstat` の出力）— 検収の G3 対象判定に使う。確定はオーケストレーターが行う
+5. 未解決の課題・実装中に気づいた計画の穴
+6. 3回失敗して打ち切ったエラーがあれば、**エラーメッセージ原文**・試した3アプローチ・（判明していれば）回避手段（該当なしなら「なし」と明記）

@@ -1,6 +1,6 @@
 # ローリング指標の遡り不足対応（min_periods=window への統一 / A-core）計画書
 
-- **ステータス**: 🚧 計画合意済み・実装未着手。**2026-09-20 にスコープ拡張**（NULL 表現の設計原則を §2.3 に確定し、T4／T5／暗黙フォールバック撤去を §3.5〜3.9 に追加）。前提だった ② は 2026-09-17 に解決・本番昇格済み（§4-6）
+- **ステータス**: 🚧 実装開始（5-1）。**2026-09-20 にスコープ拡張**（NULL 表現の設計原則を §2.3 に確定し、T4／T5／暗黙フォールバック撤去を §3.5〜3.9 に追加）。前提だった ② は 2026-09-17 に解決・本番昇格済み（§4-6）。**2026-09-23: 着手前レビューで2件の穴を発見・修正**——① §4-7（A-full を含める）が §5 チェックリストに未反映だったため 5-9c を追加し、§8 の矛盾する古い記述を無効化 ② T3増分化との相互作用（`warmup_bars` レジストリの陳腐化）が未対応だったため 5-11b を追加
 - **実施者**: AI エージェント（Claude Opus 5）
 - **開始日**: 2026-09-11 / **完了日**: —
 - **作業ブランチ**: 未作成（種別 B のため実装はワークツリー＋`--mode write` で行う）
@@ -231,7 +231,8 @@
 | `indicators/volume_and_trends.py:18-19` | `vol_sma_21` / `spy_vol_sma_21` | `vol_surge_21` / `vol_surge_rel_spy_21` の分母 |
 | `indicators/volume_and_trends.py:37-38` | `max_63d` / `max_252d` | `dist_63d_high_pct` / `dist_52w_high_pct` の分母。`is_trend_template` の cond5 も参照 |
 | `indicators/volume_and_trends.py:74,76` | `vol_sma_21` / `vol_accum_days_5` | |
-| `indicators/relative_strength.py:163-172` | `rs_252_high/low` / `close_252_high/low` | ブルー/レッドドット判定の入力。`RS_DOT_WARMUP_BARS` で実質吸収済みだが流儀としては揃える |
+| `indicators/relative_strength.py:275-284`（旧行番号163-172。5-3b以降のRECURSIVE化リファクタで移動） | `rs_252_high/low` / `close_252_high/low` | ブルー/レッドドット判定の入力。`RS_DOT_WARMUP_BARS` で実質吸収済みだが流儀としては揃える |
+| `indicators/relative_strength.py:227,246-247,266-267`（A-full。2026-09-20棚卸し時点では§3.1に未記載だった。§4-7で2026-09-21に「含める」確定） | `rs_trend_sN` / `rs_ratio_eN` / `rs_momentum_eN`（`n∈{5,14,21,63,200}` のループ内。`rolling_std_independent` 呼び出し含む） | `min_periods=max(1, n//2)` → `min_periods=n` に統一。§3.5（T4のNULL除外）を先に入れる前提が成立して初めて採用可能になった変更（§2.2の表の注記参照） |
 | `pipeline/orchestrator.py:109,326,402,461` | 仮想テーマ指数の `vol_surge` 21日平均 | 4箇所とも同一パターン |
 | `pipeline/parquet_recompute.py:331` | 同上（Parquet 基点の再計算経路） | `VIRTUAL_INDEX_SURGE_WINDOW` |
 
@@ -509,11 +510,12 @@ OHLC 系は「価格の NULL は判定不能ではなく本物の異常」なの
 > **前提だった ② は 2026-09-17 に解決・本番昇格済み。** 旧版にあった「5-17 以降は ② の完了待ち」「`--rebuild-from` 系を実行しない」という制約は**すべて解除済み**。
 
 - [x] **5-0** **§4-7（A-full を含めるか）と §4-8（API の範囲）のユーザー判断を得る。4-7 は着手前に必須**（後から追加すると全期間再計算が2回走る）— **2026-09-21 判断済み: 4-7 = 含める / 4-8 = ランク系のみ**
-- [ ] **5-0b** **`doc/in_progress/t3_incremental_plan.md`（T3 日次の増分化）の完了を待つ。**
+- [x] **5-0b** **`doc/in_progress/t3_incremental_plan.md`（T3 日次の増分化）の完了を待つ。**
       2026-09-21 判断で**あちらが先**。理由: ①を先にやっても、T3 の日次経路が SQLite の504本で
       計算しているため**検証した値が翌日から劣化し続ける**（`rs_momentum_e200` が実際に
       2026-09-15 以降 全銘柄 NULL になっている）。さらに A-full は必要遡りを最大810本へ伸ばすので、
       日次が正しく遡れる状態が前提になる。**①の昇格時のフル再計算に、あちらの移行シードを相乗りさせる**
+      — **2026-09-23 充足済み**（`t3_incremental_plan.md` は完了・本番昇格済み。`doc/completed/` へ移動済み）
 - [ ] **5-1** ワークツリーを作成し `--mode write` でプロビジョニング（種別 B。`tools/provision_worktree_data.py <worktree> --mode write`）
 - [ ] **5-2** `backend/tests/indicators/test_moving_averages.py` を新規作成（red）— 遡り199本で `sma_200` が NaN、200本で値が出る
 - [ ] **5-3** `moving_averages.py:46` を修正（green）
@@ -530,8 +532,30 @@ OHLC 系は「価格の NULL は判定不能ではなく本物の異常」なの
 - [ ] **5-8c** **T4 のランクから判定不能を除外**（§3.5）— `t4_ranks.py:85` の SQL と `parquet_recompute.py:88` を**同時に**直す。`test_parquet_recompute.py` の期待値も更新（現在「NaN は最小値」を固定しているテストがある）
 - [ ] **5-8d** T5 の gap 判定を「行の有無」に統一し、5-7e のアドホック収束処理（`t5_signals.py:64-81`）を撤去（§3.6）。`.claude/skills/pipeline-debugging/SKILL.md:32` の記述も更新
 - [ ] **5-9b** §4-8 の判断に従い API/フロントを対応（§3.9）。**4-8 が「含めない」なら本項はスキップし §8 へ起票**
+- [ ] **5-9c** **A-full を実装する（§4-7・2026-09-23 に計画書へ追記）** — `relative_strength.py:227,246-247,266-267`（`rs_trend_sN`/`rs_ratio_eN`/`rs_momentum_eN`。`rolling_std_independent` 呼び出し含む）の `min_periods=max(1, n//2)` を `min_periods=n` に統一する。**5-8c（T4のNULL除外）の後に実施すること**（§3.5 の WARNING: A-full を T4修正前に入れると `PERCENT_RANK` が NULL を最小値扱いしてランク0付近に張り付き、A-core の「NaN は自動除外」が成立しない）。既存 `test_relative_strength.py` に回帰テストを追加
 - [ ] **5-10** pytest 全件パス
 - [ ] **5-11** sandbox で T3→T4→T5 を全期間再計算し、`db_health_check.py --all --check-nulls` を通す。**注意: ② の解決により、旧版にあった「sandbox の T5 が SQLite 基点で壊れる」caveat は解消済み。**T5 も Parquet 基点で計算されるため、`market_signals` は本番と同じ手順で検証できる
+- [ ] **5-11b** **`incremental_state_registry.py` の `warmup_bars` を全列再実測し、レジストリとテストを更新する（2026-09-23 追加。T3増分化計画との相互作用）** —
+      T3 増分化（`doc/completed/t3_incremental_plan.md`）で `warmup_bars` は本番実測値として67列のレジストリに固定済みだが、
+      ① （と5-9cのA-full）は min_periods を変えるため大半の値が古くなる（例: `sma_200` 0→199、`atr_14` 0→13、
+      `rs_ratio_e200` 298→398、`rs_momentum_e200` 610→810）。**現状これらの値は registry 内の静的宣言であり、
+      実際の指標計算結果とクロス検証するテストが無いため、ここで直さないと db_health_check.py の
+      `--check-warmup-nulls` と `t3_indicators.py` の欠陥/正当ウォームアップ判別が本番昇格後に無言で誤った閾値を使い続ける**
+      （§2.3.4 が禁じる「無言で埋める」と同型のリスク）。5-11 の sandbox 全期間再計算データに対して行うこと
+      （単純な `min_periods=N` 型の列は `N-1` で解析的に決まるが、RECURSIVE連鎖を持つ列（`rs_trend_sN`/`rs_ratio_eN`/
+      `rs_roc_ema_N`/`rs_momentum_eN`/`is_trend_template`/`atr_14`/`sma50_atr_mult`/`vol_surge_21`系/
+      `up_down_vol_ratio_50`/`vcr`/`rs_blue_dot_age`/`rs_red_dot_age`）は5-6cと同じく解析的導出を信用せず実測する。
+      `t3_incremental_plan.md` §7-6/§7-7 で解析的推論の誤りを2回踏んでいるため）。手順:
+      1. `tmp/verify_warmup_thresholds.py`（5-6c で使ったもの）を sandbox Parquet 向けに再実行し、67列の新しい `warmup_bars` を測定する
+      2. `incremental_state_registry.py` の `_ENTRIES` を更新する
+      3. `test_incremental_state_registry.py` の固定値（`test_代表列のwarmup_bars` 等のパラメータ化テスト）を更新する
+      4. `max_lookback() + 1 <= HOT_WINDOW_BARS`（504）の不変条件が引き続き成り立つことを確認する（①/A-fullで `lookback` 自体が変わる列が無いか確認。無ければテストは無変更で通るはず）
+      5. `columns_with_undeterminable_warmup()` が返す列集合を確認する。現状 `rs_roc_ema_200` の1列だが、増える場合は
+         `test_incremental_state_registry.py` の固定テストを更新し、**`_calculate_t3_worker`（`t3_indicators.py`）側の
+         欠陥/判別不能分類ロジックが新しい集合を正しく扱うか**（増えた列がワーカー側の警告ログ・フォールバック分岐を
+         誤動作させないか）を確認する
+      6. `tools/db_health_check.py --check-warmup-nulls` を sandbox データに対して実行し、新しい閾値で偽陽性・偽陰性が
+         無いことを確認する（§7-7 と同じく「検出されるはずのものを注入して実際に検出されること」を確認してから0件を報告する）
 - [ ] **5-12** **SPY の T3 行の before/after 完全一致検証**（§3.3・§4-1）— 本番 Parquet と sandbox Parquet の SPY（`symbol_id = 1`）行を全列比較し、**2011-03-30 以降の差分が0行**であることを確認。差分が1行でもあれば**停止してユーザーに報告**（5-13 以降に進まない）
 - [ ] **5-12b** **T4 のランク変更の影響を測る**（§3.5）— before/after で ①各 `(date, category)` の母集団 n がどれだけ減ったか ②ランク値の分布がどれだけシフトしたか ③NULL になったランク件数、を記録する。**成績の差し戻し基準にはしないが（§4-4）、再最適化の引き渡し時に「何がどれだけ動いたか」を説明できる必要がある**
 - [ ] **5-12c** **NULL 件数の before/after 棚卸し** — 主要列ごとに NULL 行数を集計し、§1.2 の予測（IPO 銘柄数 × 窓長）と桁が合うことを確認する。**予測と大きくずれたら実装を疑う**
@@ -549,8 +573,13 @@ OHLC 系は「価格の NULL は判定不能ではなく本物の異常」なの
 
 - **5-0（§4-7 / §4-8 のユーザー判断）を先に片付ける。** 特に 4-7（A-full）は、後から追加すると全期間の T3→T4 再計算が2回走る
 - **前提だった ② は解決済み**（2026-09-17 昇格、新世代 `20260917_022002`）。`--rebuild-from` 系の実行制限も解除済み
-- **`worktree-feat-market-breadth-indicators`（S5FI/S5TH 取り込み）を先に main へ取り込むこと。**① は全期間の T3→T4 再構築を伴うため、先に入れておけば新銘柄も同じ再構築で処理される。あわせて `pip install -r requirements.txt`（`tvdatafeed-enhanced` / `websocket-client` が増える）
+- ~~`worktree-feat-market-breadth-indicators`（S5FI/S5TH 取り込み）を先に main へ取り込むこと~~ — **2026-09-23 充足済み**（`0f3e330` で merge 済み。`tvdatafeed-enhanced`/`websocket-client` も venv にインストール済みを確認済み）
 - 本計画書は 2026-09-17 に git 管理下へ取り込み済み。5-1 でワークツリーを切る際にそちらで作業する
+- **検収時のサンプリング偏りに注意（`t3_incremental_plan.md` §7-6 の教訓・2026-09-23）。** 「0件」という結果が
+  正常だからなのか測れていないからなのかを、検出されるはずのものを注入して確認してから報告すること
+  （陽性対照・到達不能な分岐の見落とし）。① は **IPO 銘柄（短い履歴）が主対象の変更**なので、5-11b の実測・
+  5-12c の NULL 件数棚卸し・5-13 の反証で使う標本には**必ず短い履歴の銘柄を含める**（履歴の長い銘柄だけに
+  絞って「差分ゼロ」を確認しても、それは測れていないだけの可能性がある）
 
 ## 6. 検証プラン / 結果
 
@@ -661,7 +690,7 @@ OHLC 系は「価格の NULL は判定不能ではなく本物の異常」なの
 ## 8. スコープ外・残作業
 
 - **② T5 のリフレッシュが SQLite 基点のまま** — `doc/issue_list.md` に起票済み（2026-09-11）。**本計画の昇格の前提**（§4-6）
-- **A-full（rs 系の `min_periods=max(1, n//2)`）** — `relative_strength.py:122,137-155`。T4 に直撃し、`PERCENT_RANK` の NULL 扱いのため A-core と影響の質が異なる。5-16 で別 issue として起票する
+- ~~A-full（rs 系の `min_periods=max(1, n//2)`）を別 issue に切り出す~~ — **2026-09-20〜21 に方針転換。§4-7 で「含める」と確定し、本計画のスコープに戻した（5-9c）。** この行は2026-09-11時点の古い判断の名残りで、§2.2/§3.5/§4-7 の確定判断と矛盾していたため打ち消し線で無効化する（削除すると転記の完全性チェック §6.2 の件数と食い違うため残す）
 - **既存ガードの撤去** — `RS_DOT_WARMUP_BARS`（`relative_strength.py:22`）と `has_breadth`（`market_signals.py:174`）。A-core 適用後は原理的に不要になるが、撤去には独立検証が要る
 - **IPO 特化スクリーナー** — A案適用後に `sma_200 IS NULL` を条件にして作れるようになる（§1.0）。本計画では作らない
 - **`bars_available` 列の追加** — 診断用。今回の実測を毎回スクリプトで再計算せずに済む
