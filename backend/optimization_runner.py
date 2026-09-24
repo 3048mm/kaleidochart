@@ -4,6 +4,7 @@ optimization_runner.py — Optuna-based Hyperparameter Optimization for Backtest
 import os
 import sys
 import argparse
+import subprocess
 import tomli
 from datetime import date as dt_date
 import pandas as pd
@@ -208,6 +209,49 @@ def resolve_strategy(config, strategy_name):
         return strat, found_name
         
     return None, None
+
+
+def list_optimizable_strategies(config):
+    """`--strategy all` の展開対象を返す。
+
+    `[strategy.optimization]`（探索空間）を持つ戦略だけを、config の記載順に返す。
+    探索空間が無い戦略（ゾーン系 I1/I2/J1/J2 など）は study を作れず実行時に落ちるため含めない。
+    """
+    return [
+        s['name'] for s in config.get('strategy', [])
+        if s.get('name') and s.get('optimization')
+    ]
+
+
+def run_all_strategies(config, trials, storage, n_jobs, run=subprocess.run):
+    """最適化対象の全戦略を、戦略ごとに**別プロセス**で順に単体実行する。
+
+    別プロセスにするのは、数時間〜十数時間かかる実行でのメモリ肥大や、
+    1戦略の異常終了が後続に波及するのを避けるため（run_optimization.bat が
+    戦略ごとに python を起動していたのと同じ挙動）。1本が失敗しても残りを続ける。
+
+    Args:
+        run: `subprocess.run` 互換の呼び出し（テストで差し替える）。
+
+    Returns:
+        失敗（終了コード != 0）した戦略名のリスト。全て成功なら空。
+    """
+    names = list_optimizable_strategies(config)
+    failed = []
+    for i, name in enumerate(names, 1):
+        print("\n" + "=" * 70, flush=True)
+        print(f"  [all {i}/{len(names)}] Optimizing Strategy: {name}", flush=True)
+        print("=" * 70, flush=True)
+        cmd = [sys.executable, os.path.abspath(__file__),
+               "--strategy", name, "--trials", str(trials), "--n-jobs", str(n_jobs)]
+        if storage:
+            cmd += ["--storage", storage]
+        result = run(cmd)
+        if result.returncode != 0:
+            print(f"[Warning] Error occurred while running strategy {name} "
+                  f"(exit code {result.returncode})", flush=True)
+            failed.append(name)
+    return failed
 
 
 def parse_optimization_params(config, strategy_name):
@@ -632,7 +676,7 @@ def objective(trial: optuna.Trial, strategy_name: str, config, config_app, exit_
 
 def main():
     parser = argparse.ArgumentParser(description="Optimize backtest parameters with Optuna")
-    parser.add_argument("--strategy", type=str, required=True, help="Strategy name or short code (A, B, C...)")
+    parser.add_argument("--strategy", type=str, required=True, help="Strategy name or short code (A, B, C...). 'all' で [strategy.optimization] を持つ全戦略を順に実行")
     parser.add_argument("--trials", type=int, default=30)
     # ワークツリーから実験する場合の逃がし口。ワークツリーの data/ は空なので、
     # 何も指定しないと本体とは別の空の trial DB が黙って作られ、既存 study と比較できない。
@@ -655,6 +699,20 @@ def main():
     config_path = os.path.join(backend_dir, 'backtest', 'backtest_config.toml')
     with open(config_path, 'rb') as f:
         config = tomli.load(f)
+
+    # --strategy all: 戦略ごとに別プロセスで単体実行して終了する（DB 初期化・データ読み込みは各プロセスが行う）
+    if args.strategy.lower() == 'all':
+        names = list_optimizable_strategies(config)
+        print(f"--strategy all: 最適化対象 {len(names)} 戦略を順に実行します（各 {args.trials} trials）:", flush=True)
+        print("  " + ", ".join(names), flush=True)
+        failed = run_all_strategies(config, args.trials, args.storage, args.n_jobs)
+        print("\n" + "=" * 70, flush=True)
+        print(f"  all 完了: 成功 {len(names) - len(failed)} / {len(names)} 戦略", flush=True)
+        if failed:
+            print(f"  失敗: {', '.join(failed)}", flush=True)
+        print("=" * 70, flush=True)
+        sys.exit(1 if failed else 0)
+
     exit_rules = ExitRules.from_config(config)
 
     # Validate strategy parameters in configuration

@@ -20,9 +20,10 @@ tools: Read, Write, Edit, Glob, Grep, Bash, PowerShell, Skill
 - 既存コードのスタイル・命名・import 形式に合わせる。import は `PYTHONPATH=backend` 前提の `api.x` / `pipeline.x` / `indicators.x` 形式が基本（`scenario_*` 系のみ `backend.x` 形式）。編集対象ファイルの既存形式に必ず合わせる。コメントは日本語。
 - Python 実行は常に `.\venv\Scripts\python.exe` を使う。
 - 実装後、対応するテストを実行して結果を確認する: `.\venv\Scripts\python.exe -m pytest backend/tests/<対応パス> -q`
+- 指示に担当ファイルが列挙されている場合は、同じ作業コピーで他のワーカーが並列に作業している。**列挙されたファイル以外は編集しない**。列挙外の変更が必要になったら、実装せずに報告して終了する。`git status` に担当外の変更が見えても触らない。
 - 使い捨ての検証スクリプトは `tmp/` に置く。`backend/scripts/` には置かない。
 - DB スキーマ・indicator・パイプラインロジックに触れる場合は、着手前に **sandbox-workflow** スキルを読む。SQLite に触れる場合は **sqlite-wal-handling** スキルを読む。
-- `git commit` / `git push` は行わない（`git add` まで可）。コミットは検収（G2）に合格した後にオーケストレーターが行う。
+- ワークツリー内では、担当範囲の変更を自ブランチにコミットしてよい（`git add` は明示パスのみ。コミットした場合は完了報告に SHA を書く）。**指示に担当ファイルが列挙されている場合（並列作業中）はコミットしない** — オーケストレーターがまとめて行う。本体チェックアウトではコミットしない。`git push` は行わない。
 - 同一エラーで3回失敗したら打ち切り、エラー内容を報告して終了する。打ち切る前に既知の回避手段を検索すること: `grep -n "<エラー原文の一部>" doc/agent_execution_rules.md doc/project_knowhow.md`（`doc/agent_execution_rules.md` §4.1）。ヒットしたらその対策を試す。**ドキュメントへの追記はワーカーでは行わない** — 完了報告に回し、オーケストレーターの判断に委ねる。
 
 ## 完了報告（必須・省略不可）

@@ -15,6 +15,8 @@ from optimization_runner import (
     parse_optimization_periods,
     calculate_prune_penalty,
     enqueue_baseline_trial,
+    list_optimizable_strategies,
+    run_all_strategies,
 )
 
 
@@ -435,3 +437,112 @@ class TestEvaluateHoldout:
 # （主指標: expectancy_lcb → 期間CAGR × DDペナルティ × 検出件数帯）に伴い
 # test_optimization_score.py へ移設した。
 
+
+# ============================================================
+# --strategy all（最適化対象の全戦略を順に回す）
+# ============================================================
+
+class TestListOptimizableStrategies:
+    """`all` の展開対象: [strategy.optimization] を持つ戦略だけを、config の記載順に返す。"""
+
+    def test_optimizationを持つ戦略だけを記載順に返す(self):
+        config = {
+            "strategy": [
+                {"name": "A_x", "optimization": {"p": {"type": "int", "min": 1, "max": 2}}},
+                {"name": "I1_no_opt"},  # 最適化テーブルなし（ゾーン系。探索空間が無い）
+                {"name": "B1_y", "optimization": {"p": {"type": "int", "min": 1, "max": 2}}},
+            ]
+        }
+        assert list_optimizable_strategies(config) == ["A_x", "B1_y"]
+
+    def test_空のoptimizationテーブルは対象外(self):
+        # 探索するパラメータが1つも無い戦略を回しても study が作れない
+        config = {"strategy": [{"name": "A_x", "optimization": {}}]}
+        assert list_optimizable_strategies(config) == []
+
+    def test_strategyが無いconfigでも例外にしない(self):
+        assert list_optimizable_strategies({}) == []
+
+    def test_実configでは最適化テーブルの無いゾーン系4戦略が除外される(self):
+        import os
+        import tomli
+        import optimization_runner
+        path = os.path.join(os.path.dirname(optimization_runner.__file__), "backtest", "backtest_config.toml")
+        with open(path, "rb") as f:
+            config = tomli.load(f)
+        names = list_optimizable_strategies(config)
+        assert names, "実 config から最適化対象が1件も取れない"
+        for n in ("I1_zone_break_flip", "I2_zone_break_breakout",
+                  "J1_zone_break_flip_confirmed", "J2_zone_break_breakout_confirmed"):
+            assert n not in names
+        # 全て resolve_strategy で解決でき、探索空間を持つこと（all が回す戦略が実行時に落ちない）
+        from optimization_runner import resolve_strategy
+        for n in names:
+            strat, actual = resolve_strategy(config, n)
+            assert actual == n and strat.get("optimization")
+
+
+class TestRunAllStrategies:
+    """`all` は戦略ごとに別プロセスで単体実行し、1本が失敗しても残りを続ける。"""
+
+    @staticmethod
+    def _config():
+        opt = {"p": {"type": "int", "min": 1, "max": 2}}
+        return {"strategy": [
+            {"name": "A_x", "optimization": opt},
+            {"name": "B1_y", "optimization": opt},
+            {"name": "C1_z", "optimization": opt},
+        ]}
+
+    def test_戦略ごとに単体実行のコマンドを順に呼ぶ(self):
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            return MagicMock(returncode=0)
+
+        failed = run_all_strategies(self._config(), trials=7, storage=None, n_jobs=1, run=fake_run)
+
+        assert failed == []
+        assert len(calls) == 3
+        names = [c[c.index("--strategy") + 1] for c in calls]
+        assert names == ["A_x", "B1_y", "C1_z"]
+        for c in calls:
+            assert c[c.index("--trials") + 1] == "7"
+            assert c[c.index("--n-jobs") + 1] == "1"
+            assert "--storage" not in c  # 未指定のときは既定の trial DB に任せる
+            assert "all" not in c  # 再帰して自分自身を無限に呼ばない
+
+    def test_storage指定は各戦略へそのまま引き継ぐ(self):
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            return MagicMock(returncode=0)
+
+        run_all_strategies(self._config(), trials=1, storage="C:/tmp/x.db", n_jobs=1, run=fake_run)
+
+        assert all(c[c.index("--storage") + 1] == "C:/tmp/x.db" for c in calls)
+
+    def test_途中で失敗しても残りを続け失敗した戦略名を返す(self):
+        def fake_run(cmd, **kwargs):
+            name = cmd[cmd.index("--strategy") + 1]
+            return MagicMock(returncode=1 if name == "B1_y" else 0)
+
+        calls_seen = []
+
+        def counting_run(cmd, **kwargs):
+            calls_seen.append(cmd[cmd.index("--strategy") + 1])
+            return fake_run(cmd, **kwargs)
+
+        failed = run_all_strategies(self._config(), trials=1, storage=None, n_jobs=1, run=counting_run)
+
+        assert calls_seen == ["A_x", "B1_y", "C1_z"]  # B1 で止まらず C1 まで実行された
+        assert failed == ["B1_y"]
+
+    def test_最適化対象が無ければ何も実行せず空を返す(self):
+        def fake_run(cmd, **kwargs):
+            raise AssertionError("実行されてはいけない")
+
+        assert run_all_strategies({"strategy": [{"name": "I1"}]}, trials=1, storage=None,
+                                  n_jobs=1, run=fake_run) == []

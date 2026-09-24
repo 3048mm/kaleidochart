@@ -631,7 +631,9 @@
   > `RS_DOT_WARMUP_BARS`ガードの撤去要否、`bars_available`診断列の追加。
   > いずれも本issueの解決の妨げにはならない低優先度の残作業。
   >
-  > **本番昇格はこの解決に含まれない**。`doc/completed/min_periods_warmup_plan.md` 5-17
+  > **【2026-09-25 更新】本番昇格は完了**（main へ merge・新世代 `20260925_011643`。検証結果は同計画 5-17）。**再最適化（対象8戦略）はユーザー実行待ち。**
+  >
+  > （以下は 2026-09-24 時点の記述）**本番昇格はこの解決に含まれない**。`doc/completed/min_periods_warmup_plan.md` 5-17
   > 以降（`/code-review` → merge → `deploy_after_merge.ps1` → 対象8戦略の再最適化）は
   > 別途ユーザー判断・実行が必要。
   - **事象**: `sma_200` / `dist_52w_high_pct` / `is_trend_template` などは
@@ -1905,6 +1907,7 @@
 - [ ] **`min_periods_warmup` の G3 レビューで切り出した項目（2026-09-24 起票・いずれも正しさへの実害なし）**
   - **背景**: `doc/in_progress/min_periods_warmup_plan.md` §6.3 の仕分けで「実在するが本ブランチのスコープ外」としたもの。番号は同 §6.3 の R 番号。
   - **R4（RrgChart）**: `frontend/src/components/RrgChart.tsx:97-99` が履歴30点のランク系列の NULL を `|| 0` で 0（最悪）にする。NULL の点を描かない／線を切る等の表示設計が要る
+  - **R8・R17 の実測（2026-09-25・本番昇格後）**: `db_health_check --all --check-nulls --check-warmup-nulls` が DFPH・^VIX・^VIX3M・S5FI・S5TH の5銘柄を NG にする。^VIX/S5FI/DFPH は出来高が常に 0（`vol_surge_21`・`up_down_vol_ratio_50` が 0/0 で NULL）、^VIX3M は出来高 NaN が14行あり `min_periods=window` で `avg_dollar_volume_21` 等が窓ぶん NULL（指標で売買対象外・個別株は出来高 NaN 0銘柄）。いずれも構造的 NULL の誤検知。通常の scan には出ない（`--check-warmup-nulls` 限定）
   - **R8・R17（増分レジストリの warmup_bars）**: `vol_surge_21`/`vol_surge_rel_spy_21`（73）・`up_down_vol_ratio_50`（76）は構造的下限（20/20/49）ではなく標本の最大値（`down_vol == 0`・出来高0 由来の NaN は固定本数で表せない）。連鎖 warmup（398/611/810 等）は `max(warmup(inputs)) + lookback - 1` でレジストリ自身から導出できるのに手書き定数で、テストが実計算と照合しない。`is_structurally_null_column` の SPY 列例外は `df_spy is None` 早期 return の副作用を列挙したもので、`^VIX`/`^VIX3M` 等の出来高0の銘柄には効かない。**`--check-warmup-nulls` の誤検知・見逃しの温床**
   - **R9（仮想指数の先頭20日）**: 構成銘柄の先頭20日は `surge.fillna(1.0)` で中立化される（`orchestrator.py` rebuild 経路と `parquet_recompute.py`）。§2.3 の「NULL は NULL のまま」と食い違う。合成指数固有の話（計画 §3.7「別系統」）
   - **R10（scenario_market_score のフォールバック）**: `backtest/scenario_market_score.py:91-107` が SPY の `sma_50/200`・`distribution_days` を `min_periods=1`、`atr_14` を `ffill().fillna(1.0)` で計算する。T3 が無いときのみ通る経路だが、T5 の MTS と食い違いうる（計画 §4-1 で「揃えない」と確定した範囲の続き）

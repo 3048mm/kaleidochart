@@ -12,7 +12,7 @@ set PYTHONIOENCODING=utf-8
 set PYTHONUTF8=1
 
 :: Prompt for strategy
-set /p STRATEGIES="Enter strategy names separated by comma [default A,B,D]: "
+set /p STRATEGIES="Enter strategy names separated by comma, or all for every optimizable strategy [default A,B,D]: "
 if "%STRATEGIES%"=="" set STRATEGIES=A,B,D
 
 :: Remove spaces from input
