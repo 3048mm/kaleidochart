@@ -1,5 +1,6 @@
 import os
 import sys
+import re
 import time
 import json
 import glob
@@ -109,6 +110,210 @@ def get_latest_master_files(pointer_file: str, *, strict: bool = False) -> dict 
                 raise ParquetPointerUnreadableError(msg) from e
             logging.getLogger(__name__).error(msg)
             return None
+
+def find_latest_parquet_backup(data_dir: str) -> str | None:
+    """`data_dir` 直下の `_bk_*` のうち、Parquet を含む最新バックアップの絶対パスを返す。
+
+    バックアップは `_bk_YYYYMMDD` と `_bk_YYYYMMDD_HHMMSS` の2形式が混在している
+    （`tools/backup_production_data.py`）。DB だけのバックアップ（
+    `BACKUP_MANIFEST.json` に `parquet_generation` キーが無い）は候補から除外する。
+    manifest が壊れている候補は警告ログを出してスキップする（他候補は生きる）。
+
+    フォルダ名の文字列比較で新しい順に並べる。`_bk_YYYYMMDD_HHMMSS` は
+    `_bk_YYYYMMDD` より必ず長い文字列になるため、同日でも時刻付きが後に来る。
+
+    Returns:
+        候補が1つも無ければ None。
+    """
+    logger = logging.getLogger(__name__)
+    candidates = []
+    for entry in sorted(glob.glob(os.path.join(data_dir, "_bk_*"))):
+        if not os.path.isdir(entry):
+            continue
+        manifest_path = os.path.join(entry, "BACKUP_MANIFEST.json")
+        if not os.path.exists(manifest_path):
+            continue
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+        except Exception as e:
+            logger.warning(f"バックアップの BACKUP_MANIFEST.json が壊れているためスキップします: "
+                           f"{entry} ({type(e).__name__}: {e})")
+            continue
+        if not isinstance(manifest.get("parquet_generation"), dict):
+            continue
+        candidates.append(entry)
+
+    if not candidates:
+        return None
+    # フォルダ名（末尾の日時部分）で新しい順に並べる
+    candidates.sort(key=os.path.basename)
+    return candidates[-1]
+
+
+def get_backup_master_files(backup_dir: str) -> dict:
+    """バックアップ内の `BACKUP_MANIFEST.json` を基準に Parquet マスタのパスを解決する。
+
+    🔴 バックアップ内に `latest_master.json` が残っていても、それは本番
+    `data/parquet_master/` を絶対パスで指しているため絶対に使わない
+    （backtest_stable_data_plan.md §1）。必ず manifest の `parquet_generation`
+    （ファイル名のみ）を `backup_dir` 基準で解決する。
+
+    Raises:
+        FileNotFoundError: manifest が無い／`parquet_generation` が無い／
+            記載されたファイルが1つでも実体を欠く場合。本番パスへ黙って
+            切り替えないため、ここでは例外にする。
+    """
+    manifest_path = os.path.join(backup_dir, "BACKUP_MANIFEST.json")
+    if not os.path.exists(manifest_path):
+        raise FileNotFoundError(f"BACKUP_MANIFEST.json が見つかりません: {manifest_path}")
+
+    with open(manifest_path, "r", encoding="utf-8") as f:
+        manifest = json.load(f)
+
+    generation = manifest.get("parquet_generation")
+    if not isinstance(generation, dict) or not generation:
+        raise FileNotFoundError(
+            f"{manifest_path} に parquet_generation がありません"
+            f"（DB だけのバックアップの可能性があります）。")
+
+    resolved = {}
+    missing = []
+    for key, fname in generation.items():
+        full_path = os.path.join(backup_dir, os.path.basename(fname))
+        resolved[key] = full_path
+        if not os.path.exists(full_path):
+            missing.append(fname)
+
+    if missing:
+        raise FileNotFoundError(
+            f"バックアップ {backup_dir} に次のファイルが見つかりません: {', '.join(missing)}")
+
+    return resolved
+
+
+def _extract_parquet_generation(master_files: dict) -> str | None:
+    """`prices_YYYYMMDD_HHMMSS.parquet` からファイル名だけの世代文字列を取り出す。"""
+    prices_path = (master_files or {}).get("prices")
+    if not prices_path:
+        return None
+    m = re.match(r"prices_(.+)\.parquet$", os.path.basename(prices_path))
+    return m.group(1) if m else None
+
+
+def resolve_backtest_data_source(data_source: str | None = None,
+                                  active_db_path: str | None = None) -> tuple[dict, dict]:
+    """バックテスト系が読む Parquet マスタの参照先を解決する（backtest_stable_data_plan.md §3-B）。
+
+    daily update は1日に2回新しい世代を作るため、バックテスト・最適化・シナリオバッチが
+    開始時にその時点の最新世代を読むと、比較のたびにデータ世代がずれる。
+    そこで本番では既定で「検証済みの最新バックアップ」（中身が二度と変わらない）を読む。
+
+    ## "latest" と "backup" の違い（2026-09-26 §7-3 で修正）
+
+    ワークツリー・sandbox で T3 を再計算し、merge 前に評価する経路
+    （`agent_execution_rules.md` §10.4 Case 2）では、**再計算した自分のデータ**を
+    読む必要がある。`"backup"` は常に**本番** data ディレクトリのバックアップを読むため、
+    この経路には使えない。`"latest"` は**現在の data ディレクトリ**
+    （`active_db_path` 由来。本体なら本番、ワークツリー・sandbox なら自分のデータ）の
+    最新世代を読む。旧 `preload_data()` の参照先はこの `"latest"` と同じ。
+
+    Args:
+        data_source: ``"backup"`` / ``"latest"`` / バックアップのフォルダ名
+            （例 ``"_bk_20260925_173413"``）。``None``（既定）なら
+            `paths.is_production()` で判定する（本番なら `"backup"`、そうでなければ
+            `"latest"`）。``"production"`` は廃止済みで受け付けない。
+        active_db_path: `"latest"` の解決に使う DB パス。呼び出し元が
+            Sandbox 隔離（`STOCKTOOL_DB_PATH` 等）を反映した値を渡すことを想定する
+            （`backtest_runner.resolve_backtest_db_path()` の戻り値など）。
+            省略時は `paths.get_db_path("stocktool")` にフォールバックする。
+
+    Returns:
+        (Parquet マスタのファイル辞書, メタ情報)。メタ情報は
+        ``{"data_source": "backup"|"latest", "backup_name": str|None,
+        "parquet_generation": str|None}``。
+
+    Raises:
+        ValueError: ``data_source="production"``（廃止済み）。
+        FileNotFoundError: 名前指定のバックアップが存在しない、または
+            現在の data ディレクトリの latest_master.json が読めない場合。
+    """
+    logger = logging.getLogger(__name__)
+    import paths
+
+    if data_source == "production":
+        raise ValueError(
+            "data_source='production' は廃止されました。"
+            " 'latest'（現在の data ディレクトリの最新世代）を使ってください"
+            "（backtest_stable_data_plan.md §7-3）。"
+        )
+
+    requested = data_source
+    if data_source is None:
+        data_source = "backup" if paths.is_production() else "latest"
+
+    if data_source == "backup":
+        # バックアップの探索先は「本番の data ディレクトリ」に固定する。
+        # ワークツリーでも本番のバックアップを読み取りで使うため、
+        # STOCKTOOL_DATA_ROOT / STOCKTOOL_ENV 等（get_data_root）の影響を受けない
+        # get_prod_data_root() を優先する。
+        prod_root = paths.get_prod_data_root() or paths.get_data_root()
+        backup_dir = find_latest_parquet_backup(prod_root)
+        if backup_dir is None:
+            logger.warning(
+                f"Parquet を含むバックアップが {prod_root} 配下に見つかりません。"
+                f" data_source='latest'（現在の data ディレクトリの最新世代）にフォールバックします。"
+            )
+            return resolve_backtest_data_source("latest", active_db_path=active_db_path)
+        master_files = get_backup_master_files(backup_dir)
+        meta = {
+            "data_source": "backup",
+            "backup_name": os.path.basename(backup_dir),
+            "parquet_generation": _extract_parquet_generation(master_files),
+        }
+        return master_files, meta
+
+    if data_source == "latest":
+        db_path = active_db_path or paths.get_db_path("stocktool")
+        parquet_dir = get_parquet_master_dir(db_path)
+        pointer_file = get_pointer_file_path(parquet_dir)
+        master_files = get_latest_master_files(pointer_file, strict=True)
+        if not master_files:
+            raise FileNotFoundError(
+                f"Parquet master cache files not found at {parquet_dir}!\n"
+                f"  パイプラインを1回実行してマスタを生成するか、--refresh-cache を付けて実行してください。"
+            )
+        # 自動削除の警告は「本番で latest を明示したとき」だけ出す。
+        # ワークツリー・sandbox の latest は自分のデータで、削除サイクルの対象は
+        # 本番 data ディレクトリだけのため、そちらでは警告不要。
+        if requested == "latest" and paths.is_production():
+            logger.warning(
+                "data_source='latest': 長時間の実行では daily update 後の自動削除"
+                "（clean_old_parquet_versions、最新2世代を保持）で、開始時に固定した世代が"
+                "実行中に消えることがあります。"
+            )
+        meta = {
+            "data_source": "latest",
+            "backup_name": None,
+            "parquet_generation": _extract_parquet_generation(master_files),
+        }
+        return master_files, meta
+
+    # それ以外はバックアップ名として扱う
+    prod_root = paths.get_prod_data_root() or paths.get_data_root()
+    backup_dir = os.path.join(prod_root, data_source)
+    if not os.path.isdir(backup_dir):
+        raise FileNotFoundError(
+            f"指定されたバックアップフォルダが見つかりません: {backup_dir}"
+        )
+    master_files = get_backup_master_files(backup_dir)
+    meta = {
+        "data_source": data_source,
+        "backup_name": data_source,
+        "parquet_generation": _extract_parquet_generation(master_files),
+    }
+    return master_files, meta
+
 
 def clean_old_parquet_versions(parquet_dir: str, logger: logging.Logger, keep_count=2):
     """Cleans up older timestamps of Parquet masters, keeping only the latest versions,

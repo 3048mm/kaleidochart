@@ -5,8 +5,9 @@ import os
 import sys
 import argparse
 import subprocess
+import sqlite3
 import tomli
-from datetime import date as dt_date
+from datetime import date as dt_date, datetime
 import pandas as pd
 
 import optuna
@@ -20,10 +21,10 @@ backtest_dir = os.path.join(backend_dir, 'backtest')
 if backtest_dir not in sys.path:
     sys.path.insert(0, backtest_dir)
 
-from backtest.backtest_runner import preload_data, run_single_strategy
+from backtest.backtest_runner import preload_data, run_single_strategy, resolve_backtest_db_path
 from backtest.backtest_simulator import ExitRules
 from backtest.common_constraints import load_min_avg_dollar_volume_21, inject_liquidity_floor, load_tax_rate
-from db.database import init_db
+from db.database import init_db, get_active_db_path
 from db import database
 
 # Configure optuna logging
@@ -33,14 +34,162 @@ logger = logging.getLogger(__name__)
 # Global dictionary for cached data per period
 _cached_data_dict = {}
 
+# 開始時に1回だけ解決した Parquet マスタの参照先（backtest_stable_data_plan.md §3-C）。
+# 全期間で同じ世代を使うため、get_cached_data はこの値を使い回す（期間ごとに
+# 探索・ポインタ読みをやり直さない）。main() の起動時に resolve_data_source() で設定する。
+_resolved_master_files = None
+_resolved_data_source_meta = None
+
+
+def resolve_data_source(data_source: str | None = None, active_db_path: str | None = None):
+    """開始時に1回だけ参照先を解決し、以降の get_cached_data 呼び出しに固定する。
+
+    Args:
+        data_source: ``"backup"`` / ``"latest"`` / バックアップのフォルダ名。
+            ``None``（既定）なら `paths.is_production()` で判定する
+            （本番なら backup、そうでなければ latest。backtest_stable_data_plan.md §7-3）。
+        active_db_path: ``"latest"`` の参照先解決に使う DB パス（現在の data ディレクトリ）。
+    """
+    global _resolved_master_files, _resolved_data_source_meta
+    from pipeline.parquet_cache_manager import resolve_backtest_data_source
+
+    master_files, meta = resolve_backtest_data_source(data_source, active_db_path=active_db_path)
+    print(f"Data source: {meta['data_source']}"
+          + (f" (backup: {meta['backup_name']})" if meta['backup_name'] else "")
+          + f" | generation={meta['parquet_generation']}", flush=True)
+    _resolved_master_files = master_files
+    _resolved_data_source_meta = meta
+    return master_files, meta
+
+
+def resolve_all_child_data_source(data_source: str | None = None, active_db_path: str | None = None) -> str:
+    """`--strategy all` の子プロセスへ渡す ``--data-source`` を、親で1回だけ解決して確定する。
+
+    子プロセスは自分でポインタ/バックアップを探索し直すため、実行が長時間（数時間〜十数時間）
+    に及ぶと daily update や自動削除で戦略ごとに世代がずれる（backtest_stable_data_plan.md
+    §6.3 R4）。ここで確定したバックアップ名を子へ渡せば全戦略が同じ世代を読む。
+    ``"latest"`` は世代を CLI で固定できないため、そのまま返し警告を出す。
+    """
+    _, meta = resolve_data_source(data_source, active_db_path=active_db_path)
+    if meta["data_source"] == "backup":
+        return meta["backup_name"]
+    logger.warning(
+        "--strategy all: data_source='latest' が解決されました。実行中に daily update や "
+        "自動削除（最新2世代保持）で世代が変わりえます（backtest_stable_data_plan.md §6.3 R4）。"
+    )
+    return "latest"
+
+
+def _backup_sqlite_file(db_path: str) -> str:
+    """`db_path` の SQLite ファイルを、sqlite3 の backup API で安全にコピーする。
+
+    退避（study の delete_study）の前に必ず呼ぶ（rules §10.1: ユーザー資産の
+    ファイルバックアップ）。単純な `shutil.copy2` は WAL モード中の書き込みと
+    競合すると不整合なコピーになりうるため、SQLite 公式の backup API を使う。
+    """
+    backup_path = f"{db_path}.bak_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    src = sqlite3.connect(db_path)
+    try:
+        dst = sqlite3.connect(backup_path)
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+    finally:
+        src.close()
+    return backup_path
+
+
+def retire_study_if_data_source_changed(storage, study_name: str, meta: dict, db_path: str) -> optuna.Study:
+    """study の Parquet 世代が変わっていたら退避し、正式名で新規作成する
+    （backtest_stable_data_plan.md §4-5）。
+
+    study 名は戦略名そのもので、`run_scenario_batch.py` がこの名前で最良パラメータを
+    引くため、常に**新しいデータの study が正式名を持つ**（古い方を別名に退避する）。
+
+    分岐:
+      - 正式名の study が無い: 新規作成して今回の参照先を記録する。
+      - 既存 study の ``user_attrs["parquet_generation"]`` が今回と一致: そのまま再開する。
+      - 不一致: 先にファイルバックアップを取り、``optuna.copy_study()`` で
+        ``<study_name>__<旧世代>``（名前衝突時は ``_2`` 、``_3``… を付与）に退避したうえで
+        元を ``delete_study()`` し、正式名で新規作成する。
+      - 記録が無い既存 study（本機能の導入前に作られたもの）: 退避せず、
+        今回の参照先を記録して引き継ぐ（警告ログを出す）。
+
+    Args:
+        storage: Optuna の RDBStorage。
+        study_name: 正式名（戦略名）。
+        meta: `resolve_backtest_data_source()` が返すメタ情報
+            （``data_source`` / ``backup_name`` / ``parquet_generation``）。
+        db_path: `storage` が指す SQLite ファイルのパス（退避前のバックアップ対象）。
+    """
+    try:
+        existing = optuna.load_study(study_name=study_name, storage=storage)
+    except KeyError:
+        existing = None
+
+    if existing is None:
+        study = optuna.create_study(
+            study_name=study_name, storage=storage, load_if_exists=True, direction="maximize",
+        )
+        study.set_user_attr("data_source", meta["data_source"])
+        study.set_user_attr("backup_name", meta["backup_name"])
+        study.set_user_attr("parquet_generation", meta["parquet_generation"])
+        return study
+
+    prev_gen = existing.user_attrs.get("parquet_generation")
+
+    if prev_gen is None:
+        print(f"  [WARNING] study '{study_name}' に世代記録がありません"
+              f"（本機能導入前の study の可能性）。退避せず今回の参照先を記録して引き継ぎます。")
+        existing.set_user_attr("data_source", meta["data_source"])
+        existing.set_user_attr("backup_name", meta["backup_name"])
+        existing.set_user_attr("parquet_generation", meta["parquet_generation"])
+        return existing
+
+    if prev_gen == meta["parquet_generation"]:
+        return existing
+
+    # 世代が不一致 -> 古い study を退避してから正式名で新規作成する
+    backup_path = _backup_sqlite_file(db_path)
+    print(f"  [INFO] 世代不一致のため optimization_trials.db をバックアップしました: {backup_path}")
+
+    existing_names = set(optuna.study.get_all_study_names(storage))
+    retired_name = f"{study_name}__{prev_gen}"
+    suffix = 2
+    while retired_name in existing_names:
+        retired_name = f"{study_name}__{prev_gen}_{suffix}"
+        suffix += 1
+
+    optuna.copy_study(from_study_name=study_name, from_storage=storage,
+                       to_storage=storage, to_study_name=retired_name)
+    # ユーザー資産なので、コピー先の trial 数が元と一致することを確かめてから元を消す
+    n_src = len(existing.get_trials(deepcopy=False))
+    n_dst = len(optuna.load_study(study_name=retired_name, storage=storage).get_trials(deepcopy=False))
+    if n_src != n_dst:
+        raise RuntimeError(
+            f"study の退避コピーが不完全です（元 {n_src} 件 / コピー {n_dst} 件）。"
+            f"元の study '{study_name}' は削除していません。バックアップ: {backup_path}")
+    optuna.delete_study(study_name=study_name, storage=storage)
+    print(f"  [INFO] study '{study_name}' の参照データ世代が変わりました"
+          f"（{prev_gen} -> {meta['parquet_generation']}）。旧 study は '{retired_name}' に退避しました。")
+
+    study = optuna.create_study(study_name=study_name, storage=storage, direction="maximize")
+    study.set_user_attr("data_source", meta["data_source"])
+    study.set_user_attr("backup_name", meta["backup_name"])
+    study.set_user_attr("parquet_generation", meta["parquet_generation"])
+    return study
+
+
 def get_cached_data(config_app, start_date, end_date):
     global _cached_data_dict
     period_key = f"{start_date}_{end_date}"
     if period_key in _cached_data_dict:
         return _cached_data_dict[period_key]
-        
+
     print(f"Preloading data from {start_date} to {end_date} for optimization...")
-    res = preload_data(database.engine, start_date, end_date, refresh_cache=False)
+    res = preload_data(database.engine, start_date, end_date, refresh_cache=False,
+                        master_files=_resolved_master_files)
     _cached_data_dict[period_key] = res
     print("Data preload complete.", flush=True)
     return res
@@ -223,7 +372,7 @@ def list_optimizable_strategies(config):
     ]
 
 
-def run_all_strategies(config, trials, storage, n_jobs, run=subprocess.run):
+def run_all_strategies(config, trials, storage, n_jobs, data_source=None, run=subprocess.run):
     """最適化対象の全戦略を、戦略ごとに**別プロセス**で順に単体実行する。
 
     別プロセスにするのは、数時間〜十数時間かかる実行でのメモリ肥大や、
@@ -244,6 +393,8 @@ def run_all_strategies(config, trials, storage, n_jobs, run=subprocess.run):
         print("=" * 70, flush=True)
         cmd = [sys.executable, os.path.abspath(__file__),
                "--strategy", name, "--trials", str(trials), "--n-jobs", str(n_jobs)]
+        if data_source is not None:
+            cmd += ["--data-source", data_source]
         if storage:
             cmd += ["--storage", storage]
         result = run(cmd)
@@ -693,6 +844,12 @@ def main():
     parser.add_argument("--n-jobs", type=int, default=1,
                         help="並列トライアル数。SQLite storage は並列(>1)だと "
                              "COMPLETE trial エラーで停止しうるため既定は1（完全逐次・最も安全）")
+    parser.add_argument("--data-source", type=str, default=None,
+                        help="最適化が読む Parquet マスタの参照先。"
+                             "'backup'（検証済みの最新バックアップ・常に本番）/ "
+                             "'latest'（現在の data ディレクトリの最新世代）/ "
+                             "バックアップのフォルダ名（例 '_bk_20260925_...')。"
+                             "省略時は本番なら backup、それ以外（ワークツリー・sandbox）なら latest。")
     args = parser.parse_args()
     
     # Use config just to load exit rules
@@ -705,7 +862,19 @@ def main():
         names = list_optimizable_strategies(config)
         print(f"--strategy all: 最適化対象 {len(names)} 戦略を順に実行します（各 {args.trials} trials）:", flush=True)
         print("  " + ", ".join(names), flush=True)
-        failed = run_all_strategies(config, args.trials, args.storage, args.n_jobs)
+
+        # 参照先を親で1回だけ解決し、確定した世代（backup ならバックアップ名）を
+        # 子プロセスに渡す（backtest_stable_data_plan.md §6.3 R4）。
+        project_root_all = os.path.dirname(backend_dir)
+        config_path_app_all = os.path.join(project_root_all, 'config.toml')
+        with open(config_path_app_all, 'rb') as f:
+            config_app_all = tomli.load(f)
+        db_path_main_all = os.path.join(project_root_all, config_app_all['system']['db_path'])
+        init_db(db_path_main_all)
+        active_db_path_all = resolve_backtest_db_path(get_active_db_path())
+        child_data_source = resolve_all_child_data_source(args.data_source, active_db_path_all)
+
+        failed = run_all_strategies(config, args.trials, args.storage, args.n_jobs, child_data_source)
         print("\n" + "=" * 70, flush=True)
         print(f"  all 完了: 成功 {len(names) - len(failed)} / {len(names)} 戦略", flush=True)
         if failed:
@@ -735,6 +904,13 @@ def main():
     
     # Load periods from TOML config
     periods = parse_optimization_periods(config)
+
+    # 参照先は開始時に1回だけ解決し、全期間で同じ Parquet マスタ世代を使う
+    # （backtest_stable_data_plan.md §3-C）。"latest" は Sandbox 隔離
+    # （STOCKTOOL_DB_PATH 等）を反映した db_path を active_db_path として渡す
+    # （backtest_runner.resolve_backtest_db_path() と同じ解決経路。config.toml の
+    # DB パスを直接渡すと隔離を経由しない＝ R1）。
+    resolve_data_source(args.data_source, active_db_path=resolve_backtest_db_path(get_active_db_path()))
 
     # 2026-07-18: n_jobs=-1（後段の study.optimize）は複数トライアルを並列スレッドで
     # 実行するため、_cached_data_dict（get_cached_data のグローバルキャッシュ）に
@@ -781,13 +957,11 @@ def main():
         print("  [Tax] 税なし (consider_tax_optimization=0.0)")
     print("=" * 60)
     
-    study = optuna.create_study(
-        study_name=study_name, 
-        storage=storage, 
-        load_if_exists=True,
-        direction="maximize"
+    # 参照データの世代が既存 study と変わっていれば退避する（backtest_stable_data_plan.md §4-5）。
+    study = retire_study_if_data_source_changed(
+        storage, study_name, _resolved_data_source_meta, db_path,
     )
-    
+
     try:
         enqueued = enqueue_baseline_trial(study, config, actual_name)
         if enqueued:

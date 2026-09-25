@@ -266,25 +266,31 @@ def test_format_elapsed_hours():
 
 
 def test_parse_args_no_jobs_flag_means_all():
-    job_names, list_only, tax = parse_args([])
+    job_names, list_only, tax, data_source = parse_args([])
     assert job_names is None
     assert list_only is False
     assert tax is None, "--tax 未指定は None（設定ファイルの値を使う合図）"
+    assert data_source is None, "--data-source 未指定は None（実際の既定判定は resolve 側に委ねる）"
 
 
 def test_parse_args_single_job():
-    job_names, _, _ = parse_args(["--jobs", "B1"])
+    job_names, _, _, _ = parse_args(["--jobs", "B1"])
     assert job_names == ["B1"]
 
 
 def test_parse_args_multiple_jobs_comma_separated():
-    job_names, _, _ = parse_args(["--jobs", "B1,B2, E1"])
+    job_names, _, _, _ = parse_args(["--jobs", "B1,B2, E1"])
     assert job_names == ["B1", "B2", "E1"]
 
 
 def test_parse_args_list_jobs_flag():
-    _, list_only, _ = parse_args(["--list-jobs"])
+    _, list_only, _, _ = parse_args(["--list-jobs"])
     assert list_only is True
+
+
+def test_parse_args_data_source_is_parsed():
+    _, _, _, data_source = parse_args(["--data-source", "latest"])
+    assert data_source == "latest"
 
 
 # ---------------------------------------------------------------------------
@@ -298,12 +304,12 @@ def test_parse_args_list_jobs_flag():
 # common_constraints.load_tax_rate() に集約して CLI 値にも同じ検査をかける。
 # ---------------------------------------------------------------------------
 def test_parse_args_tax_is_none_by_default():
-    _, _, tax = parse_args([])
+    _, _, tax, _ = parse_args([])
     assert tax is None
 
 
 def test_parse_args_tax_is_parsed_as_float():
-    _, _, tax = parse_args(["--tax", "0.2"])
+    _, _, tax, _ = parse_args(["--tax", "0.2"])
     assert tax == pytest.approx(0.2)
 
 
@@ -472,7 +478,7 @@ study_name = "non_existent_study"
     )
     monkeypatch.setattr(
         "backend.backtest.run_scenario_batch.parse_args",
-        lambda argv=None: (None, False, None),
+        lambda argv=None: (None, False, None, "backup"),
     )
 
     def mock_load_study(study_name, storage):

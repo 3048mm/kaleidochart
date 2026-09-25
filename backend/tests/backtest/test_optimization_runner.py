@@ -511,7 +511,20 @@ class TestRunAllStrategies:
             assert c[c.index("--trials") + 1] == "7"
             assert c[c.index("--n-jobs") + 1] == "1"
             assert "--storage" not in c  # 未指定のときは既定の trial DB に任せる
+            assert "--data-source" not in c  # None なら子プロセスの既定判定に任せる
             assert "all" not in c  # 再帰して自分自身を無限に呼ばない
+
+    def test_data_source指定は各戦略へそのまま引き継ぐ(self):
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            return MagicMock(returncode=0)
+
+        run_all_strategies(self._config(), trials=1, storage=None, n_jobs=1,
+                            data_source="latest", run=fake_run)
+
+        assert all(c[c.index("--data-source") + 1] == "latest" for c in calls)
 
     def test_storage指定は各戦略へそのまま引き継ぐ(self):
         calls = []

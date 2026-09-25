@@ -29,6 +29,12 @@
     python tools/backup_production_data.py --apply    # 実行
 
 退避先は `data/_bk_<YYYYMMDD_HHMMSS>/`。既存の `data/_bk_*` と同じ命名。
+
+## バックテストの既定参照先を兼ねる
+
+Parquet を含む最新のバックアップは、バックテスト・最適化・シナリオバッチの既定の
+参照先になる（`backend_specification.md` §6.6.1）。**最新のバックアップは削除しない。**
+昇格などでデータの計算方法が変わったら、正常性確認の後にこのスクリプトで取り直す。
 """
 import argparse
 import json

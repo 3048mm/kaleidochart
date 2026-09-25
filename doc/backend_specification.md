@@ -1204,6 +1204,26 @@ min_market_cap = 3e8
 - **Parquet 一撃ロード**: 全歴史が蓄積されている [data/parquet_master/](file:///d:/My%20Documents/Programing/stocktool/data/parquet_master/) の Parquet ファイル群（またはバックテスト用一時 Parquet）から `pd.read_parquet()` で一撃ロード（約1〜2秒）し、メモリ上で瞬時にシミュレーションを行います。これにより、並列バックテスト時でも本番 SQLite への Busy ロックは 100% 発生しません。
 - **独立性**: バックテスト専用キャッシュおよびParquetマスターは、稼働中の本番 API サーバー（SQLite）とは完全に分離されており、双方の競合フリーな並行稼働が物理的に保証されます。
 
+### 6.6.1 参照するデータ（`--data-source`）
+
+バックテスト・最適化・シナリオバッチは、**開始時に1回だけ**読むデータを決める
+（`parquet_cache_manager.resolve_backtest_data_source()`）。
+
+| 値 | 読むデータ | 用途 |
+| :--- | :--- | :--- |
+| `backup` | 本番 `data/` の**最新バックアップ**（`_bk_*` のうち `BACKUP_MANIFEST.json` に `parquet_generation` を持つもの）。無ければ警告を出して `latest` | 本体での通常の最適化・比較。中身が変わらないので、daily update の影響を受けない |
+| `latest` | **現在の data ディレクトリ**の最新世代（本体なら本番、ワークツリー・sandbox なら自分のデータ） | 最新の数日分を使いたいとき。ワークツリーで再計算したデータの評価（`agent_execution_rules.md` §10.4 Case 2） |
+| `_bk_<日時>` | 指定したバックアップ | 過去のデータでの再現 |
+
+- **既定**: 現在の data ディレクトリが本番なら `backup`、そうでなければ `latest`。
+- バックアップ内の `latest_master.json` は本番のファイルを絶対パスで指しているので使わない。`BACKUP_MANIFEST.json` のファイル名をバックアップのフォルダ基準で解決する。
+- 本番で `latest` を指定すると、長時間の実行中に daily update の自動削除（最新2世代を保持）で世代が消えうる（警告が出る）。
+- シナリオバッチは親プロセスで解決したファイルのパスを子プロセスに渡す（子はポインタを読まない）。
+- 参照先（種類・バックアップ名・世代）は開始時にログへ出し、`backtest_summary.json` / `scenario_summary.json` の `data_source` キーと、Optuna の study の `user_attrs` に記録する。
+- **Optuna の study**: 正式名（戦略名）の study の世代と今回の世代が違えば、`optimization_trials.db` をバックアップしてから旧 study を `<戦略名>__<旧世代>` に退避し、正式名で新規作成する。世代の記録が無い既存 study は、退避せず引き継ぐ。
+- `--refresh-cache`（SQLite からの再生成）は `latest` のときだけ使える。
+- **Parquet を含む最新のバックアップは削除しない**（既定の参照先のため）。バックアップの取得は手作業（`tools/backup_production_data.py --apply`）。昇格後など、データの計算方法が変わったら取り直す。
+
 ### 6.7 プリロードするデータの範囲 (Preloaded Data)
 
 > **2026-08-18 改訂**（Phase 3d）。旧版は「戦略評価に必須なカラムのみを選択的に抽出する」

@@ -39,6 +39,12 @@ def load_config(config_path: str) -> dict:
         return tomli.load(f)
 
 
+# preload_data() が最後に解決した参照先のメタ情報（backtest_stable_data_plan.md §3-D）。
+# master_files を直接渡された場合（シナリオバッチの子プロセス）は None のまま。
+# run_backtest() が結果 JSON に記録するために読む。
+_last_preload_meta = None
+
+
 def resolve_backtest_db_path(active_db_path, logger=None) -> str:
     """バックテストが読む Parquet マスターの位置を決める DB パスを解決する。
 
@@ -82,58 +88,106 @@ def resolve_backtest_db_path(active_db_path, logger=None) -> str:
     return paths.get_db_path("stocktool")
 
 
-def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = False):
+def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = False,
+                  data_source: str | None = None, master_files: dict | None = None):
     """
     Preload all required data into pandas DataFrames.
     Loads ALL data from the Parquet Master full-history files and performs in-memory slicing.
     SQLite connection is COMPLETELY bypassed.
-    
+
+    Args:
+        data_source: 参照先（backtest_stable_data_plan.md §3-B / §7-3）。
+            ``"backup"``（検証済みの最新バックアップ・常に本番 data ディレクトリ）/
+            ``"latest"``（現在の data ディレクトリの最新世代。本体なら本番、
+            ワークツリー・sandbox なら自分のデータ。旧実装の参照先と同じ）/
+            バックアップのフォルダ名（例 ``"_bk_20260925_..."``）。
+            ``None``（既定）なら `paths.is_production()` で判定する
+            （本番なら `"backup"`、そうでなければ `"latest"`）。
+            ``"production"`` は廃止済みで受け付けない。
+            ``master_files`` が渡された場合はこの引数は無視される。
+        master_files: 解決済みのファイル辞書（`get_latest_master_files` 等と同じキー）。
+            渡された場合、探索・ポインタ読みは一切行わない
+            （シナリオバッチの子プロセスが、親で1回だけ解決した結果を使うための経路）。
+
     Returns:
         Tuple of (df_symbols, df_prices, df_indicators, df_ranks, df_theme_constituents, trading_dates)
     """
     import sys
     import pathlib
     import logging
+    import paths
     from backend.db.database import get_active_db_path
-    from backend.pipeline.parquet_cache_manager import get_parquet_master_dir, get_pointer_file_path, get_latest_master_files, rotate_and_archive_to_parquet
-    
+    from backend.pipeline.parquet_cache_manager import (
+        rotate_and_archive_to_parquet, resolve_backtest_data_source,
+    )
+
+    global _last_preload_meta
+
     def log(msg):
         print(msg)
         sys.stdout.flush()
 
     t0 = time.time()
-    
-    # 1. Determine active DB path & Parquet master directory
-    db_path = resolve_backtest_db_path(get_active_db_path())
-            
-    parquet_dir = get_parquet_master_dir(db_path)
-    pointer_file = get_pointer_file_path(parquet_dir)
-    
-    # 2. Get latest Parquet files pointer
-    #
-    #    暗黙の自動再生成は行わない（2026-09-09）。
-    #    旧実装は「ポインタが読めない」というだけで rotate_and_archive_to_parquet() を呼び、
-    #    **読み取り専用のはずのバックテストが本番 Parquet を書き換えていた**。
-    #    ローテートは旧世代とのマージを伴うため、ポインタが壊れていると
-    #    SQLite のホット期間（730日）だけの世代を公開して全期間履歴を失う経路になる。
-    #    再生成の入口は明示指定（--refresh-cache）だけに絞る。
-    if refresh_cache:
-        log("  Refresh requested. Regenerating Parquet master from SQLite...")
-        # 失敗をログだけにして先へ進まない。旧実装は例外を握り潰したうえで
-        # 後段の「ファイルが無い」という**誤誘導のメッセージ**に化けていた
-        # （実際にはファイルは存在し、読めなかっただけ）。
-        from backend.db import database
-        with database.get_db() as db:
-            rotate_and_archive_to_parquet(db, db_path, logging.getLogger())
 
-    # strict=True: 「ポインタが存在するのに読めない」を「無い」と混同しない
-    latest_files = get_latest_master_files(pointer_file, strict=True)
+    # refresh_cache（SQLite から再生成）はバックアップへ書き込めない。"latest" 専用。
+    # data_source 未指定（None）の場合、本番では既定が "backup" になるため、
+    # refresh_cache=True と組み合わせるとこのガードで常に ValueError になり
+    # scenario_runner.py / scenario_comparison_runner.py / verify_db_vs_cache.py
+    # （--data-source を持たない）が回避できない（R2）。
+    # refresh_cache=True かつ未指定なら "latest" を既定にする。明示的に "backup" 等を
+    # 指定した場合は従来どおり ValueError のまま（書き込み禁止の意図を守る）。
+    effective_data_source = data_source
+    if effective_data_source is None:
+        if refresh_cache:
+            effective_data_source = "latest"
+        else:
+            effective_data_source = "backup" if paths.is_production() else "latest"
+    if refresh_cache and effective_data_source != "latest":
+        raise ValueError(
+            f"--refresh-cache は data_source='latest' のときだけ許可されます"
+            f"（指定: data_source={data_source!r} → {effective_data_source!r}）。"
+            f" バックアップへは書き込みません。"
+        )
+
+    if master_files is not None:
+        # 呼び出し元（親プロセス）が既に解決済み。探索・ポインタ読みは一切しない。
+        latest_files = master_files
+        _last_preload_meta = None
+        log("Data source: externally provided master_files (no lookup performed).")
+    else:
+        # 1. Determine active DB path & Parquet master directory
+        #    Sandbox 隔離（STOCKTOOL_DB_PATH 等）を反映した「現在の data ディレクトリ」を
+        #    解決する。"latest" の参照先そのものであり、--refresh-cache の書き込み先でもある。
+        db_path = resolve_backtest_db_path(get_active_db_path())
+
+        if refresh_cache:
+            # 暗黙の自動再生成は行わない（2026-09-09）。
+            # 旧実装は「ポインタが読めない」というだけで rotate_and_archive_to_parquet() を呼び、
+            # **読み取り専用のはずのバックテストが本番 Parquet を書き換えていた**。
+            # ローテートは旧世代とのマージを伴うため、ポインタが壊れていると
+            # SQLite のホット期間（730日）だけの世代を公開して全期間履歴を失う経路になる。
+            # 再生成の入口は明示指定（--refresh-cache、かつ data_source='latest'）だけに絞る。
+            log("  Refresh requested. Regenerating Parquet master from SQLite...")
+            # 失敗をログだけにして先へ進まない。旧実装は例外を握り潰したうえで
+            # 後段の「ファイルが無い」という**誤誘導のメッセージ**に化けていた
+            # （実際にはファイルは存在し、読めなかっただけ）。
+            from backend.db import database
+            with database.get_db() as db:
+                rotate_and_archive_to_parquet(db, db_path, logging.getLogger())
+
+        # 2. 参照先を解決する（backup / latest / 名前指定のバックアップ）。
+        #    "latest" は db_path（Sandbox 隔離を反映済み）を active_db_path として渡す。
+        latest_files, meta = resolve_backtest_data_source(effective_data_source, active_db_path=db_path)
+        _last_preload_meta = meta
+        log(f"Data source: {meta['data_source']}"
+            + (f" (backup: {meta['backup_name']})" if meta['backup_name'] else "")
+            + f" | generation={meta['parquet_generation']}")
 
     if not latest_files:
         raise FileNotFoundError(
-            f"Parquet master cache files not found at {parquet_dir}!\n"
+            f"Parquet master cache files not found (data_source={data_source!r})!\n"
             f"  パイプラインを1回実行してマスタを生成するか、--refresh-cache を付けて実行してください。")
-        
+
     log(f"Loading data from Parquet Master cache: {pathlib.Path(latest_files['prices']).name} ...")
     
     try:
@@ -154,7 +208,12 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
         df_prices['date'] = pd.to_datetime(df_prices['date']).dt.date
         df_indicators['date'] = pd.to_datetime(df_indicators['date']).dt.date
         df_ranks['date'] = pd.to_datetime(df_ranks['date']).dt.date
-        
+
+        # 価格データの最終日を1行で出す（backtest_stable_data_plan.md §3-D）。
+        # 参照先の種類・バックアップ名は上の "Data source: ..." 行で既に出ているので重複しない。
+        if len(df_prices) > 0:
+            log(f"  Price data through: {df_prices['date'].max()}")
+
         # 4. In-memory slicing based on start_date and end_date
         t_slice = time.time()
         sd = dt_date.fromisoformat(start_date)
@@ -440,7 +499,8 @@ def run_single_strategy(strat_dict: dict, df_indicators, df_prices, df_ranks, df
     
     return metrics, trades
 
-def run_backtest(config: dict, strategy_filter: str = None, refresh_cache: bool = False, db_path_override: str = None):
+def run_backtest(config: dict, strategy_filter: str = None, refresh_cache: bool = False, db_path_override: str = None,
+                  data_source: str | None = None):
     # (Existing beginning part of run_backtest up to initialization)
     general = config.get('general', {})
     start_date = general.get('start_date', '2021-03-26')
@@ -486,7 +546,7 @@ def run_backtest(config: dict, strategy_filter: str = None, refresh_cache: bool 
     init_db(db_path)
 
     df_symbols, df_prices, df_indicators, df_ranks, df_theme_constituents, trading_dates = \
-        preload_data(database.engine, start_date, end_date, refresh_cache=refresh_cache)
+        preload_data(database.engine, start_date, end_date, refresh_cache=refresh_cache, data_source=data_source)
 
     # Validate configuration parameters（未知キーはエラー。CLI 経路は §1.3 の先行事例に倣い停止する）
     validation_errors = validate_strategies_config(strategies, df_indicators, df_prices, df_ranks, df_theme_constituents)
@@ -558,7 +618,8 @@ def run_backtest(config: dict, strategy_filter: str = None, refresh_cache: bool 
 
     # Save results
     results_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
-    save_results_json(all_results, all_trades, results_dir, start_date, end_date)
+    save_results_json(all_results, all_trades, results_dir, start_date, end_date,
+                       data_source_meta=_last_preload_meta)
 
 
 def print_validation_warnings(warnings: list):
@@ -645,6 +706,12 @@ def main():
                         help='Override end date (YYYY-MM-DD)')
     parser.add_argument('--refresh-cache', action='store_true',
                         help='Force reload data from DB and refresh Parquet cache')
+    parser.add_argument('--data-source', type=str, default=None,
+                        help="バックテストが読む Parquet マスタの参照先。"
+                             "'backup'（検証済みの最新バックアップ・常に本番）/ "
+                             "'latest'（現在の data ディレクトリの最新世代）/ "
+                             "バックアップのフォルダ名（例 '_bk_20260925_...')。"
+                             "省略時は本番なら backup、それ以外（ワークツリー・sandbox）なら latest。")
     parser.add_argument('--db-path', type=str, default=None,
                         help='Path to a specific SQLite DB file to use for this run')
     parser.add_argument('--delete-db-after', action='store_true',
@@ -687,11 +754,21 @@ def main():
     print("=" * 60)
     print()
 
+    # --db-path を明示指定したのに data_source が既定の "backup"（本番なら常に本番の
+    # バックアップ）になると、指定した DB の内容が無視されて黙って本番を読む（R3）。
+    # --db-path 明示かつ --data-source 未指定なら "latest" を既定にする。
+    effective_data_source = args.data_source
+    if args.db_path and effective_data_source is None:
+        effective_data_source = "latest"
+        print(f"  --db-path 指定のため data_source の既定を 'latest' にします"
+              f"（{args.db_path} の内容を使うため。'backup' のままだと本番バックアップを読んでしまう）。")
+
     run_backtest(
-        config, 
-        strategy_filter=args.strategy, 
+        config,
+        strategy_filter=args.strategy,
         refresh_cache=args.refresh_cache,
-        db_path_override=args.db_path
+        db_path_override=args.db_path,
+        data_source=effective_data_source
     )
 
     # Optional cleanup
