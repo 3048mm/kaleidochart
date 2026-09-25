@@ -26,7 +26,7 @@ def test_resolve_data_source_sets_module_globals(monkeypatch):
 
     monkeypatch.setattr(
         "pipeline.parquet_cache_manager.resolve_backtest_data_source",
-        lambda data_source: (sentinel_files, sentinel_meta),
+        lambda data_source, active_db_path=None: (sentinel_files, sentinel_meta),
     )
 
     files, meta = opt_runner.resolve_data_source("backup")
@@ -42,7 +42,7 @@ def test_get_cached_data_reuses_resolved_master_files_across_periods(monkeypatch
     sentinel_files = {"prices": "x.parquet"}
     monkeypatch.setattr(
         "pipeline.parquet_cache_manager.resolve_backtest_data_source",
-        lambda data_source: (sentinel_files, {"data_source": data_source, "backup_name": None, "parquet_generation": None}),
+        lambda data_source, active_db_path=None: (sentinel_files, {"data_source": data_source, "backup_name": None, "parquet_generation": None}),
     )
     opt_runner.resolve_data_source("backup")
 

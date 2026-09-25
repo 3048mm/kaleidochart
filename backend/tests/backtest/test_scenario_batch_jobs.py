@@ -270,7 +270,7 @@ def test_parse_args_no_jobs_flag_means_all():
     assert job_names is None
     assert list_only is False
     assert tax is None, "--tax 未指定は None（設定ファイルの値を使う合図）"
-    assert data_source == "backup", "--data-source 未指定の既定は 'backup'"
+    assert data_source is None, "--data-source 未指定は None（実際の既定判定は resolve 側に委ねる）"
 
 
 def test_parse_args_single_job():
@@ -289,8 +289,8 @@ def test_parse_args_list_jobs_flag():
 
 
 def test_parse_args_data_source_is_parsed():
-    _, _, _, data_source = parse_args(["--data-source", "production"])
-    assert data_source == "production"
+    _, _, _, data_source = parse_args(["--data-source", "latest"])
+    assert data_source == "latest"
 
 
 # ---------------------------------------------------------------------------

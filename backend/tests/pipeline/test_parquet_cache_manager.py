@@ -1026,7 +1026,13 @@ class TestGetBackupMasterFiles:
 
 
 # ---------------------------------------------------------------------------
-# resolve_backtest_data_source (backtest_stable_data_plan.md §3-B)
+# resolve_backtest_data_source (backtest_stable_data_plan.md §3-B / §7-3)
+#
+# "production" は廃止され "latest"（現在の data ディレクトリの最新世代）になった。
+# ワークツリー・sandbox で T3 を再計算して merge 前に評価する経路
+# （agent_execution_rules.md §10.4 Case 2）では、"backup"（常に本番を読む）では
+# 再計算したデータを評価できないため、"latest" は active_db_path 由来（現在の
+# data ディレクトリ）を読む。
 # ---------------------------------------------------------------------------
 class TestResolveBacktestDataSource:
     def _make_backup(self, prod_root, name="_bk_20260925_173413", generation=None):
@@ -1038,8 +1044,9 @@ class TestResolveBacktestDataSource:
         _write_manifest(str(bk_dir), generation)
         return bk_dir
 
-    def _make_production_pointer(self, prod_root, generation="20260920_000000"):
-        parquet_dir = prod_root / "parquet_master"
+    def _make_latest_pointer(self, data_root, generation="20260920_000000"):
+        """`active_db_path` 側（現在の data ディレクトリ）の latest_master.json を用意する。"""
+        parquet_dir = data_root / "parquet_master"
         parquet_dir.mkdir(parents=True, exist_ok=True)
         files = {"prices": str(parquet_dir / f"prices_{generation}.parquet")}
         (parquet_dir / f"prices_{generation}.parquet").write_text("dummy")
@@ -1047,13 +1054,14 @@ class TestResolveBacktestDataSource:
             _json.dump(files, f)
         return files
 
-    def test_picks_latest_backup_by_default(self, tmp_path, monkeypatch):
+    def test_picks_latest_backup_by_default_arg(self, tmp_path, monkeypatch):
+        """明示的に data_source='backup' を渡した場合。"""
         import paths
         from pipeline.parquet_cache_manager import resolve_backtest_data_source
 
         self._make_backup(tmp_path, "_bk_20260910_000000")
         newest = self._make_backup(tmp_path, "_bk_20260925_173413")
-        monkeypatch.setattr(paths, "get_prod_data_root", lambda: str(tmp_path))
+        monkeypatch.setattr(paths, "get_prod_data_root", lambda *a, **k: str(tmp_path))
 
         master_files, meta = resolve_backtest_data_source("backup")
 
@@ -1064,18 +1072,19 @@ class TestResolveBacktestDataSource:
             "parquet_generation": "20260925_173413",
         }
 
-    def test_falls_back_to_production_when_no_backup(self, tmp_path, monkeypatch, caplog):
+    def test_falls_back_to_latest_when_no_backup(self, tmp_path, monkeypatch, caplog):
         import paths
         from pipeline.parquet_cache_manager import resolve_backtest_data_source
 
-        files = self._make_production_pointer(tmp_path)
-        monkeypatch.setattr(paths, "get_prod_data_root", lambda: str(tmp_path))
+        active_db_path = str(tmp_path / "stocktool.db")
+        files = self._make_latest_pointer(tmp_path)
+        monkeypatch.setattr(paths, "get_prod_data_root", lambda *a, **k: str(tmp_path))
 
         with caplog.at_level(logging.WARNING):
-            master_files, meta = resolve_backtest_data_source("backup")
+            master_files, meta = resolve_backtest_data_source("backup", active_db_path=active_db_path)
 
         assert master_files == files
-        assert meta["data_source"] == "production"
+        assert meta["data_source"] == "latest"
         assert meta["backup_name"] is None
         assert any("フォールバック" in r.getMessage() for r in caplog.records)
 
@@ -1085,7 +1094,7 @@ class TestResolveBacktestDataSource:
 
         self._make_backup(tmp_path, "_bk_20260910_000000")
         self._make_backup(tmp_path, "_bk_20260925_173413")
-        monkeypatch.setattr(paths, "get_prod_data_root", lambda: str(tmp_path))
+        monkeypatch.setattr(paths, "get_prod_data_root", lambda *a, **k: str(tmp_path))
 
         master_files, meta = resolve_backtest_data_source("_bk_20260910_000000")
 
@@ -1097,25 +1106,108 @@ class TestResolveBacktestDataSource:
         import paths
         from pipeline.parquet_cache_manager import resolve_backtest_data_source
 
-        monkeypatch.setattr(paths, "get_prod_data_root", lambda: str(tmp_path))
+        monkeypatch.setattr(paths, "get_prod_data_root", lambda *a, **k: str(tmp_path))
 
         with pytest.raises(FileNotFoundError):
             resolve_backtest_data_source("_bk_nonexistent")
 
-    def test_production_reads_pointer_not_backup_latest_master_json(self, tmp_path, monkeypatch):
+    def test_production_is_rejected(self, tmp_path):
+        """廃止された 'production' はエラーで 'latest' を案内する。"""
+        from pipeline.parquet_cache_manager import resolve_backtest_data_source
+
+        with pytest.raises(ValueError, match="latest"):
+            resolve_backtest_data_source("production")
+
+    def test_latest_reads_active_db_path_not_backup_latest_master_json(self, tmp_path, monkeypatch):
         """バックアップ内の latest_master.json（本番を指す罠）ではなく、
-        本番の parquet_master/latest_master.json を読む。"""
+        active_db_path（現在の data ディレクトリ）側の latest_master.json を読む。"""
         import paths
         from pipeline.parquet_cache_manager import resolve_backtest_data_source
 
-        files = self._make_production_pointer(tmp_path, generation="20260920_000000")
-        # バックアップ内に「別の」latest_master.json を置いても production 経路では無視される
+        active_db_path = str(tmp_path / "stocktool.db")
+        files = self._make_latest_pointer(tmp_path, generation="20260920_000000")
+        # バックアップ内に「別の」latest_master.json を置いても latest 経路では無視される
         bk_dir = self._make_backup(tmp_path, "_bk_20260925_173413")
         with open(bk_dir / "latest_master.json", "w", encoding="utf-8") as f:
             _json.dump({"prices": "/tmp/should_not_be_used.parquet"}, f)
-        monkeypatch.setattr(paths, "get_prod_data_root", lambda: str(tmp_path))
+        monkeypatch.setattr(paths, "get_prod_data_root", lambda *a, **k: str(tmp_path))
 
-        master_files, meta = resolve_backtest_data_source("production")
+        master_files, meta = resolve_backtest_data_source("latest", active_db_path=active_db_path)
 
         assert master_files == files
         assert meta["parquet_generation"] == "20260920_000000"
+
+    def test_latest_uses_active_db_path_over_prod_root(self, tmp_path, monkeypatch):
+        """ワークツリー・sandbox 想定: active_db_path が本番と別ディレクトリなら
+        そちらの世代を読む（本番のバックアップ・latest_master.json は無関係）。"""
+        import paths
+        from pipeline.parquet_cache_manager import resolve_backtest_data_source
+
+        prod_root = tmp_path / "prod"
+        work_root = tmp_path / "work"
+        prod_root.mkdir()
+        work_root.mkdir()
+        # 本番側にも latest_master.json を用意（間違って読んだら気づけるように別世代にする）
+        self._make_latest_pointer(prod_root, generation="99999999_999999")
+        active_db_path = str(work_root / "stocktool.db")
+        files = self._make_latest_pointer(work_root, generation="20260920_000000")
+        monkeypatch.setattr(paths, "get_prod_data_root", lambda *a, **k: str(prod_root))
+
+        master_files, meta = resolve_backtest_data_source("latest", active_db_path=active_db_path)
+
+        assert master_files == files
+        assert meta["parquet_generation"] == "20260920_000000"
+
+    def test_default_is_backup_when_production(self, tmp_path, monkeypatch):
+        import paths
+        from pipeline.parquet_cache_manager import resolve_backtest_data_source
+
+        newest = self._make_backup(tmp_path, "_bk_20260925_173413")
+        monkeypatch.setattr(paths, "get_prod_data_root", lambda *a, **k: str(tmp_path))
+        monkeypatch.setattr(paths, "is_production", lambda *a, **k: True)
+
+        master_files, meta = resolve_backtest_data_source(None)
+
+        assert meta["data_source"] == "backup"
+        assert master_files["prices"] == str(newest / "prices_20260925_173413.parquet")
+
+    def test_default_is_latest_when_not_production(self, tmp_path, monkeypatch):
+        import paths
+        from pipeline.parquet_cache_manager import resolve_backtest_data_source
+
+        active_db_path = str(tmp_path / "stocktool.db")
+        files = self._make_latest_pointer(tmp_path)
+        monkeypatch.setattr(paths, "is_production", lambda *a, **k: False)
+
+        master_files, meta = resolve_backtest_data_source(None, active_db_path=active_db_path)
+
+        assert meta["data_source"] == "latest"
+        assert master_files == files
+
+    def test_no_auto_delete_warning_when_latest_is_not_production(self, tmp_path, monkeypatch, caplog):
+        """ワークツリー・sandbox の latest では自動削除の警告を出さない。"""
+        import paths
+        from pipeline.parquet_cache_manager import resolve_backtest_data_source
+
+        active_db_path = str(tmp_path / "stocktool.db")
+        self._make_latest_pointer(tmp_path)
+        monkeypatch.setattr(paths, "is_production", lambda *a, **k: False)
+
+        with caplog.at_level(logging.WARNING):
+            resolve_backtest_data_source("latest", active_db_path=active_db_path)
+
+        assert not any("自動削除" in r.getMessage() for r in caplog.records)
+
+    def test_auto_delete_warning_when_latest_is_explicit_on_production(self, tmp_path, monkeypatch, caplog):
+        """本番で 'latest' を明示したときだけ自動削除の警告を出す。"""
+        import paths
+        from pipeline.parquet_cache_manager import resolve_backtest_data_source
+
+        active_db_path = str(tmp_path / "stocktool.db")
+        self._make_latest_pointer(tmp_path)
+        monkeypatch.setattr(paths, "is_production", lambda *a, **k: True)
+
+        with caplog.at_level(logging.WARNING):
+            resolve_backtest_data_source("latest", active_db_path=active_db_path)
+
+        assert any("自動削除" in r.getMessage() for r in caplog.records)

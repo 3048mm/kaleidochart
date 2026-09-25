@@ -201,43 +201,70 @@ def _extract_parquet_generation(master_files: dict) -> str | None:
     return m.group(1) if m else None
 
 
-def resolve_backtest_data_source(data_source: str = "backup") -> tuple[dict, dict]:
+def resolve_backtest_data_source(data_source: str | None = None,
+                                  active_db_path: str | None = None) -> tuple[dict, dict]:
     """バックテスト系が読む Parquet マスタの参照先を解決する（backtest_stable_data_plan.md §3-B）。
 
     daily update は1日に2回新しい世代を作るため、バックテスト・最適化・シナリオバッチが
-    開始時にその時点の本番最新世代を読むと、比較のたびにデータ世代がずれる。
-    そこで既定では「検証済みの最新バックアップ」（中身が二度と変わらない）を読む。
+    開始時にその時点の最新世代を読むと、比較のたびにデータ世代がずれる。
+    そこで本番では既定で「検証済みの最新バックアップ」（中身が二度と変わらない）を読む。
+
+    ## "latest" と "backup" の違い（2026-09-26 §7-3 で修正）
+
+    ワークツリー・sandbox で T3 を再計算し、merge 前に評価する経路
+    （`agent_execution_rules.md` §10.4 Case 2）では、**再計算した自分のデータ**を
+    読む必要がある。`"backup"` は常に**本番** data ディレクトリのバックアップを読むため、
+    この経路には使えない。`"latest"` は**現在の data ディレクトリ**
+    （`active_db_path` 由来。本体なら本番、ワークツリー・sandbox なら自分のデータ）の
+    最新世代を読む。旧 `preload_data()` の参照先はこの `"latest"` と同じ。
 
     Args:
-        data_source: ``"backup"``（既定）/ ``"production"`` / バックアップのフォルダ名
-            （例 ``"_bk_20260925_173413"``）。
+        data_source: ``"backup"`` / ``"latest"`` / バックアップのフォルダ名
+            （例 ``"_bk_20260925_173413"``）。``None``（既定）なら
+            `paths.is_production()` で判定する（本番なら `"backup"`、そうでなければ
+            `"latest"`）。``"production"`` は廃止済みで受け付けない。
+        active_db_path: `"latest"` の解決に使う DB パス。呼び出し元が
+            Sandbox 隔離（`STOCKTOOL_DB_PATH` 等）を反映した値を渡すことを想定する
+            （`backtest_runner.resolve_backtest_db_path()` の戻り値など）。
+            省略時は `paths.get_db_path("stocktool")` にフォールバックする。
 
     Returns:
         (Parquet マスタのファイル辞書, メタ情報)。メタ情報は
-        ``{"data_source": "backup"|"production", "backup_name": str|None,
+        ``{"data_source": "backup"|"latest", "backup_name": str|None,
         "parquet_generation": str|None}``。
 
     Raises:
-        FileNotFoundError: 名前指定のバックアップが存在しない、または本番の
-            latest_master.json が読めない場合。
+        ValueError: ``data_source="production"``（廃止済み）。
+        FileNotFoundError: 名前指定のバックアップが存在しない、または
+            現在の data ディレクトリの latest_master.json が読めない場合。
     """
     logger = logging.getLogger(__name__)
     import paths
 
-    # バックアップの探索先は「本番の data ディレクトリ」に固定する（backtest_stable_data_plan.md
-    # §3-B）。ワークツリーでも本番のバックアップを読み取りで使うため、
-    # STOCKTOOL_DATA_ROOT / STOCKTOOL_ENV 等（get_data_root）の影響を受けない
-    # get_prod_data_root() を優先する。
-    prod_root = paths.get_prod_data_root() or paths.get_data_root()
+    if data_source == "production":
+        raise ValueError(
+            "data_source='production' は廃止されました。"
+            " 'latest'（現在の data ディレクトリの最新世代）を使ってください"
+            "（backtest_stable_data_plan.md §7-3）。"
+        )
+
+    requested = data_source
+    if data_source is None:
+        data_source = "backup" if paths.is_production() else "latest"
 
     if data_source == "backup":
+        # バックアップの探索先は「本番の data ディレクトリ」に固定する。
+        # ワークツリーでも本番のバックアップを読み取りで使うため、
+        # STOCKTOOL_DATA_ROOT / STOCKTOOL_ENV 等（get_data_root）の影響を受けない
+        # get_prod_data_root() を優先する。
+        prod_root = paths.get_prod_data_root() or paths.get_data_root()
         backup_dir = find_latest_parquet_backup(prod_root)
         if backup_dir is None:
             logger.warning(
                 f"Parquet を含むバックアップが {prod_root} 配下に見つかりません。"
-                f" data_source='production'（本番の最新世代）にフォールバックします。"
+                f" data_source='latest'（現在の data ディレクトリの最新世代）にフォールバックします。"
             )
-            return resolve_backtest_data_source("production")
+            return resolve_backtest_data_source("latest", active_db_path=active_db_path)
         master_files = get_backup_master_files(backup_dir)
         meta = {
             "data_source": "backup",
@@ -246,15 +273,9 @@ def resolve_backtest_data_source(data_source: str = "backup") -> tuple[dict, dic
         }
         return master_files, meta
 
-    if data_source == "production":
-        # "production" は既存の Sandbox 隔離（STOCKTOOL_DB_PATH）を優先する。
-        # バックアップ探索と違い、production はサンドボックスで動作確認する経路が
-        # 既にあるため（backtest_runner.resolve_backtest_db_path）、そちらを壊さない。
-        env_db_path = os.environ.get("STOCKTOOL_DB_PATH")
-        if env_db_path:
-            parquet_dir = get_parquet_master_dir(env_db_path)
-        else:
-            parquet_dir = os.path.join(prod_root, "parquet_master")
+    if data_source == "latest":
+        db_path = active_db_path or paths.get_db_path("stocktool")
+        parquet_dir = get_parquet_master_dir(db_path)
         pointer_file = get_pointer_file_path(parquet_dir)
         master_files = get_latest_master_files(pointer_file, strict=True)
         if not master_files:
@@ -262,19 +283,24 @@ def resolve_backtest_data_source(data_source: str = "backup") -> tuple[dict, dic
                 f"Parquet master cache files not found at {parquet_dir}!\n"
                 f"  パイプラインを1回実行してマスタを生成するか、--refresh-cache を付けて実行してください。"
             )
-        logger.warning(
-            "data_source='production': 長時間の実行では daily update 後の自動削除"
-            "（clean_old_parquet_versions、最新2世代を保持）で、開始時に固定した世代が"
-            "実行中に消えることがあります。"
-        )
+        # 自動削除の警告は「本番で latest を明示したとき」だけ出す。
+        # ワークツリー・sandbox の latest は自分のデータで、削除サイクルの対象は
+        # 本番 data ディレクトリだけのため、そちらでは警告不要。
+        if requested == "latest" and paths.is_production():
+            logger.warning(
+                "data_source='latest': 長時間の実行では daily update 後の自動削除"
+                "（clean_old_parquet_versions、最新2世代を保持）で、開始時に固定した世代が"
+                "実行中に消えることがあります。"
+            )
         meta = {
-            "data_source": "production",
+            "data_source": "latest",
             "backup_name": None,
             "parquet_generation": _extract_parquet_generation(master_files),
         }
         return master_files, meta
 
     # それ以外はバックアップ名として扱う
+    prod_root = paths.get_prod_data_root() or paths.get_data_root()
     backup_dir = os.path.join(prod_root, data_source)
     if not os.path.isdir(backup_dir):
         raise FileNotFoundError(

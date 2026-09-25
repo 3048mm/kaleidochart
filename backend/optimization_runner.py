@@ -40,12 +40,19 @@ _resolved_master_files = None
 _resolved_data_source_meta = None
 
 
-def resolve_data_source(data_source: str = "backup"):
-    """開始時に1回だけ参照先を解決し、以降の get_cached_data 呼び出しに固定する。"""
+def resolve_data_source(data_source: str | None = None, active_db_path: str | None = None):
+    """開始時に1回だけ参照先を解決し、以降の get_cached_data 呼び出しに固定する。
+
+    Args:
+        data_source: ``"backup"`` / ``"latest"`` / バックアップのフォルダ名。
+            ``None``（既定）なら `paths.is_production()` で判定する
+            （本番なら backup、そうでなければ latest。backtest_stable_data_plan.md §7-3）。
+        active_db_path: ``"latest"`` の参照先解決に使う DB パス（現在の data ディレクトリ）。
+    """
     global _resolved_master_files, _resolved_data_source_meta
     from pipeline.parquet_cache_manager import resolve_backtest_data_source
 
-    master_files, meta = resolve_backtest_data_source(data_source)
+    master_files, meta = resolve_backtest_data_source(data_source, active_db_path=active_db_path)
     print(f"Data source: {meta['data_source']}"
           + (f" (backup: {meta['backup_name']})" if meta['backup_name'] else "")
           + f" | generation={meta['parquet_generation']}", flush=True)
@@ -245,7 +252,7 @@ def list_optimizable_strategies(config):
     ]
 
 
-def run_all_strategies(config, trials, storage, n_jobs, data_source="backup", run=subprocess.run):
+def run_all_strategies(config, trials, storage, n_jobs, data_source=None, run=subprocess.run):
     """最適化対象の全戦略を、戦略ごとに**別プロセス**で順に単体実行する。
 
     別プロセスにするのは、数時間〜十数時間かかる実行でのメモリ肥大や、
@@ -265,8 +272,9 @@ def run_all_strategies(config, trials, storage, n_jobs, data_source="backup", ru
         print(f"  [all {i}/{len(names)}] Optimizing Strategy: {name}", flush=True)
         print("=" * 70, flush=True)
         cmd = [sys.executable, os.path.abspath(__file__),
-               "--strategy", name, "--trials", str(trials), "--n-jobs", str(n_jobs),
-               "--data-source", data_source]
+               "--strategy", name, "--trials", str(trials), "--n-jobs", str(n_jobs)]
+        if data_source is not None:
+            cmd += ["--data-source", data_source]
         if storage:
             cmd += ["--storage", storage]
         result = run(cmd)
@@ -716,10 +724,12 @@ def main():
     parser.add_argument("--n-jobs", type=int, default=1,
                         help="並列トライアル数。SQLite storage は並列(>1)だと "
                              "COMPLETE trial エラーで停止しうるため既定は1（完全逐次・最も安全）")
-    parser.add_argument("--data-source", type=str, default="backup",
+    parser.add_argument("--data-source", type=str, default=None,
                         help="最適化が読む Parquet マスタの参照先。"
-                             "'backup'（既定・検証済みの最新バックアップ）/ 'production'（本番の最新世代）"
-                             "/ バックアップのフォルダ名（例 '_bk_20260925_...')")
+                             "'backup'（検証済みの最新バックアップ・常に本番）/ "
+                             "'latest'（現在の data ディレクトリの最新世代）/ "
+                             "バックアップのフォルダ名（例 '_bk_20260925_...')。"
+                             "省略時は本番なら backup、それ以外（ワークツリー・sandbox）なら latest。")
     args = parser.parse_args()
     
     # Use config just to load exit rules
@@ -764,8 +774,9 @@ def main():
     periods = parse_optimization_periods(config)
 
     # 参照先は開始時に1回だけ解決し、全期間で同じ Parquet マスタ世代を使う
-    # （backtest_stable_data_plan.md §3-C）。
-    resolve_data_source(args.data_source)
+    # （backtest_stable_data_plan.md §3-C）。"latest" は db_path_main（現在の
+    # data ディレクトリ）を active_db_path として渡す。
+    resolve_data_source(args.data_source, active_db_path=db_path_main)
 
     # 2026-07-18: n_jobs=-1（後段の study.optimize）は複数トライアルを並列スレッドで
     # 実行するため、_cached_data_dict（get_cached_data のグローバルキャッシュ）に

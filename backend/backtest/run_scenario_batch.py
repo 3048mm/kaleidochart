@@ -31,7 +31,7 @@ if _backend_dir not in sys.path:
     sys.path.insert(0, _backend_dir)
 
 from backend.backtest.scenario_runner import run_scenario_test
-from backend.backtest.backtest_runner import preload_data
+from backend.backtest.backtest_runner import preload_data, resolve_backtest_db_path
 from backend.backtest.common_constraints import load_tax_rate
 
 # Global variable inside each subprocess memory space to hold the preloaded data cache
@@ -498,10 +498,12 @@ def parse_args(argv=None):
              "本番設定を書き換えずに切り替えるためのもの。",
     )
     parser.add_argument(
-        "--data-source", type=str, default="backup",
+        "--data-source", type=str, default=None,
         help="シナリオバッチが読む Parquet マスタの参照先。"
-             "'backup'（既定・検証済みの最新バックアップ）/ 'production'（本番の最新世代）"
-             "/ バックアップのフォルダ名（例 '_bk_20260925_...')",
+             "'backup'（検証済みの最新バックアップ・常に本番）/ "
+             "'latest'（現在の data ディレクトリの最新世代）/ "
+             "バックアップのフォルダ名（例 '_bk_20260925_...')。"
+             "省略時は本番なら backup、それ以外（ワークツリー・sandbox）なら latest。",
     )
     args = parser.parse_args(argv)
     job_names = [n.strip() for n in args.jobs.split(",") if n.strip()] if args.jobs else None
@@ -580,8 +582,13 @@ def main(argv=None, db_path_override: str = None, jobs_path_override: str = None
     # 参照先は親プロセスで1回だけ解決し、子プロセス（ProcessPoolExecutor）へファイル辞書
     # として渡す（backtest_stable_data_plan.md §3-C）。子は探索もポインタ読みもしない。
     # 実行中に daily update が走っても、全 run が同じ Parquet 世代を読むことを保証する。
+    # "latest" は resolve_backtest_db_path() で Sandbox 隔離（STOCKTOOL_DB_PATH 等）を
+    # 反映した「現在の data ディレクトリ」を active_db_path として渡す。
+    from backend.db.database import get_active_db_path
     from backend.pipeline.parquet_cache_manager import resolve_backtest_data_source
-    resolved_master_files, data_source_meta = resolve_backtest_data_source(data_source)
+    active_db_path = resolve_backtest_db_path(get_active_db_path())
+    resolved_master_files, data_source_meta = resolve_backtest_data_source(
+        data_source, active_db_path=active_db_path)
     print(f"Data source: {data_source_meta['data_source']}"
           + (f" (backup: {data_source_meta['backup_name']})" if data_source_meta['backup_name'] else "")
           + f" | generation={data_source_meta['parquet_generation']}")
