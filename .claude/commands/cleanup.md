@@ -26,6 +26,9 @@ argument-hint: "[worktree名]（省略時は棚卸しのみ）"
 | Skills mirror | ドリフトや frontmatter 不備。`.\venv\Scripts\python.exe tools\sync_skills.py --apply` で解消 |
 | Stale plans | 14日以上更新の無い計画書。完了させるか `doc/completed/` へ移す |
 
+`data/_bk_*`（バックアップ）の削除を提案するときは、**Parquet を含む最新のバックアップを対象から外す**。
+バックテスト・最適化の既定の参照先になっている（`doc/backend_specification.md` §6.6.1）。
+
 ## 2. 撤収（引数が指定された場合、または上の報告後にユーザーが指示した場合）
 
 > [!IMPORTANT]
