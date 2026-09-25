@@ -87,15 +87,15 @@ description = "確立されたリーダーテーマ（RS%rank上位・水準特�
 max_hits_per_day = 10
 sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
-min_change_1d_pct = 3.0
-min_vol_surge_21 = 2.4
-min_adr_pct_21 = 5.0
+min_change_1d_pct = 11.0
+min_vol_surge_21 = 1.8
+min_adr_pct_21 = 5.5
 # 2026-08-04: 探索レンジ上限を 10.0→6.0 に引き締めたため、既定値も 7.0→6.0 に合わせた。
 # 既定値がレンジ外に残ると「最適化なしの実行は 7.0 / 最適化ありは 6.0 以下」という
 # 別条件の比較になる。
 max_sma50_atr_mult = 2.0
-min_market_cap = 1e8
-min_theme_rs_ratio_rank_e21 = 0.8
+min_market_cap = 5e7
+min_theme_rs_ratio_rank_e21 = 0.75
 is_close_gt_ema63 = true
 max_allowed_dd = 35.0   # MTM 再校正（旧 25.0）
 
@@ -154,9 +154,9 @@ max_hits_per_day = 10
 sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
 min_change_1d_pct = 9.0
-min_vol_surge_21 = 2.5
+min_vol_surge_21 = 2.7
 min_adr_pct_21 = 6.0
-min_dist_21ema_pct = 15.0
+min_dist_21ema_pct = 7.0
 max_sma50_atr_mult = 4.5
 min_market_cap = 1e7
 is_theme_rs_ratio_rank_e14_gt_e21 = true
@@ -183,14 +183,14 @@ description = "相対トレンドが強く、上昇テーマ(RSR)にも属する
 max_hits_per_day = 10
 sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
-min_change_1d_pct = 8.0 
-min_dist_21ema_pct = 5.0 
+min_change_1d_pct = 9.0
+min_dist_21ema_pct = 6.0
 min_vol_surge_21 = 1.9000000000000001 
-min_adr_pct_21 = 4.0 
-max_sma50_atr_mult = 3.0 
-min_market_cap = 1e8
-min_rs_trend_s21 = 0.8 
-min_theme_rs_ratio_rank_e21 = 0.6000000000000001
+min_adr_pct_21 = 5.5
+max_sma50_atr_mult = 6.0
+min_market_cap = 1e7
+min_rs_trend_s21 = 0.9
+min_theme_rs_ratio_rank_e21 = 0.8
 is_rs_trend_s14_lt_s21 = true
 is_theme_rs_ratio_rank_e14_gt_e21 = true
 is_close_gt_ema63 = true
@@ -303,9 +303,9 @@ sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
 rrg_leading_in = true
 min_change_1d_pct = 0.0
-min_vol_surge_21 = 1.7000000000000002
+min_vol_surge_21 = 1.6
 min_adr_pct_21 = 6.0
-max_sma50_atr_mult = 7.0
+max_sma50_atr_mult = 6.0
 min_market_cap = 1e9
 max_allowed_dd = 30.0   # MTM 再校正（旧: 未設定=デフォルト 20.0）
 
@@ -324,11 +324,11 @@ max_hits_per_day = 10
 sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
 rrg_improving_in = true
-min_change_1d_pct = 4.0
-min_vol_surge_21 = 0.8
-min_adr_pct_21 = 3.5
+min_change_1d_pct = 1.0
+min_vol_surge_21 = 0.9
+min_adr_pct_21 = 5.5
 max_sma50_atr_mult = 4.0
-min_market_cap = 500000.0
+min_market_cap = 1e6
 max_allowed_dd = 30.0   # MTM 再校正（旧: 未設定=デフォルト 20.0）
 
 [strategy.optimization]
@@ -346,12 +346,12 @@ max_hits_per_day = 5
 sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
 is_close_gt_sma50 = true
-min_dist_21ema_pct = -2.0
-max_dist_21ema_pct = 2.0
-max_sma50_atr_mult = 2.0
-min_rs_ratio_rank_e21 = 0.9
-min_up_down_vol_ratio_50 = 1.4
-max_vol_surge_21 = 0.9
+min_dist_21ema_pct = -1.0
+max_dist_21ema_pct = 0.5
+max_sma50_atr_mult = 5.5
+min_rs_ratio_rank_e21 = 0.85
+min_up_down_vol_ratio_50 = 1.2
+max_vol_surge_21 = 1.0
 is_trend_template = true
 # 2026-08-26: 探索空間に min_market_cap があるのにベースラインに無く、trial#0 だけ
 # 時価総額の下限なしで走っていた（書き戻しスクリプトは既存行の置換のみで新規キーを
@@ -437,9 +437,9 @@ sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
 is_trend_template = true       # ミネルヴィニのトレンドテンプレート適合
 max_vcr = 0.6                 # 収縮度合い（ATR10/ATR50。E1より僅かにタイト）
-max_adr_pct_21 = 2.25           # 21日平均の値幅の上限（静かな動き）
-max_vol_surge_21 = 1.0         # 出来高ドライアップ（21日平均比。e4 移植）
-min_dist_52w_high_pct = -10.0  # 52週高値から10%以内（E1より高値近接を要求）
+max_adr_pct_21 = 2.5           # 21日平均の値幅の上限（静かな動き）
+max_vol_surge_21 = 0.9         # 出来高ドライアップ（21日平均比。e4 移植）
+min_dist_52w_high_pct = -12.5  # 52週高値から10%以内（E1より高値近接を要求）
 min_up_down_vol_ratio_50 = 1.5 # 出来高比率（買い集め傾向）
 min_market_cap = 3e8
 is_close_gt_ema63 = true
@@ -471,8 +471,8 @@ sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
 min_rs_ratio_rank_e21 = 0.97
 is_trend_template = true
-min_adr_pct_21 = 2.5
-min_market_cap = 3e8
+min_adr_pct_21 = 3.5
+min_market_cap = 5e8
 max_sma50_atr_mult = 8.0
 min_vol_accum_days_5 = 3
 max_allowed_dd = 30.0   # MTM 再校正（旧: 未設定=デフォルト 20.0）
@@ -501,12 +501,12 @@ description = "月次リーダーの短期TD9押し目（下降カウント中�
 max_hits_per_day = 10
 sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
-min_change_1m_pct = 12.0        # 月次で確立した上昇
-max_td9 = -4                    # td9<=-1（現在4日ルックバックで下降カウント＝押し目）
+min_change_1m_pct = 9.0        # 月次で確立した上昇
+max_td9 = 0                    # td9<=-1（現在4日ルックバックで下降カウント＝押し目）
 is_close_gt_sma50 = true        # 地合い（is_trend_template は現状サイレント失敗のため代替）
-max_sma50_atr_mult = 3.5        # 伸びきっていない
-min_rs_ratio_rank_e21 = 0.75    # リーダー（配管済みランク）
-min_adr_pct_21 = 3.0
+max_sma50_atr_mult = 2.0        # 伸びきっていない
+min_rs_ratio_rank_e21 = 0.9    # リーダー（配管済みランク）
+min_adr_pct_21 = 4.0
 min_market_cap = 1e8
 min_avg_hits_per_day = 0.5
 min_hit_rate_pct = 1.0
@@ -562,9 +562,9 @@ max_hits_per_day = 10
 sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
 max_rs_blue_dot_age = 0
-min_change_1m_pct = 9.0
+min_change_1m_pct = 5.0
 is_close_gt_sma50 = true
-min_adr_pct_21 = 3.5
+min_adr_pct_21 = 4.0
 min_market_cap = 1e8
 min_avg_hits_per_day = 0.3
 min_hit_rate_pct = 0.5
@@ -596,12 +596,12 @@ max_hits_per_day = 10
 sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
 is_structure_2nd_break = true
-min_dist_21ema_pct = 2.0        # 21EMA の上にいる
-min_adr_pct_21 = 4.0            # 動く銘柄。母集団をほぼ半減させる最も効いた条件
-min_rs_trend_s21 = 1.0          # SPY より強い
+min_dist_21ema_pct = 0.0        # 21EMA の上にいる
+min_adr_pct_21 = 6.5            # 動く銘柄。母集団をほぼ半減させる最も効いた条件
+min_rs_trend_s21 = 1.05          # SPY より強い
 # 流動性床は [general] が全戦略へ実行時注入するため戦略側には書かない
-min_market_cap = 3e8            # 作者リストを1件も落とさない水準
-max_sma50_atr_mult = 8.0        # 上限6だと 8/26 の CNXC(6.11) が落ちるため 8 から
+min_market_cap = 1e8            # 作者リストを1件も落とさない水準
+max_sma50_atr_mult = 7.5        # 上限6だと 8/26 の CNXC(6.11) が落ちるため 8 から
 max_allowed_dd = 35.0
 min_avg_hits_per_day = 0.3
 
@@ -629,8 +629,8 @@ max_hits_per_day = 5
 sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
 is_structure_2nd_break = true
-max_vcr = 0.8
-max_rs_blue_dot_age = 10
+max_vcr = 0.7
+max_rs_blue_dot_age = 40
 min_market_cap = 1e8
 min_avg_hits_per_day = 0.25
 min_hit_rate_pct = 0.3
@@ -676,9 +676,9 @@ is_structure_trend_line_break = true
 # ホールドアウト LCB +1.17 / +1.50）。H3b（ゲート開放）と H3c（収縮を締める）は
 # どちらもホールドアウトで劣後した。詳細は
 # doc/completed/trend_line_break_optimization_plan.md §7-6 / §7-7
-min_adr_pct_21 = 7.0
+min_adr_pct_21 = 6.5
 min_rs_trend_s21 = 0.925
-min_dist_21ema_pct = -0.5
+min_dist_21ema_pct = 0.0
 max_vcr = 0.90
 min_market_cap = 1e8
 # 流動性床は [general] が全戦略へ実行時注入するため戦略側には書かない
@@ -732,10 +732,10 @@ sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
 is_structure_trend_line_break = true
 # ベースライン = H3 の best trial 163（score 0.917 / Alpha +2.87%）
-min_adr_pct_21 = 7.0
+min_adr_pct_21 = 6.5
 min_rs_trend_s21 = 0.925
 min_dist_21ema_pct = -0.5
-max_vcr = 0.90
+max_vcr = 0.7
 min_market_cap = 1e8
 # 検出ゲートを開ける（E1 と同じ値。この2行が H3 との唯一の設計差）
 min_avg_hits_per_day = 0.05
@@ -787,10 +787,10 @@ sort_ascending = false
 is_structure_trend_line_break = true
 # ベースラインは新領域の等検出点（0.398件/日）を置く。H3 best（右下）ではなく
 # 左上から始めることで、TPE が最初から新領域を見る
-min_adr_pct_21 = 4.0
+min_adr_pct_21 = 5.5
 min_rs_trend_s21 = 0.925
-min_dist_21ema_pct = -0.5
-max_vcr = 0.75
+min_dist_21ema_pct = 2.0
+max_vcr = 0.9
 min_market_cap = 1e8
 # 検出件数ゲートは**既定のまま**（H3b の過学習を繰り返さないための要）。
 # min_avg_hits_per_day / min_hit_rate_pct は意図的に書かない
