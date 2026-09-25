@@ -110,6 +110,87 @@ def get_latest_master_files(pointer_file: str, *, strict: bool = False) -> dict 
             logging.getLogger(__name__).error(msg)
             return None
 
+def find_latest_parquet_backup(data_dir: str) -> str | None:
+    """`data_dir` 直下の `_bk_*` のうち、Parquet を含む最新バックアップの絶対パスを返す。
+
+    バックアップは `_bk_YYYYMMDD` と `_bk_YYYYMMDD_HHMMSS` の2形式が混在している
+    （`tools/backup_production_data.py`）。DB だけのバックアップ（
+    `BACKUP_MANIFEST.json` に `parquet_generation` キーが無い）は候補から除外する。
+    manifest が壊れている候補は警告ログを出してスキップする（他候補は生きる）。
+
+    フォルダ名の文字列比較で新しい順に並べる。`_bk_YYYYMMDD_HHMMSS` は
+    `_bk_YYYYMMDD` より必ず長い文字列になるため、同日でも時刻付きが後に来る。
+
+    Returns:
+        候補が1つも無ければ None。
+    """
+    logger = logging.getLogger(__name__)
+    candidates = []
+    for entry in sorted(glob.glob(os.path.join(data_dir, "_bk_*"))):
+        if not os.path.isdir(entry):
+            continue
+        manifest_path = os.path.join(entry, "BACKUP_MANIFEST.json")
+        if not os.path.exists(manifest_path):
+            continue
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+        except Exception as e:
+            logger.warning(f"バックアップの BACKUP_MANIFEST.json が壊れているためスキップします: "
+                           f"{entry} ({type(e).__name__}: {e})")
+            continue
+        if not isinstance(manifest.get("parquet_generation"), dict):
+            continue
+        candidates.append(entry)
+
+    if not candidates:
+        return None
+    # フォルダ名（末尾の日時部分）で新しい順に並べる
+    candidates.sort(key=os.path.basename)
+    return candidates[-1]
+
+
+def get_backup_master_files(backup_dir: str) -> dict:
+    """バックアップ内の `BACKUP_MANIFEST.json` を基準に Parquet マスタのパスを解決する。
+
+    🔴 バックアップ内に `latest_master.json` が残っていても、それは本番
+    `data/parquet_master/` を絶対パスで指しているため絶対に使わない
+    （backtest_stable_data_plan.md §1）。必ず manifest の `parquet_generation`
+    （ファイル名のみ）を `backup_dir` 基準で解決する。
+
+    Raises:
+        FileNotFoundError: manifest が無い／`parquet_generation` が無い／
+            記載されたファイルが1つでも実体を欠く場合。本番パスへ黙って
+            切り替えないため、ここでは例外にする。
+    """
+    manifest_path = os.path.join(backup_dir, "BACKUP_MANIFEST.json")
+    if not os.path.exists(manifest_path):
+        raise FileNotFoundError(f"BACKUP_MANIFEST.json が見つかりません: {manifest_path}")
+
+    with open(manifest_path, "r", encoding="utf-8") as f:
+        manifest = json.load(f)
+
+    generation = manifest.get("parquet_generation")
+    if not isinstance(generation, dict) or not generation:
+        raise FileNotFoundError(
+            f"{manifest_path} に parquet_generation がありません"
+            f"（DB だけのバックアップの可能性があります）。")
+
+    resolved = {}
+    missing = []
+    for key, fname in generation.items():
+        full_path = os.path.join(backup_dir, os.path.basename(fname))
+        resolved[key] = full_path
+        if not os.path.exists(full_path):
+            missing.append(fname)
+
+    if missing:
+        raise FileNotFoundError(
+            f"バックアップ {backup_dir} に次のファイルが見つかりません: {', '.join(missing)}")
+
+    return resolved
+
+
 def clean_old_parquet_versions(parquet_dir: str, logger: logging.Logger, keep_count=2):
     """Cleans up older timestamps of Parquet masters, keeping only the latest versions,
     with a 15-minute grace period to prevent deleting files currently read by long-running jobs.

@@ -837,3 +837,189 @@ def test_rotate_succeeds_on_true_first_run(tmp_path):
     assert files is not None
     assert len(pd.read_parquet(files["prices"])) == 1
     engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# find_latest_parquet_backup / get_backup_master_files
+#
+# 背景（backtest_stable_data_plan.md §3-A / 2026-09-25）:
+# バックテスト系は daily update の影響を受けないよう、既定で
+# 「検証済みの最新バックアップ」を読む。バックアップは data/_bk_* に
+# 手作業で作られ、DB だけのもの（BACKUP_MANIFEST.json に parquet_generation
+# が無い）と、Parquet を含むものが混在する。
+#
+# 🔴 バックアップ内の latest_master.json は本番 data/parquet_master/ を絶対
+# パスで指しているため、絶対に使ってはいけない。manifest の parquet_generation
+# （ファイル名のみ）をバックアップのフォルダ基準で解決する必要がある。
+# ---------------------------------------------------------------------------
+import json as _json
+
+
+def _write_manifest(bk_dir, parquet_generation=None, extra=None):
+    manifest = {"created_at": "2026-09-25T00:00:00", "databases": ["stocktool.db"]}
+    if parquet_generation is not None:
+        manifest["parquet_generation"] = parquet_generation
+    if extra:
+        manifest.update(extra)
+    with open(os.path.join(bk_dir, "BACKUP_MANIFEST.json"), "w", encoding="utf-8") as f:
+        _json.dump(manifest, f, ensure_ascii=False)
+
+
+class TestFindLatestParquetBackup:
+    def test_excludes_db_only_backups(self, tmp_path):
+        """parquet_generation を持たない（DB だけの）バックアップは候補から除外する。"""
+        from pipeline.parquet_cache_manager import find_latest_parquet_backup
+
+        db_only = tmp_path / "_bk_20260910_083603"
+        db_only.mkdir()
+        _write_manifest(str(db_only))  # parquet_generation なし
+
+        with_parquet = tmp_path / "_bk_20260909_233905"
+        with_parquet.mkdir()
+        _write_manifest(str(with_parquet), {"prices": "prices_20260909_233905.parquet"})
+
+        result = find_latest_parquet_backup(str(tmp_path))
+        assert result == str(with_parquet)
+
+    def test_picks_latest_among_mixed_naming_formats(self, tmp_path):
+        """_bk_YYYYMMDD と _bk_YYYYMMDD_HHMMSS が混在しても新しい順に選ぶ。"""
+        from pipeline.parquet_cache_manager import find_latest_parquet_backup
+
+        older = tmp_path / "_bk_20260830"
+        older.mkdir()
+        _write_manifest(str(older), {"prices": "prices_20260830.parquet"})
+
+        newer = tmp_path / "_bk_20260910_083603"
+        newer.mkdir()
+        _write_manifest(str(newer), {"prices": "prices_20260910_083603.parquet"})
+
+        result = find_latest_parquet_backup(str(tmp_path))
+        assert result == str(newer)
+
+    def test_returns_none_when_no_candidates(self, tmp_path):
+        """Parquet を含むバックアップが1本も無ければ None。"""
+        from pipeline.parquet_cache_manager import find_latest_parquet_backup
+
+        db_only = tmp_path / "_bk_20260910_083603"
+        db_only.mkdir()
+        _write_manifest(str(db_only))
+
+        assert find_latest_parquet_backup(str(tmp_path)) is None
+
+    def test_returns_none_when_no_backup_dirs_at_all(self, tmp_path):
+        from pipeline.parquet_cache_manager import find_latest_parquet_backup
+        assert find_latest_parquet_backup(str(tmp_path)) is None
+
+    def test_skips_corrupted_manifest_with_warning(self, tmp_path, caplog):
+        """manifest が壊れている候補は警告を出してスキップし、他の正常な候補を選ぶ。"""
+        from pipeline.parquet_cache_manager import find_latest_parquet_backup
+
+        broken = tmp_path / "_bk_20260920_000000"
+        broken.mkdir()
+        with open(broken / "BACKUP_MANIFEST.json", "w", encoding="utf-8") as f:
+            f.write("{ this is not valid json")
+
+        valid = tmp_path / "_bk_20260910_083603"
+        valid.mkdir()
+        _write_manifest(str(valid), {"prices": "prices_20260910_083603.parquet"})
+
+        with caplog.at_level(logging.WARNING):
+            result = find_latest_parquet_backup(str(tmp_path))
+
+        assert result == str(valid)
+        assert any("20260920_000000" in r.getMessage() for r in caplog.records)
+
+    def test_ignores_dirs_without_manifest(self, tmp_path):
+        """BACKUP_MANIFEST.json が無いディレクトリは候補にしない。"""
+        from pipeline.parquet_cache_manager import find_latest_parquet_backup
+
+        no_manifest = tmp_path / "_bk_20260925_999999"
+        no_manifest.mkdir()
+
+        valid = tmp_path / "_bk_20260910_083603"
+        valid.mkdir()
+        _write_manifest(str(valid), {"prices": "prices_20260910_083603.parquet"})
+
+        result = find_latest_parquet_backup(str(tmp_path))
+        assert result == str(valid)
+
+
+class TestGetBackupMasterFiles:
+    def _make_backup_with_files(self, tmp_path, generation=None):
+        bk_dir = tmp_path / "_bk_20260925_135558"
+        bk_dir.mkdir()
+        generation = generation or {
+            "symbols": "symbols_20260925_135558.parquet",
+            "prices": "prices_20260925_135558.parquet",
+            "indicators": "indicators_20260925_135558.parquet",
+            "ranks": "ranks_20260925_135558.parquet",
+            "tc": "theme_constituents_20260925_135558.parquet",
+            "signals": "market_signals_20260925_135558.parquet",
+            "fx": "fx_rates_20260925_135558.parquet",
+        }
+        for fname in generation.values():
+            (bk_dir / fname).write_text("dummy")
+        _write_manifest(str(bk_dir), generation)
+        return str(bk_dir), generation
+
+    def test_resolves_paths_relative_to_backup_dir(self, tmp_path):
+        """manifest のファイル名を backup_dir 基準の絶対パスに解決する。"""
+        from pipeline.parquet_cache_manager import get_backup_master_files
+
+        bk_dir, generation = self._make_backup_with_files(tmp_path)
+        result = get_backup_master_files(bk_dir)
+
+        assert set(result.keys()) == set(generation.keys())
+        for key, fname in generation.items():
+            assert result[key] == os.path.join(bk_dir, fname)
+            assert os.path.exists(result[key])
+
+    def test_ignores_latest_master_json_pointing_at_production(self, tmp_path):
+        """latest_master.json が本番の別パスを指していても、それは使わずに
+        BACKUP_MANIFEST.json だけを根拠にバックアップ内のパスを解決する。"""
+        from pipeline.parquet_cache_manager import get_backup_master_files
+
+        bk_dir, generation = self._make_backup_with_files(tmp_path)
+        # バックアップ内の latest_master.json（本番の絶対パスを指す罠）を再現
+        parquet_dir = tmp_path / "parquet_master"
+        with open(os.path.join(bk_dir, "latest_master.json"), "w", encoding="utf-8") as f:
+            _json.dump({k: str(parquet_dir / v) for k, v in generation.items()}, f)
+
+        result = get_backup_master_files(bk_dir)
+        for key, fname in generation.items():
+            assert result[key] == os.path.join(bk_dir, fname)
+            assert str(parquet_dir) not in result[key]
+
+    def test_raises_on_missing_manifest(self, tmp_path):
+        bk_dir = tmp_path / "_bk_20260925_135558"
+        bk_dir.mkdir()
+
+        from pipeline.parquet_cache_manager import get_backup_master_files
+        with pytest.raises(Exception):
+            get_backup_master_files(str(bk_dir))
+
+    def test_raises_on_missing_parquet_generation_key(self, tmp_path):
+        bk_dir = tmp_path / "_bk_20260925_135558"
+        bk_dir.mkdir()
+        _write_manifest(str(bk_dir))  # parquet_generation なし
+
+        from pipeline.parquet_cache_manager import get_backup_master_files
+        with pytest.raises(Exception):
+            get_backup_master_files(str(bk_dir))
+
+    def test_raises_when_a_file_is_missing(self, tmp_path):
+        """manifest に載っているのに実体が無いファイルがあれば例外にする（本番へ黙って戻らない）。"""
+        from pipeline.parquet_cache_manager import get_backup_master_files
+
+        bk_dir = tmp_path / "_bk_20260925_135558"
+        bk_dir.mkdir()
+        generation = {
+            "symbols": "symbols_20260925_135558.parquet",
+            "prices": "prices_20260925_135558.parquet",
+        }
+        (bk_dir / generation["symbols"]).write_text("dummy")
+        # prices ファイルは作らない（欠損を再現）
+        _write_manifest(str(bk_dir), generation)
+
+        with pytest.raises(FileNotFoundError, match="prices"):
+            get_backup_master_files(str(bk_dir))
