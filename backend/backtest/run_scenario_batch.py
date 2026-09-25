@@ -318,7 +318,8 @@ def run_single_mc_scenario(strat: str, model: str, run_idx: int,
                            preset_toml_path: str, project_root: str,
                            portfolio: dict = None,
                            consider_tax: float = 0.0,
-                           master_files: dict = None) -> dict:
+                           master_files: dict = None,
+                           data_source_meta: dict = None) -> dict:
     """
     単一のモンテカルロ実行を行う。サブプロセス内で呼ばれる。
 
@@ -334,6 +335,8 @@ def run_single_mc_scenario(strat: str, model: str, run_idx: int,
                       （backtest_stable_data_plan.md §3-C）。子プロセスはこれを渡された
                       とおりに使い、探索・ポインタ読みを一切しない
                       （実行中に daily update が走っても run ごとに世代がずれないようにする）。
+        data_source_meta: 親プロセスが解決した参照先のメタ情報（backtest_stable_data_plan.md
+                      §3-D）。scenario_summary.json に記録するため run_scenario_test に渡す。
     """
     portfolio = portfolio or dict(DEFAULT_PORTFOLIO)
     global _child_preloaded_data
@@ -374,7 +377,8 @@ def run_single_mc_scenario(strat: str, model: str, run_idx: int,
             monte_carlo_seed=run_idx,
             regime_model=model,
             preloaded_data=_child_preloaded_data,
-            consider_tax=consider_tax
+            consider_tax=consider_tax,
+            data_source_meta=data_source_meta,
         )
         summary = res['summary']
         return {
@@ -701,7 +705,8 @@ def main(argv=None, db_path_override: str = None, jobs_path_override: str = None
                         preset_toml_path, project_root_here,
                         portfolio,
                         tax_rate,
-                        resolved_master_files
+                        resolved_master_files,
+                        data_source_meta
                     ): run_idx
                     for run_idx in range(num_runs)
                 }

@@ -226,7 +226,8 @@ def run_scenario_test(
     monte_carlo_seed: int = None,
     consider_tax: float = 0.0,
     regime_model: str = "mts_raw",
-    preloaded_data: Any = None
+    preloaded_data: Any = None,
+    data_source_meta: Dict[str, Any] = None,
 ) -> Dict[str, Any]:
     """
     Executes the full portfolio-level scenario simulation.
@@ -673,6 +674,11 @@ def run_scenario_test(
     equity_csv_path = os.path.join(output_dir, "scenario_equity_curve.csv")
     reporter.export_equity_curve(portfolio.equity_curve, equity_csv_path)
     
+    # 参照データの世代（backtest_stable_data_plan.md §3-D）。preloaded_data 経路
+    # （run_scenario_batch の子プロセス）では親が解決したメタ情報を受け取る。
+    if data_source_meta is not None:
+        summary['data_source'] = data_source_meta
+
     # Save summary as JSON
     json_path = os.path.join(output_dir, "scenario_summary.json")
     with open(json_path, 'w', encoding='utf-8') as f:

@@ -39,6 +39,12 @@ def load_config(config_path: str) -> dict:
         return tomli.load(f)
 
 
+# preload_data() が最後に解決した参照先のメタ情報（backtest_stable_data_plan.md §3-D）。
+# master_files を直接渡された場合（シナリオバッチの子プロセス）は None のまま。
+# run_backtest() が結果 JSON に記録するために読む。
+_last_preload_meta = None
+
+
 def resolve_backtest_db_path(active_db_path, logger=None) -> str:
     """バックテストが読む Parquet マスターの位置を決める DB パスを解決する。
 
@@ -115,6 +121,8 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
         rotate_and_archive_to_parquet, resolve_backtest_data_source,
     )
 
+    global _last_preload_meta
+
     def log(msg):
         print(msg)
         sys.stdout.flush()
@@ -135,6 +143,7 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
     if master_files is not None:
         # 呼び出し元（親プロセス）が既に解決済み。探索・ポインタ読みは一切しない。
         latest_files = master_files
+        _last_preload_meta = None
         log("Data source: externally provided master_files (no lookup performed).")
     else:
         # 1. Determine active DB path & Parquet master directory
@@ -160,6 +169,7 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
         # 2. 参照先を解決する（backup / latest / 名前指定のバックアップ）。
         #    "latest" は db_path（Sandbox 隔離を反映済み）を active_db_path として渡す。
         latest_files, meta = resolve_backtest_data_source(data_source, active_db_path=db_path)
+        _last_preload_meta = meta
         log(f"Data source: {meta['data_source']}"
             + (f" (backup: {meta['backup_name']})" if meta['backup_name'] else "")
             + f" | generation={meta['parquet_generation']}")
@@ -189,7 +199,12 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
         df_prices['date'] = pd.to_datetime(df_prices['date']).dt.date
         df_indicators['date'] = pd.to_datetime(df_indicators['date']).dt.date
         df_ranks['date'] = pd.to_datetime(df_ranks['date']).dt.date
-        
+
+        # 価格データの最終日を1行で出す（backtest_stable_data_plan.md §3-D）。
+        # 参照先の種類・バックアップ名は上の "Data source: ..." 行で既に出ているので重複しない。
+        if len(df_prices) > 0:
+            log(f"  Price data through: {df_prices['date'].max()}")
+
         # 4. In-memory slicing based on start_date and end_date
         t_slice = time.time()
         sd = dt_date.fromisoformat(start_date)
@@ -594,7 +609,8 @@ def run_backtest(config: dict, strategy_filter: str = None, refresh_cache: bool 
 
     # Save results
     results_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
-    save_results_json(all_results, all_trades, results_dir, start_date, end_date)
+    save_results_json(all_results, all_trades, results_dir, start_date, end_date,
+                       data_source_meta=_last_preload_meta)
 
 
 def print_validation_warnings(warnings: list):

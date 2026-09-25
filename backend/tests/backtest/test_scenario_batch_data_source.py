@@ -57,3 +57,36 @@ def test_run_single_mc_scenario_passes_master_files_to_preload_without_lookup(mo
     assert result is not None
 
     rsb._child_preloaded_data = None  # 後始末（他テストへ漏れないように）
+
+
+def test_run_single_mc_scenario_passes_data_source_meta_to_run_scenario_test(monkeypatch):
+    """親から渡された data_source_meta を run_scenario_test にそのまま渡す
+    （backtest_stable_data_plan.md §3-D。scenario_summary.json への記録用）。"""
+    rsb._child_preloaded_data = None
+
+    monkeypatch.setattr(
+        rsb, "preload_data",
+        lambda *a, **k: ("symbols", "prices", "indicators", "ranks", "tc", ["date1"]),
+    )
+
+    seen_kwargs = []
+
+    def fake_run_scenario_test(**kwargs):
+        seen_kwargs.append(kwargs)
+        return {"summary": {}}
+
+    monkeypatch.setattr(rsb, "run_scenario_test", fake_run_scenario_test)
+
+    sentinel_meta = {"data_source": "backup", "backup_name": "_bk_x", "parquet_generation": "g1"}
+    result = rsb.run_single_mc_scenario(
+        "A_test", "full_position", 0,
+        "2022-01-01", "2022-06-30",
+        "dummy_preset.toml", project_root,
+        master_files={"prices": "x.parquet"},
+        data_source_meta=sentinel_meta,
+    )
+
+    assert seen_kwargs[0]["data_source_meta"] is sentinel_meta
+    assert result is not None
+
+    rsb._child_preloaded_data = None

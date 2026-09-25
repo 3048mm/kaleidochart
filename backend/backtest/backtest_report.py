@@ -315,6 +315,7 @@ def save_results_json(
     output_dir: str,
     start_date: str,
     end_date: str,
+    data_source_meta: Dict[str, Any] = None,
 ):
     """
     Save detailed results to JSON files.
@@ -325,12 +326,16 @@ def save_results_json(
         output_dir: Directory to save output files.
         start_date: Backtest start date.
         end_date: Backtest end date.
+        data_source_meta: Parquet マスタの参照先メタ情報（backtest_stable_data_plan.md
+            §3-D）。``{"data_source": ..., "backup_name": ..., "parquet_generation": ...}``。
+            `master_files` を直接渡された経路（子プロセス）では ``None``。
     """
     os.makedirs(output_dir, exist_ok=True)
 
     # Summary JSON
     summary = {
         'period': {'start': start_date, 'end': end_date},
+        'data_source': data_source_meta,
         'strategies': {}
     }
     for name, metrics in results.items():

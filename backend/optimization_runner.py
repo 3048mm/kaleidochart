@@ -5,8 +5,9 @@ import os
 import sys
 import argparse
 import subprocess
+import sqlite3
 import tomli
-from datetime import date as dt_date
+from datetime import date as dt_date, datetime
 import pandas as pd
 
 import optuna
@@ -59,6 +60,107 @@ def resolve_data_source(data_source: str | None = None, active_db_path: str | No
     _resolved_master_files = master_files
     _resolved_data_source_meta = meta
     return master_files, meta
+
+
+def _backup_sqlite_file(db_path: str) -> str:
+    """`db_path` の SQLite ファイルを、sqlite3 の backup API で安全にコピーする。
+
+    退避（study の delete_study）の前に必ず呼ぶ（rules §10.1: ユーザー資産の
+    ファイルバックアップ）。単純な `shutil.copy2` は WAL モード中の書き込みと
+    競合すると不整合なコピーになりうるため、SQLite 公式の backup API を使う。
+    """
+    backup_path = f"{db_path}.bak_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    src = sqlite3.connect(db_path)
+    try:
+        dst = sqlite3.connect(backup_path)
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+    finally:
+        src.close()
+    return backup_path
+
+
+def retire_study_if_data_source_changed(storage, study_name: str, meta: dict, db_path: str) -> optuna.Study:
+    """study の Parquet 世代が変わっていたら退避し、正式名で新規作成する
+    （backtest_stable_data_plan.md §4-5）。
+
+    study 名は戦略名そのもので、`run_scenario_batch.py` がこの名前で最良パラメータを
+    引くため、常に**新しいデータの study が正式名を持つ**（古い方を別名に退避する）。
+
+    分岐:
+      - 正式名の study が無い: 新規作成して今回の参照先を記録する。
+      - 既存 study の ``user_attrs["parquet_generation"]`` が今回と一致: そのまま再開する。
+      - 不一致: 先にファイルバックアップを取り、``optuna.copy_study()`` で
+        ``<study_name>__<旧世代>``（名前衝突時は ``_2`` 、``_3``… を付与）に退避したうえで
+        元を ``delete_study()`` し、正式名で新規作成する。
+      - 記録が無い既存 study（本機能の導入前に作られたもの）: 退避せず、
+        今回の参照先を記録して引き継ぐ（警告ログを出す）。
+
+    Args:
+        storage: Optuna の RDBStorage。
+        study_name: 正式名（戦略名）。
+        meta: `resolve_backtest_data_source()` が返すメタ情報
+            （``data_source`` / ``backup_name`` / ``parquet_generation``）。
+        db_path: `storage` が指す SQLite ファイルのパス（退避前のバックアップ対象）。
+    """
+    try:
+        existing = optuna.load_study(study_name=study_name, storage=storage)
+    except KeyError:
+        existing = None
+
+    if existing is None:
+        study = optuna.create_study(
+            study_name=study_name, storage=storage, load_if_exists=True, direction="maximize",
+        )
+        study.set_user_attr("data_source", meta["data_source"])
+        study.set_user_attr("backup_name", meta["backup_name"])
+        study.set_user_attr("parquet_generation", meta["parquet_generation"])
+        return study
+
+    prev_gen = existing.user_attrs.get("parquet_generation")
+
+    if prev_gen is None:
+        print(f"  [WARNING] study '{study_name}' に世代記録がありません"
+              f"（本機能導入前の study の可能性）。退避せず今回の参照先を記録して引き継ぎます。")
+        existing.set_user_attr("data_source", meta["data_source"])
+        existing.set_user_attr("backup_name", meta["backup_name"])
+        existing.set_user_attr("parquet_generation", meta["parquet_generation"])
+        return existing
+
+    if prev_gen == meta["parquet_generation"]:
+        return existing
+
+    # 世代が不一致 -> 古い study を退避してから正式名で新規作成する
+    backup_path = _backup_sqlite_file(db_path)
+    print(f"  [INFO] 世代不一致のため optimization_trials.db をバックアップしました: {backup_path}")
+
+    existing_names = set(optuna.study.get_all_study_names(storage))
+    retired_name = f"{study_name}__{prev_gen}"
+    suffix = 2
+    while retired_name in existing_names:
+        retired_name = f"{study_name}__{prev_gen}_{suffix}"
+        suffix += 1
+
+    optuna.copy_study(from_study_name=study_name, from_storage=storage,
+                       to_storage=storage, to_study_name=retired_name)
+    # ユーザー資産なので、コピー先の trial 数が元と一致することを確かめてから元を消す
+    n_src = len(existing.get_trials(deepcopy=False))
+    n_dst = len(optuna.load_study(study_name=retired_name, storage=storage).get_trials(deepcopy=False))
+    if n_src != n_dst:
+        raise RuntimeError(
+            f"study の退避コピーが不完全です（元 {n_src} 件 / コピー {n_dst} 件）。"
+            f"元の study '{study_name}' は削除していません。バックアップ: {backup_path}")
+    optuna.delete_study(study_name=study_name, storage=storage)
+    print(f"  [INFO] study '{study_name}' の参照データ世代が変わりました"
+          f"（{prev_gen} -> {meta['parquet_generation']}）。旧 study は '{retired_name}' に退避しました。")
+
+    study = optuna.create_study(study_name=study_name, storage=storage, direction="maximize")
+    study.set_user_attr("data_source", meta["data_source"])
+    study.set_user_attr("backup_name", meta["backup_name"])
+    study.set_user_attr("parquet_generation", meta["parquet_generation"])
+    return study
 
 
 def get_cached_data(config_app, start_date, end_date):
@@ -823,13 +925,11 @@ def main():
         print("  [Tax] 税なし (consider_tax_optimization=0.0)")
     print("=" * 60)
     
-    study = optuna.create_study(
-        study_name=study_name, 
-        storage=storage, 
-        load_if_exists=True,
-        direction="maximize"
+    # 参照データの世代が既存 study と変わっていれば退避する（backtest_stable_data_plan.md §4-5）。
+    study = retire_study_if_data_source_changed(
+        storage, study_name, _resolved_data_source_meta, db_path,
     )
-    
+
     try:
         enqueued = enqueue_baseline_trial(study, config, actual_name)
         if enqueued:
