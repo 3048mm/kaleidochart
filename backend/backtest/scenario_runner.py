@@ -246,13 +246,7 @@ def run_scenario_test(
         db = database.SessionLocal()
         try:
             engine = db.get_bind()
-            # data_source を明示しない（本体は "backup" になるが is_production() で自動判定
-            # されるためワークツリー・sandbox では "latest" に化ける可能性がある）と、
-            # 未計算のワークツリー data/ を見て FileNotFoundError になる。この単体 CLI は
-            # 3-C の親プロセス連携（run_scenario_batch 等）を持たないため、旧来どおり
-            # 常に検証済みバックアップを読む "backup" を明示する。
-            df_symbols, df_prices, df_indicators, df_ranks, df_theme_constituents, trading_dates = preload_data(
-                engine, start_date, end_date, refresh_cache, data_source="backup")
+            df_symbols, df_prices, df_indicators, df_ranks, df_theme_constituents, trading_dates = preload_data(engine, start_date, end_date, refresh_cache)
         finally:
             db.close()
         

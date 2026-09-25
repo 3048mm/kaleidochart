@@ -112,13 +112,7 @@ def run_comparison(
     spy_df = pd.DataFrame()
     try:
         engine = db.get_bind()
-        # data_source を明示しない（本体は "backup" になるが is_production() で自動判定
-        # されるためワークツリー・sandbox では "latest" に化ける可能性がある）と、
-        # 未計算のワークツリー data/ を見て FileNotFoundError になる。この単体 CLI は
-        # 3-C の親プロセス連携（run_scenario_batch 等）を持たないため、旧来どおり
-        # 常に検証済みバックアップを読む "backup" を明示する。
-        df_symbols, df_prices, _, _, _, _ = preload_data(
-            engine, start_date, end_date, refresh_cache, data_source="backup")
+        df_symbols, df_prices, _, _, _, _ = preload_data(engine, start_date, end_date, refresh_cache)
         spy_id = df_symbols[df_symbols['ticker'] == 'SPY']['id'].values
         if len(spy_id) > 0:
             spy_df = df_prices[df_prices['symbol_id'] == spy_id[0]].copy()
