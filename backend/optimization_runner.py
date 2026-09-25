@@ -75,7 +75,7 @@ def resolve_all_child_data_source(data_source: str | None = None, active_db_path
         return meta["backup_name"]
     logger.warning(
         "--strategy all: data_source='latest' が解決されました。実行中に daily update や "
-        "自動削除（最新2世代保持）で世代が変わりうります（backtest_stable_data_plan.md §6.3 R4）。"
+        "自動削除（最新2世代保持）で世代が変わりえます（backtest_stable_data_plan.md §6.3 R4）。"
     )
     return "latest"
 
