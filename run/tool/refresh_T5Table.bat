@@ -6,7 +6,7 @@ cd /d "%~dp0../../"
 call venv\Scripts\activate.bat
 
 echo =========================================================
-echo   StockTool - Rebuild T5 (Market Signals) Table
+echo   KaleidoChart - Rebuild T5 (Market Signals) Table
 echo   Syncing from Parquet and Re-calculating T5
 echo =========================================================
 echo.

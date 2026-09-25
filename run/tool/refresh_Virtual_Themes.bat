@@ -6,7 +6,7 @@ cd /d "%~dp0..\..\"
 call venv\Scripts\activate.bat
 
 echo =========================================================
-echo   StockTool - Fast Local Virtual Theme Rebuild
+echo   KaleidoChart - Fast Local Virtual Theme Rebuild
 echo   ZERO internet download! Only recalculating Virtual Themes.
 echo =========================================================
 echo.

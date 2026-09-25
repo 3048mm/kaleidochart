@@ -1,6 +1,6 @@
 # プロジェクト名・フロントエンド名を「KaleidoChart」に統一するリネーム作業 計画書
 
-- **ステータス**: 🚧 計画レビュー中(§4 回答反映済み・2026-09-25)
+- **ステータス**: 🚧 進行中(ワークツリー作業完了・G3 レビュー待ち → merge 後に実機移行)
 - **実施者**: AI エージェント(Claude)
 - **開始日**: 2026-09-18 / **完了日**: —
 - **作業ブランチ**: `rename/kaleidochart-branding`(ワークツリー)
@@ -109,12 +109,12 @@ Unregister-ScheduledTask -TaskName 'StockTool_DailyUpdate','StockTool_RunServer'
 ## 5. 実装順序と進捗チェックリスト
 
 **ワークツリー内(コード・文書)**
-- [ ] README / frontend(index.html・App.tsx・package.json)/ backend/api/server.py の表示名
-- [ ] run/*.bat・run/tool/*.bat の echo バナー(10ファイル)
-- [ ] register_run_server.bat / register_weekly_maintenance.bat のタスク名＋旧名削除
-- [ ] register_daily_task.bat を実機構成(単一タスク・火〜土 07:00/13:00)に作り直し
-- [ ] doc/db_recovery_procedure.md・parquet-data-quality skill のタスク名、`sync_skills.py --apply`
-- [ ] CLAUDE.md にブランド名の一文
+- [x] README / frontend(index.html・App.tsx・package.json)/ backend/api/server.py の表示名
+- [x] run/*.bat・run/tool/*.bat の echo バナー(10ファイル)
+- [x] register_run_server.bat / register_weekly_maintenance.bat のタスク名＋旧名削除
+- [x] register_daily_task.bat を実機構成(単一タスク・火〜土 07:00/13:00)に作り直し
+- [x] doc/db_recovery_procedure.md・parquet-data-quality skill のタスク名、`sync_skills.py --apply`
+- [x] CLAUDE.md にブランド名の一文
 - [ ] 検証(§6)・G3 ブランチレビュー → ワークツリーでコミット
 
 **merge 後(実機)**
@@ -124,7 +124,13 @@ Unregister-ScheduledTask -TaskName 'StockTool_DailyUpdate','StockTool_RunServer'
 
 ### 作業中メモ
 
-未着手(他タスクが一段落してから着手)。
+- 2026-09-26: ワークツリー `.claude/worktrees/rename+kaleidochart`(`--mode write`)で実装。
+  pytest 2016 passed / 1 skipped、vitest 69 passed、`npm run build` 成功(dist の title=KaleidoChart)、.bat 非ASCII 0件。
+- `register_daily_task.bat` の登録コマンドのみを一時名 `KaleidoChart_DailyUpdate_DRYRUN` で実機登録し、本番
+  `StockTool_DailyUpdate` と比較 → コマンド・ログオン(Interactive/tk)・MultipleInstances(IgnoreNew)・
+  トリガー(07:00/13:00・DaysOfWeek=124=火〜土・毎週)が一致。一時タスクは削除済み。
+  **注意: このバッチ自体を実行すると旧 `StockTool_DailyUpdate` を削除する**(移行は §3 の XML 手順で行う)。
+- 次: G3 ブランチレビュー → G4 merge(ユーザー)→ 実機移行。
 
 ## 6. 検証プラン / 結果
 
@@ -153,6 +159,10 @@ Unregister-ScheduledTask -TaskName 'StockTool_DailyUpdate','StockTool_RunServer'
 
 - (計画段階・2026-09-25)`register_daily_task.bat` が実機の日次タスクと既に不一致であることが判明
   (ファイル冒頭に警告コメントあり)。改名で再登録が必要になるため、本計画で実機に合わせて作り直す(§3-9)。
+
+- (G3・2026-09-26)`/code-review` 指摘: `register_daily_task.bat` が登録**前**に旧 `StockTool_DailyUpdate` を
+  削除しており、登録に失敗すると日次タスクがゼロになる。→ 3本の登録スクリプトとも、旧名の削除を
+  **新タスクの作成と検証が成功した後**に移動した。
 
 ## 8. スコープ外・残作業
 

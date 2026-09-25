@@ -3,7 +3,7 @@ chcp 65001 > nul
 cd /d "%~dp0\.."
 
 echo =========================================================
-echo  StockTool - Scenario Batch Runner (3-Layer Parallel MC)
+echo  KaleidoChart - Scenario Batch Runner (3-Layer Parallel MC)
 echo =========================================================
 echo.
 

@@ -3,7 +3,7 @@ chcp 65001 > nul
 cd /d "%~dp0\.."
 
 echo =========================================================
-echo  StockTool - Scenario Test Runner
+echo  KaleidoChart - Scenario Test Runner
 echo =========================================================
 echo.
 

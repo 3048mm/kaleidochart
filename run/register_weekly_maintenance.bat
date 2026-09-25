@@ -7,10 +7,11 @@ REM the next line. See doc/agent_execution_rules.md and the
 REM upstream-data-diagnosis skill (a daily run fetched zero rows this way).
 setlocal
 
-set "TASK_NAME=StockTool_WeeklyMaintenance_Sunday_0200"
+set "TASK_NAME=KaleidoChart_WeeklyMaintenance_Sunday_0200"
+set "OLD_TASK_NAME=StockTool_WeeklyMaintenance_Sunday_0200"
 set "SCRIPT_PATH=%~dp0run_weekly_maintenance.bat"
 
-echo Registering Weekly StockTool Maintenance Task...
+echo Registering Weekly KaleidoChart Maintenance Task...
 
 REM Guard. On 2026-08-01 this task was registered with an EMPTY command
 REM (<Command>""</Command>). schtasks still reported SUCCESS, so nobody noticed;
@@ -28,6 +29,10 @@ REM Verify by reading the command back. The exit code alone is not enough -
 REM that is exactly what hid the 2026-08-01 breakage.
 schtasks /query /tn "%TASK_NAME%" /fo LIST /v | findstr /i /c:"run_weekly_maintenance.bat" >nul
 if errorlevel 1 goto :err_verify
+
+REM Remove the task registered under the old project name (StockTool) only
+REM after the new one is verified, so a failure never leaves no task at all.
+schtasks /delete /tn "%OLD_TASK_NAME%" /f >nul 2>&1
 
 echo.
 echo Weekly Task Registration Completed and verified:

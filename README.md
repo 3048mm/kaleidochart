@@ -1,4 +1,4 @@
-# Stock Analyzer
+# KaleidoChart
 
 個人の株式投資を支援するためのWebベースの株価分析・スクリーニングツールです。
 「どの銘柄を購入すべきか」を判断するため、S&P500 等に対する相対的強さ（Relative Strength）、ATR乖離、Volume Surge、およびマーク・ミネルヴィニのトレンドテンプレートに基いたデータ収集と分析を行います。

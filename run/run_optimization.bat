@@ -3,7 +3,7 @@ chcp 65001 > nul
 cd /d "%~dp0\.."
 
 echo =========================================================
-echo  StockTool - Automated Parameter Optimization (Optuna)
+echo  KaleidoChart - Automated Parameter Optimization (Optuna)
 echo =========================================================
 echo.
 

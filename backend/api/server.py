@@ -24,7 +24,7 @@ from db.database import init_db
 from db.database_user import init_user_db
 from db.database_universe import init_universe_db
 
-app = FastAPI(title="Stock Analyzer API", version="0.1.0")
+app = FastAPI(title="KaleidoChart API", version="0.1.0")
 
 # Load Configuration for DB Init
 def load_config():
@@ -80,4 +80,4 @@ app.include_router(universe_router.router, prefix="/api")
 
 @app.get("/")
 def read_root():
-    return {"message": "Welcome to the Stock Analyzer API"}
+    return {"message": "Welcome to the KaleidoChart API"}

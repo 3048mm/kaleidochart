@@ -6,7 +6,7 @@ cd /d "%~dp0../../"
 call venv\Scripts\activate.bat
 
 echo =========================================================
-echo   StockTool - Fast Local Full Rebuild (T2-T5)
+echo   KaleidoChart - Fast Local Full Rebuild (T2-T5)
 echo   ZERO internet download! Rebuilding from Parquet Master.
 echo =========================================================
 echo.

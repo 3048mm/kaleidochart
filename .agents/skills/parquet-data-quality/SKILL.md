@@ -159,7 +159,7 @@ for name, key in [("symbols","symbols"), ("theme_constituents","tc"), ("fx_rates
 
 ```powershell
 # 1. スケジュールタスクの次回実行を確認する（並走すると世代が壊れる。後述）
-Get-ScheduledTask -TaskName "StockTool_DailyUpdate" | Get-ScheduledTaskInfo | Select NextRunTime
+Get-ScheduledTask -TaskName "KaleidoChart_DailyUpdate" | Get-ScheduledTaskInfo | Select NextRunTime
 
 # 2. API サーバ（uvicorn）を止める。読み取りロックで DROP TABLE が無限に待つ
 #    2026-08-06 は "Forcing DROP ALL tables" から5分以上復帰せず、CPU 8秒で停止していた
