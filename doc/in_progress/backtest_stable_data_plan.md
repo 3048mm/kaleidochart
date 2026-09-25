@@ -115,6 +115,7 @@ daily update は1日に2回新しい世代を作るため、次の問題があ�
 - [x] 4. テスト＋実装: 3-C（シナリオバッチの子がポインタを読まないこと）— 2026-09-26 G2 合格（2回目。`5156bd1` → `d9171b2` → scenario 2ファイルの固定を撤回）。全テスト 2047 passed / 1 failed（§10.3 の既知の環境要因1件のみ）
 - [x] 5. テスト＋実装: 3-D（表示と記録）＋ §4-5 の study 退避（世代一致なら再開・不一致なら退避して新規・記録なしは引き継ぎ・退避前のバックアップ）— 2026-09-26 G2 合格。オーケストレーターが「コピー先の trial 数を確かめてから元を削除」を追加。`scenario_comparison_runner.py` の出力への記録は対象外（3経路に含まれないため）
 - [x] 6. 文書: 3-F — 2026-09-26（backend_specification §6.6.1 新設・backup_production_data の docstring・/cleanup）
+- [ ] 5-9. G3 1周目の対応 R1〜R4（§6.3）
 - [ ] 7. G3（`/accept`）
 - [ ] 8. 検証（§6）→ `doc/completed/` へ移動
 
@@ -149,6 +150,10 @@ daily update は1日に2回新しい世代を作るため、次の問題があ�
 
 | 周 | 指摘 | 重大度 | 仕分け | 対応・理由 |
 | :--- | :--- | :--- | :--- | :--- |
+| 1 | R1 `optimization_runner` の `latest` が `config.toml` の DB パスを直接使い、`resolve_backtest_db_path(get_active_db_path())`（sandbox 隔離）を経由しない | 重大 | 対応（5-9） | 他の2経路と同じ解決関数を渡す。コードで実在を確認 |
+| 1 | R2 本番で `--refresh-cache` が常に `ValueError`（scenario_runner / scenario_comparison_runner / verify_db_vs_cache は `--data-source` を持たず回避不能） | 中 | 対応（5-9） | `refresh_cache=True` かつ参照先未指定なら既定を `latest` にする |
+| 1 | R3 本番で `backtest_runner --db-path` を指定しても Parquet はバックアップから読まれる | 中 | 対応（5-9） | `--db-path` 明示かつ参照先未指定なら既定を `latest` にする |
+| 1 | R4 `--strategy all` の子プロセスが参照先を解決し直す（§3-C の「開始時に1回」に反する） | 中 | 対応（5-9） | 親で解決し、backup なら確定したバックアップ名を子へ渡す。latest は世代を CLI で固定できないので警告 |
 
 ## 7. 途中発生した課題
 
