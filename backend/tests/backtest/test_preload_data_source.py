@@ -84,10 +84,10 @@ def test_default_data_source_is_backup_when_production(monkeypatch):
     with pytest.raises(RuntimeError):
         preload_data(None, "2020-01-01", "2020-12-31")
 
-    # data_source は None のまま resolve_backtest_data_source に渡され、
-    # 判定自体は resolve 側（is_production）に委ねる。ここでは refresh_cache の
-    # ガードが誤って落ちないこと（= is_production=True で 'backup' 相当と判定される）を確認する。
-    assert seen == [None]
+    # preload_data で判定した既定値（本番なら 'backup'）がそのまま resolve に渡る。
+    # 判定とガードと解決で同じ値を使う（G3 2周目 R5: refresh_cache の既定 latest が
+    # ガードだけに使われ、解決には None が渡って backup を読んでいた）。
+    assert seen == ["backup"]
 
 
 def test_refresh_cache_defaults_to_latest_even_when_production(monkeypatch):
@@ -123,7 +123,7 @@ def test_refresh_cache_defaults_to_latest_even_when_production(monkeypatch):
         # data_source=None + refresh_cache=True で effective が 'latest' と判定されている）。
         preload_data(None, "2020-01-01", "2020-12-31", refresh_cache=True, data_source=None)
 
-    assert calls == ["rotate", ("resolve", None)], (
+    assert calls == ["rotate", ("resolve", "latest")], (
         "本番かつ data_source 未指定でも refresh_cache のガードで止まった"
     )
 

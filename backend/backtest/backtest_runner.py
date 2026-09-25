@@ -177,7 +177,7 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
 
         # 2. 参照先を解決する（backup / latest / 名前指定のバックアップ）。
         #    "latest" は db_path（Sandbox 隔離を反映済み）を active_db_path として渡す。
-        latest_files, meta = resolve_backtest_data_source(data_source, active_db_path=db_path)
+        latest_files, meta = resolve_backtest_data_source(effective_data_source, active_db_path=db_path)
         _last_preload_meta = meta
         log(f"Data source: {meta['data_source']}"
             + (f" (backup: {meta['backup_name']})" if meta['backup_name'] else "")
