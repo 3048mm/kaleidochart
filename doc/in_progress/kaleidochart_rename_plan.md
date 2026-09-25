@@ -160,6 +160,10 @@ Unregister-ScheduledTask -TaskName 'StockTool_DailyUpdate','StockTool_RunServer'
 - (計画段階・2026-09-25)`register_daily_task.bat` が実機の日次タスクと既に不一致であることが判明
   (ファイル冒頭に警告コメントあり)。改名で再登録が必要になるため、本計画で実機に合わせて作り直す(§3-9)。
 
+- (G3・2026-09-26)`/code-review` 指摘: `register_daily_task.bat` が登録**前**に旧 `StockTool_DailyUpdate` を
+  削除しており、登録に失敗すると日次タスクがゼロになる。→ 3本の登録スクリプトとも、旧名の削除を
+  **新タスクの作成と検証が成功した後**に移動した。
+
 ## 8. スコープ外・残作業
 
 - favicon の新規作成(元ファイル無し。作るならデザインから)

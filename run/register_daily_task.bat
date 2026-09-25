@@ -20,12 +20,6 @@ if not defined SCRIPT_PATH goto :err_no_path
 if "%SCRIPT_PATH%"=="" goto :err_no_path
 if not exist "%SCRIPT_PATH%" goto :err_no_file
 
-REM Remove tasks left over from the old project name (StockTool) and from the
-REM previous version of this file, otherwise the update runs twice per slot.
-for %%T in ("StockTool_DailyUpdate" "StockTool_DailyUpdate_0700" "StockTool_DailyUpdate_1300" "%TASK_NAME%") do (
-    schtasks /delete /tn %%T /f >nul 2>&1
-)
-
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $days='Tuesday','Wednesday','Thursday','Friday','Saturday'; $t=@((New-ScheduledTaskTrigger -Weekly -DaysOfWeek $days -At '07:00'),(New-ScheduledTaskTrigger -Weekly -DaysOfWeek $days -At '13:00')); $a=New-ScheduledTaskAction -Execute ('\"' + $env:SCRIPT_PATH + '\"'); Register-ScheduledTask -TaskName $env:TASK_NAME -Trigger $t -Action $a -Force | Out-Null"
 if errorlevel 1 goto :err_create
 
@@ -33,6 +27,14 @@ REM Verify by reading the command back - the exit code alone hid an empty
 REM command once (see register_weekly_maintenance.bat).
 schtasks /query /tn "%TASK_NAME%" /fo LIST /v | findstr /i /c:"run_daily_update.bat" >nul
 if errorlevel 1 goto :err_verify
+
+REM Only now remove tasks left over from the old project name (StockTool) and
+REM from the previous version of this file - deleting them before a failed
+REM registration would leave no daily task at all. Leaving them would run the
+REM update twice per slot.
+for %%T in ("StockTool_DailyUpdate" "StockTool_DailyUpdate_0700" "StockTool_DailyUpdate_1300") do (
+    schtasks /delete /tn %%T /f >nul 2>&1
+)
 
 echo.
 echo Task Registration Completed and verified:

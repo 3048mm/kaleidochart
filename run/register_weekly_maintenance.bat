@@ -21,8 +21,6 @@ if not defined SCRIPT_PATH goto :err_no_path
 if "%SCRIPT_PATH%"=="" goto :err_no_path
 if not exist "%SCRIPT_PATH%" goto :err_no_file
 
-REM Remove the task registered under the old project name (StockTool).
-schtasks /delete /tn "%OLD_TASK_NAME%" /f >nul 2>&1
 schtasks /delete /tn "%TASK_NAME%" /f >nul 2>&1
 schtasks /create /tn "%TASK_NAME%" /tr "\"%SCRIPT_PATH%\"" /sc weekly /d SUN /st 02:00 /f
 if errorlevel 1 goto :err_create
@@ -31,6 +29,10 @@ REM Verify by reading the command back. The exit code alone is not enough -
 REM that is exactly what hid the 2026-08-01 breakage.
 schtasks /query /tn "%TASK_NAME%" /fo LIST /v | findstr /i /c:"run_weekly_maintenance.bat" >nul
 if errorlevel 1 goto :err_verify
+
+REM Remove the task registered under the old project name (StockTool) only
+REM after the new one is verified, so a failure never leaves no task at all.
+schtasks /delete /tn "%OLD_TASK_NAME%" /f >nul 2>&1
 
 echo.
 echo Weekly Task Registration Completed and verified:
