@@ -33,14 +33,36 @@ logger = logging.getLogger(__name__)
 # Global dictionary for cached data per period
 _cached_data_dict = {}
 
+# 開始時に1回だけ解決した Parquet マスタの参照先（backtest_stable_data_plan.md §3-C）。
+# 全期間で同じ世代を使うため、get_cached_data はこの値を使い回す（期間ごとに
+# 探索・ポインタ読みをやり直さない）。main() の起動時に resolve_data_source() で設定する。
+_resolved_master_files = None
+_resolved_data_source_meta = None
+
+
+def resolve_data_source(data_source: str = "backup"):
+    """開始時に1回だけ参照先を解決し、以降の get_cached_data 呼び出しに固定する。"""
+    global _resolved_master_files, _resolved_data_source_meta
+    from pipeline.parquet_cache_manager import resolve_backtest_data_source
+
+    master_files, meta = resolve_backtest_data_source(data_source)
+    print(f"Data source: {meta['data_source']}"
+          + (f" (backup: {meta['backup_name']})" if meta['backup_name'] else "")
+          + f" | generation={meta['parquet_generation']}", flush=True)
+    _resolved_master_files = master_files
+    _resolved_data_source_meta = meta
+    return master_files, meta
+
+
 def get_cached_data(config_app, start_date, end_date):
     global _cached_data_dict
     period_key = f"{start_date}_{end_date}"
     if period_key in _cached_data_dict:
         return _cached_data_dict[period_key]
-        
+
     print(f"Preloading data from {start_date} to {end_date} for optimization...")
-    res = preload_data(database.engine, start_date, end_date, refresh_cache=False)
+    res = preload_data(database.engine, start_date, end_date, refresh_cache=False,
+                        master_files=_resolved_master_files)
     _cached_data_dict[period_key] = res
     print("Data preload complete.", flush=True)
     return res
@@ -223,7 +245,7 @@ def list_optimizable_strategies(config):
     ]
 
 
-def run_all_strategies(config, trials, storage, n_jobs, run=subprocess.run):
+def run_all_strategies(config, trials, storage, n_jobs, data_source="backup", run=subprocess.run):
     """最適化対象の全戦略を、戦略ごとに**別プロセス**で順に単体実行する。
 
     別プロセスにするのは、数時間〜十数時間かかる実行でのメモリ肥大や、
@@ -243,7 +265,8 @@ def run_all_strategies(config, trials, storage, n_jobs, run=subprocess.run):
         print(f"  [all {i}/{len(names)}] Optimizing Strategy: {name}", flush=True)
         print("=" * 70, flush=True)
         cmd = [sys.executable, os.path.abspath(__file__),
-               "--strategy", name, "--trials", str(trials), "--n-jobs", str(n_jobs)]
+               "--strategy", name, "--trials", str(trials), "--n-jobs", str(n_jobs),
+               "--data-source", data_source]
         if storage:
             cmd += ["--storage", storage]
         result = run(cmd)
@@ -693,6 +716,10 @@ def main():
     parser.add_argument("--n-jobs", type=int, default=1,
                         help="並列トライアル数。SQLite storage は並列(>1)だと "
                              "COMPLETE trial エラーで停止しうるため既定は1（完全逐次・最も安全）")
+    parser.add_argument("--data-source", type=str, default="backup",
+                        help="最適化が読む Parquet マスタの参照先。"
+                             "'backup'（既定・検証済みの最新バックアップ）/ 'production'（本番の最新世代）"
+                             "/ バックアップのフォルダ名（例 '_bk_20260925_...')")
     args = parser.parse_args()
     
     # Use config just to load exit rules
@@ -705,7 +732,7 @@ def main():
         names = list_optimizable_strategies(config)
         print(f"--strategy all: 最適化対象 {len(names)} 戦略を順に実行します（各 {args.trials} trials）:", flush=True)
         print("  " + ", ".join(names), flush=True)
-        failed = run_all_strategies(config, args.trials, args.storage, args.n_jobs)
+        failed = run_all_strategies(config, args.trials, args.storage, args.n_jobs, args.data_source)
         print("\n" + "=" * 70, flush=True)
         print(f"  all 完了: 成功 {len(names) - len(failed)} / {len(names)} 戦略", flush=True)
         if failed:
@@ -735,6 +762,10 @@ def main():
     
     # Load periods from TOML config
     periods = parse_optimization_periods(config)
+
+    # 参照先は開始時に1回だけ解決し、全期間で同じ Parquet マスタ世代を使う
+    # （backtest_stable_data_plan.md §3-C）。
+    resolve_data_source(args.data_source)
 
     # 2026-07-18: n_jobs=-1（後段の study.optimize）は複数トライアルを並列スレッドで
     # 実行するため、_cached_data_dict（get_cached_data のグローバルキャッシュ）に

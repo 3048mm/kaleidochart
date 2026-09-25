@@ -1023,3 +1023,99 @@ class TestGetBackupMasterFiles:
 
         with pytest.raises(FileNotFoundError, match="prices"):
             get_backup_master_files(str(bk_dir))
+
+
+# ---------------------------------------------------------------------------
+# resolve_backtest_data_source (backtest_stable_data_plan.md §3-B)
+# ---------------------------------------------------------------------------
+class TestResolveBacktestDataSource:
+    def _make_backup(self, prod_root, name="_bk_20260925_173413", generation=None):
+        bk_dir = prod_root / name
+        bk_dir.mkdir()
+        generation = generation or {"prices": f"prices_{name[4:]}.parquet"}
+        for fname in generation.values():
+            (bk_dir / fname).write_text("dummy")
+        _write_manifest(str(bk_dir), generation)
+        return bk_dir
+
+    def _make_production_pointer(self, prod_root, generation="20260920_000000"):
+        parquet_dir = prod_root / "parquet_master"
+        parquet_dir.mkdir(parents=True, exist_ok=True)
+        files = {"prices": str(parquet_dir / f"prices_{generation}.parquet")}
+        (parquet_dir / f"prices_{generation}.parquet").write_text("dummy")
+        with open(parquet_dir / "latest_master.json", "w", encoding="utf-8") as f:
+            _json.dump(files, f)
+        return files
+
+    def test_picks_latest_backup_by_default(self, tmp_path, monkeypatch):
+        import paths
+        from pipeline.parquet_cache_manager import resolve_backtest_data_source
+
+        self._make_backup(tmp_path, "_bk_20260910_000000")
+        newest = self._make_backup(tmp_path, "_bk_20260925_173413")
+        monkeypatch.setattr(paths, "get_prod_data_root", lambda: str(tmp_path))
+
+        master_files, meta = resolve_backtest_data_source("backup")
+
+        assert master_files["prices"] == str(newest / "prices_20260925_173413.parquet")
+        assert meta == {
+            "data_source": "backup",
+            "backup_name": "_bk_20260925_173413",
+            "parquet_generation": "20260925_173413",
+        }
+
+    def test_falls_back_to_production_when_no_backup(self, tmp_path, monkeypatch, caplog):
+        import paths
+        from pipeline.parquet_cache_manager import resolve_backtest_data_source
+
+        files = self._make_production_pointer(tmp_path)
+        monkeypatch.setattr(paths, "get_prod_data_root", lambda: str(tmp_path))
+
+        with caplog.at_level(logging.WARNING):
+            master_files, meta = resolve_backtest_data_source("backup")
+
+        assert master_files == files
+        assert meta["data_source"] == "production"
+        assert meta["backup_name"] is None
+        assert any("フォールバック" in r.getMessage() for r in caplog.records)
+
+    def test_named_backup_resolves_directly(self, tmp_path, monkeypatch):
+        import paths
+        from pipeline.parquet_cache_manager import resolve_backtest_data_source
+
+        self._make_backup(tmp_path, "_bk_20260910_000000")
+        self._make_backup(tmp_path, "_bk_20260925_173413")
+        monkeypatch.setattr(paths, "get_prod_data_root", lambda: str(tmp_path))
+
+        master_files, meta = resolve_backtest_data_source("_bk_20260910_000000")
+
+        assert master_files["prices"] == str(tmp_path / "_bk_20260910_000000" / "prices_20260910_000000.parquet")
+        assert meta["data_source"] == "_bk_20260910_000000"
+        assert meta["backup_name"] == "_bk_20260910_000000"
+
+    def test_named_backup_missing_raises(self, tmp_path, monkeypatch):
+        import paths
+        from pipeline.parquet_cache_manager import resolve_backtest_data_source
+
+        monkeypatch.setattr(paths, "get_prod_data_root", lambda: str(tmp_path))
+
+        with pytest.raises(FileNotFoundError):
+            resolve_backtest_data_source("_bk_nonexistent")
+
+    def test_production_reads_pointer_not_backup_latest_master_json(self, tmp_path, monkeypatch):
+        """バックアップ内の latest_master.json（本番を指す罠）ではなく、
+        本番の parquet_master/latest_master.json を読む。"""
+        import paths
+        from pipeline.parquet_cache_manager import resolve_backtest_data_source
+
+        files = self._make_production_pointer(tmp_path, generation="20260920_000000")
+        # バックアップ内に「別の」latest_master.json を置いても production 経路では無視される
+        bk_dir = self._make_backup(tmp_path, "_bk_20260925_173413")
+        with open(bk_dir / "latest_master.json", "w", encoding="utf-8") as f:
+            _json.dump({"prices": "/tmp/should_not_be_used.parquet"}, f)
+        monkeypatch.setattr(paths, "get_prod_data_root", lambda: str(tmp_path))
+
+        master_files, meta = resolve_backtest_data_source("production")
+
+        assert master_files == files
+        assert meta["parquet_generation"] == "20260920_000000"

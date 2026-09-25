@@ -317,7 +317,8 @@ def run_single_mc_scenario(strat: str, model: str, run_idx: int,
                            start_date: str, end_date: str,
                            preset_toml_path: str, project_root: str,
                            portfolio: dict = None,
-                           consider_tax: float = 0.0) -> dict:
+                           consider_tax: float = 0.0,
+                           master_files: dict = None) -> dict:
     """
     単一のモンテカルロ実行を行う。サブプロセス内で呼ばれる。
 
@@ -329,6 +330,10 @@ def run_single_mc_scenario(strat: str, model: str, run_idx: int,
         consider_tax: 適用税率（率。0.2=20%）。並列 MC はサブプロセス（ProcessPoolExecutor）で
                       走るため、親プロセスで解決した値を明示的に引数として渡す必要がある
                       （子プロセスは親のメモリ空間を共有しない）。
+        master_files: 親プロセスが開始時に1回だけ解決した Parquet マスタのファイル辞書
+                      （backtest_stable_data_plan.md §3-C）。子プロセスはこれを渡された
+                      とおりに使い、探索・ポインタ読みを一切しない
+                      （実行中に daily update が走っても run ごとに世代がずれないようにする）。
     """
     portfolio = portfolio or dict(DEFAULT_PORTFOLIO)
     global _child_preloaded_data
@@ -343,7 +348,8 @@ def run_single_mc_scenario(strat: str, model: str, run_idx: int,
     if _child_preloaded_data is None:
         print(f"Subprocess preloading Parquet data for {strat}/{model}/run_{run_idx}...", flush=True)
         try:
-            _child_preloaded_data = preload_data(None, start_date, end_date, refresh_cache=False)
+            _child_preloaded_data = preload_data(None, start_date, end_date, refresh_cache=False,
+                                                  master_files=master_files)
             print("Subprocess local preloading complete.", flush=True)
         except Exception as pe:
             print(f"Preload failed in subprocess: {pe}")
@@ -491,9 +497,15 @@ def parse_args(argv=None):
              "consider_tax を使う。税ありと税なしを比較したいときに、"
              "本番設定を書き換えずに切り替えるためのもの。",
     )
+    parser.add_argument(
+        "--data-source", type=str, default="backup",
+        help="シナリオバッチが読む Parquet マスタの参照先。"
+             "'backup'（既定・検証済みの最新バックアップ）/ 'production'（本番の最新世代）"
+             "/ バックアップのフォルダ名（例 '_bk_20260925_...')",
+    )
     args = parser.parse_args(argv)
     job_names = [n.strip() for n in args.jobs.split(",") if n.strip()] if args.jobs else None
-    return job_names, args.list_jobs, args.tax
+    return job_names, args.list_jobs, args.tax, args.data_source
 
 
 def resolve_tax_rate(tax_override):
@@ -523,7 +535,7 @@ def main(argv=None, db_path_override: str = None, jobs_path_override: str = None
     db_path = db_path_override or os.path.join(project_root_here, "data", "optimization_trials.db")
     jobs_path = jobs_path_override or os.path.join(project_root_here, "data", "scenario_batch_jobs.toml")
 
-    job_names, list_jobs_only, tax_override = parse_args(argv)
+    job_names, list_jobs_only, tax_override, data_source = parse_args(argv)
 
     all_jobs = load_scenario_batch_jobs(jobs_path)
     if not all_jobs:
@@ -564,6 +576,15 @@ def main(argv=None, db_path_override: str = None, jobs_path_override: str = None
     # 税率は --tax があればそれ、無ければ backtest_config.toml [general] consider_tax
     # （jobs_path=scenario_batch_jobs.toml とは別ファイルなので混同しないこと）。
     tax_rate = resolve_tax_rate(tax_override)
+
+    # 参照先は親プロセスで1回だけ解決し、子プロセス（ProcessPoolExecutor）へファイル辞書
+    # として渡す（backtest_stable_data_plan.md §3-C）。子は探索もポインタ読みもしない。
+    # 実行中に daily update が走っても、全 run が同じ Parquet 世代を読むことを保証する。
+    from backend.pipeline.parquet_cache_manager import resolve_backtest_data_source
+    resolved_master_files, data_source_meta = resolve_backtest_data_source(data_source)
+    print(f"Data source: {data_source_meta['data_source']}"
+          + (f" (backup: {data_source_meta['backup_name']})" if data_source_meta['backup_name'] else "")
+          + f" | generation={data_source_meta['parquet_generation']}")
 
     print("=" * 60)
     print(f"Scenario Batch: {n_jobs} jobs x {n_models} models x {num_runs} MC runs")
@@ -672,7 +693,8 @@ def main(argv=None, db_path_override: str = None, jobs_path_override: str = None
                         start_date, end_date,
                         preset_toml_path, project_root_here,
                         portfolio,
-                        tax_rate
+                        tax_rate,
+                        resolved_master_files
                     ): run_idx
                     for run_idx in range(num_runs)
                 }

@@ -51,7 +51,7 @@ def test_no_regenerate_when_pointer_absent(sandbox_paths, rotate_spy):
     from backend.backtest.backtest_runner import preload_data
 
     with pytest.raises(FileNotFoundError) as ei:
-        preload_data(None, "2020-01-01", "2020-12-31", refresh_cache=False)
+        preload_data(None, "2020-01-01", "2020-12-31", refresh_cache=False, data_source="production")
 
     assert rotate_spy == [], "読み取り専用のはずの経路が本番 Parquet を書き換えた"
     assert "--refresh-cache" in str(ei.value), "誤誘導のメッセージのままになっている"
@@ -68,7 +68,7 @@ def test_no_regenerate_when_pointer_unreadable(sandbox_paths, rotate_spy):
     pointer.write_bytes(BOM_BYTES + b'{"prices": "x.parquet"}')
 
     with pytest.raises(ParquetPointerUnreadableError):
-        preload_data(None, "2020-01-01", "2020-12-31", refresh_cache=False)
+        preload_data(None, "2020-01-01", "2020-12-31", refresh_cache=False, data_source="production")
 
     assert rotate_spy == [], "壊れたポインタを理由に書き込みへ入った"
 
@@ -90,7 +90,7 @@ def test_explicit_refresh_cache_still_regenerates(sandbox_paths, monkeypatch):
 
     # 再生成をモックしたのでポインタは作られない。到達点は「呼ばれたか」だけ見る。
     with pytest.raises((FileNotFoundError, Exception)):
-        preload_data(None, "2020-01-01", "2020-12-31", refresh_cache=True)
+        preload_data(None, "2020-01-01", "2020-12-31", refresh_cache=True, data_source="production")
 
     assert calls, "--refresh-cache でも再生成が呼ばれなくなっている"
 

@@ -82,12 +82,22 @@ def resolve_backtest_db_path(active_db_path, logger=None) -> str:
     return paths.get_db_path("stocktool")
 
 
-def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = False):
+def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = False,
+                  data_source: str = "backup", master_files: dict | None = None):
     """
     Preload all required data into pandas DataFrames.
     Loads ALL data from the Parquet Master full-history files and performs in-memory slicing.
     SQLite connection is COMPLETELY bypassed.
-    
+
+    Args:
+        data_source: 参照先（backtest_stable_data_plan.md §3-B）。既定 ``"backup"``
+            （検証済みの最新バックアップ）。``"production"`` で本番の最新世代、
+            バックアップのフォルダ名（例 ``"_bk_20260925_..."``）で名前指定もできる。
+            ``master_files`` が渡された場合はこの引数は無視される。
+        master_files: 解決済みのファイル辞書（`get_latest_master_files` 等と同じキー）。
+            渡された場合、探索・ポインタ読みは一切行わない
+            （シナリオバッチの子プロセスが、親で1回だけ解決した結果を使うための経路）。
+
     Returns:
         Tuple of (df_symbols, df_prices, df_indicators, df_ranks, df_theme_constituents, trading_dates)
     """
@@ -95,45 +105,56 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
     import pathlib
     import logging
     from backend.db.database import get_active_db_path
-    from backend.pipeline.parquet_cache_manager import get_parquet_master_dir, get_pointer_file_path, get_latest_master_files, rotate_and_archive_to_parquet
-    
+    from backend.pipeline.parquet_cache_manager import (
+        rotate_and_archive_to_parquet, resolve_backtest_data_source,
+    )
+
     def log(msg):
         print(msg)
         sys.stdout.flush()
 
     t0 = time.time()
-    
-    # 1. Determine active DB path & Parquet master directory
-    db_path = resolve_backtest_db_path(get_active_db_path())
-            
-    parquet_dir = get_parquet_master_dir(db_path)
-    pointer_file = get_pointer_file_path(parquet_dir)
-    
-    # 2. Get latest Parquet files pointer
-    #
-    #    暗黙の自動再生成は行わない（2026-09-09）。
-    #    旧実装は「ポインタが読めない」というだけで rotate_and_archive_to_parquet() を呼び、
-    #    **読み取り専用のはずのバックテストが本番 Parquet を書き換えていた**。
-    #    ローテートは旧世代とのマージを伴うため、ポインタが壊れていると
-    #    SQLite のホット期間（730日）だけの世代を公開して全期間履歴を失う経路になる。
-    #    再生成の入口は明示指定（--refresh-cache）だけに絞る。
-    if refresh_cache:
-        log("  Refresh requested. Regenerating Parquet master from SQLite...")
-        # 失敗をログだけにして先へ進まない。旧実装は例外を握り潰したうえで
-        # 後段の「ファイルが無い」という**誤誘導のメッセージ**に化けていた
-        # （実際にはファイルは存在し、読めなかっただけ）。
-        from backend.db import database
-        with database.get_db() as db:
-            rotate_and_archive_to_parquet(db, db_path, logging.getLogger())
 
-    # strict=True: 「ポインタが存在するのに読めない」を「無い」と混同しない
-    latest_files = get_latest_master_files(pointer_file, strict=True)
+    # refresh_cache（SQLite から再生成）はバックアップへ書き込めない。production 専用。
+    if refresh_cache and data_source != "production":
+        raise ValueError(
+            f"--refresh-cache は data_source='production' のときだけ許可されます"
+            f"（指定: data_source={data_source!r}）。バックアップへは書き込みません。"
+        )
+
+    if master_files is not None:
+        # 呼び出し元（親プロセス）が既に解決済み。探索・ポインタ読みは一切しない。
+        latest_files = master_files
+        log("Data source: externally provided master_files (no lookup performed).")
+    else:
+        if refresh_cache:
+            # 1. Determine active DB path & Parquet master directory
+            db_path = resolve_backtest_db_path(get_active_db_path())
+            # 暗黙の自動再生成は行わない（2026-09-09）。
+            # 旧実装は「ポインタが読めない」というだけで rotate_and_archive_to_parquet() を呼び、
+            # **読み取り専用のはずのバックテストが本番 Parquet を書き換えていた**。
+            # ローテートは旧世代とのマージを伴うため、ポインタが壊れていると
+            # SQLite のホット期間（730日）だけの世代を公開して全期間履歴を失う経路になる。
+            # 再生成の入口は明示指定（--refresh-cache、かつ data_source='production'）だけに絞る。
+            log("  Refresh requested. Regenerating Parquet master from SQLite...")
+            # 失敗をログだけにして先へ進まない。旧実装は例外を握り潰したうえで
+            # 後段の「ファイルが無い」という**誤誘導のメッセージ**に化けていた
+            # （実際にはファイルは存在し、読めなかっただけ）。
+            from backend.db import database
+            with database.get_db() as db:
+                rotate_and_archive_to_parquet(db, db_path, logging.getLogger())
+
+        # 2. 参照先を解決する（backup / production / 名前指定のバックアップ）
+        latest_files, meta = resolve_backtest_data_source(data_source)
+        log(f"Data source: {meta['data_source']}"
+            + (f" (backup: {meta['backup_name']})" if meta['backup_name'] else "")
+            + f" | generation={meta['parquet_generation']}")
 
     if not latest_files:
         raise FileNotFoundError(
-            f"Parquet master cache files not found at {parquet_dir}!\n"
+            f"Parquet master cache files not found (data_source={data_source!r})!\n"
             f"  パイプラインを1回実行してマスタを生成するか、--refresh-cache を付けて実行してください。")
-        
+
     log(f"Loading data from Parquet Master cache: {pathlib.Path(latest_files['prices']).name} ...")
     
     try:
@@ -440,7 +461,8 @@ def run_single_strategy(strat_dict: dict, df_indicators, df_prices, df_ranks, df
     
     return metrics, trades
 
-def run_backtest(config: dict, strategy_filter: str = None, refresh_cache: bool = False, db_path_override: str = None):
+def run_backtest(config: dict, strategy_filter: str = None, refresh_cache: bool = False, db_path_override: str = None,
+                  data_source: str = "backup"):
     # (Existing beginning part of run_backtest up to initialization)
     general = config.get('general', {})
     start_date = general.get('start_date', '2021-03-26')
@@ -486,7 +508,7 @@ def run_backtest(config: dict, strategy_filter: str = None, refresh_cache: bool 
     init_db(db_path)
 
     df_symbols, df_prices, df_indicators, df_ranks, df_theme_constituents, trading_dates = \
-        preload_data(database.engine, start_date, end_date, refresh_cache=refresh_cache)
+        preload_data(database.engine, start_date, end_date, refresh_cache=refresh_cache, data_source=data_source)
 
     # Validate configuration parameters（未知キーはエラー。CLI 経路は §1.3 の先行事例に倣い停止する）
     validation_errors = validate_strategies_config(strategies, df_indicators, df_prices, df_ranks, df_theme_constituents)
@@ -645,6 +667,10 @@ def main():
                         help='Override end date (YYYY-MM-DD)')
     parser.add_argument('--refresh-cache', action='store_true',
                         help='Force reload data from DB and refresh Parquet cache')
+    parser.add_argument('--data-source', type=str, default='backup',
+                        help="バックテストが読む Parquet マスタの参照先。"
+                             "'backup'（既定・検証済みの最新バックアップ）/ 'production'（本番の最新世代）"
+                             "/ バックアップのフォルダ名（例 '_bk_20260925_...')")
     parser.add_argument('--db-path', type=str, default=None,
                         help='Path to a specific SQLite DB file to use for this run')
     parser.add_argument('--delete-db-after', action='store_true',
@@ -688,10 +714,11 @@ def main():
     print()
 
     run_backtest(
-        config, 
-        strategy_filter=args.strategy, 
+        config,
+        strategy_filter=args.strategy,
         refresh_cache=args.refresh_cache,
-        db_path_override=args.db_path
+        db_path_override=args.db_path,
+        data_source=args.data_source
     )
 
     # Optional cleanup
