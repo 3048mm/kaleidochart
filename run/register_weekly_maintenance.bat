@@ -7,10 +7,11 @@ REM the next line. See doc/agent_execution_rules.md and the
 REM upstream-data-diagnosis skill (a daily run fetched zero rows this way).
 setlocal
 
-set "TASK_NAME=StockTool_WeeklyMaintenance_Sunday_0200"
+set "TASK_NAME=KaleidoChart_WeeklyMaintenance_Sunday_0200"
+set "OLD_TASK_NAME=StockTool_WeeklyMaintenance_Sunday_0200"
 set "SCRIPT_PATH=%~dp0run_weekly_maintenance.bat"
 
-echo Registering Weekly StockTool Maintenance Task...
+echo Registering Weekly KaleidoChart Maintenance Task...
 
 REM Guard. On 2026-08-01 this task was registered with an EMPTY command
 REM (<Command>""</Command>). schtasks still reported SUCCESS, so nobody noticed;
@@ -20,6 +21,8 @@ if not defined SCRIPT_PATH goto :err_no_path
 if "%SCRIPT_PATH%"=="" goto :err_no_path
 if not exist "%SCRIPT_PATH%" goto :err_no_file
 
+REM Remove the task registered under the old project name (StockTool).
+schtasks /delete /tn "%OLD_TASK_NAME%" /f >nul 2>&1
 schtasks /delete /tn "%TASK_NAME%" /f >nul 2>&1
 schtasks /create /tn "%TASK_NAME%" /tr "\"%SCRIPT_PATH%\"" /sc weekly /d SUN /st 02:00 /f
 if errorlevel 1 goto :err_create

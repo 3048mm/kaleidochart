@@ -54,7 +54,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-A personal stock analysis/screening web tool (Japanese-language docs and UI). It computes Relative Strength (vs SPY), ATR-based volatility, volume surge, and Minervini Trend Template signals, then serves them through a batch-computed backend so the frontend only reads pre-aggregated data.
+**KaleidoChart**（旧称 stocktool / Stock Analyzer。リポジトリ・フォルダ名・`stocktool.db`・`STOCKTOOL_*` 環境変数などの内部識別子は旧称のまま）— a personal stock analysis/screening web tool (Japanese-language docs and UI). It computes Relative Strength (vs SPY), ATR-based volatility, volume surge, and Minervini Trend Template signals, then serves them through a batch-computed backend so the frontend only reads pre-aggregated data.
 
 - `backend/` — Python: FastAPI server + data collection/indicator batch pipeline + backtest engine
 - `frontend/` — Vite + React (TypeScript) SPA, TradingView `lightweight-charts`

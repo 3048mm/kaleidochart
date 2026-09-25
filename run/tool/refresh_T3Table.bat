@@ -6,7 +6,7 @@ cd /d "%~dp0../../"
 call venv\Scripts\activate.bat
 
 echo =========================================================
-echo   StockTool - Rebuild T3 (Indicators) Table
+echo   KaleidoChart - Rebuild T3 (Indicators) Table
 echo   Recomputes T3/T4/T5 on the Parquet master, restores SQLite,
 echo   then runs post-processing (T1 sync/FX/virtual themes/rotate/purge)
 echo =========================================================

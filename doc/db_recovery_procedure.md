@@ -23,7 +23,7 @@
 
 ```powershell
 # 1. スケジュールタスクの次回実行を確認（並走すると Parquet 世代が壊れる）
-Get-ScheduledTask -TaskName "StockTool_DailyUpdate" | Get-ScheduledTaskInfo | Select NextRunTime
+Get-ScheduledTask -TaskName "KaleidoChart_DailyUpdate" | Get-ScheduledTaskInfo | Select NextRunTime
 
 # 2. API サーバ（uvicorn）を停止する
 Get-CimInstance Win32_Process -Filter "name='python.exe'" |

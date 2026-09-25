@@ -4,15 +4,18 @@ REM
 REM ASCII ONLY - see the header of register_weekly_maintenance.bat for why.
 setlocal
 
-set "TASK_NAME=StockTool_RunServer"
+set "TASK_NAME=KaleidoChart_RunServer"
+set "OLD_TASK_NAME=StockTool_RunServer"
 set "SCRIPT_PATH=%~dp0run_server.bat"
 
-echo Registering Run StockTool Server Task...
+echo Registering Run KaleidoChart Server Task...
 
 if not defined SCRIPT_PATH goto :err_no_path
 if "%SCRIPT_PATH%"=="" goto :err_no_path
 if not exist "%SCRIPT_PATH%" goto :err_no_file
 
+REM Remove the task registered under the old project name (StockTool).
+schtasks /delete /tn "%OLD_TASK_NAME%" /f >nul 2>&1
 schtasks /delete /tn "%TASK_NAME%" /f >nul 2>&1
 schtasks /create /tn "%TASK_NAME%" /tr "\"%SCRIPT_PATH%\"" /sc onstart /f
 if errorlevel 1 goto :err_create

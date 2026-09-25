@@ -6,7 +6,7 @@ cd /d "%~dp0../../"
 call venv\Scripts\activate.bat
 
 echo =========================================================
-echo   StockTool - Complete Data Pipeline Rebuild (Step 3)
+echo   KaleidoChart - Complete Data Pipeline Rebuild (Step 3)
 echo   Running Safely in Sandbox (stocktool_restoring.db)
 echo =========================================================
 echo.

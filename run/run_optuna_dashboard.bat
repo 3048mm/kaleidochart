@@ -3,7 +3,7 @@ chcp 65001 > nul
 cd /d "%~dp0\.."
 
 echo =========================================================
-echo  StockTool - Optuna Dashboard (Port 8080)
+echo  KaleidoChart - Optuna Dashboard (Port 8080)
 echo =========================================================
 echo.
 
