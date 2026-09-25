@@ -21,10 +21,10 @@ backtest_dir = os.path.join(backend_dir, 'backtest')
 if backtest_dir not in sys.path:
     sys.path.insert(0, backtest_dir)
 
-from backtest.backtest_runner import preload_data, run_single_strategy
+from backtest.backtest_runner import preload_data, run_single_strategy, resolve_backtest_db_path
 from backtest.backtest_simulator import ExitRules
 from backtest.common_constraints import load_min_avg_dollar_volume_21, inject_liquidity_floor, load_tax_rate
-from db.database import init_db
+from db.database import init_db, get_active_db_path
 from db import database
 
 # Configure optuna logging
@@ -60,6 +60,24 @@ def resolve_data_source(data_source: str | None = None, active_db_path: str | No
     _resolved_master_files = master_files
     _resolved_data_source_meta = meta
     return master_files, meta
+
+
+def resolve_all_child_data_source(data_source: str | None = None, active_db_path: str | None = None) -> str:
+    """`--strategy all` の子プロセスへ渡す ``--data-source`` を、親で1回だけ解決して確定する。
+
+    子プロセスは自分でポインタ/バックアップを探索し直すため、実行が長時間（数時間〜十数時間）
+    に及ぶと daily update や自動削除で戦略ごとに世代がずれる（backtest_stable_data_plan.md
+    §6.3 R4）。ここで確定したバックアップ名を子へ渡せば全戦略が同じ世代を読む。
+    ``"latest"`` は世代を CLI で固定できないため、そのまま返し警告を出す。
+    """
+    _, meta = resolve_data_source(data_source, active_db_path=active_db_path)
+    if meta["data_source"] == "backup":
+        return meta["backup_name"]
+    logger.warning(
+        "--strategy all: data_source='latest' が解決されました。実行中に daily update や "
+        "自動削除（最新2世代保持）で世代が変わりうります（backtest_stable_data_plan.md §6.3 R4）。"
+    )
+    return "latest"
 
 
 def _backup_sqlite_file(db_path: str) -> str:
@@ -844,7 +862,19 @@ def main():
         names = list_optimizable_strategies(config)
         print(f"--strategy all: 最適化対象 {len(names)} 戦略を順に実行します（各 {args.trials} trials）:", flush=True)
         print("  " + ", ".join(names), flush=True)
-        failed = run_all_strategies(config, args.trials, args.storage, args.n_jobs, args.data_source)
+
+        # 参照先を親で1回だけ解決し、確定した世代（backup ならバックアップ名）を
+        # 子プロセスに渡す（backtest_stable_data_plan.md §6.3 R4）。
+        project_root_all = os.path.dirname(backend_dir)
+        config_path_app_all = os.path.join(project_root_all, 'config.toml')
+        with open(config_path_app_all, 'rb') as f:
+            config_app_all = tomli.load(f)
+        db_path_main_all = os.path.join(project_root_all, config_app_all['system']['db_path'])
+        init_db(db_path_main_all)
+        active_db_path_all = resolve_backtest_db_path(get_active_db_path())
+        child_data_source = resolve_all_child_data_source(args.data_source, active_db_path_all)
+
+        failed = run_all_strategies(config, args.trials, args.storage, args.n_jobs, child_data_source)
         print("\n" + "=" * 70, flush=True)
         print(f"  all 完了: 成功 {len(names) - len(failed)} / {len(names)} 戦略", flush=True)
         if failed:
@@ -876,9 +906,11 @@ def main():
     periods = parse_optimization_periods(config)
 
     # 参照先は開始時に1回だけ解決し、全期間で同じ Parquet マスタ世代を使う
-    # （backtest_stable_data_plan.md §3-C）。"latest" は db_path_main（現在の
-    # data ディレクトリ）を active_db_path として渡す。
-    resolve_data_source(args.data_source, active_db_path=db_path_main)
+    # （backtest_stable_data_plan.md §3-C）。"latest" は Sandbox 隔離
+    # （STOCKTOOL_DB_PATH 等）を反映した db_path を active_db_path として渡す
+    # （backtest_runner.resolve_backtest_db_path() と同じ解決経路。config.toml の
+    # DB パスを直接渡すと隔離を経由しない＝ R1）。
+    resolve_data_source(args.data_source, active_db_path=resolve_backtest_db_path(get_active_db_path()))
 
     # 2026-07-18: n_jobs=-1（後段の study.optimize）は複数トライアルを並列スレッドで
     # 実行するため、_cached_data_dict（get_cached_data のグローバルキャッシュ）に

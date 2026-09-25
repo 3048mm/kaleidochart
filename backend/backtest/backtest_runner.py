@@ -130,9 +130,18 @@ def preload_data(engine, start_date: str, end_date: str, refresh_cache: bool = F
     t0 = time.time()
 
     # refresh_cache（SQLite から再生成）はバックアップへ書き込めない。"latest" 専用。
+    # data_source 未指定（None）の場合、本番では既定が "backup" になるため、
+    # refresh_cache=True と組み合わせるとこのガードで常に ValueError になり
+    # scenario_runner.py / scenario_comparison_runner.py / verify_db_vs_cache.py
+    # （--data-source を持たない）が回避できない（R2）。
+    # refresh_cache=True かつ未指定なら "latest" を既定にする。明示的に "backup" 等を
+    # 指定した場合は従来どおり ValueError のまま（書き込み禁止の意図を守る）。
     effective_data_source = data_source
     if effective_data_source is None:
-        effective_data_source = "backup" if paths.is_production() else "latest"
+        if refresh_cache:
+            effective_data_source = "latest"
+        else:
+            effective_data_source = "backup" if paths.is_production() else "latest"
     if refresh_cache and effective_data_source != "latest":
         raise ValueError(
             f"--refresh-cache は data_source='latest' のときだけ許可されます"
@@ -745,12 +754,21 @@ def main():
     print("=" * 60)
     print()
 
+    # --db-path を明示指定したのに data_source が既定の "backup"（本番なら常に本番の
+    # バックアップ）になると、指定した DB の内容が無視されて黙って本番を読む（R3）。
+    # --db-path 明示かつ --data-source 未指定なら "latest" を既定にする。
+    effective_data_source = args.data_source
+    if args.db_path and effective_data_source is None:
+        effective_data_source = "latest"
+        print(f"  --db-path 指定のため data_source の既定を 'latest' にします"
+              f"（{args.db_path} の内容を使うため。'backup' のままだと本番バックアップを読んでしまう）。")
+
     run_backtest(
         config,
         strategy_filter=args.strategy,
         refresh_cache=args.refresh_cache,
         db_path_override=args.db_path,
-        data_source=args.data_source
+        data_source=effective_data_source
     )
 
     # Optional cleanup

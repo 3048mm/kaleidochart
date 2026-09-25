@@ -37,6 +37,63 @@ def test_resolve_data_source_sets_module_globals(monkeypatch):
     assert opt_runner._resolved_data_source_meta is sentinel_meta
 
 
+def test_resolve_all_child_data_source_returns_backup_name(monkeypatch):
+    """--strategy all: 参照先が backup に解決されたら、確定したバックアップ名を子へ渡す（R4）。"""
+    monkeypatch.setattr(
+        "pipeline.parquet_cache_manager.resolve_backtest_data_source",
+        lambda data_source, active_db_path=None: (
+            {"prices": "x.parquet"},
+            {"data_source": "backup", "backup_name": "_bk_20260925_173413", "parquet_generation": "g"},
+        ),
+    )
+
+    child_data_source = opt_runner.resolve_all_child_data_source(None, active_db_path="dummy")
+
+    assert child_data_source == "_bk_20260925_173413"
+
+
+def test_resolve_all_child_data_source_returns_latest_and_warns(monkeypatch, caplog):
+    """参照先が latest に解決されたら 'latest' をそのまま返し、世代が変わりうる旨を警告する（R4）。"""
+    monkeypatch.setattr(
+        "pipeline.parquet_cache_manager.resolve_backtest_data_source",
+        lambda data_source, active_db_path=None: (
+            {"prices": "x.parquet"},
+            {"data_source": "latest", "backup_name": None, "parquet_generation": "g2"},
+        ),
+    )
+
+    with caplog.at_level("WARNING"):
+        child_data_source = opt_runner.resolve_all_child_data_source(None, active_db_path="dummy")
+
+    assert child_data_source == "latest"
+    assert any("latest" in rec.message for rec in caplog.records)
+
+
+def test_main_resolves_data_source_via_resolve_backtest_db_path(monkeypatch):
+    """main() は config.toml の DB パスを直接渡さず、resolve_backtest_db_path 経由で
+    Sandbox 隔離（STOCKTOOL_DB_PATH 等）を反映した値を active_db_path として渡す（R1）。"""
+    seen_active_db_paths = []
+
+    def fake_resolve_data_source(data_source, active_db_path=None):
+        seen_active_db_paths.append(active_db_path)
+        raise RuntimeError("stop before actual optimization run")
+
+    monkeypatch.setattr(opt_runner, "resolve_data_source", fake_resolve_data_source)
+    monkeypatch.setattr(opt_runner, "resolve_backtest_db_path", lambda *a, **k: "isolated_db_path")
+    monkeypatch.setattr(opt_runner, "init_db", lambda *a, **k: None)
+    monkeypatch.setattr(
+        opt_runner.sys, "argv",
+        ["optimization_runner.py", "--strategy", "F_elite_momentum97", "--trials", "1"],
+    )
+
+    with pytest.raises(RuntimeError):
+        opt_runner.main()
+
+    # config.toml の DB パス（db_path_main）そのものではなく、resolve_backtest_db_path の
+    # 戻り値（Sandbox 隔離を反映済み）が active_db_path として渡っていること。
+    assert seen_active_db_paths == ["isolated_db_path"]
+
+
 def test_get_cached_data_reuses_resolved_master_files_across_periods(monkeypatch):
     """resolve_data_source で解決した後は、期間が変わっても同じ master_files を preload_data に渡す。"""
     sentinel_files = {"prices": "x.parquet"}

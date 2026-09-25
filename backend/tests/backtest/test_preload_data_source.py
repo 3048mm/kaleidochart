@@ -90,6 +90,44 @@ def test_default_data_source_is_backup_when_production(monkeypatch):
     assert seen == [None]
 
 
+def test_refresh_cache_defaults_to_latest_even_when_production(monkeypatch):
+    """本番かつ data_source 省略でも --refresh-cache は latest を既定にする（R2）。
+
+    scenario_runner.py / scenario_comparison_runner.py / verify_db_vs_cache.py は
+    --data-source を持たないため、本番で refresh_cache=True にすると常に ValueError
+    になり回避不能だった。data_source 未指定なら refresh_cache 優先で latest にする。
+    """
+    import backend.backtest.backtest_runner as br
+    import backend.pipeline.parquet_cache_manager as pcm
+
+    monkeypatch.setattr(br, "resolve_backtest_db_path", lambda *a, **k: "dummy_db_path")
+    monkeypatch.setattr("paths.is_production", lambda *a, **k: True)
+
+    calls = []
+    monkeypatch.setattr(
+        pcm, "rotate_and_archive_to_parquet",
+        lambda *a, **k: calls.append("rotate"),
+    )
+    import contextlib
+    import backend.db.database as db_module
+    monkeypatch.setattr(db_module, "get_db", lambda *a, **k: contextlib.nullcontext(object()))
+
+    def fake_resolve(ds, active_db_path=None):
+        calls.append(("resolve", ds))
+        raise RuntimeError("stop before actual file IO")
+    monkeypatch.setattr(pcm, "resolve_backtest_data_source", fake_resolve)
+
+    from backend.backtest.backtest_runner import preload_data
+    with pytest.raises(RuntimeError):
+        # ValueError（refresh_cache のガード）で落ちていないことだけを見る（= 本番でも
+        # data_source=None + refresh_cache=True で effective が 'latest' と判定されている）。
+        preload_data(None, "2020-01-01", "2020-12-31", refresh_cache=True, data_source=None)
+
+    assert calls == ["rotate", ("resolve", None)], (
+        "本番かつ data_source 未指定でも refresh_cache のガードで止まった"
+    )
+
+
 def test_default_data_source_is_latest_when_not_production(monkeypatch):
     """data_source 省略時、本番以外（ワークツリー・sandbox）なら --refresh-cache が許可される
     （= effective が 'latest' と判定されている）。"""
