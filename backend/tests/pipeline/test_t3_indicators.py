@@ -19,12 +19,16 @@
 
 該当しなければ増分経路（`state=True`）を使う。
 
-## 戻り値契約（5-6b）
+## 戻り値契約（5-6b・5-7d）
 
-`_calculate_t3_worker` の戻り値は `(ticker, sid, records, fallback_reason)` の
-4要素タプル。増分経路が使われた場合 `fallback_reason` は None、フォールバック
+`_calculate_t3_worker` の戻り値は `(ticker, sid, records, fallback_reason, warnings)` の
+5要素タプル。増分経路が使われた場合 `fallback_reason` は None、フォールバック
 した場合は上記1〜4に対応する `FALLBACK_REASON_*` のいずれか（4の場合は
 `"null_recursive_column:列名,列名"` の形式で NULL だった列名も付与される）。
+`warnings` は文字列のリストで、`first_valid_pos > warmup_bars`（本来もっと早く
+値が出ているはずなのに出ていない）の列があれば増分経路・フォールバック経路の
+いずれでも積まれる（t3_fallback_lookback_window計画 5-7d・案X。欠陥扱いには
+せず増分計算は継続する）。該当が無ければ空リスト。
 
 ## DB スキーマについて
 
@@ -59,6 +63,7 @@ from indicators.incremental_state_registry import (  # noqa: E402
 from pipeline.phases.t3_indicators import (  # noqa: E402
     _calculate_t3_worker,
     _log_fallback_summary,
+    _log_warnings_summary,
     FALLBACK_REASON_NO_SAVED_ROWS,
     FALLBACK_REASON_INSUFFICIENT_ROWS,
     FALLBACK_REASON_MULTI_DAY_GAP,
@@ -270,7 +275,7 @@ class TestCalculateT3WorkerIncrementalPath:
 
         calls = _patch_calculate_indicators(monkeypatch)
 
-        ticker, sid, records, fallback_reason = _calculate_t3_worker(
+        ticker, sid, records, fallback_reason, warnings = _calculate_t3_worker(
             SID_TARGET, 'TEST', t3_max, db_path, spy_price_only,
             skip_fetch=False, is_virtual=False, spy_latest_date=dates[-1],
         )
@@ -288,7 +293,7 @@ class TestCalculateT3WorkerIncrementalPath:
         _insert_prices(db_path, SID_TARGET, df_full)
         _insert_indicators(db_path, SID_TARGET, full_res, upto_idx=N_TOTAL - 2)
 
-        ticker, sid, records, fallback_reason = _calculate_t3_worker(
+        ticker, sid, records, fallback_reason, warnings = _calculate_t3_worker(
             SID_TARGET, 'TEST', t3_max, db_path, spy_price_only,
             skip_fetch=False, is_virtual=False, spy_latest_date=dates[-1],
         )
@@ -315,7 +320,7 @@ class TestCalculateT3WorkerFallback:
 
         calls = _patch_calculate_indicators(monkeypatch)
 
-        ticker, sid, records, fallback_reason = _calculate_t3_worker(
+        ticker, sid, records, fallback_reason, warnings = _calculate_t3_worker(
             SID_TARGET, 'TEST', None, db_path, spy_price_only,
             skip_fetch=False, is_virtual=False, spy_latest_date=dates[-1],
         )
@@ -338,7 +343,7 @@ class TestCalculateT3WorkerFallback:
 
         calls = _patch_calculate_indicators(monkeypatch)
 
-        ticker, sid, records, fallback_reason = _calculate_t3_worker(
+        ticker, sid, records, fallback_reason, warnings = _calculate_t3_worker(
             SID_TARGET, 'TEST', t3_max, db_path, spy_price_only,
             skip_fetch=False, is_virtual=False, spy_latest_date=dates[-1],
         )
@@ -360,7 +365,7 @@ class TestCalculateT3WorkerFallback:
 
         calls = _patch_calculate_indicators(monkeypatch)
 
-        ticker, sid, records, fallback_reason = _calculate_t3_worker(
+        ticker, sid, records, fallback_reason, warnings = _calculate_t3_worker(
             SID_TARGET, 'TEST', t3_max, db_path, spy_price_only,
             skip_fetch=False, is_virtual=False, spy_latest_date=dates[-1],
         )
@@ -393,7 +398,7 @@ class TestCalculateT3WorkerFallback:
 
         calls = _patch_calculate_indicators(monkeypatch)
 
-        ticker, sid, records, fallback_reason = _calculate_t3_worker(
+        ticker, sid, records, fallback_reason, warnings = _calculate_t3_worker(
             SID_TARGET, 'TEST', t3_max, db_path, spy_price_only,
             skip_fetch=False, is_virtual=False, spy_latest_date=dates[-1],
         )
@@ -418,11 +423,15 @@ class TestCalculateT3WorkerWarmupClassification:
     （単調性・ウィンドウ長との大小関係）に基づく方式に改めた。
 
     さらに t3_fallback_lookback_window計画 5-3/5-7a で、単調にNULL→非NULLへ
-    移行し前日行に値がある列は「増分継続」の対象に変わり（旧仕様の
-    `warmup_in_progress` は廃止）、そのうち `first_valid_pos > warmup_bars`
-    （ウィンドウ内での最初の非NULL位置が本来の必要本数を超えている＝
-    確実に欠陥）のケースは欠陥判定に含まれるよう改訂した。本クラスは
-    この分類（欠陥／判別不能／増分継続／欠陥（単調だが遅すぎる））を固定する。
+    移行し前日行に値がある列は「増分継続」の対象に変わった（旧仕様の
+    `warmup_in_progress` は廃止）。5-7aでは、そのうち `first_valid_pos >
+    warmup_bars`（ウィンドウ内での最初の非NULL位置が本来の必要本数を超えて
+    いる）のケースを欠陥判定に含めていたが、5-7d（G3 2周目 R8/R9・案X）で
+    「欠陥ではなくWARNINGのみ・増分計算は継続する」に改訂した（欠陥扱いに
+    するとSQLite504本の全期間計算に回ってしまい、本計画が断ち切ろうとした
+    NULL連鎖を再び起こすため。また warmup_bars は実測値で誤判定の余地が
+    あるため）。本クラスはこの分類（欠陥／判別不能／増分継続／増分継続＋警告）
+    を固定する。
     """
 
     def test_ウィンドウ全体がnullかつwarmup_barsがk未満なら欠陥になる(self, db_path, monkeypatch):
@@ -446,7 +455,7 @@ class TestCalculateT3WorkerWarmupClassification:
 
         calls = _patch_calculate_indicators(monkeypatch)
 
-        ticker, sid, records, fallback_reason = _calculate_t3_worker(
+        ticker, sid, records, fallback_reason, warnings = _calculate_t3_worker(
             SID_TARGET, 'TEST', t3_max, db_path, spy_price_only,
             skip_fetch=False, is_virtual=False, spy_latest_date=dates[-1],
         )
@@ -484,7 +493,7 @@ class TestCalculateT3WorkerWarmupClassification:
 
         calls = _patch_calculate_indicators(monkeypatch)
 
-        ticker, sid, records, fallback_reason = _calculate_t3_worker(
+        ticker, sid, records, fallback_reason, warnings = _calculate_t3_worker(
             SID_TARGET, 'TEST', t3_max, db_path, spy_price_only,
             skip_fetch=False, is_virtual=False, spy_latest_date=dates[-1],
         )
@@ -533,7 +542,7 @@ class TestCalculateT3WorkerWarmupClassification:
 
         calls = _patch_calculate_indicators(monkeypatch)
 
-        ticker, sid, records, fallback_reason = _calculate_t3_worker(
+        ticker, sid, records, fallback_reason, warnings = _calculate_t3_worker(
             SID_TARGET, 'TEST', t3_max, db_path, spy_price_only,
             skip_fetch=False, is_virtual=False, spy_latest_date=dates[-1],
         )
@@ -583,7 +592,7 @@ class TestCalculateT3WorkerWarmupClassification:
 
         calls = _patch_calculate_indicators(monkeypatch)
 
-        ticker, sid, records, fallback_reason = _calculate_t3_worker(
+        ticker, sid, records, fallback_reason, warnings = _calculate_t3_worker(
             SID_TARGET, 'TEST', t3_max, db_path, spy_price_only,
             skip_fetch=False, is_virtual=False, spy_latest_date=dates[-1],
         )
@@ -606,6 +615,52 @@ class TestCalculateT3WorkerWarmupClassification:
         )
         assert 'rs_momentum_e200' in compare_cols
 
+    def test_rs_momentum_e200が実値を持つ履歴でも増分結果が全履歴計算と一致する(self, db_path, monkeypatch):
+        """t3_fallback_lookback_window計画 5-7e（G3 2周目 R11）: 5-7bのテスト
+        （n_short=750）は `rs_momentum_e200`（warmup_bars=810）の真値がまだ
+        NaNのため、NaN==NaNの一致しか確認できていなかった。本テストは
+        n_short=850（>810）にして `rs_momentum_e200` が最終行で実値を持つ
+        ケースを固定し、増分経路・全列（`rs_momentum_e200` を含む）が全履歴
+        計算と一致することを確認する（rs_roc_ema_200の遷移点611もウィンドウ
+        [449,848]の内側にある）。"""
+        n_short = 850
+        dates, df_full, spy_full, full_res, spy_price_only = _build_short_scenario(n_short)
+        t3_max = dates[n_short - 2]
+        _insert_prices(db_path, SID_TARGET, df_full)
+        _insert_indicators(db_path, SID_TARGET, full_res, upto_idx=n_short - 2)
+
+        # 前提確認: rs_roc_ema_200の遷移点(611)がウィンドウ[449,848]の内側にあり、
+        # rs_momentum_e200が最終行で実値（NaNではない）を持つこと。
+        assert pd.isna(full_res['rs_roc_ema_200'].iloc[600])
+        assert not pd.isna(full_res['rs_roc_ema_200'].iloc[612])
+        assert not pd.isna(full_res['rs_momentum_e200'].iloc[n_short - 2]), (
+            'rs_momentum_e200が最終行で実値を持つ前提が崩れている'
+            '（warmup_bars=810の実測値がレジストリと乖離した可能性）'
+        )
+
+        calls = _patch_calculate_indicators(monkeypatch)
+
+        ticker, sid, records, fallback_reason, warnings = _calculate_t3_worker(
+            SID_TARGET, 'TEST', t3_max, db_path, spy_price_only,
+            skip_fetch=False, is_virtual=False, spy_latest_date=dates[-1],
+        )
+
+        assert not isinstance(records, Exception), f'ワーカーが例外を返した: {records}'
+        assert calls == [True], f'増分経路が使われるはずが: {calls}'
+        assert fallback_reason is None, f'フォールバック理由は無いはずが: {fallback_reason}'
+        assert len(records) == 1
+        got_row = records[0]
+        ref_row = full_res.iloc[-1]
+
+        assert not pd.isna(got_row['rs_momentum_e200']), (
+            'rs_momentum_e200 は実値のはずがNULLで書かれた'
+        )
+        compare_cols = [c for c in IND_COLS if c not in _NON_STRICT_COLUMNS]
+        mismatches = _find_mismatches(ref_row, got_row, compare_cols)
+        assert not mismatches, (
+            f'増分経路の結果が全期間計算（全履歴を1回で計算した値）と不一致: {mismatches}'
+        )
+
     def test_ウィンドウ全体がnullかつwarmup_barsがk以上なら判別不能になる(self, db_path, monkeypatch):
         """§3.5 ケース3: `rs_roc_ema_200`（warmup_bars=611）は増分ウィンドウ長
         K（=max_lookback()=400）より大きいため、ウィンドウ全体がNULLでも
@@ -625,7 +680,7 @@ class TestCalculateT3WorkerWarmupClassification:
 
         calls = _patch_calculate_indicators(monkeypatch)
 
-        ticker, sid, records, fallback_reason = _calculate_t3_worker(
+        ticker, sid, records, fallback_reason, warnings = _calculate_t3_worker(
             SID_TARGET, 'TEST', t3_max, db_path, spy_price_only,
             skip_fetch=False, is_virtual=False, spy_latest_date=dates[-1],
         )
@@ -639,13 +694,14 @@ class TestCalculateT3WorkerWarmupClassification:
         assert 'rs_roc_ema_200' in fallback_reason
         assert FALLBACK_REASON_NULL_RECURSIVE_COLUMN not in fallback_reason
 
-    def test_単調移行でもfirst_valid_posがwarmup_barsを超えていれば欠陥になる(self, db_path, monkeypatch):
-        """t3_fallback_lookback_window計画 5-7a（G3 1周目 R1/R6）: 単調に
+    def test_単調移行でfirst_valid_posがwarmup_barsを超えていても増分継続しwarningsに積まれる(self, db_path, monkeypatch):
+        """t3_fallback_lookback_window計画 5-7d（G3 2周目 R8/R9・案X）: 単調に
         NULL→非NULLへ移行していても（値→NULLへの回帰は無い）、ウィンドウ内での
         最初の非NULL位置（`first_valid_pos`）が `warmup_bars`（ema_200=199）を
-        超えていれば、本来もっと早く値が出ているはずなのに出ていないことになり、
-        確実な欠陥として扱う（ウィンドウ内位置は銘柄の真の先頭からの絶対位置
-        以下になるはずなので、正常なら `first_valid_pos <= warmup_bars`）。"""
+        超えている場合、5-7aでは欠陥としてフォールバックしていたが、5-7dで
+        WARNINGのみに変更し増分計算は継続する（欠陥扱いにするとSQLite504本の
+        全期間計算に回ってしまい、本計画が断ち切ろうとしたNULL連鎖を再び
+        起こすため。また warmup_bars は実測値で誤判定の余地があるため）。"""
         dates, df_full, spy_full, full_res, spy_price_only = _build_scenario()
         t3_max = dates[N_TOTAL - 2]
         _insert_prices(db_path, SID_TARGET, df_full)
@@ -653,7 +709,8 @@ class TestCalculateT3WorkerWarmupClassification:
 
         # ウィンドウ（K本、絶対位置[N_TOTAL-1-K, N_TOTAL-2]）の先頭300行の
         # ema_200 をNULLにする。warmup_bars(199) < 300 なので、本来なら
-        # とうにウォームアップ完了しているはず＝欠陥。残りは正しい値のまま
+        # とうにウォームアップ完了しているはず（誤判定の可能性はあるが
+        # 5-7dではこれも増分継続の対象）。残りは正しい値のまま
         # （単調で最終行にも値がある）。
         window_start_idx = N_TOTAL - 1 - K
         null_dates = [str(d) for d in dates[window_start_idx:window_start_idx + 300]]
@@ -669,23 +726,32 @@ class TestCalculateT3WorkerWarmupClassification:
 
         calls = _patch_calculate_indicators(monkeypatch)
 
-        ticker, sid, records, fallback_reason = _calculate_t3_worker(
+        ticker, sid, records, fallback_reason, warnings = _calculate_t3_worker(
             SID_TARGET, 'TEST', t3_max, db_path, spy_price_only,
             skip_fetch=False, is_virtual=False, spy_latest_date=dates[-1],
         )
 
         assert not isinstance(records, Exception), f'ワーカーが例外を返した: {records}'
-        assert calls == [None], f'全期間計算（state=None）にフォールバックするはずが: {calls}'
-        assert fallback_reason is not None
-        assert fallback_reason.startswith(FALLBACK_REASON_NULL_RECURSIVE_COLUMN + ':'), (
-            f'first_valid_pos(300) > warmup_bars(199)は欠陥のはずが: {fallback_reason}'
+        assert calls == [True], (
+            f'first_valid_pos > warmup_barsでも増分経路が使われるはずが: {calls}'
         )
-        assert 'ema_200' in fallback_reason
+        assert fallback_reason is None, (
+            f'5-7dではWARNINGのみでフォールバック理由は無いはずが: {fallback_reason}'
+        )
+        assert len(warnings) == 1, f'ema_200のwarningが1件積まれるはずが: {warnings}'
+        assert warnings[0].startswith('null_prefix_exceeds_warmup:ema_200'), (
+            f'警告の列名・接頭辞が期待どおりでない: {warnings[0]}'
+        )
+        assert 'first_valid_pos=300' in warnings[0] and 'warmup_bars=199' in warnings[0], (
+            f'警告に実測値が含まれるはずが: {warnings[0]}'
+        )
 
     def test_first_valid_posがwarmup_barsと一致するのは境界として増分継続になる(self, db_path, monkeypatch):
         """5-7a の境界値: `first_valid_pos == warmup_bars` は「ウィンドウが銘柄の
         真の先頭と一致する場合に起こりうる正常系」であり、欠陥ではなく増分継続の
-        対象になる。"""
+        対象になる。t3_fallback_lookback_window計画 5-7e（R12）: 境界ケースでも
+        出力行を全履歴計算と比較する（callsの確認だけでは値が壊れていても
+        気づけない）。"""
         dates, df_full, spy_full, full_res, spy_price_only = _build_scenario()
         t3_max = dates[N_TOTAL - 2]
         _insert_prices(db_path, SID_TARGET, df_full)
@@ -707,7 +773,7 @@ class TestCalculateT3WorkerWarmupClassification:
 
         calls = _patch_calculate_indicators(monkeypatch)
 
-        ticker, sid, records, fallback_reason = _calculate_t3_worker(
+        ticker, sid, records, fallback_reason, warnings = _calculate_t3_worker(
             SID_TARGET, 'TEST', t3_max, db_path, spy_price_only,
             skip_fetch=False, is_virtual=False, spy_latest_date=dates[-1],
         )
@@ -716,8 +782,14 @@ class TestCalculateT3WorkerWarmupClassification:
         assert calls == [True], (
             f'first_valid_pos == warmup_barsは境界として増分継続のはずが: {calls}'
         )
-        assert fallback_reason is None, (
-            f'境界（等号）は欠陥ではないはずが: {fallback_reason}'
+        assert fallback_reason is None
+        assert len(records) == 1
+        got_row = records[0]
+        ref_row = full_res.iloc[-1]
+        compare_cols = [c for c in IND_COLS if c not in _NON_STRICT_COLUMNS]
+        mismatches = _find_mismatches(ref_row, got_row, compare_cols)
+        assert not mismatches, (
+            f'境界ケースの増分結果が全期間計算と不一致: {mismatches}'
         )
 
 
@@ -734,7 +806,7 @@ class TestCalculateT3WorkerSpyExclusion:
 
         calls = _patch_calculate_indicators(monkeypatch)
 
-        ticker, sid, records, fallback_reason = _calculate_t3_worker(
+        ticker, sid, records, fallback_reason, warnings = _calculate_t3_worker(
             SID_SPY, 'SPY', t3_max, db_path, spy_full[['date', 'close', 'volume']],
             skip_fetch=False, is_virtual=False, spy_latest_date=dates[-1],
         )
@@ -870,3 +942,50 @@ class TestLogFallbackSummary:
         # 「いずれも...全期間計算そのものの結果は正確です」という一括の断定は禁止
         # （判別不能な列については正確性を保証できないため）。
         assert 'いずれも' not in msg, f'判別不能を含むのに一括で正確と主張している: {msg}'
+
+
+class TestLogWarningsSummary:
+    """t3_fallback_lookback_window計画 5-7d: `first_valid_pos > warmup_bars` の
+    WARNINGを、銘柄ごとに1行ずつではなくフェーズ終了時に1回だけ集計してログ
+    出力する（`_log_warnings_summary`）ことの固定。"""
+
+    def test_警告が無ければログを出さない(self, caplog):
+        logger = logging.getLogger('test_t3_warnings_summary_empty')
+        with caplog.at_level(logging.WARNING, logger=logger.name):
+            _log_warnings_summary(logger, [])
+
+        assert not caplog.records, f'警告0件でログが出た: {[r.message for r in caplog.records]}'
+
+    def test_警告を件数銘柄先頭20件列でまとめて1回だけwarningに出す(self, caplog):
+        logger = logging.getLogger('test_t3_warnings_summary_nonempty')
+        ticker_warnings = [
+            ('AAA', 'null_prefix_exceeds_warmup:ema_200(first_valid_pos=300>warmup_bars=199)'),
+            ('BBB', 'null_prefix_exceeds_warmup:rs_roc_ema_200(first_valid_pos=700>warmup_bars=611)'),
+        ]
+        with caplog.at_level(logging.WARNING, logger=logger.name):
+            _log_warnings_summary(logger, ticker_warnings)
+
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1, f'集計は1回だけのはずが: {[r.message for r in warnings]}'
+        msg = warnings[0].message
+        assert '2 件' in msg
+        assert 'AAA' in msg and 'BBB' in msg
+        assert 'ema_200' in msg and 'rs_roc_ema_200' in msg
+        assert '--rebuild-from T3' in msg
+
+    def test_銘柄が21件以上でも先頭20件だけ列挙し残り件数を示す(self, caplog):
+        logger = logging.getLogger('test_t3_warnings_summary_many_tickers')
+        ticker_warnings = [
+            (f'T{i:02d}', f'null_prefix_exceeds_warmup:ema_200(first_valid_pos={300+i}>warmup_bars=199)')
+            for i in range(25)
+        ]
+        with caplog.at_level(logging.WARNING, logger=logger.name):
+            _log_warnings_summary(logger, ticker_warnings)
+
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        msg = warnings[0].message
+        assert '25 件' in msg
+        assert 'T00' in msg and 'T19' in msg
+        assert 'T20' not in msg, f'先頭20件を超える銘柄名まで列挙されている: {msg}'
+        assert '他5銘柄' in msg

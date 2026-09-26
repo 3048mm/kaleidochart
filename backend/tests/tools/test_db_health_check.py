@@ -401,10 +401,11 @@ def test_warmup_null_absent_when_all_present(warmup_health_db):
 # ============================================================
 #
 # 旧実装は比較対象に t3_count（ホットキャッシュ行数。実測最大503）を使っていたため、
-# warmup_bars が503を超える列（rs_roc_ema_200=511・rs_momentum_e200=610）には
-# 条件が永久に成立せず、検査そのものが本不具合の当事者に到達できなかった
-# （2回目のcode-review指摘1）。ここでは「t3_countだけでは届かないが、
-# Parquetの真の履歴本数を使えば届く」状況を作って修正を固定する。
+# warmup_bars が503を超える列（A-full後の現行値: rs_roc_ema_200=611・
+# rs_momentum_e200=810。当時の実測値は511/610）には条件が永久に成立せず、
+# 検査そのものが本不具合の当事者に到達できなかった（2回目のcode-review指摘1）。
+# ここでは「t3_countだけでは届かないが、Parquetの真の履歴本数を使えば届く」
+# 状況を作って修正を固定する。
 
 def _write_parquet_history(parquet_root, symbol_row_counts: dict) -> str:
     """`{symbol_id: 行数}` から最小限の `prices` Parquet マスタを組み立てる（5-15d）。
@@ -453,8 +454,9 @@ def test_warmup_null_reachable_via_parquet_true_history(warmup_health_db, tmp_pa
     """5-15d本体（2回目のcode-review指摘1）: t3_count（3）だけでは warmup_bars（15）に
     届かない銘柄でも、Parquetの真の履歴本数（20）を使えば検出できる。
 
-    これが本番の rs_roc_ema_200（t3_count最大503 <= warmup_bars511）/
-    rs_momentum_e200（同610）が旧実装では検出不能だった構造そのもの。
+    これが本番の rs_roc_ema_200（t3_count最大503 <= warmup_bars611・
+    当時の実測値は511）/ rs_momentum_e200（同810。当時610）が
+    旧実装では検出不能だった構造そのもの。
     """
     add, _ = warmup_health_db
     add(1, "SPY", _SPY_ROWS_WARMUP)
