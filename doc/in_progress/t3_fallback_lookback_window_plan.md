@@ -103,6 +103,8 @@
 - [x] **5-7a**（G3 1周目・R1/R6）単調移行の列でも、**ウィンドウ内の NULL 区間の長さ（`first_valid_pos`）が `warmup_bars` を超えていれば欠陥**として扱う（ウィンドウ内位置 ≤ 絶対位置なので、正常なら `first_valid_pos <= warmup_bars`。超えていれば確実に欠陥）。`warmup_bars` 未確定の列は従来どおり増分継続。使われていない `warmup_cols` はこの判定に使うか削除。テスト: NULL 区間が warmup_bars を超える列（例 `ema_200` を 300 行 NULL）は `null_recursive_column` でフォールバックすること — **2026-09-26 完了**。`first_valid_pos > warmup_bars` を欠陥に追加（境界 == は増分継続）。red: 300行NULLの `ema_200` が増分継続になっていた。**実データでの発火件数は sandbox（修復＋日次1回後）・本番（修復前）とも 0 件**（`tmp/t3_prefix_check.py`）＝健全なデータで誤発火しない
 - [x] **5-7b**（同・R5）テスト追加: WINDOW 列の rolling 窓が NULL→値ありの遷移をまたぐケース（`rs_momentum_e200` の 200 本窓が 611 本目より前にかかる。履歴 700〜810 本程度）で、増分結果が全履歴計算と一致する（真値が NaN なら NaN で一致）こと — **2026-09-26 完了**。履歴750本（窓 [349,748] が遷移点611をまたぐ）で増分経路を通り、`rs_momentum_e200` を含む全列が全履歴計算と一致
 - [x] **5-7c**（同・R3/R4/R7）コメント・docstring の是正: 「過去行の NULL は無関係」は RECURSIVE 列のシードについてのみ正しく、WINDOW 列（`rs_ratio_eN`・`rs_momentum_eN`）は**保存済みの NULL 区間が真のウォームアップと一致していることが前提**である旨に直す（5-7a の検査がその前提を守る）。`_log_fallback_summary` の「正当なウォームアップ中」、`511`（→611）、`incremental_merge.py` の「K 行すべて非 NaN のときだけ増分」という前提記述（L41-48・82-86・161-169・202-205 付近）、テスト docstring の3区分の記述 — **2026-09-26 完了**。t3_indicators.py・incremental_merge.py・テストの docstring を「保存済みNULL区間＝真のウォームアップ」前提の記述に是正、511→611。全件 2068 passed / 1 skipped
+- [ ] **5-7d**（G3 2周目 R8/R9・**2026-09-26 ユーザー判断: 案 X**）5-7a の「`first_valid_pos > warmup_bars`」を**フォールバック（欠陥）から WARNING のみに変更し、増分計算は継続**する。理由: 欠陥扱いにすると SQLite 504本の全期間計算に回り、EMA のずれと `rs_roc_ema_200` の NULL 連鎖（本計画が断ち切る経路）を起こす（R8）。`warmup_bars` は実測値で、先頭入力 NaN の銘柄では真の立ち上がりが後ろにずれるため誤判定がありうる（R9）。実装: `_calculate_t3_worker` の戻り値を `(ticker, sid, records, fallback_reason, warnings)` の5要素にし（`warnings` は列名を含む文字列のリスト。増分経路でも返せる）、`sync_phase_t3_indicators` がフェーズ終了時に件数・銘柄（先頭20件）・列を1回だけ WARNING で出す。推奨対処は `--rebuild-from T3`。例外時の戻り値・wrapper・全テストのアンパックを5要素に揃える
+- [ ] **5-7e**（G3 2周目 R10〜R14）①`incremental_merge.py` の「呼び出し側が保証する」を「上限（`first_valid_pos <= warmup_bars`）と単調性だけを検査し、上限内の欠陥的な NULL 区間は検出できない」と正確に書く（R10）②テスト: 履歴 ≥ 811 本（例 850）で `rs_momentum_e200` が**実値**を持つケースの一致（R11）、境界ケース（`first_valid_pos == warmup_bars`）でも出力行を全履歴計算と比較（R12）③`incremental_state_registry.py` の `columns_with_undeterminable_warmup` docstring、`test_db_health_check.py` のコメントの 511/610 を 611/810 系の現行値に（R13）④`warmup_thresholds.get(col)` の重複を分岐の外へ（R14）
 - [ ] **5-7** G3（`/code-review medium`。種別 B なら high）
 - [ ] **5-8** merge → `deploy_after_merge.ps1`（A。ユーザー実行）→ 翌日の日次更新ログで `null_recursive_column` が 0〜数件であることを確認
 - [ ] **5-9** 計画書を `doc/completed/` へ移動
@@ -161,6 +163,13 @@
 | 1 | R5: rolling 窓が遷移をまたぐケースのテストが無い | 中 | 対応 → 5-7b | sandbox では実銘柄（611〜1011本）で一致を確認済みだが、テストで固定する |
 | 1 | R6: `warmup_cols` が未使用 | 低 | 対応 → 5-7a | 5-7a の検査に使う |
 | 1 | R7: `_log_fallback_summary` 等に「正当なウォームアップ中」「511」の古い記述 | 低 | 対応 → 5-7c | |
+| 2 | R8: 5-7a の欠陥判定は SQLite 504本の全期間計算に回すため、EMA のずれと `rs_roc_ema_200` の NULL 連鎖を再び起こす | 高 | 対応 → 5-7d | 往復上限（2周）に達したためユーザーへエスカレーション → **2026-09-26 案 X（WARNING のみ・増分継続）** |
+| 2 | R9: `warmup_bars` は実測値。先頭入力 NaN の銘柄は真の立ち上がりが後ろにずれ、健全な銘柄を欠陥と誤判定しうる（`rs_blue_dot_age` は warmup 0） | 高 | 対応 → 5-7d | 案 X なら誤判定しても警告だけで害がない。実データでの発火は現時点 0 件（§5 5-7a） |
+| 2 | R10: `incremental_merge.py` の「呼び出し側が保証する」は過大（上限しか検査していない） | 中 | 対応 → 5-7e | |
+| 2 | R11: 遷移をまたぐテスト（750本）は `rs_momentum_e200` の真値が NaN で、NaN==NaN しか確認していない | 中 | 対応 → 5-7e | 811本以上のケースを追加 |
+| 2 | R12: 境界テストが出力値を比較していない | 低 | 対応 → 5-7e | |
+| 2 | R13: registry の docstring・health check テストに 511/610 が残る | 低 | 対応 → 5-7e | |
+| 2 | R14: `warmup_thresholds.get(col)` の重複 | 低 | 対応 → 5-7e | |
 
 ## 7. 途中発生した課題
 
