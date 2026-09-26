@@ -1,5 +1,8 @@
 @echo off
-REM Registers the API server task (runs at PC startup) in Task Scheduler.
+REM Registers the API server task (runs at user logon) in Task Scheduler.
+REM
+REM ONLOGON, not ONSTART - on Windows Home a startup-triggered task running as
+REM the interactive user never fires, so the server would not come up.
 REM
 REM ASCII ONLY - see the header of register_weekly_maintenance.bat for why.
 setlocal
@@ -15,7 +18,7 @@ if "%SCRIPT_PATH%"=="" goto :err_no_path
 if not exist "%SCRIPT_PATH%" goto :err_no_file
 
 schtasks /delete /tn "%TASK_NAME%" /f >nul 2>&1
-schtasks /create /tn "%TASK_NAME%" /tr "\"%SCRIPT_PATH%\"" /sc onstart /f
+schtasks /create /tn "%TASK_NAME%" /tr "\"%SCRIPT_PATH%\"" /sc onlogon /f
 if errorlevel 1 goto :err_create
 
 REM Verify by reading the command back - schtasks reports SUCCESS even when the

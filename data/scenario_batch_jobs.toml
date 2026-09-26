@@ -202,3 +202,24 @@ source = "optuna"
 study_name = "H3_structure_trend_line_break"
   [job.portfolio]
   max_positions = 4
+
+# =============================================================
+# 2026-09-26 追加: 型3 で未検証だった戦略（min_periods_warmup 後の再最適化結果で確認）
+# =============================================================
+[[job]]
+name = "C1"
+strategy_code = "C1_rrg_leading_in"
+source = "optuna"
+study_name = "C1_rrg_leading_in"
+
+[[job]]
+name = "C2"
+strategy_code = "C2_rrg_improving_in"
+source = "optuna"
+study_name = "C2_rrg_improving_in"
+
+[[job]]
+name = "H3c"
+strategy_code = "H3c_structure_tlb_contraction"
+source = "optuna"
+study_name = "H3c_structure_tlb_contraction"

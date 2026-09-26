@@ -634,8 +634,11 @@ def get_scenario_summary(name: str):
             else:
                 cagr = 0.0
         else:
-            cagr = float(cagr)
-            
+            # scenario_summary.json の cagr はパーセント（scenario_reporter が ×100 で保存）。
+            # 上の動的計算・Monte Carlo 集計と同じ比率に揃える（揃えないとフロントの
+            # `cagr * 100` で Run 個別タブだけ100倍表示になる）
+            cagr = float(cagr) / 100.0
+
         # 3. Calculate and inject exact yearly returns dynamically from scenario_equity_curve.csv
         yearly_returns = {}
         equity_file = os.path.join(scenario_path, "scenario_equity_curve.csv")
@@ -1122,12 +1125,10 @@ def get_scenario_trades(name: str):
                 # Map exit_reason as primary reason, fallback to reason
                 reason_val = row.get("exit_reason", row.get("reason", ""))
                 
-                # Convert pnl ratio (e.g. -0.05) to percentage (e.g. -5.0).
-                raw_pnl = float(row.get("pnl_pct", 0.0))
-                if abs(raw_pnl) > 0.0 and abs(raw_pnl) < 1.0:
-                    pnl_pct_val = raw_pnl * 100.0
-                else:
-                    pnl_pct_val = raw_pnl
+                # pnl_pct は常に比率（scenario_portfolio が比率で書く。-0.05 → -5.0%）。
+                # 旧実装は「|x| < 1 なら比率」と推測していたため、+100% 以上の取引
+                # （比率 >= 1）だけ変換されず 1/100 で表示されていた（ABVX +677% → +6.77%）
+                pnl_pct_val = float(row.get("pnl_pct", 0.0)) * 100.0
                 
                 trades.append(BacktestTradeLogItem(
                     date=date_val,

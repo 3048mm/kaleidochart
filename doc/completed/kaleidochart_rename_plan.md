@@ -1,8 +1,8 @@
 # プロジェクト名・フロントエンド名を「KaleidoChart」に統一するリネーム作業 計画書
 
-- **ステータス**: 🚧 進行中(ワークツリー作業完了・G3 レビュー待ち → merge 後に実機移行)
+- **ステータス**: ✅ 完了 — 表示名・タスク名を KaleidoChart に統一。移行後の初回日次実行(2026-09-26 07:00)成功
 - **実施者**: AI エージェント(Claude)
-- **開始日**: 2026-09-18 / **完了日**: —
+- **開始日**: 2026-09-18 / **完了日**: 2026-09-26
 - **作業ブランチ**: `rename/kaleidochart-branding`(ワークツリー)
 - **着手条件**: 他セッション・他タスクが一段落してから(ユーザー指示)
 - **変更種別**: A(コード・文書の文字列のみ)＋ **実機タスクスケジューラの移行(手動操作・merge 後)**
@@ -115,12 +115,18 @@ Unregister-ScheduledTask -TaskName 'StockTool_DailyUpdate','StockTool_RunServer'
 - [x] register_daily_task.bat を実機構成(単一タスク・火〜土 07:00/13:00)に作り直し
 - [x] doc/db_recovery_procedure.md・parquet-data-quality skill のタスク名、`sync_skills.py --apply`
 - [x] CLAUDE.md にブランド名の一文
-- [ ] 検証(§6)・G3 ブランチレビュー → ワークツリーでコミット
+- [x] 検証(§6)・G3 ブランチレビュー → ワークツリーでコミット(bbc2e7c / 3220c2e、merge 9ff392c)
 
 **merge 後(実機)**
-- [ ] 実機タスクの XML 退避 → 新名で登録 → 確認 → 旧名削除(§3 手順)
-- [ ] 翌営業日の 07:00 実行が `KaleidoChart_DailyUpdate` で成功したこと(LastRunTime / LastTaskResult=0)を確認
-- [ ] 計画書を `doc/completed/` へ移動
+- [x] 実機タスクの移行(2026-09-26 02:39〜02:41 にユーザーが実施。XML 退避なし)。
+  確認結果: `StockTool_*` 0件。`KaleidoChart_DailyUpdate` は火〜土 07:00/13:00・同一コマンド・Interactive/tk で本番と一致。
+  `KaleidoChart_WeeklyMaintenance_Sunday_0200` は日曜 02:00。`KaleidoChart_RunServer` は**ログオン時トリガー**
+  (ユーザー回答: Windows Home では起動時トリガーが動かないため意図的)。
+  → `register_run_server.bat` を `/sc onlogon` に修正(2026-09-26、本体・未コミット)
+- [x] 翌営業日の 07:00 実行が `KaleidoChart_DailyUpdate` で成功したこと(LastRunTime / LastTaskResult=0)を確認
+  → 2026-09-26 07:00 起動・LastTaskResult=0・pipeline.log `Step 3 Pipeline COMPLETED SUCCESSFULLY`(1h12m53s)・
+    T2〜T5 と SPY の MAX(date)=2026-09-25(独立経路での確認: 実行結果とデータ日付)
+- [x] 計画書を `doc/completed/` へ移動
 
 ### 作業中メモ
 

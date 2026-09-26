@@ -126,6 +126,56 @@ def test_get_scenario_summary_specific(client, mock_output_dir):
     # 同ディレクトリの scenario_trade_logs.csv (pnl_pct=0.0 の1件) からフォールバック算出される
     assert data["avg_trade_pnl_pct"] == 0.0
 
+def test_get_scenario_summary_cagr_in_json_is_percent_converted_to_ratio(client, mock_output_dir):
+    """scenario_summary.json の `cagr` はパーセント（scenario_reporter が ×100 で保存）。
+
+    API は他の経路（cagr 欠落時の動的計算・Monte Carlo 集計）と同じく**比率**で返す。
+    パーセントのまま返すと、フロント（`summary.cagr * 100`）で Run 個別タブだけ
+    100倍表示（7.29% → 729%）になる。
+    """
+    sc = mock_output_dir / "scenario_with_cagr"
+    sc.mkdir()
+    (sc / "scenario_summary.json").write_text(json.dumps({
+        "start_date": "2022-01-01", "end_date": "2026-03-26",
+        "initial_capital": 100000.0, "final_capital": 134684.02,
+        "cagr": 7.29,  # パーセント表記（実ファイルと同じ）
+        "profit_factor": 1.36, "win_rate": 0.35, "total_trades": 502,
+        "max_drawdown": {"pct": 49.69, "amount": 51044.62},
+    }), encoding="utf-8")
+    resp = client.get("/api/backtest/scenario/scenario_with_cagr/summary")
+    assert resp.status_code == 200
+    assert resp.json()["cagr"] == pytest.approx(0.0729)
+
+
+def test_get_scenario_trades_pnl_pct_over_100pct_is_converted(client, mock_output_dir):
+    """scenario_trade_logs.csv の pnl_pct は常に比率（scenario_portfolio が比率で書く）。
+
+    旧実装は「|x| < 1 なら比率、それ以外はパーセント」と推測していたため、
+    +100% 以上の取引（比率 >= 1）だけ ×100 されず 1/100 で表示された
+    （実例: ABVX +676.9% が +6.77% と表示）。
+    """
+    sc = mock_output_dir / "scenario_big_winner"
+    sc.mkdir()
+    (sc / "scenario_summary.json").write_text(json.dumps({
+        "start_date": "2025-07-01", "end_date": "2025-07-31",
+        "initial_capital": 100000.0, "final_capital": 227000.0,
+        "total_trades": 3, "win_rate": 0.67, "profit_factor": 2.0,
+        "max_drawdown": {"pct": 5.0, "amount": 5000.0},
+    }), encoding="utf-8")
+    (sc / "scenario_trade_logs.csv").write_text(
+        "ticker,entry_date,exit_date,entry_price,exit_price,shares,amount,exit_reason,pnl_pct\n"
+        "ABVX,2025-07-14,2025-07-23,8.83,68.6,1417,12512.1,sma50_atr_exit,6.768969\n"
+        "DBL,2025-07-01,2025-07-10,10.0,20.0,100,1000.0,sma50_atr_exit,1.0\n"
+        "SOC,2025-07-18,2025-07-23,31.69,28.11,591,18728.8,stop_loss,-0.112969\n",
+        encoding="utf-8")
+    resp = client.get("/api/backtest/scenario/scenario_big_winner/trades")
+    assert resp.status_code == 200
+    by_ticker = {t["ticker"]: t["pnl_pct"] for t in resp.json() if t["action"] == "SELL"}
+    assert by_ticker["ABVX"] == pytest.approx(676.8969)
+    assert by_ticker["DBL"] == pytest.approx(100.0)  # 境界: ちょうど2倍
+    assert by_ticker["SOC"] == pytest.approx(-11.2969)
+
+
 def test_get_scenario_summary_latest(client, mock_output_dir):
     """Test GET /api/backtest/scenario/latest/summary dynamically resolves to the latest folder (scenario_beta)."""
     resp = client.get("/api/backtest/scenario/latest/summary")
