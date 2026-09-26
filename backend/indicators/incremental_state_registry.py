@@ -638,9 +638,10 @@ def columns_with_undeterminable_warmup() -> Tuple[str, ...]:
     履歴として実際にNULLチェックする対象＝RECURSIVE型列に限られるため。
     WINDOW型列は毎回生価格から無条件に再計算されるためこの分岐を通らず、
     `warmup_bars` がどれだけ大きくても本関数の対象にする意味が無い）。
-    2026-09-23時点では `rs_roc_ema_200`（warmup_bars=511 > K=`max_lookback()`=400）
-    の1列のみだが、将来レジストリに列が追加/変更されて増えても気づけるよう、
-    この事実自体を `test_incremental_state_registry.py` で固定する。
+    A-full後（2026-09-24時点）では `rs_roc_ema_200`（warmup_bars=611 >
+    K=`max_lookback()`=400）の1列のみだが、将来レジストリに列が追加/変更
+    されて増えても気づけるよう、この事実自体を `test_incremental_state_registry.py`
+    で固定する。
     """
     k = max_lookback()
     return tuple(sorted(

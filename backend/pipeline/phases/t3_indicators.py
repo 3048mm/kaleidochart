@@ -2,7 +2,7 @@ import time
 import logging
 import multiprocessing
 from collections import Counter
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from datetime import date
 from sqlalchemy import func
 import pandas as pd
@@ -29,8 +29,8 @@ from db.database import init_db, get_db
 # 5-15c（2回目の code-review 指摘1・5-15b の回帰）: 5-15b の実装は「その行の
 # 絶対位置（SQLiteの保持期間内での位置）が warmup_bars を超えているか」で
 # 判定していたが、SQLiteの保持行数（実測504）自体が一部の列の warmup_bars
-# （`rs_roc_ema_200`=511）より小さいため、この判定が**原理的に到達不能**
-# だった（`position > warmup_bars` が511まで届かない）。その結果、本番の
+# （`rs_roc_ema_200`=611、A-full前の実測値では511）より小さいため、この判定が
+# **原理的に到達不能**だった（`position > warmup_bars` が届かない）。その結果、本番の
 # 実際の欠陥（`rs_roc_ema_200` が全銘柄NULL）が `WARMUP_IN_PROGRESS`（正当）に
 # 誤分類され、5-6b が塞いだはずの「誰も気づかない」穴が再び開いていた。
 #
@@ -45,12 +45,35 @@ from db.database import init_db, get_db
 #   3. ウィンドウ全体がNULLで `warmup_bars >= K` なら、正当なウォームアップ中
 #      なのか欠陥なのかこの検査だけでは判別できない
 #      （`WARMUP_UNDETERMINED`。`rs_roc_ema_200` がこれに該当する）。
+#   4. ウィンドウ内でNULL→非NULLへ単調に移行している場合、最初の非NULL位置
+#      （`first_valid_pos`）が `warmup_bars` を超えていても増分計算は継続する
+#      （欠陥扱いにはしない。t3_fallback_lookback_window計画 5-7d・G3 2周目
+#      R8/R9・案X）。理由:
+#        - 欠陥扱いにするとSQLite保持本数（実測504）だけの全期間計算に回り、
+#          611本必要な`rs_roc_ema_200`にNULLを書く→翌日「単調性の破れ」と
+#          誤検出される連鎖（本計画が断ち切ろうとした経路そのもの）を再び
+#          起こしてしまう（R8）。
+#        - `warmup_bars` はA-fullの実測値であり、先頭入力がNaNの銘柄などでは
+#          真の立ち上がりが後ろにずれるため、`first_valid_pos > warmup_bars`が
+#          必ずしも欠陥を意味しない（誤判定の余地がある。R9）。
+#      代わりに `warnings` としてフェーズ終了時に1回だけWARNINGで可視化し、
+#      `--rebuild-from T3` を推奨する（銘柄ごとの個別ログは出さない）。
 FALLBACK_REASON_NO_SAVED_ROWS = 'no_saved_rows'                    # 保存済みT3行が無い（新規上場・オンボード直後）
 FALLBACK_REASON_INSUFFICIENT_ROWS = 'insufficient_saved_rows'      # 保存済み行数がK（max_lookback()）に満たない
 FALLBACK_REASON_MULTI_DAY_GAP = 'multi_day_gap'                    # 新規に書く日付が2日ぶん以上ある（または0日）
 FALLBACK_REASON_NULL_RECURSIVE_COLUMN = 'null_recursive_column'    # RECURSIVE型列が確実に欠陥（単調性の破れ、またはK>warmup_barsで全NULL）
-FALLBACK_REASON_WARMUP_IN_PROGRESS = 'warmup_in_progress'          # RECURSIVE型列が単調にNULL→非NULLへ移行中（正当・ウォームアップ中）
 FALLBACK_REASON_WARMUP_UNDETERMINED = 'warmup_undetermined'        # ウィンドウ全体がNULLかつK<=warmup_barsで判別不能（5-15c）
+# 5-15c で追加した FALLBACK_REASON_WARMUP_IN_PROGRESS は t3_fallback_lookback_window
+# 計画（5-3）で廃止した。ウィンドウ内でNULL→非NULLへ単調に移行し、最終供給行
+# （前日）に値がある列は、増分計算（RECURSIVE型列は前日値をシードに最終行だけを
+# 1歩計算する契約）自体は正しく継続できる。ただし「過去行のNULLは無関係」と
+# 言えるのはこの1歩計算のシード（前日値）についてのみであり、WINDOW型列
+# （`rs_ratio_eN`・`rs_momentum_eN` 等）はRECURSIVE型列に対する通常のrolling
+# なので、供給履歴のNULL区間が真のウォームアップと一致していること
+# （`first_valid_pos <= warmup_bars`）が正しさの前提になる。この上限は
+# **保証されない**（5-7d で超過は WARNING のみ・増分継続に変更。超過した列を
+# 持つ銘柄は WINDOW 型列に NaN・誤値を書きうる。根治はフォールバックの
+# Parquet 基点化＝issue_list の案C）。単調移行自体はフォールバック理由ではない。
 
 def _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_virtual=False, spy_latest_date: Optional[date] = None):
     """Worker function to calculate T3 for a single ticker in a separate process using direct sqlite3 connection (fast, no ORM).
@@ -68,13 +91,13 @@ def _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_vi
         除外。5-15b）の供給履歴に NaN がある
 
     RECURSIVE型列にNaNがある場合、さらに「欠陥」（`FALLBACK_REASON_NULL_RECURSIVE_COLUMN`）・
-    「正当なウォームアップ中」（`FALLBACK_REASON_WARMUP_IN_PROGRESS`）・
-    「判別不能」（`FALLBACK_REASON_WARMUP_UNDETERMINED`）の3つを区別する
-    （5-15b・5-15c。2回目の code-review 指摘1）。
+    「判別不能」（`FALLBACK_REASON_WARMUP_UNDETERMINED`）・「増分継続（正当な
+    ウォームアップ中）」の3つを区別する（5-15b・5-15c。2回目の code-review 指摘1。
+    t3_fallback_lookback_window計画 5-3 で3つめの扱いを改訂）。
 
     5-15b の初版は「NaNの行の `daily_prices` 内での位置が `warmup_bars` を
     超えているか」で判定していたが、SQLiteの保持行数（実測504）自体が
-    `rs_roc_ema_200` の `warmup_bars`（511）より小さいため、この判定が
+    `rs_roc_ema_200` の `warmup_bars`（当時511。A-full後は611）より小さいため、この判定が
     **原理的に到達不能**だった（本番の実際の欠陥が誤って「正当」に分類され
     続けていた）。5-15c で以下の、増分ウィンドウ（K本）内だけで判定できる
     性質に基づく方式へ改めた（銘柄の真の履歴長はSQLiteからは分からないため）:
@@ -89,20 +112,50 @@ def _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_vi
     3. **ウィンドウ全体がNULL・`warmup_bars >= K`** — ウィンドウが銘柄の
        真の先頭から始まっている場合は正当なウォームアップ中でもNULLに
        なりうるため、判別不能（`WARMUP_UNDETERMINED`。`rs_roc_ema_200` が該当）。
-    4. それ以外（ウィンドウ内でNULL→非NULLへ単調に移行、かつ全NULLではない）は
-       正当なウォームアップ中（`WARMUP_IN_PROGRESS`）。
+    4. それ以外（ウィンドウ内でNULL→非NULLへ単調に移行し、最終供給行＝前日に
+       値がある） — **フォールバックせず増分計算を継続する**
+       （t3_fallback_lookback_window計画 5-3）。RECURSIVE型列は前日値
+       （K-1行目）をシードに最終行だけを1歩計算する契約
+       （`incremental_merge.prev_self_seed`）なので、シードとして使う前日値
+       さえ実値であれば、それより前の行のNULLが「真のウォームアップと一致
+       している」限り増分計算の正しさに影響しない。旧仕様（5-15c）は
+       このケースも `WARMUP_IN_PROGRESS` としてフォールバックしていたが、
+       そのフォールバック先の全期間計算がSQLiteの保持本数（実測504本）
+       だけで行われるため、611本必要な `rs_roc_ema_200` にNULLを書いてしまい、
+       翌日「値→NULLへ戻った」（単調性の破れ）と誤検出される連鎖を生んでいた
+       （本計画が解消する不具合そのもの）。
+       このうち `first_valid_pos > warmup_bars`（単調ではあるが、本来もっと
+       早く値が出ているはずなのに出ていない）のケースは、5-7a では確実な
+       欠陥として `NULL_RECURSIVE_COLUMN` に分類していたが、5-7d（G3 2周目
+       R8/R9・案X）で **WARNING のみに変更し、増分計算は継続する**ように
+       改めた（欠陥扱いにするとSQLite504本の全期間計算に回ってしまい、
+       本計画が断ち切ろうとした`rs_roc_ema_200`のNULL連鎖を再び起こすため。
+       また `warmup_bars` は実測値であり、先頭入力がNaNの銘柄では真の
+       立ち上がりが後ろにずれて誤判定しうる）。該当した列は `warnings`
+       としてワーカーの戻り値に含め、呼び出し側がフェーズ終了時に1回だけ
+       集計してWARNINGログに出す。
 
     複数列で分類が割れた場合、1つの `fallback_reason` は
-    欠陥 > 判別不能 > ウォームアップ中 の優先順位で選ぶ
-    （最も注意を要する分類を呼び出し側へ伝えるため）。
-    いずれの場合も増分計算自体（rolling窓へのNaN混入）は行えないため、
-    state=None へのフォールバックという挙動そのものは変わらない
-    （変わるのは理由の分類のみ）。
+    欠陥 > 判別不能 の優先順位で選ぶ（増分継続の対象になる列は
+    フォールバック理由に寄与しない。`first_valid_pos > warmup_bars` の列も
+    増分継続の対象であり `warnings` に積まれるだけで `fallback_reason` には
+    寄与しない）。
 
-    戻り値は `(ticker, sid, records, fallback_reason)` の4要素タプル
-    （5-6b で `fallback_reason` を追加。増分経路が使われた場合は None、
-    フォールバックした場合は上記 `FALLBACK_REASON_*` のいずれか）。
-    例外発生時は `(ticker, sid, exception, None)`。
+    **WINDOW型列（`rs_ratio_eN`・`rs_momentum_eN` 等）への影響**: WINDOW型列
+    自体は毎回生価格から無条件に再計算されるため直接この判定対象ではないが、
+    その入力（RECURSIVE型列）に対して通常の rolling（`min_periods=window`）を
+    かけるだけなので、供給履歴の先頭のNULL区間が真のウォームアップと一致して
+    いる（単調・最終行に値あり）限り、rolling が返すNaN/実値も真の値と一致する
+    （詳細は `backend/indicators/incremental_merge.py` のモジュールdocstring）。
+    `first_valid_pos > warmup_bars` の列がある場合はこの前提が破れている
+    可能性があるため、上記のとおり WARNING で可視化する。
+
+    戻り値は `(ticker, sid, records, fallback_reason, warnings)` の5要素
+    タプル（5-6b で `fallback_reason` を追加、5-7d で `warnings` を追加）。
+    `warnings` は文字列のリストで、増分経路・フォールバック経路のいずれでも
+    返る（該当が無ければ空リスト）。各要素は
+    `"null_prefix_exceeds_warmup:列名(first_valid_pos=N>warmup_bars=M)"`
+    の形式で列名と実測値を含む。例外発生時は `(ticker, sid, exception, None, [])`。
     """
     try:
         import sqlite3
@@ -120,7 +173,7 @@ def _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_vi
             df_price = pd.read_sql_query(query, conn, params=(sid,))
 
             if df_price.empty:
-                return ticker, sid, [], None
+                return ticker, sid, [], None, []
 
             # sqlite3 returns date as string, parse to date object
             df_price['date'] = pd.to_datetime(df_price['date']).dt.date
@@ -132,6 +185,7 @@ def _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_vi
             # （増分経路が成立したら fallback_reason は必ず None のまま）。
             df_inc = None
             fallback_reason = None
+            prefix_warnings: List[str] = []  # 5-7d: 欠陥ではなく警告に留める事象（列名・実測値付き）
             if t3_max is None:
                 fallback_reason = FALLBACK_REASON_NO_SAVED_ROWS
             else:
@@ -194,6 +248,7 @@ def _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_vi
                             undetermined_cols = []
                             warmup_cols = []
                             for col in null_cols:
+                                warmup_bars = warmup_thresholds.get(col)  # 5-7e R14: 分岐の外で1回だけ取得
                                 notna_series = df_hist[col].notna()
                                 if notna_series.any():
                                     first_valid_pos = notna_series.idxmax()
@@ -202,10 +257,26 @@ def _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_vi
                                     if not notna_series.iloc[first_valid_pos:].all():
                                         defect_cols.append(col)
                                     else:
+                                        # 単調ではあるが、ウィンドウ内での最初の非NULL位置
+                                        # （first_valid_pos）が warmup_bars を超えている
+                                        # 場合、5-7aでは確実な欠陥としていたが、5-7d
+                                        # （G3 2周目 R8/R9・案X）で WARNING のみに変更し
+                                        # 増分計算は継続する（欠陥扱いにするとSQLite504本
+                                        # の全期間計算に回ってしまい、本計画が断ち切ろうと
+                                        # した rs_roc_ema_200 のNULL連鎖を再び起こすため。
+                                        # また warmup_bars は実測値であり、先頭入力がNaNの
+                                        # 銘柄では真の立ち上がりが後ろにずれて誤判定しうる）。
+                                        # 等号（first_valid_pos == warmup_bars）は
+                                        # ウィンドウが銘柄の真の先頭と一致する場合に
+                                        # 起こりうる正常系。
                                         warmup_cols.append(col)
+                                        if warmup_bars is not None and first_valid_pos > warmup_bars:
+                                            prefix_warnings.append(
+                                                f"null_prefix_exceeds_warmup:{col}"
+                                                f"(first_valid_pos={first_valid_pos}>warmup_bars={warmup_bars})"
+                                            )
                                 else:
                                     # ウィンドウ全体がNULL。
-                                    warmup_bars = warmup_thresholds.get(col)
                                     if warmup_bars is not None and warmup_bars < K:
                                         # ウィンドウがどこから始まっていても最終行の
                                         # 絶対位置は必ず warmup_bars を超えるため、
@@ -213,16 +284,20 @@ def _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_vi
                                         defect_cols.append(col)
                                     else:
                                         # warmup_bars が未確定、またはウィンドウ長K以上
-                                        # 必要（例: rs_roc_ema_200 は511 > K=400）
+                                        # 必要（例: rs_roc_ema_200 は611 > K=400）
                                         # -> 正当なウォームアップ中か欠陥か判別できない。
                                         undetermined_cols.append(col)
                             if defect_cols:
                                 fallback_reason = f"{FALLBACK_REASON_NULL_RECURSIVE_COLUMN}:{','.join(defect_cols)}"
                             elif undetermined_cols:
                                 fallback_reason = f"{FALLBACK_REASON_WARMUP_UNDETERMINED}:{','.join(undetermined_cols)}"
-                            else:
-                                fallback_reason = f"{FALLBACK_REASON_WARMUP_IN_PROGRESS}:{','.join(warmup_cols)}"
-                        else:
+                            # else: warmup_cols のみ（単調にNULL→非NULLへ移行し、
+                            # 最終供給行＝前日に値がある）。これはフォールバック
+                            # 理由ではなく増分継続の対象（t3_fallback_lookback_window
+                            # 計画 §3.1・案B）。fallback_reason は None のまま
+                            # 下の増分計算ブロックへ進む。
+
+                        if fallback_reason is None:
                             new_date = new_dates.iloc[0]
                             price_hist = df_price[df_price['date'] <= t3_max].tail(K)
                             price_new = df_price[df_price['date'] == new_date]
@@ -253,12 +328,12 @@ def _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_vi
             delta_df = df_ind[(df_ind['date'] > (t3_max if t3_max else date(2000, 1, 1)))]
 
         if delta_df.empty:
-            return ticker, sid, [], None
+            return ticker, sid, [], None, []
 
-        return ticker, sid, delta_df.to_dict('records'), fallback_reason
+        return ticker, sid, delta_df.to_dict('records'), fallback_reason, prefix_warnings
 
     except Exception as e:
-        return ticker, sid, e, None
+        return ticker, sid, e, None, []
 
 def _calculate_t3_worker_wrapper(args):
     """Wrapper function to unpack arguments for multiprocessing Pool."""
@@ -279,7 +354,9 @@ def _log_fallback_summary(logger: logging.Logger, fallback_reasons: List[str]) -
     （全期間計算そのものは正確で、単に保存済み行が無いだけ）。
     `FALLBACK_REASON_NULL_RECURSIVE_COLUMN`（欠陥の可能性）が1件でもあれば
     WARNING で内訳とリフレッシュ推奨を出し、それ以外（新規上場・履歴不足・
-    連休明け・正当なウォームアップ中）だけなら想定内として INFO に留める。
+    連休明け・判別不能）だけなら想定内として INFO に留める。単調に
+    NULL→非NULLへ移行し前日行に値がある列はもはやフォールバック理由では
+    ないため（t3_fallback_lookback_window計画 5-3）、ここには現れない。
 
     5-15c（2回目の code-review 指摘1）: `FALLBACK_REASON_WARMUP_UNDETERMINED`
     （判別不能）を新設した。判別不能は欠陥と確定したわけではないため
@@ -314,10 +391,11 @@ def _log_fallback_summary(logger: logging.Logger, fallback_reasons: List[str]) -
     no_saved_rows_count = reason_counts.get(FALLBACK_REASON_NO_SAVED_ROWS, 0)
     # no_saved_rows（新規上場。t3_maxが無く daily_prices の全行がそのまま銘柄の
     # 全履歴）だけが「全期間計算＝全履歴計算」として正確と言い切れる。それ以外
-    # （insufficient_saved_rows/multi_day_gap/warmup_in_progress/warmup_undetermined）は
-    # いずれも state=None の全期間計算がSQLiteの保持本数（実測504本程度）だけを
-    # 対象にしたものであり、warmup_barsがそれを超える列では遡り不足により
-    # 不正確な可能性がある。
+    # （insufficient_saved_rows/multi_day_gap/warmup_undetermined。
+    # warmup_in_progressはt3_fallback_lookback_window計画5-3で増分継続の対象に
+    # なったため、ここにはもう現れない）は、いずれも state=None の全期間計算が
+    # SQLiteの保持本数（実測504本程度）だけを対象にしたものであり、warmup_barsが
+    # それを超える列では遡り不足により不正確な可能性がある。
     uncertain_count = total - defect_count - no_saved_rows_count
 
     if defect_count:
@@ -343,8 +421,8 @@ def _log_fallback_summary(logger: logging.Logger, fallback_reasons: List[str]) -
         logger.info(
             f"Phase 3: 増分計算できず全期間計算にフォールバックした銘柄が {total} 件"
             f"（理由内訳: {breakdown}）。欠陥（null_recursive_column）はありませんが、"
-            f"うち {uncertain_count} 件（insufficient_saved_rows/multi_day_gap/"
-            "warmup_in_progress）は SQLite が保持する daily_prices 全行"
+            f"うち {uncertain_count} 件（insufficient_saved_rows/multi_day_gap）"
+            "は SQLite が保持する daily_prices 全行"
             "（実測504本程度）だけを使った全期間計算です。演算上必要な履歴本数が"
             "その保持本数を超える列（rs_roc_ema_200等）では遡り不足により書き込まれた"
             "値が不正確な可能性があります。"
@@ -359,6 +437,35 @@ def _log_fallback_summary(logger: logging.Logger, fallback_reasons: List[str]) -
             "価格履歴自体がSQLiteの保持期間に収まるため全期間計算がそのまま"
             "全履歴計算になり正確です。"
         )
+
+def _log_warnings_summary(logger: logging.Logger, ticker_warnings: List[Tuple[str, str]]) -> None:
+    """5-7d（G3 2周目 R8/R9・案X）: `first_valid_pos > warmup_bars` の WARNING を
+    フェーズ終了時に1回だけ集計してログ出力する（銘柄ごとに1行ずつは出さない）。
+
+    `ticker_warnings` は `(ticker, warning_str)` のタプルのリスト。`warning_str` は
+    `"null_prefix_exceeds_warmup:列名(first_valid_pos=N>warmup_bars=M)"` の形式
+    （`_calculate_t3_worker` の `warnings` 要素そのもの）。
+    """
+    if not ticker_warnings:
+        return
+
+    total = len(ticker_warnings)
+    tickers = sorted({t for t, _ in ticker_warnings})
+    ticker_sample = ', '.join(tickers[:20])
+    if len(tickers) > 20:
+        ticker_sample += f' 他{len(tickers) - 20}銘柄'
+    # 列名部分（"列名(..." の直前まで）だけを抜き出して集計する。
+    cols = sorted({w.split(':', 1)[1].split('(', 1)[0] for _, w in ticker_warnings if ':' in w})
+    logger.warning(
+        f"Phase 3: first_valid_pos が warmup_bars を超えている"
+        f"（本来もっと早く値が出ているはずなのに出ていない）列の警告が {total} 件"
+        "（該当銘柄は、他の理由で全期間計算にフォールバックしていなければ増分計算を継続）"
+        f"（銘柄 {len(tickers)} 件: {ticker_sample}。列: {', '.join(cols)}）。"
+        "warmup_bars は実測値のため誤判定の可能性がありますが、実際に増分計算の"
+        "状態が壊れている場合はこの銘柄・列を対象に `--rebuild-from T3` による"
+        "リフレッシュを推奨します。"
+    )
+
 
 def sync_phase_t3_indicators(db, sheet_data: List[Dict], symbol_id_map: Dict, spy_latest_date: Optional[date], skip_fetch: bool, db_path: str, logger: logging.Logger):
     """Phase 3: Indicators (T3) - Per-ticker catch-up using T2 price data with Parallel Processing."""
@@ -406,11 +513,12 @@ def sync_phase_t3_indicators(db, sheet_data: List[Dict], symbol_id_map: Dict, sp
     pending_recs = []
     chunk_size = 50  # Write to DB every 50 tickers to minimize commit/fsync overhead
     fallback_reasons: List[str] = []  # フォールバックした銘柄の理由（5-6b。フェーズ終了時に集計してログ出力）
+    ticker_warnings: List[Tuple[str, str]] = []  # (ticker, warning_str) のリスト（5-7d。フェーズ終了時に集計してログ出力）
 
     with multiprocessing.Pool(processes=num_workers) as pool:
         results = pool.imap_unordered(_calculate_t3_worker_wrapper, pool_args)
 
-        for res_ticker, res_sid, records, fallback_reason in results:
+        for res_ticker, res_sid, records, fallback_reason, res_warnings in results:
             try:
                 if isinstance(records, Exception):
                     logger.error(f"[{res_ticker}] Worker exception: {records}")
@@ -432,6 +540,8 @@ def sync_phase_t3_indicators(db, sheet_data: List[Dict], symbol_id_map: Dict, sp
                     # 書いていないため対象外）。
                     if fallback_reason:
                         fallback_reasons.append(fallback_reason)
+                    if res_warnings:
+                        ticker_warnings.extend((res_ticker, w) for w in res_warnings)
 
                 completed += 1
                 if completed % chunk_size == 0:
@@ -459,4 +569,5 @@ def sync_phase_t3_indicators(db, sheet_data: List[Dict], symbol_id_map: Dict, sp
                 db.rollback()
 
     _log_fallback_summary(logger, fallback_reasons)
+    _log_warnings_summary(logger, ticker_warnings)
     logger.info(f"Phase 3 COMPLETE: Updated {update_count} tickers.")

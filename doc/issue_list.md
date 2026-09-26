@@ -1853,6 +1853,7 @@
        新規上場7銘柄で NULL。Wilder 実装は14本未満で例外を投げて NaN になる。
        標本を「2,400本以上の履歴を持つ120銘柄」に限ったことによる見落とし
     3. **本物の異常（別途調査）** — `rs_roc_ema_200` が NULL の**40銘柄**
+       **【2026-09-26 原因判明】** T3 の `warmup_in_progress` フォールバックが SQLite 504本で全期間計算して NULL を書く仕組みによるもの（`doc/in_progress/t3_fallback_lookback_window_plan.md` §1.1）。昇格後に 95 銘柄へ拡大して表面化。案 B で再発防止、残るケースは上の「T3 のフォールバック…（案 C）」へ
        （個別25・テーマ12・指標2・市場1）。511本以上の履歴があるのに値が無い。
        **偽陽性ではなく、この検査が掘り当てた実在の異常**
   - **残作業**: ①1 と 2 の対処（除外規則と閾値の修正）②3 の40銘柄を調査
@@ -1874,11 +1875,21 @@
   - **影響範囲の見積り（未実施）**: 計算結果が実際に不正確になっているのか、単に
     ffillで吸収されて実害が無いログノイズなのかは未確認。実害があるなら仮想テーマ指数の
     RS系列の精度に波及する可能性がある。
+  - **追記（2026-09-26・`t3_fallback_lookback_window_plan.md` §7-1）**: `--rebuild-from T3` で仮想テーマ指数 171 本が `no_saved_rows` 扱いで **SQLite の保持範囲だけで再計算**され、`rs_value_e200` 等の窓の先頭がウォームアップ（NULL）になることを観測。ログは「SQLiteの保持期間に収まるため正確」と出すが、仮想テーマ指数には当てはまらない
   - **再現方法**: sandbox環境で `update_pipeline.py --rebuild-from T3 --skip-fetch --skip-sync`
     を実行し、`report_stale_input_gaps` のWARNINGログを仮想テーマ指数のsymbol_idで絞り込む。
   - **対応案**: ①ホットキャッシュ購入経路と仮想テーマ合成経路のSPY参照範囲を揃える
     ②実害（値のズレ）があるかをまず測定してから優先度を決める
   - 関連: `doc/completed/min_periods_warmup_plan.md`（5-6b・5-11完了ノート）
+
+- [ ] 🟡 **T3 のフォールバック（全期間計算）が SQLite の保持本数（約504本）だけで計算され、Parquet の正しい値を上書きする（案 C・2026-09-26 起票）**
+  - **背景**: `doc/in_progress/t3_fallback_lookback_window_plan.md`（案 B）で、`warmup_in_progress` による不要なフォールバックは止めた。残るフォールバック（`warmup_undetermined`＝前日行が NULL、`insufficient_saved_rows`、`multi_day_gap`、欠陥）は引き続き **SQLite の約504本だけ**で全期間計算する
+  - **症状1（確定値が書かれない）**: 前日行が NULL のまま真の履歴で 611 本目を越える銘柄は、`rs_roc_ema_200`（warmup 611）・`rs_momentum_e200`（810）が **NULL のまま永続化**する。「判別不能」は 2026-09-26 時点で本番 74 件、約200本の区間に分布 → **およそ週2銘柄**が新たに該当（見積もり）
+  - **症状2（値がずれる）**: sandbox 検証（同計画 §6・§7-2）で、判別不能フォールバックの 245 銘柄中 **208 銘柄の `ema_150`・`ema_200`・`rs_value_e200` 等が Parquet 基点の値と不一致**（504本の先頭で EMA を再シードするため）
+  - **対応案**: フォールバックの全期間計算を **Parquet 基点**にする（issue ② の T5 と同じ直し方）。対象は1日数百銘柄なので、全銘柄分の Parquet を1回読んで銘柄ごとに渡す形にすればコストは抑えられる見込み。**R19（`weekly_maintenance` の T3 自己修復が SQLite 基点）と同じ直し方なので1計画にまとめる**
+  - **代替案（G3 指摘・2026-09-26）**: 判別不能の列が1つあると銘柄ごと全期間計算に回すのをやめ、**判別不能の列だけ NaN のまま増分計算を続ける**。症状2（他の EMA 系のずれ）は Parquet を読まずに直る（症状1は残る）。前提として、シード欠落時に各カーネルが増分ウィンドウの先頭から再シードしない（`t3_incremental_plan.md` 5-15d で対処済みとされる）ことを検証する必要がある
+  - **修復手段（当面）**: `--rebuild-from T3`（Parquet 基点）で一時的に正しい値に戻る。症状1の銘柄は翌日以降も NULL が続く
+  - 関連: `doc/in_progress/t3_fallback_lookback_window_plan.md` §1.4・§6・§7-2、下の「`rs_roc_ema_200` が NULL の40銘柄」
 
 - [ ] **`min_periods` 統一後に残った既存ガード2件の要否を再検証する（2026-09-24 起票。旧 issue①の残作業）**
   - **背景**: `doc/completed/min_periods_warmup_plan.md`（旧issue①）でA-core（`min_periods=window`統一）
