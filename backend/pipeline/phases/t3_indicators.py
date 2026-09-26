@@ -2,7 +2,7 @@ import time
 import logging
 import multiprocessing
 from collections import Counter
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from datetime import date
 from sqlalchemy import func
 import pandas as pd
@@ -70,8 +70,10 @@ FALLBACK_REASON_WARMUP_UNDETERMINED = 'warmup_undetermined'        # ウィン�
 # 言えるのはこの1歩計算のシード（前日値）についてのみであり、WINDOW型列
 # （`rs_ratio_eN`・`rs_momentum_eN` 等）はRECURSIVE型列に対する通常のrolling
 # なので、供給履歴のNULL区間が真のウォームアップと一致していること
-# （`first_valid_pos <= warmup_bars`。5-7a の検査で保証）が正しさの前提になる。
-# この前提が保たれる限りフォールバック理由ではなくなった。
+# （`first_valid_pos <= warmup_bars`）が正しさの前提になる。この上限は
+# **保証されない**（5-7d で超過は WARNING のみ・増分継続に変更。超過した列を
+# 持つ銘柄は WINDOW 型列に NaN・誤値を書きうる。根治はフォールバックの
+# Parquet 基点化＝issue_list の案C）。単調移行自体はフォールバック理由ではない。
 
 def _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_virtual=False, spy_latest_date: Optional[date] = None):
     """Worker function to calculate T3 for a single ticker in a separate process using direct sqlite3 connection (fast, no ORM).
@@ -183,7 +185,7 @@ def _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_vi
             # （増分経路が成立したら fallback_reason は必ず None のまま）。
             df_inc = None
             fallback_reason = None
-            warnings: List[str] = []  # 5-7d: 欠陥ではなく警告に留める事象（列名・実測値付き）
+            prefix_warnings: List[str] = []  # 5-7d: 欠陥ではなく警告に留める事象（列名・実測値付き）
             if t3_max is None:
                 fallback_reason = FALLBACK_REASON_NO_SAVED_ROWS
             else:
@@ -269,7 +271,7 @@ def _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_vi
                                         # 起こりうる正常系。
                                         warmup_cols.append(col)
                                         if warmup_bars is not None and first_valid_pos > warmup_bars:
-                                            warnings.append(
+                                            prefix_warnings.append(
                                                 f"null_prefix_exceeds_warmup:{col}"
                                                 f"(first_valid_pos={first_valid_pos}>warmup_bars={warmup_bars})"
                                             )
@@ -328,7 +330,7 @@ def _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_vi
         if delta_df.empty:
             return ticker, sid, [], None, []
 
-        return ticker, sid, delta_df.to_dict('records'), fallback_reason, warnings
+        return ticker, sid, delta_df.to_dict('records'), fallback_reason, prefix_warnings
 
     except Exception as e:
         return ticker, sid, e, None, []
@@ -436,7 +438,7 @@ def _log_fallback_summary(logger: logging.Logger, fallback_reasons: List[str]) -
             "全履歴計算になり正確です。"
         )
 
-def _log_warnings_summary(logger: logging.Logger, ticker_warnings: List['tuple']) -> None:
+def _log_warnings_summary(logger: logging.Logger, ticker_warnings: List[Tuple[str, str]]) -> None:
     """5-7d（G3 2周目 R8/R9・案X）: `first_valid_pos > warmup_bars` の WARNING を
     フェーズ終了時に1回だけ集計してログ出力する（銘柄ごとに1行ずつは出さない）。
 
@@ -455,8 +457,9 @@ def _log_warnings_summary(logger: logging.Logger, ticker_warnings: List['tuple']
     # 列名部分（"列名(..." の直前まで）だけを抜き出して集計する。
     cols = sorted({w.split(':', 1)[1].split('(', 1)[0] for _, w in ticker_warnings if ':' in w})
     logger.warning(
-        f"Phase 3: 増分計算は継続したが、first_valid_pos が warmup_bars を超えている"
-        f"（本来もっと早く値が出ているはずなのに出ていない）警告が {total} 件"
+        f"Phase 3: first_valid_pos が warmup_bars を超えている"
+        f"（本来もっと早く値が出ているはずなのに出ていない）列の警告が {total} 件"
+        "（該当銘柄は、他の理由で全期間計算にフォールバックしていなければ増分計算を継続）"
         f"（銘柄 {len(tickers)} 件: {ticker_sample}。列: {', '.join(cols)}）。"
         "warmup_bars は実測値のため誤判定の可能性がありますが、実際に増分計算の"
         "状態が壊れている場合はこの銘柄・列を対象に `--rebuild-from T3` による"
@@ -510,12 +513,12 @@ def sync_phase_t3_indicators(db, sheet_data: List[Dict], symbol_id_map: Dict, sp
     pending_recs = []
     chunk_size = 50  # Write to DB every 50 tickers to minimize commit/fsync overhead
     fallback_reasons: List[str] = []  # フォールバックした銘柄の理由（5-6b。フェーズ終了時に集計してログ出力）
-    ticker_warnings: List[tuple] = []  # (ticker, warning_str) のリスト（5-7d。フェーズ終了時に集計してログ出力）
+    ticker_warnings: List[Tuple[str, str]] = []  # (ticker, warning_str) のリスト（5-7d。フェーズ終了時に集計してログ出力）
 
     with multiprocessing.Pool(processes=num_workers) as pool:
         results = pool.imap_unordered(_calculate_t3_worker_wrapper, pool_args)
 
-        for res_ticker, res_sid, records, fallback_reason, warnings in results:
+        for res_ticker, res_sid, records, fallback_reason, res_warnings in results:
             try:
                 if isinstance(records, Exception):
                     logger.error(f"[{res_ticker}] Worker exception: {records}")
@@ -537,8 +540,8 @@ def sync_phase_t3_indicators(db, sheet_data: List[Dict], symbol_id_map: Dict, sp
                     # 書いていないため対象外）。
                     if fallback_reason:
                         fallback_reasons.append(fallback_reason)
-                    if warnings:
-                        ticker_warnings.extend((res_ticker, w) for w in warnings)
+                    if res_warnings:
+                        ticker_warnings.extend((res_ticker, w) for w in res_warnings)
 
                 completed += 1
                 if completed % chunk_size == 0:

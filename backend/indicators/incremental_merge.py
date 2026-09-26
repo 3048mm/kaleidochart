@@ -101,9 +101,9 @@ float64 に強制変換し、この問題を解消する。
 
 現状はこの状況自体が `_calculate_t3_worker`（`pipeline/phases/t3_indicators.py`）の
 判定（供給履歴の最終行＝前日行がNaNの列は増分呼び出し自体を行わず
-`state=None` にフォールバックし、先頭側のNULL区間も単調・
-`first_valid_pos <= warmup_bars` であることを要求する。
-t3_fallback_lookback_window計画 5-3・5-7a）によって未然に防がれているため、
+`state=None` にフォールバックし、先頭側のNULL区間には単調性を要求する。
+`first_valid_pos <= warmup_bars` の上限は 5-7d 以降 WARNING のみで要求しない。
+t3_fallback_lookback_window計画 5-3・5-7d）によって未然に防がれているため、
 実害は出ていない。しかし `doc/issue_list.md` に起票済みのとおり、この増分設計をT5へ
 流用する予定があり、将来の呼び出し元がこのガードを持つとは限らない。
 「呼び出し側のガード頼み」ではなく**契約自体を安全側に閉じる**ため、
