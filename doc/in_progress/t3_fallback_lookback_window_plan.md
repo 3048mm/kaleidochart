@@ -95,11 +95,11 @@
 
 - [x] **5-0** G1 合意（§4） — **2026-09-26**
 - [x] **5-1** ワークツリー作成・`--mode write` でプロビジョニング（`tools/provision_worktree_data.py <worktree> --mode write`。pytest 全体・sandbox 再計算に必要） — **2026-09-26 完了**（`.claude/worktrees/t3-fallback-lookback`、基点 `9ff392c`）
-- [ ] **5-2** テスト（red）: `backend/tests/pipeline/test_t3_indicators.py` に、①ウィンドウ内で NULL→値ありへ単調に移行し前日行に値がある銘柄が**増分経路を通る**（`fallback_reason is None`）こと ②その増分結果が全期間計算（全履歴）の同日の値と**一致**すること（`rs_roc_ema_200`・`rs_momentum_e200` を含む全列）③値→NULL の戻りは従来どおり欠陥でフォールバックすること ④前日行 NULL は従来どおりフォールバックすること
-- [ ] **5-3** 実装（green）: `t3_indicators.py:182-224` の判定を §3.1 のとおり変更。ログ文言・docstring を更新
-- [ ] **5-4** `backend/tests/` 全件パス
-- [ ] **5-5** sandbox 検証: 本番と同じ「昇格直後→日次1回→日次2回」を再現し、`null_recursive_column` が再発しないこと・対象 95 銘柄の `rs_roc_ema_200` が Parquet 基点の値と一致することを確認
-- [ ] **5-6** `doc/issue_list.md`: 案 C（§1.4）を起票。既存「40銘柄」issue に本計画の結論（同じ仕組み・B で再発防止・C が残る）を追記
+- [x] **5-2** テスト（red）: `backend/tests/pipeline/test_t3_indicators.py` に、①ウィンドウ内で NULL→値ありへ単調に移行し前日行に値がある銘柄が**増分経路を通る**（`fallback_reason is None`）こと ②その増分結果が全期間計算（全履歴）の同日の値と**一致**すること（`rs_roc_ema_200`・`rs_momentum_e200` を含む全列）③値→NULL の戻りは従来どおり欠陥でフォールバックすること ④前日行 NULL は従来どおりフォールバックすること — **2026-09-26 完了**（implementer）。既存の合成シナリオ（900本・`rs_roc_ema_200` は611本目で遷移・K=400 のウィンドウ [499,898]）を流用し、旧テスト「単調遷移は warmup_in_progress」を「増分継続し、新規1日分の全列が全履歴計算と一致」に書き換え（`_find_mismatches`・rtol=atol=1e-9・zone_break 4列を除く全列）。③④は既存テストがそのまま担保。red: `assert [None] == [True]`（フォールバックした）
+- [x] **5-3** 実装（green）: `t3_indicators.py:182-224` の判定を §3.1 のとおり変更。ログ文言・docstring を更新 — **2026-09-26 完了**（`6efd7cc`）。`warmup_cols` のみのときフォールバック理由を設定せず増分ブロックへ合流（`if fallback_reason is None:`）。`FALLBACK_REASON_WARMUP_IN_PROGRESS` は発生しなくなったため削除（他モジュールの参照なし）。ログ文言・docstring を更新
+- [x] **5-4** `backend/tests/` 全件パス — **2026-09-26 完了**（implementer 2065 passed / 1 skipped。オーケストレーターの再実行は下記 G2）
+- [x] **5-5** sandbox 検証: 本番と同じ「昇格直後→日次1回→日次2回」を再現し、`null_recursive_column` が再発しないこと・対象 95 銘柄の `rs_roc_ema_200` が Parquet 基点の値と一致することを確認 — **2026-09-26 完了**。結果は §6「sandbox 検証の結果」
+- [x] **5-6** `doc/issue_list.md`: 案 C（§1.4）を起票。既存「40銘柄」issue に本計画の結論（同じ仕組み・B で再発防止・C が残る）を追記 — **2026-09-26 完了**（案 C を新規起票・40銘柄 issue に原因を追記・仮想テーマ指数 issue に §7-1 を追記）
 - [ ] **5-7** G3（`/code-review medium`。種別 B なら high）
 - [ ] **5-8** merge → `deploy_after_merge.ps1`（A。ユーザー実行）→ 翌日の日次更新ログで `null_recursive_column` が 0〜数件であることを確認
 - [ ] **5-9** 計画書を `doc/completed/` へ移動
@@ -116,6 +116,25 @@
 | 全体 | `backend/tests/` | 全件パス |
 | sandbox | 5-5 | 日次2回後も `null_recursive_column` 0件、95銘柄の値が Parquet 基点と一致 |
 | 本番 | 5-8 翌日の `logs/pipeline.log` の Phase 3 集計行 | `null_recursive_column` 0〜数件（§1.4 由来のみ） |
+
+#### sandbox 検証の結果（5-5・2026-09-26）
+
+手順（ワークツリーの `data/sandbox`＝本番のコピー。スクリプトは `tmp/`）:
+
+1. `python tmp/t3_defect_repro.py data/sandbox/stocktool.db --include-latest` — 修復前: **欠陥 95 件（全て `rs_roc_ema_200`、91 件が 2026-09-24 から NULL）**＝本番と同一
+2. `update_pipeline.py --rebuild-from T3 --skip-fetch --skip-sync`（Parquet 基点・5分43秒）→ 欠陥 **0 件**。修復した 93 銘柄は `rs_roc_ema_200` が「単調移行中」に戻った（旧コードなら翌日フォールバックして NULL に戻る状態）
+3. `python tmp/t3_daily_sim.py prepare` で最新日（2026-09-25）の T3 行 3,319 行を退避・削除 → `update_pipeline.py --skip-fetch --skip-sync`（新コードで1日分だけ T3 計算）→ `compare` で退避値（＝Parquet 基点の正解）と照合
+4. `python tmp/t3_mismatch_origin.py` で、不一致を「新コードでの経路」別に集計
+
+| 経路 | 銘柄数 | 正解との一致（zone_break 4列を除く67列） |
+| :-- | --: | :-- |
+| **増分**（今回の修正で増分継続になった銘柄を含む） | 2,852 | **全件一致** |
+| フォールバック: `insufficient_saved_rows` | 222 | 全件一致 |
+| フォールバック: `warmup_undetermined` | 245 | **208 件不一致**（`ema_63/150/200`・`rs_value_e200`・`rs_ratio_e200` 等。例 ETHA・OZEM・ADUR） |
+
+- 日次1回後も欠陥 **0 件**。ログから `warmup_in_progress` が消え、フォールバックは `insufficient_saved_rows=222, warmup_undetermined=245` のみ
+- 修復した 93 銘柄の `rs_roc_ema_200`・`rs_momentum_e200` は正解と一致
+- **不一致は全て従来からのフォールバック経路（判別不能→SQLite 504本で全期間計算）由来**で、本修正とは無関係。ただしその誤差は `rs_roc_ema_200` に限らず、**上場の浅い銘柄の EMA 系全般**に出ている（§7-2）
 
 **ベースラインの再現手順**（本番 SQLite を読み取り専用で開き、最新日を除いた K 行で現行判定を再現）: 2026-09-26 に実施。欠陥 95 銘柄・全件 `rs_roc_ema_200`・NULL に戻った最初の日付 2026-09-24 が 91 件。スクリプトは 5-1 でワークツリーの `tmp/` に移して残す。
 
@@ -134,6 +153,18 @@
 | :--- | :--- | :--- | :--- | :--- |
 
 ## 7. 途中発生した課題
+
+### 7-1. `--rebuild-from T3` で仮想テーマ指数 171 本が SQLite 範囲だけで再計算される（2026-09-26・5-5 で観測）
+
+- **事象**: sandbox の `--rebuild-from T3` 後、単調移行中の `rs_value_e200`・`rs_roc_ema_63` が 67 → 238 件に増えた。差の 171 件は再計算ログの `no_saved_rows=171`（仮想テーマ指数）と一致
+- **原因（推定）**: 仮想テーマ指数の T3 が Parquet 基点ではなく SQLite の保持範囲だけで再計算され、窓の先頭がウォームアップ（NULL）になる。ログ文言「価格履歴自体がSQLiteの保持期間に収まるため…正確です」は仮想テーマ指数には当てはまらない
+- **判断**: 本計画の変更とは無関係（再計算経路には触れていない）。既存 issue「仮想テーマ指数のT3全期間再計算で、SPY参照データの供給不足…」と同じ領域のため、そこへ追記した（5-6）
+
+### 7-2. フォールバック（判別不能）経路の誤差は EMA 系全般に出ている（2026-09-26・5-5 で観測）
+
+- **事象**: 5-5 の照合で、`warmup_undetermined` でフォールバックした 245 銘柄中 208 銘柄が、`ema_150`・`ema_200` 等で Parquet 基点の値と不一致（相対差 1e-3〜1e-4 程度。例 ETHA `ema_150` 17.1257 → 17.1432）
+- **原因**: SQLite の 504 本の先頭から EMA をシードし直すため、全履歴でのシードと値がずれる（§1.4 と同じ構造）
+- **判断**: 案 C（Parquet 基点化）の必要性を補強する事実として、5-6 の起票に含めた。本計画のスコープ外
 
 ## 8. スコープ外・残作業
 
