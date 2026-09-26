@@ -63,7 +63,6 @@ from pipeline.phases.t3_indicators import (  # noqa: E402
     FALLBACK_REASON_INSUFFICIENT_ROWS,
     FALLBACK_REASON_MULTI_DAY_GAP,
     FALLBACK_REASON_NULL_RECURSIVE_COLUMN,
-    FALLBACK_REASON_WARMUP_IN_PROGRESS,
     FALLBACK_REASON_WARMUP_UNDETERMINED,
 )
 
@@ -491,9 +490,18 @@ class TestCalculateT3WorkerWarmupClassification:
         )
         assert 'ema_200' in fallback_reason
 
-    def test_ウィンドウ内で単調にnullから非nullへ遷移する場合はwarmup_in_progressになる(self, db_path, monkeypatch):
-        """§3.5 ケース4: ウィンドウが列の真のウォームアップ完了点をまたいでいて
-        （NULL→非NULLへの単調な遷移のみ・全NULLではない）場合は正当。
+    def test_ウィンドウ内で単調にnullから非nullへ遷移し前日行に値があれば増分を継続する(self, db_path, monkeypatch):
+        """t3_fallback_lookback_window計画 §3.1（5-3で改訂）: ウィンドウが列の
+        真のウォームアップ完了点をまたいでいて（NULL→非NULLへの単調な遷移のみ・
+        全NULLではない）、かつ最終供給行（前日）に値がある場合は、
+        フォールバックせず増分計算を継続する（旧仕様は`warmup_in_progress`として
+        全期間計算へフォールバックしていたが、その全期間計算はSQLiteの保持本数
+        （実測504本）だけで行われるため611本必要なrs_roc_ema_200にNULLを
+        書いてしまっていた＝本計画が解消する不具合そのもの）。
+
+        RECURSIVE型列は前日値（K-1行目）をシードに最終行だけを1歩計算する
+        契約（`incremental_merge.prev_self_seed`）のため、シードより前の
+        行にNULLがあっても増分計算の正しさに影響しない。
 
         5-9c（A-full。RS系のmin_periodsをmax(1,n//2)からnへ統一）により
         rs_roc_ema_200 の実効ウォームアップが大幅に後ろへ伸びた（真の
@@ -511,8 +519,10 @@ class TestCalculateT3WorkerWarmupClassification:
 
         # 前提確認: ウィンドウ内（絶対位置499〜898）で rs_roc_ema_200 が
         # NULL→非NULLへ単調に遷移していること（実測遷移点=611）。
+        # かつ最終供給行（前日=n_short-2）には値があること。
         assert pd.isna(full_res['rs_roc_ema_200'].iloc[550])
         assert not pd.isna(full_res['rs_roc_ema_200'].iloc[700])
+        assert not pd.isna(full_res['rs_roc_ema_200'].iloc[n_short - 2])
 
         calls = _patch_calculate_indicators(monkeypatch)
 
@@ -522,14 +532,22 @@ class TestCalculateT3WorkerWarmupClassification:
         )
 
         assert not isinstance(records, Exception), f'ワーカーが例外を返した: {records}'
-        assert calls == [None], f'NaNを含む供給履歴のため全期間計算にフォールバックするはずが: {calls}'
-        assert fallback_reason is not None
-        assert fallback_reason.startswith(FALLBACK_REASON_WARMUP_IN_PROGRESS + ':'), (
-            f'ウィンドウ内で単調にnull→非nullへ遷移する場合はWARMUP_IN_PROGRESSのはずが: {fallback_reason}'
+        assert calls == [True], (
+            f'単調にNULL→非NULLへ遷移し前日行に値がある場合は増分経路が使われるはずが: {calls}'
         )
-        assert 'rs_roc_ema_200' in fallback_reason
-        assert FALLBACK_REASON_NULL_RECURSIVE_COLUMN not in fallback_reason
-        assert FALLBACK_REASON_WARMUP_UNDETERMINED not in fallback_reason
+        assert fallback_reason is None, (
+            f'増分継続すべきでフォールバック理由は無いはずが: {fallback_reason}'
+        )
+        assert len(records) == 1
+        got_row = records[0]
+        ref_row = full_res.iloc[-1]
+
+        compare_cols = [c for c in IND_COLS if c not in _NON_STRICT_COLUMNS]
+        mismatches = _find_mismatches(ref_row, got_row, compare_cols)
+        assert not mismatches, (
+            f'増分経路の結果が全期間計算（全履歴を1回で計算した値）と不一致: {mismatches}'
+        )
+        assert not pd.isna(got_row['rs_roc_ema_200']), 'rs_roc_ema_200 にNULLが書かれてはいけない'
 
     def test_ウィンドウ全体がnullかつwarmup_barsがk以上なら判別不能になる(self, db_path, monkeypatch):
         """§3.5 ケース3: `rs_roc_ema_200`（warmup_bars=511）は増分ウィンドウ長
@@ -628,20 +646,25 @@ class TestLogFallbackSummary:
         assert '--rebuild-from T3' in msg
 
     def test_欠陥理由が無ければWARNINGではなくINFOになる(self, caplog):
-        """5-15b（code-review指摘2・軽微2件目）: 新規上場・履歴不足・ウォームアップ中
-        など想定内の理由だけなら、WARNINGではなくINFOに留める（一律WARNINGだと
-        ノイズになりWARNINGが読まれなくなる）。
+        """5-15b（code-review指摘2・軽微2件目）: 新規上場・履歴不足・連休明け・
+        判別不能など想定内の理由だけなら、WARNINGではなくINFOに留める
+        （一律WARNINGだとノイズになりWARNINGが読まれなくなる）。
 
-        5-15d（2回目のcode-review指摘2）: `warmup_in_progress`等（no_saved_rowsを
+        5-15d（2回目のcode-review指摘2）: `warmup_undetermined`等（no_saved_rowsを
         除く）は「SQLiteの保持本数だけを使った全期間計算」であり遡り不足の可能性が
         あるため、5-15c時点まで残っていた「不正確という文言を禁止する」という
-        アサーションを反転した（5-15bの誤りの再発そのものだった。§7-6参照）。"""
+        アサーションを反転した（5-15bの誤りの再発そのものだった。§7-6参照）。
+
+        t3_fallback_lookback_window計画（5-3）で `warmup_in_progress` は
+        フォールバック理由から廃止された（単調にNULL→非NULLへ移行し前日行に
+        値がある列は増分継続の対象になったため）。本テストは残る想定内理由
+        （insufficient_saved_rows/multi_day_gap）で同じ分類を固定する。"""
         logger = logging.getLogger('test_t3_fallback_summary_benign_only')
         reasons = [
             FALLBACK_REASON_NO_SAVED_ROWS,
             FALLBACK_REASON_INSUFFICIENT_ROWS,
+            FALLBACK_REASON_INSUFFICIENT_ROWS,
             FALLBACK_REASON_MULTI_DAY_GAP,
-            f'{FALLBACK_REASON_WARMUP_IN_PROGRESS}:rs_roc_ema_200',
         ]
         with caplog.at_level(logging.INFO, logger=logger.name):
             _log_fallback_summary(logger, reasons)
@@ -652,8 +675,8 @@ class TestLogFallbackSummary:
         assert len(infos) == 1
         msg = infos[0].message
         assert '4 件' in msg
-        assert f'{FALLBACK_REASON_WARMUP_IN_PROGRESS}=1' in msg
-        # warmup_in_progress/multi_day_gap/insufficient_saved_rows はSQLiteの保持本数
+        assert f'{FALLBACK_REASON_INSUFFICIENT_ROWS}=2' in msg
+        # insufficient_saved_rows/multi_day_gap はSQLiteの保持本数
         # だけを使った全期間計算であり、正確とは言い切れない（5-15d）。
         assert '不正確' in msg, (
             'no_saved_rows以外を含むフォールバックで「不正確」の留保が無い'
