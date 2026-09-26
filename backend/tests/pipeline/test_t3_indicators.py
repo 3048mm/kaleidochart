@@ -412,10 +412,17 @@ class TestCalculateT3WorkerWarmupClassification:
 
     5-15b の初版は `daily_prices` 内での絶対位置と `warmup_bars` を比較する
     方式だったが、SQLiteの保持行数（実測504）が `rs_roc_ema_200` の
-    `warmup_bars`（511）より小さいため判定が原理的に到達不能で、本番の実際の
-    欠陥が「正当」に誤分類され続けていた（5-15b の回帰）。5-15c で
-    増分ウィンドウ（K本）内だけで観測できる性質（単調性・ウィンドウ長との
-    大小関係）に基づく方式に改めた。本クラスはこの3区分それぞれを固定する。
+    `warmup_bars`（A-full後は611。当時は511）より小さいため判定が原理的に
+    到達不能で、本番の実際の欠陥が「正当」に誤分類され続けていた
+    （5-15b の回帰）。5-15c で増分ウィンドウ（K本）内だけで観測できる性質
+    （単調性・ウィンドウ長との大小関係）に基づく方式に改めた。
+
+    さらに t3_fallback_lookback_window計画 5-3/5-7a で、単調にNULL→非NULLへ
+    移行し前日行に値がある列は「増分継続」の対象に変わり（旧仕様の
+    `warmup_in_progress` は廃止）、そのうち `first_valid_pos > warmup_bars`
+    （ウィンドウ内での最初の非NULL位置が本来の必要本数を超えている＝
+    確実に欠陥）のケースは欠陥判定に含まれるよう改訂した。本クラスは
+    この分類（欠陥／判別不能／増分継続／欠陥（単調だが遅すぎる））を固定する。
     """
 
     def test_ウィンドウ全体がnullかつwarmup_barsがk未満なら欠陥になる(self, db_path, monkeypatch):
@@ -549,8 +556,58 @@ class TestCalculateT3WorkerWarmupClassification:
         )
         assert not pd.isna(got_row['rs_roc_ema_200']), 'rs_roc_ema_200 にNULLが書かれてはいけない'
 
+    def test_window列のrolling窓が遷移をまたぐ場合も増分結果が全履歴計算と一致する(self, db_path, monkeypatch):
+        """t3_fallback_lookback_window計画 5-7b（G3 1周目 R5）: WINDOW型列
+        （`rs_momentum_e200` = `rs_roc_ema_200` の200本rolling）自体の窓が、
+        RECURSIVE型列（`rs_roc_ema_200`）のNULL→非NULL遷移点（実測絶対位置611）
+        をまたぐケースを固定する。
+
+        n_short=750・K=400 では増分ウィンドウは絶対位置[349,748]をカバーし、
+        遷移点611はその内側にある。この場合でも増分経路（フォールバックしない）
+        を通り、新規1日分の全列（`rs_momentum_e200` を含む）が全履歴を1回で
+        計算した値と一致する（真値がNaNならNaNで一致する）ことを確認する。
+        一致すれば、WINDOW型列のrollingは「供給履歴の先頭のNULL区間が真の
+        ウォームアップと一致している限り、全履歴計算と同じ結果を返す」という
+        §3.1の前提が実証される。"""
+        n_short = 750
+        dates, df_full, spy_full, full_res, spy_price_only = _build_short_scenario(n_short)
+        t3_max = dates[n_short - 2]
+        _insert_prices(db_path, SID_TARGET, df_full)
+        _insert_indicators(db_path, SID_TARGET, full_res, upto_idx=n_short - 2)
+
+        # 前提確認: 遷移点(611)がウィンドウ[349,748]の内側にあり、単調に
+        # NULL→非NULLへ移行し、最終供給行（前日=n_short-2）には値があること。
+        assert pd.isna(full_res['rs_roc_ema_200'].iloc[600])
+        assert not pd.isna(full_res['rs_roc_ema_200'].iloc[612])
+        assert not pd.isna(full_res['rs_roc_ema_200'].iloc[n_short - 2])
+
+        calls = _patch_calculate_indicators(monkeypatch)
+
+        ticker, sid, records, fallback_reason = _calculate_t3_worker(
+            SID_TARGET, 'TEST', t3_max, db_path, spy_price_only,
+            skip_fetch=False, is_virtual=False, spy_latest_date=dates[-1],
+        )
+
+        assert not isinstance(records, Exception), f'ワーカーが例外を返した: {records}'
+        assert calls == [True], (
+            f'遷移点がウィンドウ内にある場合も増分経路が使われるはずが: {calls}'
+        )
+        assert fallback_reason is None, (
+            f'増分継続すべきでフォールバック理由は無いはずが: {fallback_reason}'
+        )
+        assert len(records) == 1
+        got_row = records[0]
+        ref_row = full_res.iloc[-1]
+
+        compare_cols = [c for c in IND_COLS if c not in _NON_STRICT_COLUMNS]
+        mismatches = _find_mismatches(ref_row, got_row, compare_cols)
+        assert not mismatches, (
+            f'増分経路の結果が全期間計算（全履歴を1回で計算した値）と不一致: {mismatches}'
+        )
+        assert 'rs_momentum_e200' in compare_cols
+
     def test_ウィンドウ全体がnullかつwarmup_barsがk以上なら判別不能になる(self, db_path, monkeypatch):
-        """§3.5 ケース3: `rs_roc_ema_200`（warmup_bars=511）は増分ウィンドウ長
+        """§3.5 ケース3: `rs_roc_ema_200`（warmup_bars=611）は増分ウィンドウ長
         K（=max_lookback()=400）より大きいため、ウィンドウ全体がNULLでも
         「正当なウォームアップ中」か「欠陥」かをこの検査だけでは判別できない。
         これは5-15bの回帰そのものが起きていたシナリオ（本番の実際の不具合と
@@ -581,6 +638,87 @@ class TestCalculateT3WorkerWarmupClassification:
         )
         assert 'rs_roc_ema_200' in fallback_reason
         assert FALLBACK_REASON_NULL_RECURSIVE_COLUMN not in fallback_reason
+
+    def test_単調移行でもfirst_valid_posがwarmup_barsを超えていれば欠陥になる(self, db_path, monkeypatch):
+        """t3_fallback_lookback_window計画 5-7a（G3 1周目 R1/R6）: 単調に
+        NULL→非NULLへ移行していても（値→NULLへの回帰は無い）、ウィンドウ内での
+        最初の非NULL位置（`first_valid_pos`）が `warmup_bars`（ema_200=199）を
+        超えていれば、本来もっと早く値が出ているはずなのに出ていないことになり、
+        確実な欠陥として扱う（ウィンドウ内位置は銘柄の真の先頭からの絶対位置
+        以下になるはずなので、正常なら `first_valid_pos <= warmup_bars`）。"""
+        dates, df_full, spy_full, full_res, spy_price_only = _build_scenario()
+        t3_max = dates[N_TOTAL - 2]
+        _insert_prices(db_path, SID_TARGET, df_full)
+        _insert_indicators(db_path, SID_TARGET, full_res, upto_idx=N_TOTAL - 2)
+
+        # ウィンドウ（K本、絶対位置[N_TOTAL-1-K, N_TOTAL-2]）の先頭300行の
+        # ema_200 をNULLにする。warmup_bars(199) < 300 なので、本来なら
+        # とうにウォームアップ完了しているはず＝欠陥。残りは正しい値のまま
+        # （単調で最終行にも値がある）。
+        window_start_idx = N_TOTAL - 1 - K
+        null_dates = [str(d) for d in dates[window_start_idx:window_start_idx + 300]]
+        con = sqlite3.connect(db_path)
+        try:
+            con.executemany(
+                'UPDATE indicators SET ema_200 = NULL WHERE symbol_id = ? AND date = ?',
+                [(SID_TARGET, d) for d in null_dates],
+            )
+            con.commit()
+        finally:
+            con.close()
+
+        calls = _patch_calculate_indicators(monkeypatch)
+
+        ticker, sid, records, fallback_reason = _calculate_t3_worker(
+            SID_TARGET, 'TEST', t3_max, db_path, spy_price_only,
+            skip_fetch=False, is_virtual=False, spy_latest_date=dates[-1],
+        )
+
+        assert not isinstance(records, Exception), f'ワーカーが例外を返した: {records}'
+        assert calls == [None], f'全期間計算（state=None）にフォールバックするはずが: {calls}'
+        assert fallback_reason is not None
+        assert fallback_reason.startswith(FALLBACK_REASON_NULL_RECURSIVE_COLUMN + ':'), (
+            f'first_valid_pos(300) > warmup_bars(199)は欠陥のはずが: {fallback_reason}'
+        )
+        assert 'ema_200' in fallback_reason
+
+    def test_first_valid_posがwarmup_barsと一致するのは境界として増分継続になる(self, db_path, monkeypatch):
+        """5-7a の境界値: `first_valid_pos == warmup_bars` は「ウィンドウが銘柄の
+        真の先頭と一致する場合に起こりうる正常系」であり、欠陥ではなく増分継続の
+        対象になる。"""
+        dates, df_full, spy_full, full_res, spy_price_only = _build_scenario()
+        t3_max = dates[N_TOTAL - 2]
+        _insert_prices(db_path, SID_TARGET, df_full)
+        _insert_indicators(db_path, SID_TARGET, full_res, upto_idx=N_TOTAL - 2)
+
+        # ema_200 の warmup_bars=199。ウィンドウ先頭からちょうど199行だけを
+        # NULLにする（first_valid_pos == warmup_bars）。
+        window_start_idx = N_TOTAL - 1 - K
+        null_dates = [str(d) for d in dates[window_start_idx:window_start_idx + 199]]
+        con = sqlite3.connect(db_path)
+        try:
+            con.executemany(
+                'UPDATE indicators SET ema_200 = NULL WHERE symbol_id = ? AND date = ?',
+                [(SID_TARGET, d) for d in null_dates],
+            )
+            con.commit()
+        finally:
+            con.close()
+
+        calls = _patch_calculate_indicators(monkeypatch)
+
+        ticker, sid, records, fallback_reason = _calculate_t3_worker(
+            SID_TARGET, 'TEST', t3_max, db_path, spy_price_only,
+            skip_fetch=False, is_virtual=False, spy_latest_date=dates[-1],
+        )
+
+        assert not isinstance(records, Exception), f'ワーカーが例外を返した: {records}'
+        assert calls == [True], (
+            f'first_valid_pos == warmup_barsは境界として増分継続のはずが: {calls}'
+        )
+        assert fallback_reason is None, (
+            f'境界（等号）は欠陥ではないはずが: {fallback_reason}'
+        )
 
 
 class TestCalculateT3WorkerSpyExclusion:

@@ -29,8 +29,8 @@ from db.database import init_db, get_db
 # 5-15c（2回目の code-review 指摘1・5-15b の回帰）: 5-15b の実装は「その行の
 # 絶対位置（SQLiteの保持期間内での位置）が warmup_bars を超えているか」で
 # 判定していたが、SQLiteの保持行数（実測504）自体が一部の列の warmup_bars
-# （`rs_roc_ema_200`=511）より小さいため、この判定が**原理的に到達不能**
-# だった（`position > warmup_bars` が511まで届かない）。その結果、本番の
+# （`rs_roc_ema_200`=611、A-full前の実測値では511）より小さいため、この判定が
+# **原理的に到達不能**だった（`position > warmup_bars` が届かない）。その結果、本番の
 # 実際の欠陥（`rs_roc_ema_200` が全銘柄NULL）が `WARMUP_IN_PROGRESS`（正当）に
 # 誤分類され、5-6b が塞いだはずの「誰も気づかない」穴が再び開いていた。
 #
@@ -45,16 +45,25 @@ from db.database import init_db, get_db
 #   3. ウィンドウ全体がNULLで `warmup_bars >= K` なら、正当なウォームアップ中
 #      なのか欠陥なのかこの検査だけでは判別できない
 #      （`WARMUP_UNDETERMINED`。`rs_roc_ema_200` がこれに該当する）。
+#   4. ウィンドウ内でNULL→非NULLへ単調に移行している場合でも、最初の非NULL
+#      位置（`first_valid_pos`）が `warmup_bars` を超えていれば欠陥と断定できる
+#      （ウィンドウ内位置は銘柄の真の先頭からの絶対位置以下になるはずなので、
+#      正常時は必ず `first_valid_pos <= warmup_bars`。t3_fallback_lookback_window
+#      計画 5-7a・G3 1周目 R1/R6）。
 FALLBACK_REASON_NO_SAVED_ROWS = 'no_saved_rows'                    # 保存済みT3行が無い（新規上場・オンボード直後）
 FALLBACK_REASON_INSUFFICIENT_ROWS = 'insufficient_saved_rows'      # 保存済み行数がK（max_lookback()）に満たない
 FALLBACK_REASON_MULTI_DAY_GAP = 'multi_day_gap'                    # 新規に書く日付が2日ぶん以上ある（または0日）
-FALLBACK_REASON_NULL_RECURSIVE_COLUMN = 'null_recursive_column'    # RECURSIVE型列が確実に欠陥（単調性の破れ、またはK>warmup_barsで全NULL）
+FALLBACK_REASON_NULL_RECURSIVE_COLUMN = 'null_recursive_column'    # RECURSIVE型列が確実に欠陥（単調性の破れ、K>warmup_barsで全NULL、またはfirst_valid_pos>warmup_bars）
 FALLBACK_REASON_WARMUP_UNDETERMINED = 'warmup_undetermined'        # ウィンドウ全体がNULLかつK<=warmup_barsで判別不能（5-15c）
 # 5-15c で追加した FALLBACK_REASON_WARMUP_IN_PROGRESS は t3_fallback_lookback_window
 # 計画（5-3）で廃止した。ウィンドウ内でNULL→非NULLへ単調に移行し、最終供給行
-# （前日）に値がある列は「正当なウォームアップ中」ではあるが、増分計算で
-# 正しく継続できる（前日値をシードに最終行だけを1歩計算するだけなので、
-# 過去行のNULLは無関係）ため、フォールバック理由ではなくなった。
+# （前日）に値がある列は、増分計算（RECURSIVE型列は前日値をシードに最終行だけを
+# 1歩計算する契約）自体は正しく継続できる。ただし「過去行のNULLは無関係」と
+# 言えるのはこの1歩計算のシード（前日値）についてのみであり、WINDOW型列
+# （`rs_ratio_eN`・`rs_momentum_eN` 等）はRECURSIVE型列に対する通常のrolling
+# なので、供給履歴のNULL区間が真のウォームアップと一致していること
+# （`first_valid_pos <= warmup_bars`。5-7a の検査で保証）が正しさの前提になる。
+# この前提が保たれる限りフォールバック理由ではなくなった。
 
 def _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_virtual=False, spy_latest_date: Optional[date] = None):
     """Worker function to calculate T3 for a single ticker in a separate process using direct sqlite3 connection (fast, no ORM).
@@ -94,20 +103,36 @@ def _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_vi
        真の先頭から始まっている場合は正当なウォームアップ中でもNULLに
        なりうるため、判別不能（`WARMUP_UNDETERMINED`。`rs_roc_ema_200` が該当）。
     4. それ以外（ウィンドウ内でNULL→非NULLへ単調に移行し、最終供給行＝前日に
-       値がある。全NULLではない） — **フォールバックせず増分計算を継続する**
+       値があり、かつ最初の非NULL位置 `first_valid_pos` が `warmup_bars`
+       以下） — **フォールバックせず増分計算を継続する**
        （t3_fallback_lookback_window計画 5-3）。RECURSIVE型列は前日値
        （K-1行目）をシードに最終行だけを1歩計算する契約
-       （`incremental_merge.prev_self_seed`）なので、シードより前の行に
-       NULLがあっても増分計算の正しさに影響しない。旧仕様（5-15c）は
+       （`incremental_merge.prev_self_seed`）なので、シードとして使う前日値
+       さえ実値であれば、それより前の行のNULLが「真のウォームアップと一致
+       している」限り増分計算の正しさに影響しない。旧仕様（5-15c）は
        このケースも `WARMUP_IN_PROGRESS` としてフォールバックしていたが、
        そのフォールバック先の全期間計算がSQLiteの保持本数（実測504本）
        だけで行われるため、611本必要な `rs_roc_ema_200` にNULLを書いてしまい、
        翌日「値→NULLへ戻った」（単調性の破れ）と誤検出される連鎖を生んでいた
        （本計画が解消する不具合そのもの）。
+       なお `first_valid_pos > warmup_bars`（単調ではあるが、本来もっと早く
+       値が出ているはずなのに出ていない）の場合は上記4に該当せず、確実な
+       欠陥として `NULL_RECURSIVE_COLUMN` に分類する（ウィンドウ内位置は
+       銘柄の真の先頭からの絶対位置以下になるはずなので、正常時は必ず
+       `first_valid_pos <= warmup_bars`。t3_fallback_lookback_window計画
+       5-7a・G3 1周目 R1/R6）。
 
     複数列で分類が割れた場合、1つの `fallback_reason` は
     欠陥 > 判別不能 の優先順位で選ぶ（増分継続の対象になる列は
     フォールバック理由に寄与しない）。
+
+    **WINDOW型列（`rs_ratio_eN`・`rs_momentum_eN` 等）への影響**: WINDOW型列
+    自体は毎回生価格から無条件に再計算されるため直接この判定対象ではないが、
+    その入力（RECURSIVE型列）に対して通常の rolling（`min_periods=window`）を
+    かけるだけなので、供給履歴の先頭のNULL区間が真のウォームアップと一致して
+    いる（単調・最終行に値あり・`first_valid_pos <= warmup_bars`）限り、
+    rolling が返すNaN/実値も真の値と一致する（詳細は
+    `backend/indicators/incremental_merge.py` のモジュールdocstring）。
 
     戻り値は `(ticker, sid, records, fallback_reason)` の4要素タプル
     （5-6b で `fallback_reason` を追加。増分経路が使われた場合は None、
@@ -212,7 +237,24 @@ def _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_vi
                                     if not notna_series.iloc[first_valid_pos:].all():
                                         defect_cols.append(col)
                                     else:
-                                        warmup_cols.append(col)
+                                        # 単調ではあるが、ウィンドウ内での最初の非NULL位置
+                                        # （first_valid_pos）が warmup_bars を超えていれば
+                                        # 確実に欠陥（t3_fallback_lookback_window計画
+                                        # 5-7a・G3 1周目 R1/R6）。ウィンドウ内位置は
+                                        # 銘柄の真の先頭からの絶対位置以下になるはず
+                                        # （ウィンドウはどこかの日付から始まるだけで、
+                                        # 銘柄の先頭より前から始まることはない）ので、
+                                        # 正常時は必ず first_valid_pos <= warmup_bars。
+                                        # 超えていれば「本来もっと早く値が出ているはずなのに
+                                        # 出ていない」ことになり、欠陥と断定できる。
+                                        # 等号（first_valid_pos == warmup_bars）は
+                                        # ウィンドウが銘柄の真の先頭と一致する場合に
+                                        # 起こりうる正常系。
+                                        warmup_bars = warmup_thresholds.get(col)
+                                        if warmup_bars is not None and first_valid_pos > warmup_bars:
+                                            defect_cols.append(col)
+                                        else:
+                                            warmup_cols.append(col)
                                 else:
                                     # ウィンドウ全体がNULL。
                                     warmup_bars = warmup_thresholds.get(col)
@@ -223,7 +265,7 @@ def _calculate_t3_worker(sid, ticker, t3_max, db_path, spy_df, skip_fetch, is_vi
                                         defect_cols.append(col)
                                     else:
                                         # warmup_bars が未確定、またはウィンドウ長K以上
-                                        # 必要（例: rs_roc_ema_200 は511 > K=400）
+                                        # 必要（例: rs_roc_ema_200 は611 > K=400）
                                         # -> 正当なウォームアップ中か欠陥か判別できない。
                                         undetermined_cols.append(col)
                             if defect_cols:
@@ -293,7 +335,9 @@ def _log_fallback_summary(logger: logging.Logger, fallback_reasons: List[str]) -
     （全期間計算そのものは正確で、単に保存済み行が無いだけ）。
     `FALLBACK_REASON_NULL_RECURSIVE_COLUMN`（欠陥の可能性）が1件でもあれば
     WARNING で内訳とリフレッシュ推奨を出し、それ以外（新規上場・履歴不足・
-    連休明け・正当なウォームアップ中）だけなら想定内として INFO に留める。
+    連休明け・判別不能）だけなら想定内として INFO に留める。単調に
+    NULL→非NULLへ移行し前日行に値がある列はもはやフォールバック理由では
+    ないため（t3_fallback_lookback_window計画 5-3）、ここには現れない。
 
     5-15c（2回目の code-review 指摘1）: `FALLBACK_REASON_WARMUP_UNDETERMINED`
     （判別不能）を新設した。判別不能は欠陥と確定したわけではないため
