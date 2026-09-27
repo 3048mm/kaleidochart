@@ -220,6 +220,19 @@ graph TD
 > 詳細な経緯と設計: `doc/completed/screener_filter_unification_plan.md`、
 > `doc/backend_specification.md` §5.0。
 
+### 7.3 目的関数（Objective）を変更するときの必須手順
+
+Optuna 最適化の目的関数を変更する際は、試行結果の混入や不整合を防ぐため、以下を**必ず遵守**すること。
+
+1. **`optimization_runner.py` の `CURRENT_OBJECTIVE_ID` をインクリメントする**:
+   - 式やスコア計算方針を変更した場合は、必ず `CURRENT_OBJECTIVE_ID`（例: `geo_mean_v1` → `geo_mean_v2`）および `CURRENT_OBJECTIVE_FORMULA` を更新する。
+   - `verify_and_register_objective_id()` により、過去の異なる目的関数で作られた既存 study や未記録のレガシー study への追記は機械的に拒絶（`IncompatibleObjectiveError`）される。
+2. **既存 study は必ず退避（リネーム）してから回す**:
+   - 目的関数が異なる trial を同一 study に混ぜてはならない（最適化の探索空間・ベスト trial の評価軸が破壊されるため）。
+3. **掛け算のペナルティを足すときは、スコアが負のときの符号を必ず確認する**:
+   - 負の値に 1 未満の係数（例: `× 0.2`）を掛けるとゼロに近づく＝**罰ではなく改善**になってしまう。
+   - スコアが 0 以下の場合は掛け算ペナルティを適用せず素の値を返すなど、負値ガードを徹底すること。
+
 ## 8. コーディング規約・ファイルフォーマット (Coding Standards)
 
 当プロジェクトでは、Windows環境における文字化けやGit上での改行コード混在を防ぐため、全テキストファイル（`.py`, `.md`, `.toml`, `.json`, `.tsx` 等）において以下のフォーマットを強制します。

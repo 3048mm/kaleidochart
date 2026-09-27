@@ -440,6 +440,9 @@ class TestEvaluateHoldout:
 
 # ============================================================
 # --strategy all（最適化対象の全戦略を順に回す）
+# =====================================================
+
+
 # ============================================================
 
 class TestListOptimizableStrategies:
@@ -559,3 +562,108 @@ class TestRunAllStrategies:
 
         assert run_all_strategies({"strategy": [{"name": "I1"}]}, trials=1, storage=None,
                                   n_jobs=1, run=fake_run) == []
+
+
+# ============================================================
+# verify_and_register_objective_id (目的関数の混入防止)
+# ============================================================
+from optimization_runner import (
+    CURRENT_OBJECTIVE_ID,
+    CURRENT_OBJECTIVE_FORMULA,
+    IncompatibleObjectiveError,
+    verify_and_register_objective_id,
+)
+
+
+def test_verify_and_register_objective_id_new_study():
+    """新規 study（trials=0, user_attrs={}）に現在の ID と formula を記録する。"""
+    mock_study = MagicMock()
+    mock_study.study_name = "test_study"
+    mock_study.user_attrs = {}
+    mock_study.trials = []
+
+    verify_and_register_objective_id(mock_study)
+
+    mock_study.set_user_attr.assert_any_call("objective_id", CURRENT_OBJECTIVE_ID)
+    mock_study.set_user_attr.assert_any_call("objective_formula", CURRENT_OBJECTIVE_FORMULA)
+
+
+def test_verify_and_register_objective_id_matching():
+    """既存 study の objective_id が一致する場合、正常に通過する。"""
+    mock_study = MagicMock()
+    mock_study.study_name = "test_study"
+    mock_study.user_attrs = {"objective_id": CURRENT_OBJECTIVE_ID}
+    mock_study.trials = [MagicMock()]
+
+    # 例外が送出されないこと
+    verify_and_register_objective_id(mock_study)
+
+
+def test_verify_and_register_objective_id_mismatch():
+    """既存 study の objective_id が異なる場合、IncompatibleObjectiveError で停止する。"""
+    mock_study = MagicMock()
+    mock_study.study_name = "A_momentum_breakout"
+    mock_study.user_attrs = {"objective_id": "cagr_v1"}
+    mock_study.trials = [MagicMock()]
+
+    with pytest.raises(IncompatibleObjectiveError) as exc_info:
+        verify_and_register_objective_id(mock_study)
+
+    err = str(exc_info.value)
+    assert "A_momentum_breakout" in err
+    assert "cagr_v1" in err
+    assert CURRENT_OBJECTIVE_ID in err
+    assert "退避" in err
+
+
+def test_verify_and_register_objective_id_legacy_with_trials():
+    """trial を持つが objective_id が未記録のレガシー study は混入防止のためエラーにする。"""
+    mock_study = MagicMock()
+    mock_study.study_name = "B_legacy_study"
+    mock_study.user_attrs = {}  # objective_id なし
+    mock_study.trials = [MagicMock(), MagicMock()]  # 2 trials 存在
+
+    with pytest.raises(IncompatibleObjectiveError) as exc_info:
+        verify_and_register_objective_id(mock_study)
+
+    err = str(exc_info.value)
+    assert "B_legacy_study" in err
+    assert "2 件の trial" in err
+    assert "レガシー study" in err
+    assert "退避" in err
+
+
+def test_verify_and_register_objective_id_empty_trials_unregistered():
+    """trial が 0 件で未記録の場合は新規 study と同様に登録して通過する。"""
+    mock_study = MagicMock()
+    mock_study.study_name = "empty_study"
+    mock_study.user_attrs = {}
+    mock_study.trials = []
+
+    verify_and_register_objective_id(mock_study)
+
+    mock_study.set_user_attr.assert_any_call("objective_id", CURRENT_OBJECTIVE_ID)
+    mock_study.set_user_attr.assert_any_call("objective_formula", CURRENT_OBJECTIVE_FORMULA)
+
+
+def test_main_aborts_on_incompatible_objective(capsys, monkeypatch):
+    """main() 実行時に既存 study の objective_id が不一致なら sys.exit(1) で即座に終了する。"""
+    import optimization_runner as opt
+
+    mock_study = MagicMock()
+    mock_study.study_name = "A_momentum_breakout"
+    mock_study.user_attrs = {"objective_id": "old_objective_v0"}
+    mock_study.trials = [MagicMock()]
+
+    monkeypatch.setattr(opt, "init_db", lambda *a, **kw: None)
+    monkeypatch.setattr(opt, "get_cached_data", lambda *a, **kw: None)
+    monkeypatch.setattr(opt, "resolve_data_source", lambda *a, **kw: None)
+    monkeypatch.setattr(opt, "retire_study_if_data_source_changed", lambda *a, **kw: mock_study)
+
+    with pytest.raises(SystemExit) as exc_info:
+        opt.main(["--strategy", "A", "--trials", "1"])
+    assert exc_info.value.code == 1
+
+    captured = capsys.readouterr()
+    assert "[ERROR] 目的関数の不一致を検知しました" in captured.out
+    assert "old_objective_v0" in captured.out

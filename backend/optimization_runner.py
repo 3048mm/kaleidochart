@@ -31,6 +31,66 @@ from db import database
 optuna.logging.set_verbosity(optuna.logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+class IncompatibleObjectiveError(RuntimeError):
+    """既存の Optuna study の目的関数と現在のコードの目的関数が不一致。"""
+
+
+#: 現在の目的関数の識別子と式の要約（混入防止用）
+CURRENT_OBJECTIVE_ID = "geo_mean_v1"
+CURRENT_OBJECTIVE_FORMULA = "geo_mean_gain with quality_gate and expectancy_lcb penalty"
+
+
+def verify_and_register_objective_id(
+    study: optuna.Study,
+    current_id: str = CURRENT_OBJECTIVE_ID,
+    current_formula: str = CURRENT_OBJECTIVE_FORMULA,
+) -> None:
+    """study の objective_id を検証し、必要に応じて登録する。
+
+    - 新規 study または trial=0 で未記録の場合:
+      `study.set_user_attr("objective_id", current_id)`
+      `study.set_user_attr("objective_formula", current_formula)`
+      を記録する。
+    - 既存 study で objective_id が一致する場合:
+      正常終了。
+    - 既存 study で objective_id が不一致の場合:
+      IncompatibleObjectiveError を送出。
+    - 既存 study で既に trial が存在する（len(study.trials) > 0）のに objective_id が無い場合:
+      レガシー study による目的関数混入を防ぐため、IncompatibleObjectiveError を送出。
+
+    Raises:
+        IncompatibleObjectiveError: 目的関数が不一致またはレガシー study の場合。
+    """
+    study_name = getattr(study, "study_name", "<unknown>")
+    user_attrs = getattr(study, "user_attrs", {})
+    trials = getattr(study, "trials", [])
+
+    if "objective_id" in user_attrs:
+        stored_id = user_attrs["objective_id"]
+        if stored_id != current_id:
+            raise IncompatibleObjectiveError(
+                f"既存の study '{study_name}' の目的関数 ID は '{stored_id}' ですが、"
+                f"現在のコードは '{current_id}' です。\n"
+                f"異なる目的関数の trial を同一 study に混入させることはできません。\n"
+                f"既存 study を退避（リネーム）してから再実行してください。"
+            )
+        return
+
+    # objective_id が未記録の場合
+    if len(trials) > 0:
+        raise IncompatibleObjectiveError(
+            f"既存の study '{study_name}' には {len(trials)} 件の trial が存在しますが、"
+            f"objective_id が記録されていません（レガシー study）。\n"
+            f"現在の目的関数 '{current_id}' との混入を防ぐため、"
+            f"既存 study を退避（リネーム）してから再実行してください。"
+        )
+
+    # 新規または trial 未実行の study に記録
+    study.set_user_attr("objective_id", current_id)
+    study.set_user_attr("objective_formula", current_formula)
+
+
 # Global dictionary for cached data per period
 _cached_data_dict = {}
 
@@ -825,7 +885,7 @@ def objective(trial: optuna.Trial, strategy_name: str, config, config_app, exit_
         traceback.print_exc()
         raise e
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description="Optimize backtest parameters with Optuna")
     parser.add_argument("--strategy", type=str, required=True, help="Strategy name or short code (A, B, C...). 'all' で [strategy.optimization] を持つ全戦略を順に実行")
     parser.add_argument("--trials", type=int, default=30)
@@ -850,7 +910,7 @@ def main():
                              "'latest'（現在の data ディレクトリの最新世代）/ "
                              "バックアップのフォルダ名（例 '_bk_20260925_...')。"
                              "省略時は本番なら backup、それ以外（ワークツリー・sandbox）なら latest。")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     
     # Use config just to load exit rules
     config_path = os.path.join(backend_dir, 'backtest', 'backtest_config.toml')
@@ -961,6 +1021,13 @@ def main():
     study = retire_study_if_data_source_changed(
         storage, study_name, _resolved_data_source_meta, db_path,
     )
+
+    # 目的関数の整合性チェック（混入防止）
+    try:
+        verify_and_register_objective_id(study)
+    except IncompatibleObjectiveError as e:
+        print(f"\n[ERROR] 目的関数の不一致を検知しました:\n{e}\n")
+        sys.exit(1)
 
     try:
         enqueued = enqueue_baseline_trial(study, config, actual_name)
