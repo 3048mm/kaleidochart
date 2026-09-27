@@ -16,7 +16,7 @@ argument-hint: "<項目名>（例: parquet_pointer_fail_loud）"
 ### 1-1. 既存の課題リストを見る
 
 ```powershell
-Select-String -Path doc\issue_list.md -Pattern "<関連しそうな語>"
+Select-String -Path doc\issue_list.md, doc\issues\*.md -Encoding UTF8 -Pattern "<関連しそうな語>"
 ```
 
 関連する課題があれば、**優先順位をユーザーに提案する**（`doc/project_knowhow.md` D-1）。
@@ -111,4 +111,5 @@ Copy-Item doc\in_progress\_TEMPLATE.md doc\in_progress\$ARGUMENTS`_plan.md
 - チェックリスト・作業中メモ・§7 途中発生した課題を**随時更新する**。
   別セッションからの再開点になるため、区切りごとに即時更新すること
 - ワークツリーで計画書を更新したら**その場でコミットする**（未コミットで置き残さない）
-- 完了したら §6 の結果を記入し、`doc/completed/` へ移動する
+- 完了したら §6 の結果を記入し、`doc/completed/` へ移動する。対応した issue は
+  `doc/issue_list.md` から `doc/issue_list_archive.md` へ移す（`doc/issues/` の詳細も含めて）

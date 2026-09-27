@@ -25,6 +25,7 @@
 - 変更種別 A〜D の定義: `doc/agent_execution_rules.md` §10.2
 - ワークツリーのデータ準備（G1 の後・実装の前）: 同 §10.3
 - バックテスト評価は G4 の前に行う: 同 §10.4
+- 計画書を `doc/completed/` へ移すとき、対応した issue も `doc/issue_list.md` から `doc/issue_list_archive.md` へ移す（書き方: `doc/project_knowhow.md` D-1）
 
 ```
 G1 計画合意 ──▶ 実装 ⇄ G2 項目検収（チェック項目ごと）
@@ -113,3 +114,4 @@ G1 計画合意 ──▶ 実装 ⇄ G2 項目検収（チェック項目ごと�
 - 2026-09-23: 初版 — CLAUDE.md・rules §7/§9/§10.2・commands に分散していたゲート・閾値・介入地点を集約。G3（ブランチレビュー）を自動化し、往復上限と「上位3件＝報告の上限」を定義。計画書: `doc/completed/workflow_gates_plan.md`
 - 2026-09-23: §4.1 を追加 — 「指示」（毎回読まれる。今のルールだけを書く）と「学びの記録」（grep で引く。エラー原文・経緯を残す）の区別。防ぐ事故: プロンプト監査が学びの記録の経緯（検索キー・削除判断の材料）を「古い経緯」として削る提案をすること
 - 2026-09-25: G2 の条件を「対象テスト pass」に緩め、全件テストを G3 の開始条件へ移動。G3 の開始条件に「未コミットの変更が無い」を追加し、コミットの主体と粒度を自由化。防ぐ事故: `/code-review main...<branch>` はコミット済みの差分しか見ないため、未コミットの変更がレビューされないまま G3 通過になること（試運転: `doc/completed/workflow_gates_plan.md` §7-5）
+- 2026-09-28: 計画書完了時に issue を `doc/issue_list_archive.md` へ移す手順を追加。防ぐ事故: 完了項目が `issue_list.md` の未完了欄に残り続け、未完了と見分けがつかなくなること（`doc/completed/issue_list_restructure_plan.md`）
