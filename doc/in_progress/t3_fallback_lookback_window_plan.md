@@ -1,6 +1,6 @@
 # T3 増分フォールバック判定の是正（rs_roc_ema_200 の NULL 上書き）計画書
 
-- **ステータス**: 🚧 進行中（G1 合意 2026-09-26）
+- **ステータス**: 🚧 進行中（G1 合意 2026-09-26・merge/昇格済み。次回日次更新での再発なし確認待ち）
 - **実施者**: AI エージェント（Claude Opus 5.5）
 - **開始日**: 2026-09-26 / **完了日**: —
 - **作業ブランチ**: `worktree-t3-fallback-lookback`（G1 合意後に作成）
@@ -105,8 +105,8 @@
 - [x] **5-7c**（同・R3/R4/R7）コメント・docstring の是正: 「過去行の NULL は無関係」は RECURSIVE 列のシードについてのみ正しく、WINDOW 列（`rs_ratio_eN`・`rs_momentum_eN`）は**保存済みの NULL 区間が真のウォームアップと一致していることが前提**である旨に直す（5-7a の検査がその前提を守る）。`_log_fallback_summary` の「正当なウォームアップ中」、`511`（→611）、`incremental_merge.py` の「K 行すべて非 NaN のときだけ増分」という前提記述（L41-48・82-86・161-169・202-205 付近）、テスト docstring の3区分の記述 — **2026-09-26 完了**。t3_indicators.py・incremental_merge.py・テストの docstring を「保存済みNULL区間＝真のウォームアップ」前提の記述に是正、511→611。全件 2068 passed / 1 skipped
 - [x] **5-7d**（G3 2周目 R8/R9・**2026-09-26 ユーザー判断: 案 X**）5-7a の「`first_valid_pos > warmup_bars`」を**フォールバック（欠陥）から WARNING のみに変更し、増分計算は継続**する。理由: 欠陥扱いにすると SQLite 504本の全期間計算に回り、EMA のずれと `rs_roc_ema_200` の NULL 連鎖（本計画が断ち切る経路）を起こす（R8）。`warmup_bars` は実測値で、先頭入力 NaN の銘柄では真の立ち上がりが後ろにずれるため誤判定がありうる（R9）。実装: `_calculate_t3_worker` の戻り値を `(ticker, sid, records, fallback_reason, warnings)` の5要素にし（`warnings` は列名を含む文字列のリスト。増分経路でも返せる）、`sync_phase_t3_indicators` がフェーズ終了時に件数・銘柄（先頭20件）・列を1回だけ WARNING で出す。推奨対処は `--rebuild-from T3`。例外時の戻り値・wrapper・全テストのアンパックを5要素に揃える — **2026-09-26 完了**。戻り値を5要素（`warnings` 追加。呼び出し元は wrapper の1箇所のみ）、超過は増分継続＋フェーズ終了時に1回だけ WARNING（`_log_warnings_summary`・先頭20銘柄）。red: 旧テストの `assert [True] == [None]`
 - [x] **5-7e**（G3 2周目 R10〜R14）①`incremental_merge.py` の「呼び出し側が保証する」を「上限（`first_valid_pos <= warmup_bars`）と単調性だけを検査し、上限内の欠陥的な NULL 区間は検出できない」と正確に書く（R10）②テスト: 履歴 ≥ 811 本（例 850）で `rs_momentum_e200` が**実値**を持つケースの一致（R11）、境界ケース（`first_valid_pos == warmup_bars`）でも出力行を全履歴計算と比較（R12）③`incremental_state_registry.py` の `columns_with_undeterminable_warmup` docstring、`test_db_health_check.py` のコメントの 511/610 を 611/810 系の現行値に（R13）④`warmup_thresholds.get(col)` の重複を分岐の外へ（R14） — **2026-09-26 完了**。履歴850本で `rs_momentum_e200` が実値かつ全67列一致、境界ケースも値比較を追加、511/610 の旧値を是正、`get` の重複を解消。全件 2072 passed / 1 skipped（オーケストレーター再実行で確認）
-- [ ] **5-7** G3（`/code-review medium`。種別 B なら high）
-- [ ] **5-8** merge → `deploy_after_merge.ps1`（A。ユーザー実行）→ 翌日の日次更新ログで `null_recursive_column` が 0〜数件であることを確認
+- [x] **5-7** G3（`/code-review medium`。種別 B なら high） — **2026-09-26 通過**（3回・計23件。§6.3）
+- [ ] **5-8** merge → `deploy_after_merge.ps1`（A。ユーザー実行）→ 翌日の日次更新ログで `null_recursive_column` が 0〜数件であることを確認 — **2026-09-26 merge（`39f8775`）・昇格済み**（新世代 `20260926_234016`）。本番を読み取り専用で確認: 欠陥 95 → **0 件**、修復した 93 銘柄は `rs_roc_ema_200` が単調移行中（次回から増分継続）、5-7a 条件 0 件。**残: 次回の日次更新（2026-09-29 火 07:00）の Phase 3 集計で `null_recursive_column` が 0〜数件であることの確認**
 - [ ] **5-9** 計画書を `doc/completed/` へ移動
 
 ### 作業中メモ
