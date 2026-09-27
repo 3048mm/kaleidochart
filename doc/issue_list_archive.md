@@ -5,6 +5,32 @@
 
 ## 完了済みタスク (Completed)
 
+- [x] ~~🔴 **T5 の日次も SQLite 基点のまま — T3 と同じ遡り不足が残っている**（2026-09-20 発見）~~ — **2026-09-28 問題なしとして完了（誤起票）**
+  - **結論**: T5（`calculate_market_signals()`）は EMA 等の再帰状態を持たず、有限窓（SMA200・SMA50・ATR14・25本ローリング・shift20）だけで計算する。
+    必要な遡りは最大 **220本**（`spy_sma200_rising` = SMA200 + 20本前比較。`SPY_LOOKBACK_MIN_BARS`）で、日次の対象日（最新日）には SQLite の SPY 502本があり **282本の余裕**がある。
+    T3 が壊れたのは EMA が全履歴に依存するためで、T5 には当てはまらない。
+  - **実測（2026-09-28・読み取りのみ）**: SQLite 502本と Parquet 4,147本で計算した値の不一致は SQLite 先頭の区間だけで、理論値どおり
+    （`spy_sma200_rising` 219本・`spy_above_sma200`/`market_phase`/`market_trend_score` 199本・`distribution_days` 24本）。それ以降は全列一致。
+    保存済みの SQLite `market_signals` 502行と Parquet master の `market_signals` も7列すべて不一致0行。
+    スクリプト: `tmp/check_t5_lookback.py`・`tmp/check_t5_stored_vs_parquet.py`
+  - **誤起票の経緯**: `doc/completed/t3_incremental_plan.md` §1.3 が「同じ病気を3回発見」を整理した流れで「T5 の日次も同じ病気のまま」と一文で類推し、そのまま起票された（`b72aab2`）。
+    `db.query(DailyPrice)` で SQLite を読むというコードの形だけが根拠で、窓が有限か再帰かを確かめていなかった。
+    2026-09-11 の ② の時点で `doc/completed/min_periods_warmup_plan.md:24` に「デイリーでは起きない」と既に書かれていたが照合されなかった。
+  - **残るリスク（いずれも低・既存の手当てあり）**: ①13ヶ月以上止めた後の一括追いつきでは先頭220本内の日付が NULL で書かれる（`logger.error` で警告される。偽の値は入らない）
+    ②T5 に EMA を導入すると本当に T3 と同じ問題になる（定数名は `EMA50_ATR_*` だが実装は SMA）③`breadth_sma50` は T3 の `sma_50` に依存する（T3 側の issue）
+  - 起票時の本文:
+  - **事象**: `backend/pipeline/phases/t5_signals.py:109-117` が `db.query(DailyPrice)` で
+    SQLite（730日＝実測504営業日）から読んで計算している。T3 の日次で見つかったのと
+    **同じ病気**（`doc/in_progress/t3_incremental_plan.md` §1.3）。
+  - **`SPY_LOOKBACK_MIN_BARS` のガードは警報であって治療ではない**。遡り不足を検知して
+    警告するだけで、正しい値を計算するわけではない。
+  - **同じ病気を3回別々に発見している**: 2026-09-04（T3 の再構築）、2026-09-11（T5 の
+    リフレッシュ＝②）、2026-09-20（T3 の日次）。毎回「その経路だけ」を直しており、
+    アーキテクチャの目標として宣言されていないため次の経路が残る。
+  - **対応案**: T3 の日次で採った増分化（保存済み状態から継ぐ）と同型の対処。
+    `doc/in_progress/t3_incremental_plan.md` の設計をそのまま適用できるはず。
+  - 関連: `doc/in_progress/t3_incremental_plan.md`、`doc/completed/t5_parquet_rebuild_plan.md`
+
 
 
 - [x] 🎯 **税率（`consider_tax`）が個別銘柄シナリオテストの売買戦略に一切届いていなかった不具合の修正**:

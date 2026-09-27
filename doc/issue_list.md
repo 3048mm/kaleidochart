@@ -56,15 +56,10 @@
   - **対応案**: 目的関数を税後の値にするか、「スコアには効かない」と仕様に明記するかを判断する
   - **詳細**: [doc/issues/tax_optimization_no_effect.md](issues/tax_optimization_no_effect.md)
 
-- [ ] 🔴 **T5 の日次も SQLite 基点のまま — T3 と同じ遡り不足が残っている**（2026-09-20 発見）
-  - **症状**: T5 の日次が SQLite（約504営業日）から読んで計算しており、T3 と同じ遡り不足が残っている
-  - **対応案**: T3 の増分化（保存済み状態から継ぐ）と同型の対処
-  - **詳細**: [doc/issues/t5_daily_sqlite_lookback.md](issues/t5_daily_sqlite_lookback.md)
-
-- [ ] 🟠 **遡及的な価格修正のあとに T3 が再計算されない — ウィークリー修復自体にも欠陥がある**（2026-09-20 発見）
-  - **症状**: 過去の価格を補正しても T3 の過去行は再計算されない。週次修復も「行が無い」ケースしか拾わず、しかも SQLite 基点
-  - **対応案**: 補正銘柄を Parquet 基点で再計算する仕組み・修復入力の Parquet 化・誤った値の検出手段
-  - **詳細**: [doc/issues/t3_not_recomputed_after_price_fix.md](issues/t3_not_recomputed_after_price_fix.md)
+- [ ] 🟠 **週次の T3 修復が「行の欠落」しか拾わず、しかも SQLite 基点で再計算する**（2026-09-20 発見 / 2026-09-28 書き直し）
+  - **症状**: 値が誤っている・NULL の行は直らず、SQLite 窓の先頭付近を修復すると遡り不足の値を書き込む（R19 と同一）。手動の価格補正後の T3 再計算は問題なし
+  - **対応案**: 修復入力を Parquet 基点にし、誤った値の検出手段を持つ。T3 フォールバック（案 C）・R19 と1計画にまとめる
+  - **詳細**: [doc/issues/weekly_t3_repair_sqlite_base.md](issues/weekly_t3_repair_sqlite_base.md)
 
 ## P2 — 中（体感改善・保守性・運用安全性）
 
