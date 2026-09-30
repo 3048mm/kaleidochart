@@ -67,7 +67,8 @@
 | `min_rs_ratio_rank_e21`| `relative_ranks.percent_rank` | **RS 21日ランク**: カテゴリ内でのRS強さのパーセンタイル順位 (0.0~1.0)。`indicator_name='rs_ratio_e21'` を参照。 |
 | `is_rs_ratio_rank_e21_gt_e63` | `relative_ranks.percent_rank` | **RS短期加速**: 21日ランクが63日ランクを上回っているか（短期的な相対強度が向上しているか）。 |
 | `min_rs_macd_hist_21` | `indicators.rs_macd_hist_21` | **RS-MACDヒストグラム下限**: 相対強度MACDのヒストグラム生値が指定値以上か。0.0以上で強気（ゴールデンクロス）状態を示す。 |
-| `is_rs_macd_hist_rising_21` | `indicators.rs_macd_hist_21` (当日・前日比) | **RS-MACDヒストグラム加速**: 当日のヒストグラム値が 0.0 以上であり、かつ前日の値を上回って加速しているか。 |
+| `is_rs_macd_hist_rising_21` | `indicators.rs_macd_hist_21` (当日・前日比) | **RS-MACDヒストグラム加速**: 当日のヒストグラム値が前日の値を上回って加速しているか（正負は問わない。水準は `min_rs_macd_hist_21` で指定）。前日値が無い銘柄は通過しない。2026-09-30 に「0.0 以上」の条件を外した。 |
+| `is_theme_rs_macd_hist_rising_21` | `indicators.rs_macd_hist_21`（テーマ行の当日・前日比）<br>`theme_constituents` | **テーマRS-MACDヒストグラム加速**: 所属テーマのヒストグラム値が前日を上回っているか（判定式は銘柄版と同一。水準は `min_theme_rs_macd_hist_21` で指定）。 |
 | `is_theme_rs_ratio_e21_gt_e63` | `indicators.rs_ratio_e21/e63`<br>`theme_constituents` | **テーマ主導 (21 vs 63)**: 所属するテーマ自体のRS21 > RS63であるか。個別銘柄の場合は、その銘柄を構成員に持つテーマのいずれかが合格していれば真。 |
 | `is_theme_rs_ratio_e14_gt_e21` | `indicators.rs_ratio_e14/e21`<br>`theme_constituents` | **テーマ主導 (14 vs 21)**: 所属するテーマ自体のRS14 > RS21であるか。 |
 | `min_theme_rs_ratio_rank_e14` / `min_theme_rs_ratio_rank_e21` | `relative_ranks.percent_rank`<br>`theme_constituents` | **テーマRSランク下限**: 所属するテーマのRS比率ランク (0.0~1.0) が指定値以上か。 |

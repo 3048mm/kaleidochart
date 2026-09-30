@@ -166,6 +166,11 @@ _SPECIAL_SPECS = {
         requires=('rs_macd_hist_21',),
         prev_requires=('rs_macd_hist_21',),
     ),
+    'is_theme_rs_macd_hist_rising_21': FilterSpec(
+        key='is_theme_rs_macd_hist_rising_21', kind='special', column=None, op=None,
+        requires=('rs_macd_hist_21',),
+        prev_requires=('rs_macd_hist_21',),
+    ),
 
     # --- 個別 RS Ratio %rank 比較（filter_rs_rank_21_gt_63 / filter_rs_rank_14_gt_21） ---
     'is_rs_ratio_rank_e21_gt_e63': FilterSpec(

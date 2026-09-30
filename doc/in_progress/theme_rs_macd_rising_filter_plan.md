@@ -77,26 +77,30 @@ B6 は「銘柄の RS-MACD が加速している」ことが戦略の定義だ�
 
 ## 5. 実装順序と進捗チェックリスト
 
-- [ ] G1: 本計画書のユーザー合意
-- [ ] ワークツリー作成・計画書コミット
-- [ ] test-writer: 失敗するテスト追加（red）
+- [x] G1: 本計画書のユーザー合意
+- [x] ワークツリー作成・計画書コミット
+- [x] test-writer: 失敗するテスト追加（red）
   - `backend/tests/indicators/test_screener_filters.py`: 銘柄版の既存テスト（hist>0 前提の箇所 L399-413 付近）を新仕様に修正。
     テーマ版: 加速/非加速/hist負でも上昇なら通過/prev NaN は不通過/prev 列なしは全不通過/テーマ非所属
   - `backend/tests/backtest/test_backtest_screener_refactoring.py`: apply_filters 経由（前日マージ込み）
   - `backend/tests/api/test_screener_special_filter_behavior.py`: テーマ版の期待集合を追加、銘柄版の期待集合 `{1, 3, 100}` を新仕様で見直し
-- [ ] implementer: §3 の 1〜4 を実装（green）
-- [ ] 全件テスト（`pytest backend/tests/`）
-- [ ] `doc/backtest_config_spec.md` 追記
+- [x] implementer: §3 の 1〜4 を実装（green）
+- [x] 全件テスト（`pytest backend/tests/`）
+- [x] `doc/backtest_config_spec.md` 追記
 - [ ] G2 検収（/accept）→ G3 ブランチレビュー（/code-review）
 - [ ] G4 merge（ユーザー）
-- [ ] B6 現行 best の再採点（銘柄版の意味変更で不変を確認）
+- [x] B6 現行 best の再採点（銘柄版の意味変更で不変を確認）
 - [ ] （範囲外・後続）B6 派生の型1最適化: 現行 B6 + テーマ加速 / M系との比較
 
 ### 作業中メモ
 
-なし
+- 変更が小さいためワーカー委譲せずオーケストレーターが直接実装（ユーザー了承）。テスト先行（red 確認済み）→ 実装。
 
 ## 6. 検証プラン / 結果
+
+**結果（2026-09-30）**: 全件 2086 passed / 1 skipped / 1 failed（上記 §7 の環境起因1件のみ）。
+B6 現行設定の型1再採点: 旧判定・新判定とも score=2.3704 / trades=298 / exp=5.331% / LCB=0.761% / DD=−105.09%（完全一致）。
+再採点は本体コードの `backtest_screener.filter_rs_macd_hist_rising_21` を新判定に差し替えて実施（`tmp/b6_rescore_backend.py old|new`。ワークツリーの data 解決が tmp スクリプトから使えないため）。
 
 - 単体・結合テスト全件パス: `$env:PYTHONPATH="backend"; .\venv\Scripts\python.exe -m pytest backend/tests/ -v`
 - 実データでの疎通: tmp スクリプトで B6 + `is_theme_rs_macd_hist_rising_21=true` の FixedTrial を1本実行し、
@@ -120,6 +124,9 @@ B6 は「銘柄の RS-MACD が加速している」ことが戦略の定義だ�
 | :--- | :--- | :--- | :--- | :--- |
 
 ## 7. 途中発生した課題
+
+- apply_filters 経由のテストで当初テーマ行も出力に含まれる想定にしたが、バックテストはテーマ行を最終出力から除く仕様（`test_apply_filters_excludes_theme_rows_from_final_output`）。テスト期待値を構成銘柄のみに修正。
+- 全件テストで `test_scenario_comparison.py::test_run_comparison_generates_outputs` が失敗（ワークツリーに Parquet マスタが無い `FileNotFoundError`）。本体チェックアウトでは同テストが通過することを確認済みで、本変更とは無関係。
 
 ## 8. スコープ外・残作業
 

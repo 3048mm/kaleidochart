@@ -130,6 +130,8 @@ EXPECTED = {
     "is_rs_trend_s14_lt_s21": {1, 3, 101},
     "is_theme_rs_trend_rank_s14_gt_s21": {1, 100},
     "is_rs_macd_hist_rising_21": {1, 3, 100},
+    # テーマ100 (0.1→0.2 上昇) とその構成銘柄1。テーマ101 は下降のため除外
+    "is_theme_rs_macd_hist_rising_21": {1, 100},
     # S-2: テーマ100 (rank e21=0.8 > e63=0.5) も通過する（バックテストと同一の意味論）
     "is_rs_ratio_rank_e21_gt_e63": {1, 100},
 }

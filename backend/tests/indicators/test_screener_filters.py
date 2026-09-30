@@ -381,6 +381,7 @@ class TestRrgLaggingIn:
 # ============================================================
 from indicators.screener_filters import (
     filter_rs_macd_hist_rising_21,
+    filter_theme_rs_macd_hist_rising_21,
     filter_rs_trend_s21_lt_s63,
     filter_rs_trend_s14_lt_s21,
     filter_theme_rs_trend_rank_s14_gt_s21,
@@ -390,27 +391,65 @@ from indicators.screener_filters import (
 
 
 class TestRsMacdHistRising21:
-    def test_rising_and_positive_passes(self):
+    # 2026-09-30: 判定は「前日より上昇」のみ（hist > 0 は含めない）。水準は min_rs_macd_hist_21 で別に指定する
+    def test_rising_passes_regardless_of_sign(self):
         merged = pd.DataFrame({
-            "symbol_id": [1, 2, 3, 4],
-            "rs_macd_hist_21":      [0.5,  0.5, -0.1, 0.5],
-            "prev_rs_macd_hist_21": [0.2,  0.8,  -0.2, None],
+            "symbol_id": [1, 2, 3, 4, 5],
+            "rs_macd_hist_21":      [0.5,  0.5, -0.1, -0.3, 0.5],
+            "prev_rs_macd_hist_21": [0.2,  0.8,  -0.2, -0.1, None],
         })
         mask = filter_rs_macd_hist_rising_21(merged)
-        # 1: 正かつ上昇 → 通過, 2: 正だが下降 → 除外, 3: 負 → 除外, 4: prev NaN → 比較 False → 除外
-        assert list(mask) == [True, False, False, False]
+        # 1: 上昇 → 通過, 2: 下降 → 除外, 3: 負だが上昇 → 通過, 4: 負で下降 → 除外, 5: prev NaN → 除外
+        assert list(mask) == [True, False, True, False, False]
 
-    def test_without_prev_column_falls_back_to_positive_only(self):
+    def test_without_prev_column_excludes_all(self):
+        # 前日値が無い＝上昇を確認できないため通過させない
         merged = pd.DataFrame({
             "symbol_id": [1, 2],
             "rs_macd_hist_21": [0.5, -0.5],
         })
         mask = filter_rs_macd_hist_rising_21(merged)
-        assert list(mask) == [True, False]
+        assert list(mask) == [False, False]
 
     def test_missing_columns_passthrough(self):
         merged = pd.DataFrame({"symbol_id": [1, 2]})
         mask = filter_rs_macd_hist_rising_21(merged)
+        assert list(mask) == [True, True]
+
+
+class TestThemeRsMacdHistRising21:
+    @staticmethod
+    def _frame(prev=True):
+        d = {
+            "symbol_id": [100, 101, 102, 1, 2, 3, 4],
+            "category": ["テーマ", "テーマ", "テーマ", "個別", "個別", "個別", "個別"],
+            # テーマ100: 正で上昇 / 101: 負だが上昇 / 102: 下降。個別銘柄自身の値は判定に使わない
+            "rs_macd_hist_21":      [0.3, -0.1, 0.5, -9.0, 9.0, 9.0, 9.0],
+        }
+        if prev:
+            d["prev_rs_macd_hist_21"] = [0.1, -0.4, 0.8, 0.0, 0.0, 0.0, 0.0]
+        return pd.DataFrame(d)
+
+    tc = pd.DataFrame({"theme_id": [100, 101, 102], "symbol_id": [1, 2, 3]})
+
+    def test_members_of_rising_themes_pass(self):
+        mask = filter_theme_rs_macd_hist_rising_21(self._frame(), self.tc)
+        # 通過: テーマ100/101 とその構成銘柄1/2。除外: 下降テーマ102・構成銘柄3・テーマ無所属4
+        assert list(mask) == [True, True, False, True, True, False, False]
+
+    def test_prev_nan_theme_excluded(self):
+        merged = self._frame()
+        merged.loc[0, "prev_rs_macd_hist_21"] = None
+        mask = filter_theme_rs_macd_hist_rising_21(merged, self.tc)
+        assert list(mask) == [False, True, False, False, True, False, False]
+
+    def test_without_prev_column_excludes_all(self):
+        mask = filter_theme_rs_macd_hist_rising_21(self._frame(prev=False), self.tc)
+        assert not mask.any()
+
+    def test_missing_columns_passthrough(self):
+        merged = pd.DataFrame({"symbol_id": [100, 1], "category": ["テーマ", "個別"]})
+        mask = filter_theme_rs_macd_hist_rising_21(merged, self.tc)
         assert list(mask) == [True, True]
 
 
@@ -478,5 +517,6 @@ class TestSpecialFilterKeysRegistry:
             "is_rs_ratio_rank_e21_gt_e63",
             "is_theme_rs_trend_rank_s14_gt_s21",
             "is_rs_macd_hist_rising_21",
+            "is_theme_rs_macd_hist_rising_21",
         }
         assert expected <= SPECIAL_FILTER_KEYS

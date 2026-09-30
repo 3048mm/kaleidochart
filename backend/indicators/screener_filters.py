@@ -290,21 +290,52 @@ def filter_rs_rank_14_gt_21(merged: pd.DataFrame) -> pd.Series:
     return merged['rs14_rank'] > merged['rs21_rank']
 
 
-def filter_rs_macd_hist_rising_21(merged: pd.DataFrame) -> pd.Series:
-    """
-    RS-MACD ヒストグラムが正かつ前日より上昇（加速）している銘柄を通過させるフィルタ。
+def _rs_macd_hist_rising_mask(merged: pd.DataFrame) -> pd.Series:
+    """RS-MACD ヒストグラムが前日より上昇している行（銘柄・テーマ共通の判定式）。
 
-    - 'prev_rs_macd_hist_21' が無い場合（前日データなし）は「正」のみで判定。
+    - 2026-09-30: 旧仕様の「hist > 0」を外し、上昇のみの判定に統一した。水準（正負）は
+      min_rs_macd_hist_21 / min_theme_rs_macd_hist_21 で別に指定する（条件の重複を避けるため）。
+    - 'prev_rs_macd_hist_21' が無い／NaN の行は上昇を確認できないため False（不通過）。
     - 'rs_macd_hist_21' 自体が無い場合は全通過。
-
-    Returns:
-        pd.Series[bool]: True = 通過
     """
     if 'rs_macd_hist_21' not in merged.columns:
         return pd.Series(True, index=merged.index)
     if 'prev_rs_macd_hist_21' not in merged.columns:
-        return merged['rs_macd_hist_21'] > 0
-    return (merged['rs_macd_hist_21'] > 0) & (merged['rs_macd_hist_21'] > merged['prev_rs_macd_hist_21'])
+        return pd.Series(False, index=merged.index)
+    return merged['rs_macd_hist_21'] > merged['prev_rs_macd_hist_21']
+
+
+def filter_rs_macd_hist_rising_21(merged: pd.DataFrame) -> pd.Series:
+    """RS-MACD ヒストグラムが前日より上昇（加速）している銘柄を通過させるフィルタ。
+
+    判定式は _rs_macd_hist_rising_mask を参照。
+
+    Returns:
+        pd.Series[bool]: True = 通過
+    """
+    return _rs_macd_hist_rising_mask(merged)
+
+
+def filter_theme_rs_macd_hist_rising_21(
+    merged: pd.DataFrame,
+    df_theme_constituents: pd.DataFrame,
+) -> pd.Series:
+    """テーマの RS-MACD ヒストグラムが前日より上昇しているテーマと、その構成銘柄を通過させるフィルタ。
+
+    判定式は銘柄版と同一（_rs_macd_hist_rising_mask をテーマ行に適用）。
+    """
+    if 'rs_macd_hist_21' not in merged.columns:
+        return pd.Series(True, index=merged.index)
+    is_theme = merged['category'] == 'テーマ'
+    rising = _rs_macd_hist_rising_mask(merged)
+    rising_themes = merged.loc[is_theme & rising, 'symbol_id'].values
+    stocks_in_themes = df_theme_constituents[
+        df_theme_constituents['theme_id'].isin(rising_themes)
+    ]['symbol_id'].values
+    return (
+        (is_theme & merged['symbol_id'].isin(rising_themes)) |
+        ((merged['category'] == '個別') & (merged['symbol_id'].isin(stocks_in_themes)))
+    )
 
 
 def filter_rs_trend_s21_lt_s63(merged: pd.DataFrame) -> pd.Series:

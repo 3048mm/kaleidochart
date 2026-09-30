@@ -25,6 +25,7 @@ from indicators.screener_filters import (
     filter_rrg_improving_in,
     filter_rrg_lagging_in,
     filter_rs_macd_hist_rising_21,
+    filter_theme_rs_macd_hist_rising_21,
     filter_rs_trend_s21_lt_s63,
     filter_rs_trend_s14_lt_s21,
     filter_theme_rs_trend_rank_s14_gt_s21,
@@ -234,6 +235,8 @@ def evaluate_special_filters(
             mask &= filter_theme_rs_trend_rank_s21_gt_s63(merged, df_tc)
         elif key == "is_rs_macd_hist_rising_21":
             mask &= filter_rs_macd_hist_rising_21(merged)
+        elif key == "is_theme_rs_macd_hist_rising_21":
+            mask &= filter_theme_rs_macd_hist_rising_21(merged, df_tc)
         elif key == "is_vcp_breakout":
             mask &= filter_vcp_breakout(
                 merged,

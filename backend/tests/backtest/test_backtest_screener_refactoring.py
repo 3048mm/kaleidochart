@@ -712,3 +712,32 @@ def test_apply_filters_does_not_remerge_prev_when_already_present():
     # _x/_y 衝突が起きていれば MissingFilterColumnError になるか結果が変わる。
     # ガードが効いていればフレーム上の prev_ 列がそのまま使われ、A のみ通過する。
     assert set(filtered['ticker']) == {'A'}
+
+
+def test_apply_filters_theme_rs_macd_hist_rising_merges_prev_for_theme_rows():
+    """is_theme_rs_macd_hist_rising_21 は prev_requires 経由でテーマ行にも前日値がマージされ、
+    前日より上昇したテーマの構成銘柄だけが通過すること（銘柄自身の上昇は問わない）。"""
+    merged = pd.DataFrame([
+        [100, '_UP_', 'Up', 'テーマ', 1, -0.1],
+        [101, '_DN_', 'Down', 'テーマ', 1, 0.5],
+        [1, 'A', 'A', '個別', 1, -1.0],
+        [2, 'B', 'B', '個別', 1, 1.0],
+    ], columns=['symbol_id', 'ticker', 'name', 'category', 'active', 'rs_macd_hist_21'])
+    df_ind = pd.DataFrame([
+        ['2026-06-25', 100, -0.3],   # 負だが上昇
+        ['2026-06-25', 101, 0.8],    # 下降
+        ['2026-06-25', 1, 0.0],
+        ['2026-06-25', 2, 0.0],
+    ], columns=['date', 'symbol_id', 'rs_macd_hist_21'])
+    tc = pd.DataFrame({'theme_id': [100, 101], 'symbol_id': [1, 2]})
+
+    filtered = apply_filters_to_df(
+        merged=merged, target_date='2026-06-26',
+        df_ind=df_ind,
+        df_ranks=pd.DataFrame(columns=['date', 'symbol_id']),
+        df_symbols=pd.DataFrame(), df_theme_constituents=tc,
+        strategy={'name': 't', 'is_theme_rs_macd_hist_rising_21': True},
+        prev_date='2026-06-25',
+    )
+    # テーマ行は売買対象外のため最終出力から除かれる。上昇テーマ100 の構成銘柄 A のみ通過
+    assert set(filtered['ticker']) == {'A'}
