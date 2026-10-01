@@ -1,8 +1,8 @@
 # テーマ RS-MACD 加速フィルタ追加・銘柄版の判定式統一 計画書
 
-- **ステータス**: 🚧 進行中
+- **ステータス**: ✅ 完了（テーマ RS-MACD 加速フィルタ追加・銘柄版判定を上昇のみに統一、B6 成績不変）
 - **実施者**: Claude Code (Opus 5.5) オーケストレーター / 実装は implementer・test-writer に委譲予定
-- **開始日**: 2026-09-30 / **完了日**: —
+- **開始日**: 2026-09-30 / **完了日**: 2026-09-30
 - **作業ブランチ**: `worktree-theme-rs-macd-rising`（予定・ワークツリー）
 - **対象 issue / 関連ドキュメント**: `doc/backtest_config_spec.md` §条件一覧 / `tmp/b_strategies_summary_20260930.md` / `tmp/b6_dd_analysis.py`
 
@@ -88,7 +88,7 @@ B6 は「銘柄の RS-MACD が加速している」ことが戦略の定義だ�
 - [x] 全件テスト（`pytest backend/tests/`）
 - [x] `doc/backtest_config_spec.md` 追記
 - [x] G2 検収（/accept）→ G3 ブランチレビュー（/code-review）
-- [ ] G4 merge（ユーザー）
+- [x] G4 merge（ユーザー指示で ff merge）
 - [x] B6 現行 best の再採点（銘柄版の意味変更で不変を確認）
 - [ ] （範囲外・後続）B6 派生の型1最適化: 現行 B6 + テーマ加速 / M系との比較
 

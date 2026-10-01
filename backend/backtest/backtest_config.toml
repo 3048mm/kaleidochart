@@ -131,20 +131,23 @@ is_close_gt_ema63 = true
 max_allowed_dd = 35.0   # MTM 再校正（旧: 未設定=デフォルト 20.0）
 
 [strategy.optimization]
+# 2026-09-28 実験3: 最適値が境界に張り付いた adr 上限 6→8 / sma50 下限 2→1 / rs_rank 上限 0.7→0.9 を拡張
+# （同時に試したテーマ is_theme_rs_ratio_rank_e14_gt_e21 の追加は、現行値で検出件数不足になり
+#   B2 の性格が変わるため 2026-09-30 に取り消し。探索範囲の拡張のみ採用）
 min_change_1d_pct  = { type = "float", min = 2.0, max = 10.0, step = 1.0 }
 min_vol_surge_21   = { type = "float", min = 0.5, max = 3.0, step = 0.1 }
 # 2026-07-05: 探索下限を 1.0→3.0 に引き上げ。B2 の「テーマの急騰銘柄」というコンセプトを
 # 探索空間で防衛する（DD 制約下で adr を下げてボラフィルタを撤廃した低ボラ大量トレード型へ
 # 変質するのを防ぐ）
-min_adr_pct_21     = { type = "float", min = 3.0, max = 6.0, step = 0.5 }
-max_sma50_atr_mult = { type = "float", min = 2.0, max = 8.0, step = 0.5 }
+min_adr_pct_21     = { type = "float", min = 3.0, max = 8.0, step = 0.5 }
+max_sma50_atr_mult = { type = "float", min = 1.0, max = 8.0, step = 0.5 }
 # 2026-07-24: 探索下限を 1e5→1e7 に引き上げ（1e5〜5e6 は企業として小さすぎ、売買代金床
 # 導入後は無駄な探索だった。B1/B4/B5 で既に適用済みの防衛パターンに統一。
 # max_avg_hits_per_day 引き締め後、この低すぎる選択肢が「大量の超小型株を拾って
 # プルーニングを回避する」抜け道になっていたことが判明したため）
 min_market_cap     = { type = "categorical", choices = [1e7, 5e7, 1e8, 3e8, 1e9] }
 is_theme_rs_ratio_rank_e21_gt_e63   = { type = "categorical", choices = [true] }
-min_rs_ratio_rank_e21 = { type = "float", min = 0.3, max = 0.7, step = 0.1 }
+min_rs_ratio_rank_e21 = { type = "float", min = 0.3, max = 0.9, step = 0.1 }
 is_close_gt_ema63 = { type = "categorical", choices = [true] }
 
 [[strategy]]
@@ -156,7 +159,8 @@ sort_ascending = false
 min_change_1d_pct = 9.0
 min_vol_surge_21 = 2.7
 min_adr_pct_21 = 6.0
-min_dist_21ema_pct = 7.0
+# 2026-10-01: min_dist_21ema_pct（7.0）を削除。外しても型1 score 2.62→2.60・取引 296→299・LCB 0.58 で
+# 実質無効（急騰 9% と close>EMA63 で既に絞れている）。検証: tmp/ablation_fixed.py
 max_sma50_atr_mult = 4.5
 min_market_cap = 1e7
 is_theme_rs_ratio_rank_e14_gt_e21 = true
@@ -166,7 +170,6 @@ max_allowed_dd = 35.0   # MTM 再校正（旧: 未設定=デフォルト 20.0）
 
 [strategy.optimization]
 min_change_1d_pct    = { type = "float", min = 2.0, max = 10.0, step = 1.0 }
-min_dist_21ema_pct   = { type = "float", min = -1.0, max = 20.0, step = 1.0 }
 min_vol_surge_21   = { type = "float", min = 0.5, max = 3.0, step = 0.1 }
 min_adr_pct_21     = { type = "float", min = 1.0, max = 6.0, step = 0.5 }
 max_sma50_atr_mult = { type = "float", min = 2.0, max = 8.0, step = 0.5 }
@@ -179,73 +182,90 @@ is_close_gt_ema63 = { type = "categorical", choices = [true] }
 
 [[strategy]]
 name = "B4_rs_trend_with_theme"
+# 2026-10-01: is_close_gt_ema63 を削除し、削除後の最適化 best（tmp/drop_ema63_trials.db
+# "B4_rs_trend_with_theme__noEMA63" #197）を既定値に採用（ユーザー判断）。
+# 銘柄 rs_trend s14<s21 が中期トレンドの担保を兼ねており EMA63 と役割が重複（B5 と同じ傾向）。
+# 型1: score 2.07→3.03 / LCB −0.12→+0.71。型3: CAGR 全5モデルで +0.2〜1.7pt、最大DD は +0〜2.9pt。
+# ホールドアウト calm_recent の期待値は −0.05% と弱い点に留意。
 description = "相対トレンドが強く、上昇テーマ(RSR)にも属する銘柄"
 max_hits_per_day = 10
 sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
 min_change_1d_pct = 9.0
-min_dist_21ema_pct = 6.0
-min_vol_surge_21 = 1.9000000000000001 
-min_adr_pct_21 = 5.5
+min_dist_21ema_pct = 1.0
+min_vol_surge_21 = 1.9
+min_adr_pct_21 = 6.0
 max_sma50_atr_mult = 6.0
 min_market_cap = 1e7
-min_rs_trend_s21 = 0.9
+min_rs_trend_s21 = 1.0
 min_theme_rs_ratio_rank_e21 = 0.8
 is_rs_trend_s14_lt_s21 = true
 is_theme_rs_ratio_rank_e14_gt_e21 = true
-is_close_gt_ema63 = true
 max_allowed_dd = 35.0   # MTM 再校正（旧: 未設定=デフォルト 20.0）
 
 [strategy.optimization]
 min_change_1d_pct    = { type = "float", min = 2.0, max = 10.0, step = 1.0 }
 min_dist_21ema_pct   = { type = "float", min = -1.0, max = 20.0, step = 1.0 }
 min_vol_surge_21   = { type = "float", min = 0.5, max = 5.0, step = 0.1 }
-min_adr_pct_21     = { type = "float", min = 1.0, max = 6.0, step = 0.5 }
+# 2026-10-01: 1.0〜6.0 → 4.0〜8.0（EMA63 削除後の best が上限 6.0 に張り付いたため。B5 と同範囲）
+min_adr_pct_21     = { type = "float", min = 4.0, max = 8.0, step = 0.5 }
 max_sma50_atr_mult = { type = "float", min = 2.0, max = 8.0, step = 0.5 }
-min_market_cap     = { type = "categorical", choices = [1e7, 1e8] }
-#min_market_cap     = { type = "categorical", choices = [1e5, 5e5, 1e6, 5e6, 1e7, 5e7, 1e8, 3e8, 1e9] }
+# 2026-10-01: 選択肢 2つ → 5つ（B2/B5/B6 と統一。選択肢2つでは検出件数が振れやすい）
+min_market_cap     = { type = "categorical", choices = [1e7, 5e7, 1e8, 3e8, 1e9] }
 min_rs_trend_s21 = { type = "float", min = 0.8, max = 2.0, step = 0.1 }
 min_theme_rs_ratio_rank_e21 = { type = "float", min = 0.4, max = 0.9, step = 0.1 }
 is_rs_trend_s14_lt_s21   = { type = "categorical", choices = [true] }
 is_theme_rs_ratio_rank_e14_gt_e21   = { type = "categorical", choices = [true] }
-is_close_gt_ema63 = { type = "categorical", choices = [true] }
 
 [[strategy]]
 name = "B5_rs_trend_with_theme"
-description = "相対トレンドが強く、上昇テーマ(RST)にも属する銘柄"
+# 2026-09-30: V2b を既定に採用（ユーザー判断）。旧 B5 からの変更点:
+#   - 銘柄 is_rs_trend_s21_lt_s63 / テーマ is_theme_rs_trend_rank_s21_gt_s63 を追加（14/21 と 21/63 の AND）
+#   - is_close_gt_ema63 を削除（rs_trend の持続条件と役割が重複。外すと型1 LCB 0.14→0.58）
+#   - min_dist_21ema_pct を削除（1d+5%・close>EMA63 下でほぼ冗長。Importance も低い）
+# 型1: score 2.57→3.20 / LCB 0.42→0.58 / 取引 277→251。
+# 型3: 単独では全5モデルで最大DDが最小・CAGR/DD 最良だが、spy_sma200 / mts_raw の CAGR は旧 B5 が上
+#   （旧 B5 は大きく伸びる初動銘柄で稼ぐ型）。B256_union では full_position 39.6→49.3% / spy_sma63 29.7→39.6%。
+# 検証の経緯と数値: tmp/b5_variant_*.py・output/scenario/B5_V2b/・output/scenario/B256_union_V2b/
+description = "相対トレンドが短期・中期とも持続して強く、上昇テーマ(RST)にも属する銘柄"
 max_hits_per_day = 10
 sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
-min_change_1d_pct = 5.0 
-min_dist_21ema_pct = 0.0 
-min_vol_surge_21 = 2.0 
-min_adr_pct_21 = 6.0 
-max_sma50_atr_mult = 5.0 
+min_change_1d_pct = 4.0
+min_vol_surge_21 = 1.9
+min_adr_pct_21 = 7.0
+max_sma50_atr_mult = 6.0
 min_market_cap = 1e7
-min_rs_trend_s21 = 1.1 
-min_theme_rs_trend_s21 = 0.9 
-is_rs_trend_s14_lt_s21 = true 
-is_theme_rs_trend_rank_s14_gt_s21 = true 
-is_close_gt_ema63 = true
+min_rs_trend_s21 = 0.8
+# 2026-09-30: min_theme_rs_trend_s21 を削除。テーマ rank s14>s21 かつ s21>s63 を満たすテーマは
+# 生値 0.8 以上をほぼ満たしており、外しても型1の成績が完全一致（score 3.20 / 251取引 / LCB 0.577、
+# ホールドアウトも同値。200 trial でもこれを超える点なし）。検証: tmp/b5_drop_theme_floor_optimize.py
+is_rs_trend_s14_lt_s21 = true
+is_rs_trend_s21_lt_s63 = true
+is_theme_rs_trend_rank_s14_gt_s21 = true
+is_theme_rs_trend_rank_s21_gt_s63 = true
 max_allowed_dd = 35.0   # MTM 再校正（旧: 未設定=デフォルト 20.0）
 
 [strategy.optimization]
 min_change_1d_pct    = { type = "float", min = 2.0, max = 10.0, step = 1.0 }
-min_dist_21ema_pct   = { type = "float", min = -1.0, max = 20.0, step = 1.0 }
 # 2026-07-24: 探索下限を 0.5→1.5 に引き上げ（B2 で min_adr_pct_21 にやったのと同じ
 # コンセプト防衛。vol_surge_21<1.0 は21日平均"以下"の出来高＝そもそも「サージ」の体を
 # なしておらず、出来高の裏付けが薄い銘柄まで通っていた。max_sma50_atr_mult の上限も
 # 8.0→6.0 に引き締め、既に伸びきった銘柄を追いかけるのを抑制する）
 min_vol_surge_21   = { type = "float", min = 1.5, max = 5.0, step = 0.1 }
-min_adr_pct_21     = { type = "float", min = 1.0, max = 6.0, step = 0.5 }
+# 2026-09-28: 1.0〜6.0 → 4.0〜8.0。ベースライン 6.0 が上限に張り付き、下限 1.0 は
+# 「急騰銘柄」コンセプトを防衛できていなかった（B2/B6 と同型の防衛）。
+min_adr_pct_21     = { type = "float", min = 4.0, max = 8.0, step = 0.5 }
+# max_sma50_atr_mult: 2026-09-29 に削除を試験 → 型1 score 2.89→-0.41（取引倍増・期待値 7.06→1.91%）。
+# Importance は低いが条件自体は必須。上限 8.0 まで広げても最適は 6.0 のまま。
 max_sma50_atr_mult = { type = "float", min = 2.0, max = 6.0, step = 0.5 }
-min_market_cap     = { type = "categorical", choices = [1e7, 1e8] }
-#min_market_cap     = { type = "categorical", choices = [1e5, 5e5, 1e6, 5e6, 1e7, 5e7, 1e8, 3e8, 1e9] }
+# 2026-09-28: B2/B6 と同じ選択肢に統一（選択肢2つでは検出件数が振れやすい）
+min_market_cap     = { type = "categorical", choices = [1e7, 5e7, 1e8, 3e8, 1e9] }
 min_rs_trend_s21 = { type = "float", min = 0.8, max = 2.0, step = 0.1 }
-min_theme_rs_trend_s21 = { type = "float", min = 0.9, max = 2.0, step = 0.1 }
 is_rs_trend_s14_lt_s21   = { type = "categorical", choices = [true] }
+is_rs_trend_s21_lt_s63   = { type = "categorical", choices = [true] }
 is_theme_rs_trend_rank_s14_gt_s21   = { type = "categorical", choices = [true] }
-is_close_gt_ema63 = { type = "categorical", choices = [true] }
+is_theme_rs_trend_rank_s21_gt_s63   = { type = "categorical", choices = [true] }
 
 [[strategy]]
 name = "B6_rs_macd_and_theme"
@@ -265,7 +285,11 @@ max_sma50_atr_mult = 4.5
 min_market_cap = 1e7
 min_rs_trend_rank_s21 = 0.7000000000000001
 min_rs_macd_hist_21 = 0.0 
-min_theme_rs_trend_s21 = 0.9 
+# 2026-09-30: min_theme_rs_trend_s21（0.9）を削除。外しても型1の成績が完全一致（score 2.41 / 297取引）で、
+# 何も絞り込んでいなかった（Importance 10% は 1.0 以上に上げた trial の悪化を拾っていただけ）。
+# テーマ側で実際に効いているのは is_theme_rs_trend_rank_s14_gt_s21 のみ。
+# テーマ条件の比較（MACD 水準/加速・ratio rank e21>e63・trend rank s21>s63・s14 生値）はいずれも現行を下回った。
+# 検証: tmp/b6_theme_macd_optimize.py（M1〜M3 / R1・R2 / H1 / T1・T2 / S14）・tmp/b6_variant_trials.db
 is_theme_rs_trend_rank_s14_gt_s21 = true
 is_close_gt_ema63 = true
 # 2026-08-17: 加速条件は B6 の定義そのものなので探索対象から外し true で固定した（下記参照）。
@@ -287,7 +311,6 @@ max_sma50_atr_mult = { type = "float", min = 2.0, max = 8.0, step = 0.5 }
 min_market_cap     = { type = "categorical", choices = [1e7, 5e7, 1e8, 3e8, 1e9] }
 min_rs_trend_rank_s21 = { type = "float", min = 0.4, max = 0.9, step = 0.1 }
 min_rs_macd_hist_21 = { type = "float", min = 0.0, max = 0.5, step = 0.1 }
-min_theme_rs_trend_s21 = { type = "float", min = 0.9, max = 2.0, step = 0.1 }
 is_theme_rs_trend_rank_s14_gt_s21   = { type = "categorical", choices = [true] }
 is_close_gt_ema63 = { type = "categorical", choices = [true] }
 # 2026-08-17: 探索を [true] に固定。加速条件を探索対象にすることは「B6 が B6 でなくなる自由」を

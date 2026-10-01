@@ -7,7 +7,8 @@
 
 > [!IMPORTANT]
 > **このファイルは未完了項目の索引**（2026-09-28 再構成）。
-> - 1項目は**5行以内**（見出し・症状・対応案・詳細リンク）。経緯・実測値・議論は
+> - 1項目は**5行以内**（見出し・症状・対応案・詳細リンク）。症状の行頭に **【実測】/【推測】** を付ける
+>   （【推測】は着手時にまず実測で確かめる。詳細: `doc/project_knowhow.md` D-1）。経緯・実測値・議論は
 >   `doc/issues/<slug>.md` か対応する計画書（`doc/in_progress/`）に書く。
 > - **完了した項目は `doc/issue_list_archive.md` へ移す**（原文のまま・ここには残さない）。
 > - コード中のコメントにある「`doc/issue_list.md` P1 参照」等の参照先は、
@@ -67,6 +68,10 @@
   - **症状**: ダッシュボードが `market_trend_score` / `distribution_days` の NULL を 0 として表示する
   - **対応案**: NULL の扱いを層をまたいで設計してから、該当フィールドを Optional 化する
   - **詳細**: [doc/issues/dashboard_null_as_zero.md](issues/dashboard_null_as_zero.md)
+
+- [ ] 🔵 **ダッシュボード表示1回で `/api/dashboard`（約720KB）が3回呼ばれる — 本当に不要かは再見極め要**（2026-10-01 発見）
+  - **症状**: 【実測】uvicorn ログで、1回のページ表示ごとに `?rank_type=rs_trend`・`?date=<最新>&rank_type=rs_trend`・`?rank_type=rs_trend` の3連続（計約2.1MB）。デイリー実行中にスマホ（Tailscale＋Vite プロキシ経由）で「Loading Data」のまま進まなかった。API 単体は1回 0.77秒。遅延との因果は【推測】（デイリー終了後はすぐ表示された）
+  - **対応案**: 着手時に、3回それぞれの呼び出し元（`frontend/src/pages/DashboardPage.tsx:75` 付近・日付確定前後の再取得・StrictMode の二重実行など）と役割を確かめ、**意図した再取得かどうかを見極めてから**削る
 
 - [ ] 🔵 **週次メンテに `scan_split_consistency.py` を組み込む（根本対応・2026-09-11 分離起票）**
   - **症状**: `scan_split_consistency.py` が週次メンテに入っていない（元は「分割記録の鮮度」issue の対応案の片方）
