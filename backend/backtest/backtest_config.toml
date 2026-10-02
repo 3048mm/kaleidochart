@@ -277,9 +277,17 @@ description = "相対トレンド・出来高が強く、上昇テーマに属�
 max_hits_per_day = 10
 sort_column = "rs_ratio_rank_e21"
 sort_ascending = false
-min_change_1d_pct = 9.0 
-min_dist_21ema_pct = 15.0 
-min_vol_surge_21 = 2.6 
+# 2026-10-02: 21EMA 乖離の上限 max_dist_21ema_pct を追加し、最適化 best（tmp/b6_variant_trials.db
+# "B6_rs_macd_and_theme__D1" #196）を既定値に採用（ユーザー判断）。乖離 10〜39% の帯 + 急騰 10%。
+# 型1: score 2.41→3.17 / LCB +0.80→+1.28 / 取引 297→276。ホールドアウト stress_bear LCB −4.45→−2.10、
+# calm_recent +1.10→+1.16。2022 の DD は −105→−103 でほぼ不変。
+# 型3 単独 30 run（旧→D1）: DD は spy_sma200 −4.5 / spy_sma63 −3.6 / mts_raw −2.3pt と有意に改善、
+# CAGR は vxv_vix_ema +4.6pt、spy_sma63 −3.8pt（有意に悪化）、他は誤差内。B256_union 30 run でも spy_sma63 の
+# CAGR は −11.6pt と悪化。spy_sma63 以外では良い方向のため採用（2026-10-02 ユーザー判断）。
+min_change_1d_pct = 10.0
+min_dist_21ema_pct = 10.0
+max_dist_21ema_pct = 39.0
+min_vol_surge_21 = 2.7
 min_adr_pct_21 = 6.0 
 max_sma50_atr_mult = 4.5
 min_market_cap = 1e7
@@ -301,8 +309,11 @@ max_allowed_dd = 35.0   # MTM 再校正（旧: 未設定=デフォルト 20.0）
 # 事実上無効化された（取引 534→743・1取引 3.83%→2.29% と質が劣化）。
 # 加速条件を [true] に固定しても、急騰の閾値が自由なら「加速しているだけの
 # 平凡な銘柄」を拾えてしまう。is_rs_macd_hist_rising_21 と対で防衛する。
-min_change_1d_pct    = { type = "float", min = 8.0, max = 10.0, step = 1.0 }
+# 2026-10-02: 上限 10.0→14.0（D1 best が上限 10.0 に張り付いたため）
+min_change_1d_pct    = { type = "float", min = 8.0, max = 14.0, step = 1.0 }
 min_dist_21ema_pct   = { type = "float", min = -1.0, max = 20.0, step = 1.0 }
+# 2026-10-02: 21EMA 乖離の上限を追加（下限だけでは極端に伸びた銘柄も拾っていた）
+max_dist_21ema_pct   = { type = "float", min = 18.0, max = 40.0, step = 1.0 }
 min_vol_surge_21   = { type = "float", min = 1.5, max = 5.0, step = 0.1 }
 # 2026-08-21: 下限 1.0→5.0。上と同じ理由（税込みベストが 6.0→2.5 へ緩めていた）。
 min_adr_pct_21     = { type = "float", min = 5.0, max = 6.0, step = 0.5 }
